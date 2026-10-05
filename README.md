@@ -38,9 +38,9 @@ Contact links open email/phone apps. Requests for updates are not automatic subs
 
 ## GitHub Pages
 
-Assets use a relative base so the build works under `/churchtimes/` as well as a domain root. The repository includes a CI build/test workflow and a manual GitHub Pages deployment workflow.
+Assets use a relative base so the build works under `/churchtimes/` as well as a domain root. The repository includes a CI build/test workflow and a GitHub Pages deployment workflow that runs automatically on pushes to `main` and also supports manual runs.
 
-After code is published, enable **Settings → Pages → Source → GitHub Actions**, then run **Deploy website to GitHub Pages**. Source publication and successful web deployment are separate outcomes. For a production newsroom, integrate the design with the existing WordPress CMS or a server-rendered publishing layer and individual article metadata.
+Enable **Settings → Pages → Source → GitHub Actions**, then run **Deploy website to GitHub Pages**. Subsequent pushes to `main` automatically test, build and deploy. Pages must be enabled before deployment can succeed. Source publication and successful web deployment are separate outcomes. For a production newsroom, integrate the design with the existing WordPress CMS or a server-rendered publishing layer and individual article metadata.
 
 ## Verified checks
 

@@ -32,7 +32,7 @@ The previous brand and financial strategy files remain available in the reposito
 
 Target repository: `abcentech/churchtimes`, branch `main`. Publishing source to GitHub does not change churchtimesnigeria.net or automatically enable hosting.
 
-`Website checks` builds and runs desktop/mobile tests for pushes to main and pull requests. `Deploy website to GitHub Pages` is a manual workflow. To host the site on Pages, enable GitHub Actions as the Pages source in repository settings and run that workflow. Its deployment job exposes the resulting URL in GitHub. No deployment URL should be claimed before a successful deployment.
+`Website checks` builds and runs desktop/mobile tests for pushes to main and pull requests. `Deploy website to GitHub Pages` runs on pushes to main and also supports manual runs. It checks the build and desktop/mobile behaviour before deployment. To host the site on Pages, enable GitHub Actions as the Pages source in repository settings and run that workflow. Its deployment job exposes the resulting URL in GitHub. No deployment URL should be claimed before a successful deployment.
 
 ## Validation
 
