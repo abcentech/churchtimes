@@ -1,0 +1,122 @@
+{
+  "url": "https://www.churchtimes.co.uk/about-us",
+  "status": 200,
+  "headings": [
+    "About the Church Times",
+    "Events",
+    "Campaigns",
+    "Listen now",
+    "Top Comment",
+    "Angela Tilby: C of E must regain trust of UK Jews",
+    "Top Feature",
+    "Conqueror's legacy of bloody brutality",
+    "Job of the Week",
+    "Priest with Responsibility for Pastoral Care",
+    "Clerical",
+    "Rector",
+    "Associate Minister",
+    "House for Duty Associate Minister",
+    "Welcome to the Church Times"
+  ],
+  "meta": [
+    {
+      "charset": "utf-8"
+    },
+    {
+      "name": "viewport",
+      "content": "width=device-width, initial-scale=1.0, minimum-scale=1"
+    },
+    {
+      "http-equiv": "X-UA-Compatible",
+      "content": "IE=edge"
+    },
+    {
+      "name": "google-site-verification",
+      "content": "YC-yPSebwVXh2NMiLTX4k7VLDxVpAW8jt0kYouz6Mgo"
+    },
+    {
+      "name": "apple-itunes-app",
+      "content": "app-id=938087502"
+    },
+    {
+      "name": "og:title",
+      "content": "Church Times: about us"
+    },
+    {
+      "name": "og:url",
+      "content": "https://www.churchtimes.co.uk/about-us"
+    },
+    {
+      "property": "og:url",
+      "content": "https://www.churchtimes.co.uk/about-us"
+    },
+    {
+      "property": "og:title",
+      "content": "Church Times: about us"
+    },
+    {
+      "name": "description",
+      "content": "The Church Times, founded in 1863, is known for informed and independent reporting of church and world news in print, online, and on its app. Each issue includes lively opinion and detailed analysis on current affairs, wide-ranging features and interviews, insightful faith content, Bible commentary, cartoons, books and arts reviews, and more"
+    },
+    {
+      "name": "og:description",
+      "content": "The Church Times, founded in 1863, is known for informed and independent reporting of church and world news in print, online, and on its app. Each issue includes lively opinion and detailed analysis on current affairs, wide-ranging features and interviews, insightful faith content, Bible commentary, cartoons, books and arts reviews, and more"
+    },
+    {
+      "property": "og:description",
+      "content": "The Church Times, founded in 1863, is known for informed and independent reporting of church and world news in print, online, and on its app. Each issue includes lively opinion and detailed analysis on current affairs, wide-ranging features and interviews, insightful faith content, Bible commentary, cartoons, books and arts reviews, and more"
+    },
+    {
+      "name": "og:image",
+      "content": "https://www.churchtimes.co.uk/media/5643411/promo-film-thumbnail.png?anchor=center&mode=crop&width=1200&height=628&rnd=131659276490000000"
+    },
+    {
+      "property": "og:image",
+      "content": "https://www.churchtimes.co.uk/media/5643411/promo-film-thumbnail.png?anchor=center&mode=crop&width=1200&height=628&rnd=131659276490000000"
+    },
+    {
+      "name": "fb:app_id",
+      "content": "1929242603975784"
+    },
+    {
+      "property": "fb:app_id",
+      "content": "1929242603975784"
+    },
+    {
+      "name": "twitter:card",
+      "content": "summary_large_image"
+    },
+    {
+      "name": "twitter:title",
+      "content": "Church Times: about us"
+    },
+    {
+      "name": "twitter:description",
+      "content": "The Church Times, founded in 1863, is known for informed and independent reporting of church and world news in print, online, and on its app. Each issue includes lively opinion and detailed analysis on current affairs, wide-ranging features and interviews, insightful faith content, Bible commentary, cartoons, books and arts reviews, and more"
+    },
+    {
+      "name": "twitter:text:description",
+      "content": "The Church Times, founded in 1863, is known for informed and independent reporting of church and world news in print, online, and on its app. Each issue includes lively opinion and detailed analysis on current affairs, wide-ranging features and interviews, insightful faith content, Bible commentary, cartoons, books and arts reviews, and more"
+    },
+    {
+      "name": "twitter:image",
+      "content": "https://www.churchtimes.co.uk/media/5643411/promo-film-thumbnail.png?anchor=center&mode=crop&width=1200&height=628&rnd=131659276490000000"
+    },
+    {
+      "name": "keywords",
+      "content": ""
+    },
+    {
+      "name": "msapplication-TileColor",
+      "content": "#ffffff"
+    },
+    {
+      "name": "msapplication-TileImage",
+      "content": "/ms-icon-144x144.png"
+    },
+    {
+      "name": "theme-color",
+      "content": "#ffffff"
+    }
+  ]
+}

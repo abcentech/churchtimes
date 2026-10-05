@@ -1,0 +1,86 @@
+[
+  {
+    "name": "ng-contact",
+    "url": "https://churchtimesnigeria.net/contact-us/",
+    "retrieved_on": "2026-10-05",
+    "raw_bytes": 254986,
+    "sha256": "77aa7894c58342be3875722a542f55863a5c707b5243a373202a56d3372b19cd"
+  },
+  {
+    "name": "ng-advert",
+    "url": "https://churchtimesnigeria.net/advert/",
+    "retrieved_on": "2026-10-05",
+    "raw_bytes": 261302,
+    "sha256": "dc874645d5721de3ef1c33d8321919813868fbe011d8886c1d6aa02700d66264"
+  },
+  {
+    "name": "ng-news",
+    "url": "https://churchtimesnigeria.net/sowore-holds-private-meeting-with-pastor-adeboye-recounts-his-encounter/",
+    "retrieved_on": "2026-10-05",
+    "raw_bytes": 284182,
+    "sha256": "b6400cea1e1304b1a8a5d3b91c38980362b92061e038fb88e9f3a04237f931c7"
+  },
+  {
+    "name": "ng-business",
+    "url": "https://churchtimesnigeria.net/anlca-72-stakeholders-seek-digital-transformation-and-better-trade-facilitation/",
+    "retrieved_on": "2026-10-05",
+    "raw_bytes": 299148,
+    "sha256": "fec0087135c11e4431be607adb7982564714e9119c52dd1cc09855e9d98a7e20"
+  },
+  {
+    "name": "ng-robots",
+    "url": "https://churchtimesnigeria.net/robots.txt",
+    "retrieved_on": "2026-10-05",
+    "raw_bytes": 126,
+    "sha256": "97acaf8a5f4c60f18f323110d765afad823103d29c214dffa425349930486dfb"
+  },
+  {
+    "name": "ng-sitemap",
+    "url": "https://churchtimesnigeria.net/sitemap_index.xml",
+    "retrieved_on": "2026-10-05",
+    "raw_bytes": 1664,
+    "sha256": "a1b8dc7cc9a7c8e9de921d3f8b3c50614877f94627e9733fb3465dd2111d0fe6"
+  },
+  {
+    "name": "uk-home",
+    "url": "https://www.churchtimes.co.uk",
+    "retrieved_on": "2026-10-05",
+    "raw_bytes": 133140,
+    "sha256": "ced622337a90e4dc0e8cd412b5a86504d55b7c3e9d7bb407d8b4dccd638fc4db"
+  },
+  {
+    "name": "uk-about",
+    "url": "https://www.churchtimes.co.uk/about-us",
+    "retrieved_on": "2026-10-05",
+    "raw_bytes": 83111,
+    "sha256": "45bd8bb25b68088848d6c4ec45c663f69d11b2a2005446de03954670e61fc9aa"
+  },
+  {
+    "name": "uk-subscribe",
+    "url": "https://www.churchtimes.co.uk/subscribe",
+    "retrieved_on": "2026-10-05",
+    "raw_bytes": 90311,
+    "sha256": "0962e4d29bc77eabe1d5763b4c481036fcd1f7253c4315e1747d5aa2a1951091"
+  },
+  {
+    "name": "uk-advertise",
+    "url": "https://www.churchtimes.co.uk/advertise",
+    "retrieved_on": "2026-10-05",
+    "raw_bytes": 104062,
+    "sha256": "10d5e28930d3b213de467738e1acc164e38b6e768c73ffbba374aec466039ba3"
+  },
+  {
+    "name": "uk-archive",
+    "url": "https://www.churchtimes.co.uk/archive",
+    "retrieved_on": "2026-10-05",
+    "raw_bytes": 68521,
+    "sha256": "c9ff4896a47a20ae96dcba946c1202a71d4627367130ce1589bfe09eb10ec001"
+  },
+  {
+    "name": "uk-contact",
+    "url": "https://www.churchtimes.co.uk/contact-us",
+    "retrieved_on": "2026-10-05",
+    "raw_bytes": 100038,
+    "sha256": "84d59a2f4ed06419be6dca2eabb8e2e8bbf7cb7f8f55fd496fd4514984587591"
+  }
+]
