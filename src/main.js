@@ -5,7 +5,7 @@ import './style.css';
 import edition from './data/stories.json';
 
 const stories = edition.stories;
-const asset = path => `${import.meta.env.BASE_URL}${path}`;
+const asset = path => `${import.meta.env.BASE_URL}${import.meta.env.PROD ? 'site/' : ''}${path}`;
 const escape = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const icon = (name, size=20) => {
   const paths = {

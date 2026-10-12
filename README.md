@@ -38,18 +38,23 @@ Contact links open email/phone apps. Requests for updates are not automatic subs
 
 ## GitHub Pages
 
-Assets use a relative base so the build works under `/churchtimes/` as well as a domain root. The repository includes a CI build/test workflow and a GitHub Pages deployment workflow that runs automatically on pushes to `main` and also supports manual runs.
+The currently enabled Pages source is the `main` branch root. It publishes the **compiled** `index.html` and `site/` export, with `.nojekyll` to prevent source processing. No Pages API settings change or extra credential is needed.
 
-Enable **Settings → Pages → Source → GitHub Actions**, then run **Deploy website to GitHub Pages**. Subsequent pushes to `main` automatically test, build and deploy. Pages must be enabled before deployment can succeed. Source publication and successful web deployment are separate outcomes. For a production newsroom, integrate the design with the existing WordPress CMS or a server-rendered publishing layer and individual article metadata.
+Edit the application in `src/` and `public/`. The editable HTML template is `src/index.template.html`; the root `index.html` is generated. Vite uses that template for development and builds.
+
+Before committing website changes:
+
+```bash
+npm run export:pages
+npm run check:pages
+```
+
+Commit the resulting `index.html`, `site/` and `.nojekyll` with the source changes. GitHub’s existing branch-based Pages deployment publishes the compiled website automatically on push. The verification workflow checks that the export matches the current source, runs browser tests and retains the build artifact.
+
+`npm run build` produces a complete deployable `dist/` directory. Both the committed branch export and `dist/` work under `/churchtimes/`. The GitHub workflow token is not asked to alter repository settings; that operation previously failed with “Resource not accessible by integration.”
 
 ## Verified checks
 
-Clean frozen installation and production build passed. All 20 desktop/mobile browser checks passed on both the development server and the production build beneath `/churchtimes/`. Every homepage photograph loaded successfully in the production path, with no failed asset requests.
+The real-content website has 20 desktop/mobile browser checks. The branch export must pass them on a plain static server under `/churchtimes/` before publication.
 
 [Desktop preview](docs/previews/website-first-screen.png) · [Full homepage](docs/previews/website-desktop.png) · [Mobile preview](docs/previews/website-mobile.png)
-
-### Blank Pages site or source-branch publishing
-
-This is a Vite application: publishing the raw `main` branch with GitHub’s built-in Jekyll workflow does not compile the application. The deployment workflow now checks the existing Pages configuration and sets its build type to `workflow` before uploading the tested `dist` artifact. It preserves other site settings. Pages must exist and the workflow needs its declared `pages: write` permission.
-
-The build job prepares and tests the artifact before the `github-pages` deployment environment. Existing deployment protections remain in force. If GitHub holds a run as Waiting, inspect the signed-in run page for the environment review or other protection requirement.

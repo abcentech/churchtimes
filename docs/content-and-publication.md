@@ -28,11 +28,13 @@ No production DNS, WordPress database, administrator settings or existing-site f
 
 The previous brand and financial strategy files remain available in the repository as working proposals. They are not presented as current newsroom policy, current advertising prices or approved business results. The new website removes strategy calculators and template-pack promotions from reader navigation.
 
-## GitHub and optional hosting
+## GitHub Pages publication
 
-Target repository: `abcentech/churchtimes`, branch `main`. Publishing source to GitHub does not change churchtimesnigeria.net or automatically enable hosting.
+Target repository: `abcentech/churchtimes`, branch `main`. The existing branch-based Pages deployment is retained. The root `index.html` and `site/` contain the compiled application, and `.nojekyll` selects static publishing. Development uses `src/index.template.html` through the Vite HTML plugin.
 
-`Website checks` builds and runs desktop/mobile tests for pushes to main and pull requests. `Deploy website to GitHub Pages` runs on pushes to main and also supports manual runs. It checks the build and desktop/mobile behaviour before deployment. To host the site on Pages, enable GitHub Actions as the Pages source in repository settings and run that workflow. Its deployment job exposes the resulting URL in GitHub. No deployment URL should be claimed before a successful deployment.
+Run `npm run export:pages` before committing website changes. `npm run check:pages` verifies that the committed export matches the current build. The workflow validates the build and browser behaviour; GitHub's native branch deployment publishes it. No workflow token needs to change the repository's Pages settings.
+
+The prior attempt to change the build type from the workflow was denied with `Resource not accessible by integration`. Publishing compiled files into the already-configured branch resolves the source-versus-build mismatch without changing repository settings or removing any deployment protection.
 
 ## Validation
 

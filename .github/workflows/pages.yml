@@ -1,15 +1,12 @@
-name: Deploy website to GitHub Pages
+name: Verify compiled Pages website
 on:
   push:
     branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
-concurrency:
-  group: pages
-  cancel-in-progress: true
 jobs:
-  build:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,38 +16,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      - run: npm run check:pages
       - run: npx playwright install --with-deps chromium
       - run: npm test -- --workers=2
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Select the compiled-site publishing method
-        uses: actions/github-script@v8
-        with:
-          script: |
-            const repository = context.repo;
-            const { data: pages } = await github.request('GET /repos/{owner}/{repo}/pages', repository);
-            if (pages.build_type !== 'workflow') {
-              await github.request('PUT /repos/{owner}/{repo}/pages', {
-                ...repository,
-                build_type: 'workflow'
-              });
-              core.info('Pages now publishes the compiled Actions artifact instead of the source branch.');
-            } else {
-              core.info('Pages is already configured for Actions artifacts.');
-            }
-      - uses: actions/configure-pages@v5
-      - name: Deploy
-        id: deployment
-        uses: actions/deploy-pages@v4

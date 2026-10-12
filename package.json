@@ -5,9 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "vite build",
+    "build": "vite build && node tools/prepare-pages.mjs",
     "preview": "vite preview --host 0.0.0.0",
-    "test": "playwright test"
+    "test": "playwright test",
+    "export:pages": "npm run build && node tools/export-pages.mjs",
+    "check:pages": "node tools/check-pages-export.mjs"
   },
   "devDependencies": {
     "@playwright/test": "1.58.2",
