@@ -47,3 +47,7 @@ Enable **Settings → Pages → Source → GitHub Actions**, then run **Deploy w
 Clean frozen installation and production build passed. All 20 desktop/mobile browser checks passed on both the development server and the production build beneath `/churchtimes/`. Every homepage photograph loaded successfully in the production path, with no failed asset requests.
 
 [Desktop preview](docs/previews/website-first-screen.png) · [Full homepage](docs/previews/website-desktop.png) · [Mobile preview](docs/previews/website-mobile.png)
+
+### Blank Pages site or source-branch publishing
+
+This is a Vite application: publishing the raw `main` branch with GitHub’s built-in Jekyll workflow does not compile the application. The deployment workflow now checks the existing Pages configuration and sets its build type to `workflow` before uploading the tested `dist` artifact. It preserves other site settings. Pages must exist and the workflow needs its declared `pages: write` permission.
