@@ -51,3 +51,5 @@ Clean frozen installation and production build passed. All 20 desktop/mobile bro
 ### Blank Pages site or source-branch publishing
 
 This is a Vite application: publishing the raw `main` branch with GitHub’s built-in Jekyll workflow does not compile the application. The deployment workflow now checks the existing Pages configuration and sets its build type to `workflow` before uploading the tested `dist` artifact. It preserves other site settings. Pages must exist and the workflow needs its declared `pages: write` permission.
+
+The build job prepares and tests the artifact before the `github-pages` deployment environment. Existing deployment protections remain in force. If GitHub holds a run as Waiting, inspect the signed-in run page for the environment review or other protection requirement.
