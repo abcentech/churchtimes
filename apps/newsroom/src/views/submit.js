@@ -32,6 +32,23 @@ export function renderSubmit(container) {
         </p>
       </div>
 
+      <!-- Rate Limit Alert Banner -->
+      <div class="rate-limit-banner" id="rate-limit-banner" style="display: none;" role="alert">
+        <span class="rate-limit-icon">⏳</span>
+        <div>
+          <h4 style="margin: 0 0 0.25rem 0; color: #991B1B; font-size: 0.9375rem; font-weight: 700;">Rate Limit Active</h4>
+          <p style="margin: 0; font-size: 0.8125rem; color: #7F1D1D;">
+            You have reached the maximum submission limit. Please wait <strong id="rate-limit-countdown">900</strong> seconds before submitting another story tip.
+          </p>
+        </div>
+      </div>
+
+      <!-- Validation Summary Alert -->
+      <div class="validation-summary-alert" id="validation-summary-box" style="display: none;" role="alert">
+        <h4 style="margin: 0 0 0.35rem 0; color: #991B1B; font-size: 0.875rem; font-weight: 700;">Please correct the following errors:</h4>
+        <ul id="validation-error-list" style="margin: 0; padding-left: 1.25rem; font-size: 0.8125rem; color: #B91C1C;"></ul>
+      </div>
+
       <form id="public-submission-form" novalidate>
         <!-- Story Headline -->
         <div class="form-group" style="margin-bottom: 1.25rem;">
@@ -135,6 +152,31 @@ export function renderSubmit(container) {
           <input type="text" id="sub-honeypot" name="website_url" tabindex="-1" autocomplete="off" />
         </div>
 
+        <!-- Cloudflare Turnstile Challenge -->
+        <div class="form-group" style="margin-bottom: 1.5rem;" id="turnstile-wrapper">
+          <div style="background-color: var(--color-parchment-light); border: 1px solid var(--color-rule); border-radius: var(--radius-md); padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem;" id="turnstile-box">
+            <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;">
+              <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <span style="font-size: 1.25rem;">🛡️</span>
+                <div>
+                  <div style="font-size: 0.8125rem; font-weight: 700; color: var(--color-ink);">Cloudflare Turnstile Verification</div>
+                  <div style="font-size: 0.75rem; color: var(--color-muted);" id="turnstile-status-text">
+                    Challenge status: <strong style="color: #059669;" id="turnstile-status-label">Verified (Mock Key)</strong>
+                  </div>
+                </div>
+              </div>
+              <div style="display: flex; gap: 0.35rem; align-items: center;">
+                <button type="button" class="btn btn-outline btn-xs" id="btn-expire-turnstile" title="Simulate expired challenge">Expire Challenge</button>
+                <button type="button" class="btn btn-outline btn-xs" id="btn-reset-turnstile" title="Simulate missing challenge">Reset Challenge</button>
+                <button type="button" class="btn btn-outline btn-xs" id="btn-verify-turnstile" title="Simulate verified challenge">Verify</button>
+              </div>
+            </div>
+            <div id="cf-turnstile-widget" class="cf-turnstile" data-sitekey="0x4AAAAAAAxMockTurnstileKey" style="display: none;"></div>
+            <input type="hidden" id="cf-turnstile-response" name="cf-turnstile-response" value="mock-turnstile-token-valid" />
+            <span class="form-error-msg" id="turnstile-error-msg" style="display: none;"></span>
+          </div>
+        </div>
+
         <!-- Affirmation Checkbox -->
         <div class="form-group" style="margin-bottom: 1.5rem;">
           <label style="display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.8125rem; color: var(--color-ink); cursor: pointer;">
@@ -156,8 +198,83 @@ export function renderSubmit(container) {
   `;
 
   const form = container.querySelector('#public-submission-form');
+  const turnstileTokenInput = container.querySelector('#cf-turnstile-response');
+  const turnstileStatusLabel = container.querySelector('#turnstile-status-label');
+  const turnstileBox = container.querySelector('#turnstile-box');
+  const turnstileErrorMsg = container.querySelector('#turnstile-error-msg');
+
+  container.querySelector('#btn-expire-turnstile')?.addEventListener('click', () => {
+    turnstileTokenInput.value = 'EXPIRED';
+    turnstileStatusLabel.textContent = 'Expired (Simulated)';
+    turnstileStatusLabel.style.color = '#DC2626';
+  });
+
+  container.querySelector('#btn-reset-turnstile')?.addEventListener('click', () => {
+    turnstileTokenInput.value = '';
+    turnstileStatusLabel.textContent = 'Unverified (Missing Token)';
+    turnstileStatusLabel.style.color = '#DC2626';
+  });
+
+  container.querySelector('#btn-verify-turnstile')?.addEventListener('click', () => {
+    turnstileTokenInput.value = 'mock-turnstile-token-valid';
+    turnstileStatusLabel.textContent = 'Verified (Mock Key)';
+    turnstileStatusLabel.style.color = '#059669';
+    turnstileErrorMsg.style.display = 'none';
+    turnstileBox.classList.remove('has-error');
+  });
+
+  let rateLimitInterval = null;
+
+  function showRateLimitBanner(seconds) {
+    const banner = container.querySelector('#rate-limit-banner');
+    const countdownEl = container.querySelector('#rate-limit-countdown');
+    if (!banner || !countdownEl) return;
+
+    banner.style.display = 'flex';
+    let remaining = seconds;
+    countdownEl.textContent = remaining;
+
+    if (rateLimitInterval) clearInterval(rateLimitInterval);
+    rateLimitInterval = setInterval(() => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        clearInterval(rateLimitInterval);
+        banner.style.display = 'none';
+      } else {
+        countdownEl.textContent = remaining;
+      }
+    }, 1000);
+  }
+
+  function showValidationErrors(errors) {
+    const summaryBox = container.querySelector('#validation-summary-box');
+    const errorList = container.querySelector('#validation-error-list');
+    if (!summaryBox || !errorList) return;
+
+    errorList.innerHTML = errors.map(e => `<li>${escapeHtml(e.message)}</li>`).join('');
+    summaryBox.style.display = 'block';
+
+    errors.forEach(err => {
+      if (err.field === 'turnstile') {
+        turnstileBox.classList.add('has-error');
+        turnstileErrorMsg.textContent = err.message;
+        turnstileErrorMsg.style.display = 'block';
+      }
+    });
+
+    summaryBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  function clearErrors() {
+    const summaryBox = container.querySelector('#validation-summary-box');
+    if (summaryBox) summaryBox.style.display = 'none';
+    turnstileBox?.classList.remove('has-error');
+    if (turnstileErrorMsg) turnstileErrorMsg.style.display = 'none';
+  }
+
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
+    clearErrors();
 
     const headline = container.querySelector('#sub-headline-input').value.trim();
     const category = container.querySelector('#sub-category-select').value;
@@ -170,26 +287,34 @@ export function renderSubmit(container) {
     const phone = container.querySelector('#sub-phone-input').value.trim() || '';
     const honeypot = container.querySelector('#sub-honeypot').value;
     const affirmed = container.querySelector('#sub-affirmation-chk').checked;
+    const turnstileToken = turnstileTokenInput ? turnstileTokenInput.value : 'mock-turnstile-token-valid';
 
-    if (!headline || !body || !location) {
-      alert('Please fill out all required fields marked with *');
-      return;
-    }
-    if (!affirmed) {
-      alert('Please confirm the accuracy affirmation checkbox.');
+    const clientErrors = [];
+    if (!headline) clientErrors.push({ field: 'headline', message: 'Working Headline is required.' });
+    if (!location) clientErrors.push({ field: 'location', message: 'Event Location is required.' });
+    if (!body) clientErrors.push({ field: 'body', message: 'Full Story Details are required.' });
+    if (!affirmed) clientErrors.push({ field: 'affirmation', message: 'Please confirm the accuracy affirmation checkbox.' });
+
+    if (clientErrors.length > 0) {
+      showValidationErrors(clientErrors);
       return;
     }
 
     const payload = {
       headline,
+      title: headline,
       category,
       location,
       body,
       submitterName: name,
+      name,
       organization: org,
       submitterEmail: email,
+      email,
       submitterPhone: phone,
-      honeypot
+      phone,
+      honeypot,
+      turnstileToken
     };
 
     const submitBtn = container.querySelector('#btn-submit-public');
@@ -198,12 +323,19 @@ export function renderSubmit(container) {
 
     try {
       const res = await apiAdapter.createPublicSubmission(payload);
-      renderSuccessReceipt(container, res.data);
+      renderSuccessReceipt(container, res.data || payload);
       showToast('Story tip received by Church Times newsroom!', 'success');
     } catch (err) {
       submitBtn.disabled = false;
       submitBtn.textContent = '📨 Submit Story Tip to Newsroom';
-      alert(`Submission error: ${err.message}`);
+
+      if (err.name === 'ApiRateLimitError') {
+        showRateLimitBanner(err.retryAfter || 900);
+      } else if (err.name === 'ApiValidationError' && err.errors) {
+        showValidationErrors(err.errors);
+      } else {
+        showValidationErrors([{ field: 'general', message: err.message }]);
+      }
     }
   });
 }

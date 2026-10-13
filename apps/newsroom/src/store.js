@@ -7,21 +7,26 @@ import { apiAdapter } from './api/adapter.js';
 class NewsroomStore {
   constructor() {
     this.users = apiAdapter.getUsers();
-    this.currentUser = this.users[0]; // Default: Gbenga Osinaike (Reporter)
+    this.currentUser = apiAdapter.getCurrentUser() || this.users[0];
     this.currentView = 'dashboard';
     this.activeStoryId = null;
     this.activeEventSlug = 'ncef-2026-plenary';
     this.listeners = new Set();
     this.dirtyStory = false;
+
+    apiAdapter.subscribe(() => {
+      this.currentUser = apiAdapter.getCurrentUser();
+      this.notify('user_changed', this.currentUser);
+    });
   }
 
   getCurrentUser() {
-    return this.currentUser;
+    return apiAdapter.getCurrentUser() || this.currentUser;
   }
 
   setCurrentUser(userId) {
-    const user = this.users.find(u => u.id === userId);
-    if (user) {
+    if (apiAdapter.isMockActive) {
+      const user = apiAdapter.setMockUser(userId);
       this.currentUser = user;
       this.notify('user_changed', this.currentUser);
     }

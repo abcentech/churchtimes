@@ -19,11 +19,13 @@ class NewsroomApp {
     this.mainEl = document.getElementById('main-content');
     this.modeBannerEl = document.getElementById('mode-banner');
     this.roleSelect = document.getElementById('user-role-select');
+    this.sessionChipEl = document.getElementById('session-chip');
     this.themeToggleBtn = document.getElementById('theme-toggle-btn');
   }
 
   init() {
     this.initRolePicker();
+    this.initSessionDisplay();
     this.initTheme();
     this.initModeBanner();
     this.initNavLinks();
@@ -35,6 +37,8 @@ class NewsroomApp {
     store.subscribe((event, data) => {
       if (event === 'user_changed') {
         showToast(`Switched active role: ${data.name} (${data.role})`, 'info');
+        this.updateSessionDisplay();
+        this.syncRolePicker();
         this.route();
       } else if (event === 'view_changed') {
         this.updateNavActiveStates(data.view);
@@ -44,21 +48,204 @@ class NewsroomApp {
 
     apiAdapter.subscribe(() => {
       this.updateModeBanner();
+      this.updateSessionDisplay();
       this.updateBadges();
     });
   }
 
   initRolePicker() {
     if (!this.roleSelect) return;
-    const users = apiAdapter.getUsers();
-    this.roleSelect.innerHTML = users.map(u => `
-      <option value="${u.id}" ${u.id === store.getCurrentUser().id ? 'selected' : ''}>
-        ${u.name} (${formatRoleName(u.role)})
-      </option>
-    `).join('');
+    this.syncRolePicker();
 
     this.roleSelect.addEventListener('change', () => {
       store.setCurrentUser(this.roleSelect.value);
+    });
+  }
+
+  syncRolePicker() {
+    if (!this.roleSelect) return;
+    const users = apiAdapter.getUsers();
+    const current = apiAdapter.getCurrentUser();
+    this.roleSelect.innerHTML = users.map(u => `
+      <option value="${u.id}" ${current && u.id === current.id ? 'selected' : ''}>
+        ${u.name} (${formatRoleName(u.role)})
+      </option>
+    `).join('');
+  }
+
+  initSessionDisplay() {
+    this.updateSessionDisplay();
+  }
+
+  updateSessionDisplay() {
+    if (!this.sessionChipEl) return;
+    const user = apiAdapter.getCurrentUser();
+
+    if (user) {
+      this.sessionChipEl.innerHTML = `
+        <div class="session-user-badge" id="session-user-badge" title="${escapeHtml(user.email || user.name)}">
+          <span class="session-avatar">${escapeHtml(user.avatar || user.name.slice(0, 2).toUpperCase())}</span>
+          <div class="session-meta">
+            <span class="session-user-name">${escapeHtml(user.name)}</span>
+            <span class="badge badge-role">${escapeHtml(formatRoleName(user.role))}</span>
+          </div>
+        </div>
+        <button type="button" class="btn btn-outline btn-xs" id="btn-staff-logout" aria-label="Sign out of newsroom session">
+          Log out
+        </button>
+      `;
+
+      const logoutBtn = this.sessionChipEl.querySelector('#btn-staff-logout');
+      if (logoutBtn) {
+        logoutBtn.addEventListener('click', async () => {
+          await apiAdapter.logout();
+          showToast('Logged out. Session cleared.', 'info');
+        });
+      }
+    } else {
+      this.sessionChipEl.innerHTML = `
+        <button type="button" class="btn btn-primary btn-sm" id="btn-staff-login" aria-label="Staff login">
+          🔐 Staff Login
+        </button>
+      `;
+
+      const loginBtn = this.sessionChipEl.querySelector('#btn-staff-login');
+      if (loginBtn) {
+        loginBtn.addEventListener('click', () => this.openStaffLoginModal());
+      }
+    }
+  }
+
+  openStaffLoginModal() {
+    openModal({
+      title: 'Staff Authentication',
+      onClose: () => {
+        if (window.location.hash === '#login') {
+          window.location.hash = '#dashboard';
+        }
+      },
+      contentHtml: `
+        <div style="display: flex; flex-direction: column; gap: 1rem;">
+          <div class="ethics-notice-box" style="margin-bottom: 0;">
+            <h4 style="margin: 0 0 0.25rem 0;">Church Times Nigeria — Newsroom Access</h4>
+            <p style="margin: 0; font-size: 0.8125rem;">
+              Secure authenticated access for accredited journalists and editors.
+              In live mode, sessions use HttpOnly cookies. Passwords and tokens are <strong>never stored in localStorage</strong>.
+            </p>
+          </div>
+
+          <div class="validation-summary-alert" id="login-error-alert" style="display: none; margin-bottom: 0;" role="alert">
+            <span id="login-error-msg"></span>
+          </div>
+
+          <form id="staff-login-form" novalidate>
+            <div class="form-group" style="margin-bottom: 1rem;">
+              <label for="login-email-input" class="form-label">Staff Email Address <span style="color: #DC2626;">*</span></label>
+              <input
+                type="email"
+                id="login-email-input"
+                class="form-input"
+                placeholder="editor@churchtimesnigeria.net"
+                required
+                autocomplete="username"
+              />
+            </div>
+
+            <div class="form-group" style="margin-bottom: 1rem;">
+              <label for="login-password-input" class="form-label">Password <span style="color: #DC2626;">*</span></label>
+              <input
+                type="password"
+                id="login-password-input"
+                class="form-input"
+                placeholder="••••••••••••"
+                required
+                autocomplete="current-password"
+              />
+            </div>
+
+            <div style="margin-bottom: 1.25rem; background: var(--color-parchment-light); padding: 0.75rem; border-radius: var(--radius-sm); border: 1px dashed var(--color-rule);">
+              <div style="font-size: 0.75rem; font-weight: 700; color: var(--color-muted); text-transform: uppercase; margin-bottom: 0.35rem;">
+                Demo Credentials (Claude Payload CMS Matrix)
+              </div>
+              <div style="display: flex; gap: 0.35rem; flex-wrap: wrap;">
+                <button type="button" class="btn btn-outline btn-xs demo-fill-btn" data-email="reporter@churchtimes.local">Reporter</button>
+                <button type="button" class="btn btn-outline btn-xs demo-fill-btn" data-email="news-editor@churchtimes.local">Section Editor</button>
+                <button type="button" class="btn btn-outline btn-xs demo-fill-btn" data-email="eic@churchtimes.local">Editor-in-Chief</button>
+                <button type="button" class="btn btn-outline btn-xs demo-fill-btn" data-email="admin@churchtimes.local">Admin</button>
+              </div>
+              <div style="font-size: 0.75rem; color: var(--color-muted); margin-top: 0.35rem;">
+                Default demo password: <code>churchtimes2026!</code>
+              </div>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; gap: 0.5rem;">
+              <button type="button" class="btn btn-outline" id="modal-cancel-login">Cancel</button>
+              <button type="submit" class="btn btn-primary" id="btn-submit-login">
+                🔐 Sign In to Newsroom
+              </button>
+            </div>
+          </form>
+        </div>
+      `,
+      onRender: (modalBody, close) => {
+        const form = modalBody.querySelector('#staff-login-form');
+        const emailInput = modalBody.querySelector('#login-email-input');
+        const passwordInput = modalBody.querySelector('#login-password-input');
+        const errorAlert = modalBody.querySelector('#login-error-alert');
+        const errorMsg = modalBody.querySelector('#login-error-msg');
+        const submitBtn = modalBody.querySelector('#btn-submit-login');
+
+        modalBody.querySelector('#modal-cancel-login').addEventListener('click', () => {
+          close();
+          if (window.location.hash === '#login') {
+            window.location.hash = '#dashboard';
+          }
+        });
+
+        // Demo quick fill
+        modalBody.querySelectorAll('.demo-fill-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            emailInput.value = btn.getAttribute('data-email');
+            passwordInput.value = 'churchtimes2026!';
+            errorAlert.style.display = 'none';
+          });
+        });
+
+        form.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          errorAlert.style.display = 'none';
+
+          const email = emailInput.value.trim();
+          const password = passwordInput.value;
+
+          if (!email || !password) {
+            errorMsg.textContent = 'Please enter both email and password.';
+            errorAlert.style.display = 'block';
+            return;
+          }
+
+          submitBtn.disabled = true;
+          submitBtn.textContent = 'Authenticating...';
+
+          try {
+            const res = await apiAdapter.login({ email, password });
+            showToast(`Welcome, ${res.user.name}! Authenticated as ${formatRoleName(res.user.role)}.`, 'success');
+            close();
+            this.updateSessionDisplay();
+            this.syncRolePicker();
+            if (window.location.hash === '#login') {
+              window.location.hash = '#dashboard';
+            } else {
+              this.route();
+            }
+          } catch (err) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = '🔐 Sign In to Newsroom';
+            errorMsg.textContent = err.message;
+            errorAlert.style.display = 'block';
+          }
+        });
+      }
     });
   }
 
@@ -98,16 +285,19 @@ class NewsroomApp {
     const banner = document.getElementById('mode-banner');
     const badge = document.getElementById('mode-banner-badge');
     const text = document.getElementById('mode-banner-desc');
+    const mockWrapper = document.getElementById('mock-role-picker-wrapper');
     if (!banner || !badge || !text) return;
 
     if (info.isMock) {
       banner.className = 'mode-banner';
       badge.textContent = 'LOCAL MOCK MODE';
       text.textContent = 'Running in Local Storage Mock Mode. All edits persist in browser.';
+      if (mockWrapper) mockWrapper.style.display = 'flex';
     } else {
       banner.className = 'mode-banner is-live';
       badge.textContent = 'LIVE CMS CONNECTED';
       text.textContent = `Connected to Payload CMS at ${info.backendUrl}`;
+      if (mockWrapper) mockWrapper.style.display = 'none';
     }
   }
 
@@ -126,8 +316,24 @@ class NewsroomApp {
           </div>
 
           <div class="form-group">
-            <label for="modal-cms-url" class="form-label">Payload CMS Base URL</label>
-            <input type="url" id="modal-cms-url" class="form-input" value="${escapeHtml(info.backendUrl)}" />
+            <label class="form-label" style="font-weight: 600;">Operating Mode</label>
+            <div style="display: flex; gap: 1.5rem; margin-top: 0.35rem;">
+              <label style="display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.875rem;">
+                <input type="radio" name="cms-mode" id="radio-mode-mock" value="mock" ${info.isMock ? 'checked' : ''} />
+                <span>🛠 Local Mock Mode</span>
+              </label>
+              <label style="display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.875rem;">
+                <input type="radio" name="cms-mode" id="radio-mode-live" value="live" ${!info.isMock ? 'checked' : ''} />
+                <span>🌐 Live Payload CMS</span>
+              </label>
+            </div>
+            <span class="form-help">In Mock mode, role switcher is enabled. In Live CMS mode, real authenticated sessions are enforced.</span>
+          </div>
+
+          <div class="form-group">
+            <label for="cms-url-input" class="form-label">Payload CMS Base URL</label>
+            <input type="url" id="cms-url-input" class="form-input" value="${escapeHtml(info.backendUrl)}" />
+            <input type="hidden" id="modal-cms-url" value="${escapeHtml(info.backendUrl)}" />
             <span class="form-help">Default: http://localhost:3000</span>
           </div>
 
@@ -143,13 +349,22 @@ class NewsroomApp {
 
           <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.5rem;">
             <button type="button" class="btn btn-outline" id="modal-close-settings">Close</button>
-            <button type="button" class="btn btn-primary" id="modal-test-conn-btn">
-              Test Connection & Connect
+            <button type="button" class="btn btn-outline" id="modal-test-conn-btn">
+              Test Connection
+            </button>
+            <button type="button" class="btn btn-primary" id="btn-save-cms-config">
+              Save Configuration
             </button>
           </div>
         </div>
       `,
       onRender: (modalBody, close) => {
+        const urlInput = modalBody.querySelector('#cms-url-input');
+        const legacyUrlInput = modalBody.querySelector('#modal-cms-url');
+        if (urlInput && legacyUrlInput) {
+          urlInput.addEventListener('input', () => { legacyUrlInput.value = urlInput.value; });
+        }
+
         modalBody.querySelector('#modal-close-settings').addEventListener('click', close);
 
         modalBody.querySelector('#modal-reset-fixtures-btn').addEventListener('click', () => {
@@ -160,7 +375,7 @@ class NewsroomApp {
         });
 
         modalBody.querySelector('#modal-test-conn-btn').addEventListener('click', async () => {
-          const url = modalBody.querySelector('#modal-cms-url').value.trim();
+          const url = (urlInput ? urlInput.value : legacyUrlInput.value).trim();
           showToast('Pinging Payload CMS endpoint...', 'info');
           const res = await apiAdapter.testBackendConnection(url);
           if (res.success) {
@@ -172,6 +387,27 @@ class NewsroomApp {
             this.updateModeBanner();
           }
         });
+
+        const saveBtn = modalBody.querySelector('#btn-save-cms-config');
+        if (saveBtn) {
+          saveBtn.addEventListener('click', () => {
+            const isLive = modalBody.querySelector('#radio-mode-live')?.checked;
+            const url = (urlInput ? urlInput.value : legacyUrlInput.value).trim();
+            if (isLive) {
+              apiAdapter.backendUrl = url || 'http://localhost:3000';
+              apiAdapter.isMockActive = false;
+              apiAdapter.connectionStatus = `Connected to Payload CMS (${apiAdapter.backendUrl})`;
+              showToast(`Switched to Live Payload CMS mode (${apiAdapter.backendUrl})`, 'success');
+            } else {
+              apiAdapter.isMockActive = true;
+              apiAdapter.connectionStatus = 'Local Mock Mode';
+              showToast('Switched to Local Mock Mode', 'info');
+            }
+            this.updateModeBanner();
+            this.updateSessionDisplay();
+            close();
+          });
+        }
       }
     });
   }
@@ -257,6 +493,9 @@ class NewsroomApp {
       case 'media':
         await renderMedia(this.mainEl);
         break;
+      case 'login':
+        this.openStaffLoginModal();
+        break;
       default:
         await renderDashboard(this.mainEl);
         break;
@@ -296,13 +535,17 @@ class NewsroomApp {
 }
 
 function formatRoleName(role) {
+  if (!role) return 'Contributor';
+  const clean = role.replace(/_/g, '-');
   const map = {
     reporter: 'Reporter',
-    section_editor: 'Section Editor',
-    editor_in_chief: 'Editor-in-Chief',
+    'section-editor': 'Section Editor',
+    'editor-in-chief': 'Editor-in-Chief',
+    admin: 'Administrator',
+    'trusted-publisher': 'Trusted Publisher',
     public: 'Public Contributor'
   };
-  return map[role] || role;
+  return map[clean] || map[role] || role;
 }
 
 function escapeHtml(str) {

@@ -610,33 +610,32 @@ function renderStatusBadge(status) {
 }
 
 function renderWorkflowButtons(story, user) {
-  const role = user?.role || 'reporter';
-  const status = story?.status || 'draft';
+  if (!user) {
+    return `<button type="button" class="btn btn-outline btn-sm" id="btn-editor-login-prompt">🔐 Sign in to Edit</button>`;
+  }
 
+  const status = story?.status || 'draft';
   let buttons = '';
 
-  if (role === 'reporter') {
-    if (status === 'draft' || status === 'changes_requested') {
-      buttons += `<button type="button" class="btn btn-accent btn-sm" id="btn-submit-review">📤 Submit for Review</button>`;
-    }
-  } else if (role === 'section_editor') {
-    if (status === 'in_review') {
-      buttons += `<button type="button" class="btn btn-danger btn-sm" id="btn-request-changes">✏️ Request Changes</button>`;
-      buttons += `<button type="button" class="btn btn-success btn-sm" id="btn-approve-story">✅ Approve Story</button>`;
-    } else if (status === 'draft' || status === 'changes_requested') {
-      buttons += `<button type="button" class="btn btn-accent btn-sm" id="btn-submit-review">📤 Submit for Review</button>`;
-    }
-  } else if (role === 'editor_in_chief') {
-    if (status === 'in_review') {
-      buttons += `<button type="button" class="btn btn-danger btn-sm" id="btn-request-changes">✏️ Request Changes</button>`;
-      buttons += `<button type="button" class="btn btn-success btn-sm" id="btn-approve-story">✅ Approve Story</button>`;
-    }
-    if (status === 'approved' || status === 'in_review') {
-      buttons += `<button type="button" class="btn btn-primary btn-sm" id="btn-publish-story" style="background-color: var(--color-forest-dark);">🚀 Publish Story</button>`;
-    }
-    if (status === 'draft' || status === 'changes_requested') {
-      buttons += `<button type="button" class="btn btn-accent btn-sm" id="btn-submit-review">📤 Submit for Review</button>`;
-    }
+  // Submit for Review: Reporter, Section Editor, EIC, Admin
+  if (apiAdapter.hasPermission('story.submit_review') && (status === 'draft' || status === 'changes_requested')) {
+    buttons += `<button type="button" class="btn btn-accent btn-sm" id="btn-submit-review">📤 Submit for Review</button>`;
+  }
+
+  // Request Changes: Section Editor, EIC, Admin
+  if (apiAdapter.hasPermission('story.request_changes') && status === 'in_review') {
+    buttons += `<button type="button" class="btn btn-danger btn-sm" id="btn-request-changes">✏️ Request Changes</button>`;
+  }
+
+  // Approve: Section Editor, EIC, Admin
+  if (apiAdapter.hasPermission('story.approve') && status === 'in_review') {
+    buttons += `<button type="button" class="btn btn-success btn-sm" id="btn-approve-story">✅ Approve Story</button>`;
+  }
+
+  // Publish: Editor-in-Chief, Admin, or Trusted-Publisher (for own story)
+  const isAuthor = story?.author?.id === user?.id || story?.author?.email === user?.email;
+  if (apiAdapter.hasPermission('story.publish', { isAuthor }) && (status === 'approved' || status === 'in_review')) {
+    buttons += `<button type="button" class="btn btn-primary btn-sm" id="btn-publish-story" style="background-color: var(--color-forest-dark);">🚀 Publish Story</button>`;
   }
 
   return buttons;

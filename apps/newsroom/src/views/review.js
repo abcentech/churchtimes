@@ -341,7 +341,7 @@ function inspectStoryModal(article, container) {
         <button type="button" class="btn btn-outline" id="modal-open-editor">✏️ Open in Full Editor</button>
         <button type="button" class="btn btn-danger" id="modal-request-changes">✏️ Request Changes</button>
         <button type="button" class="btn btn-success" id="modal-approve-story">✅ Approve Story</button>
-        ${currentUser.role === 'editor_in_chief' ? `
+        ${apiAdapter.hasPermission('story.publish') ? `
           <button type="button" class="btn btn-primary" id="modal-publish-story" style="background-color: var(--color-forest-dark);">🚀 Publish Live</button>
         ` : ''}
       </div>

@@ -39,10 +39,12 @@
 
         <!-- Controls: Active Role Switcher, Theme Toggle -->
         <div class="masthead-controls">
-          <div class="role-picker">
+          <div class="role-picker" id="mock-role-picker-wrapper">
             <label for="user-role-select">Active Role:</label>
             <select id="user-role-select" class="role-select" aria-label="Switch active newsroom role"></select>
           </div>
+          <!-- Authenticated User Session Widget (replaces mock role picker in live mode) -->
+          <div class="session-chip" id="session-chip" aria-label="User session"></div>
           <button type="button" class="theme-btn" id="theme-toggle-btn" aria-label="Toggle dark mode theme" title="Toggle theme">
             🌙
           </button>
