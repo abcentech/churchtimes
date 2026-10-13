@@ -67,8 +67,10 @@ export async function sendPublicSubmission({ endpoint, values, token, kind = 'st
   const abort = () => controller.abort();
   signal?.addEventListener('abort', abort, { once: true });
   if (signal?.aborted) controller.abort();
-  const timeout = setTimeout(abort, timeoutMs);
+  let timedOut = false;
+  const timeout = setTimeout(()=>{timedOut=true;abort();}, timeoutMs);
   try {
+    if (signal?.aborted) throw new SubmissionError('cancelled');
     const body = JSON.stringify(submissionPayload(values, token, kind));
     if (new TextEncoder().encode(body).byteLength > 64 * 1024) throw new SubmissionError('size');
     const response = await fetchImpl(endpoint, {
@@ -77,7 +79,7 @@ export async function sendPublicSubmission({ endpoint, values, token, kind = 'st
       body, signal: controller.signal,
     });
     let result;
-    try { result = await response.json(); } catch { result = null; }
+    try { result = await response.json(); } catch { if(controller.signal.aborted) throw new SubmissionError(signal?.aborted ? 'cancelled' : timedOut ? 'timeout' : 'network'); result = null; }
     if (response.status === 429) throw new SubmissionError('rate-limit', { retryAfter: retryDelay(response.headers.get('Retry-After')) });
     const backendErrors = Array.isArray(result?.errors) ? result.errors : [];
     if (backendErrors.some(error => error?.field === 'turnstileToken')) throw new SubmissionError('challenge');
@@ -90,7 +92,7 @@ export async function sendPublicSubmission({ endpoint, values, token, kind = 'st
       // Translate known backend field names; never echo raw backend messages.
       const mapping = { name:'name', email:'email', phone:'phone', title:'title', subject:'title', body:'message', message:'message', categorySuggestion:'category', location:'location' };
       for (const error of backendErrors) {
-        if (mapping[error?.field]) fields[mapping[error.field]] = 'Please check this field and try again.';
+        if (Object.hasOwn(mapping,error?.field)) fields[mapping[error.field]] = 'Please check this field and try again.';
       }
       throw new SubmissionError('validation', { fields });
     }
@@ -99,7 +101,7 @@ export async function sendPublicSubmission({ endpoint, values, token, kind = 'st
     return { reference: typeof result.reference === 'string' ? result.reference.slice(0, 100) : '' };
   } catch (error) {
     if (error instanceof SubmissionError) throw error;
-    throw new SubmissionError(signal?.aborted ? 'cancelled' : 'network');
+    throw new SubmissionError(signal?.aborted ? 'cancelled' : timedOut ? 'timeout' : 'network');
   } finally {
     clearTimeout(timeout);
     signal?.removeEventListener('abort', abort);

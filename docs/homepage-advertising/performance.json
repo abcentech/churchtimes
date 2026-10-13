@@ -1,0 +1,86 @@
+{
+  "method": {
+    "runs": 3,
+    "viewport": [
+      390,
+      844
+    ],
+    "latencyMs": 150,
+    "downloadBytesPerSecond": 150000,
+    "uploadBytesPerSecond": 75000,
+    "cpuThrottle": 4,
+    "cache": "disabled",
+    "cms": false,
+    "activeCampaigns": 0
+  },
+  "before": [
+    {
+      "lcp": 3128,
+      "cls": 0.0006745484268731724,
+      "resourceBytes": 405106,
+      "requests": 11
+    },
+    {
+      "lcp": 3124,
+      "cls": 0.0006745484268731724,
+      "resourceBytes": 405106,
+      "requests": 11
+    },
+    {
+      "lcp": 3160,
+      "cls": 0.0006745484268731724,
+      "resourceBytes": 405106,
+      "requests": 11
+    }
+  ],
+  "after": [
+    {
+      "lcp": 2512,
+      "cls": 0.0007848810089584632,
+      "resourceBytes": 345779,
+      "requests": 11
+    },
+    {
+      "lcp": 2532,
+      "cls": 0.0007848810089584632,
+      "resourceBytes": 345779,
+      "requests": 11
+    },
+    {
+      "lcp": 2480,
+      "cls": 0.0007848810089584632,
+      "resourceBytes": 345779,
+      "requests": 11
+    }
+  ],
+  "layouts": [
+    {
+      "phase": "before",
+      "width": 390,
+      "storyAppearances": 18,
+      "uniqueStories": 11,
+      "height": 11087
+    },
+    {
+      "phase": "before",
+      "width": 1440,
+      "storyAppearances": 18,
+      "uniqueStories": 11,
+      "height": 5485
+    },
+    {
+      "phase": "after",
+      "width": 390,
+      "storyAppearances": 13,
+      "uniqueStories": 13,
+      "height": 8017
+    },
+    {
+      "phase": "after",
+      "width": 1440,
+      "storyAppearances": 13,
+      "uniqueStories": 13,
+      "height": 3678
+    }
+  ]
+}

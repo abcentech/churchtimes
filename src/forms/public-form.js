@@ -141,6 +141,7 @@ export function bindPublicForm(kind='story') {
         challenge:'Verification was not accepted. Complete a new challenge and try again.',
         validation:'The newsroom could not accept these details. Please check the form.',
         server:'The service is temporarily unavailable. Your text remains in this form. Please try again later.',
+        timeout:'The service took too long to respond. Your text remains here. Contact the newsroom before resending to avoid duplicates.',
         network:'We could not confirm whether your submission was received. Your text remains here. Contact the newsroom before resending to avoid duplicates.',
         unconfirmed:'The service did not confirm receipt. Your text remains here. Contact the newsroom before resending.',
       };
