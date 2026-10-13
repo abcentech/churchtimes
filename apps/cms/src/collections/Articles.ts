@@ -23,6 +23,8 @@ import {
 } from '../access/roles'
 import { articlePreviewTokenEndpoint } from '../endpoints/articlePreviewToken'
 import { writeAuditLog } from '../lib/audit'
+import { clampLimit } from '../lib/clampLimit'
+import { deepEqual } from '../lib/deepEqual'
 import {
   ARTICLE_STATUSES,
   type ArticleStatus,
@@ -30,10 +32,10 @@ import {
   canTransition,
   isArticleStatus,
 } from '../workflow/articleWorkflow'
+import { reconcileCorrections } from '../workflow/corrections'
 
 export { ARTICLE_STATUSES }
 
-const MAX_LIMIT = 100
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
 type Doc = Record<string, unknown>
@@ -70,6 +72,28 @@ const readAccess: Access = ({ req }) => {
   return { or }
 }
 
+/**
+ * `GET /api/articles/versions[/:id]` and restore. Without this, Payload's default for
+ * `readVersions` is "any logged-in user", which exposes every draft (and review notes) to every staff
+ * member. Same rule as `readAccess`, expressed on the version document: the stored article fields live
+ * under `version.*` in `_articles_v` (`version.status`, `version.author`, `version.category`).
+ * Anonymous callers get 403.
+ */
+const readVersionsAccess: Access = ({ req }) => {
+  const user = asUser(req.user)
+  if (!isStaff(user)) return false
+  if (isEditorInChief(user)) return true
+  const or: Where[] = [
+    { 'version.status': { equals: 'published' } },
+    { 'version.author': { equals: user!.id as number } },
+  ]
+  const sections = userSectionIds(user)
+  if (user!.role !== 'reporter' && sections.length > 0) {
+    or.push({ 'version.category': { in: sections as number[] } })
+  }
+  return { or }
+}
+
 const updateAccess: Access = ({ req }) => {
   const user = asUser(req.user)
   if (!isStaff(user)) return false
@@ -93,11 +117,13 @@ const never: FieldAccess = () => false
 // Hooks
 // ---------------------------------------------------------------------------------------------
 
-/** Clamp client-driven list queries to MAX_LIMIT (Payload 3 has no collection-level maxLimit). */
-const clampLimit: CollectionBeforeOperationHook = ({ args, operation }) => {
-  if (operation === 'read' && args && typeof args === 'object' && !(args as Doc).overrideAccess) {
-    const a = args as { limit?: number }
-    if (a.limit !== undefined && (a.limit === 0 || a.limit > MAX_LIMIT)) a.limit = MAX_LIMIT
+/**
+ * Mark restoreVersion requests. `req.context` is server-side only (clients cannot set it) and is the
+ * same object the later `beforeChange` hook sees, so `enforceWorkflow` can tell a restore from a PATCH.
+ */
+const markRestore: CollectionBeforeOperationHook = ({ args, operation }) => {
+  if (operation === 'restoreVersion') {
+    ;(args.req.context as { restoreVersion?: boolean }).restoreVersion = true
   }
   return args
 }
@@ -135,7 +161,8 @@ const autoSlug: CollectionBeforeValidateHook = async ({ data, operation, origina
   return data
 }
 
-const same = (a: unknown, b: unknown): boolean => JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
+// Canonical comparison: jsonb (Lexical content) does not preserve key order, JSON.stringify does.
+const same = deepEqual
 
 const CONTENT_KEYS = ['title', 'slug', 'excerpt', 'content', 'featuredImage', 'bylineName'] as const
 
@@ -154,7 +181,13 @@ const fail = (status: number, message: string): never => {
  * seed: seed).
  */
 const enforceWorkflow: CollectionBeforeChangeHook = async ({ data, originalDoc, operation, req }) => {
-  const ctx = (req.context ?? {}) as { seed?: boolean; systemTransition?: boolean; systemNow?: string }
+  const ctx = (req.context ?? {}) as {
+    seed?: boolean
+    systemTransition?: boolean
+    systemNow?: string
+    restoreVersion?: boolean
+    correctionAmended?: boolean
+  }
   const isCreate = operation === 'create'
   const orig = (originalDoc ?? {}) as Doc
   const now = ctx.systemNow ? new Date(ctx.systemNow) : new Date()
@@ -205,6 +238,25 @@ const enforceWorkflow: CollectionBeforeChangeHook = async ({ data, originalDoc, 
     }
   }
 
+  // --- corrections: append-only ---------------------------------------------------------------
+  // restoreVersion by an admin / editor-in-chief replaces the whole document with an older version;
+  // that is an amendment of history by definition and is audited as `article.restore`.
+  const restoring = ctx.restoreVersion === true && isEditorInChief(user)
+  let correctionsAdded = 0
+  if (isCreate && Array.isArray(data.corrections)) {
+    // New articles: the server clock stamps every entry, whatever the client sent.
+    data.corrections = (data.corrections as Doc[]).map((c) => ({ note: c.note, correctedAt: now.toISOString() }))
+  } else if (!isCreate && !restoring && data.corrections !== undefined) {
+    const rec = reconcileCorrections(orig.corrections, data.corrections, { now, canAmend: isEditorInChief(user) })
+    if (!rec.ok) return fail(400, rec.message)
+    if (rec.changed && !canEditContent({ user, status: prevStatus, isAuthor, categoryId: origCategoryId })) {
+      return fail(403, 'Not permitted to edit corrections on this article.')
+    }
+    if (rec.amended) ctx.correctionAmended = true
+    data.corrections = rec.rows
+    correctionsAdded = rec.added
+  }
+
   // --- status transition --------------------------------------------------------------------
   const res = canTransition({ user, from: prevStatus, to: nextStatus, isAuthor, categoryId, isCreate })
   if (!res.ok) return fail(res.status, res.message)
@@ -238,19 +290,12 @@ const enforceWorkflow: CollectionBeforeChangeHook = async ({ data, originalDoc, 
   if (nextStatus === 'published' && !orig.publishedAt) data.publishedAt = now.toISOString()
 
   // --- corrections on published articles -------------------------------------------------------
-  if (!isCreate && prevStatus === 'published' && nextStatus === 'published') {
+  if (!isCreate && !restoring && prevStatus === 'published' && nextStatus === 'published') {
     const material = (['title', 'excerpt', 'content'] as const).some(
       (k) => k in data && !same(data[k], orig[k]),
     )
-    if (material) {
-      const origLen = Array.isArray(orig.corrections) ? orig.corrections.length : 0
-      const incoming = Array.isArray(data.corrections) ? (data.corrections as Doc[]) : []
-      if (incoming.length <= origLen) {
-        return fail(400, 'Editing a published article requires adding a corrections entry.')
-      }
-      data.corrections = incoming.map((c, i) =>
-        i >= origLen && !c.correctedAt ? { ...c, correctedAt: now.toISOString() } : c,
-      )
+    if (material && correctionsAdded < 1) {
+      return fail(400, 'Editing a published article requires adding a corrections entry.')
     }
   }
 
@@ -258,7 +303,12 @@ const enforceWorkflow: CollectionBeforeChangeHook = async ({ data, originalDoc, 
 }
 
 const auditChanges: CollectionAfterChangeHook = async ({ doc, previousDoc, operation, req }) => {
-  const ctx = (req.context ?? {}) as { seed?: boolean; systemTransition?: boolean }
+  const ctx = (req.context ?? {}) as {
+    seed?: boolean
+    systemTransition?: boolean
+    restoreVersion?: boolean
+    correctionAmended?: boolean
+  }
   if (ctx.seed === true) return doc
   const actorRole = ctx.systemTransition ? 'system' : undefined
   const title = String((doc as Doc).title ?? '')
@@ -298,6 +348,27 @@ const auditChanges: CollectionAfterChangeHook = async ({ doc, previousDoc, opera
       actorRole,
     })
   }
+  if (ctx.correctionAmended) {
+    await writeAuditLog(req, {
+      action: 'correction.amend',
+      collection: 'articles',
+      docId: doc.id,
+      toStatus: doc.status,
+      summary: `Corrections history amended (${before} -> ${after} entries)`,
+      details: { before: prev.corrections ?? [], after: doc.corrections ?? [] },
+      actorRole,
+    })
+  }
+  if (ctx.restoreVersion) {
+    await writeAuditLog(req, {
+      action: 'article.restore',
+      collection: 'articles',
+      docId: doc.id,
+      toStatus: doc.status,
+      summary: `Article restored from an earlier version (${before} -> ${after} corrections)`,
+      actorRole,
+    })
+  }
   return doc
 }
 
@@ -329,9 +400,10 @@ export const Articles: CollectionConfig = {
     create: staffOnly,
     update: updateAccess,
     delete: editorInChiefOnly,
+    readVersions: readVersionsAccess,
   },
   hooks: {
-    beforeOperation: [clampLimit],
+    beforeOperation: [clampLimit, markRestore],
     beforeValidate: [autoSlug],
     beforeChange: [enforceWorkflow],
     afterChange: [auditChanges],

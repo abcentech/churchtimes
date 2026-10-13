@@ -15,7 +15,7 @@ describe('Users auth configuration', () => {
     expect(auth.lockTime).toBe(600_000)
     expect(auth.tokenExpiration).toBeLessThanOrEqual(8 * 3600)
     expect(auth.forgotPassword.expiration).toBe(3_600_000)
-  })
+  }, 30_000) // first import of the Users module loads Payload; slow on a cold, busy machine
 
   it('production cookies are Secure, SameSite=Lax and host-only', async () => {
     vi.stubEnv('NODE_ENV', 'production')

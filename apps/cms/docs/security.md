@@ -108,16 +108,20 @@ Test files are in `tests/integration/security.test.ts` (S) and `tests/unit/*` (U
 - **Force logout**: change a user's password (ends their other sessions) or `POST /api/users/:id/revoke-sessions` (admin).
 - **Unlock**: `POST /api/users/unlock` (admin) or wait 10 minutes.
 - **Break-glass**: `npm run admin:set-password` (operations §4.3).
-- **Audit**: user creation, role/section changes and session revocations are written to `audit-logs` (`user.create`, `user.role-change`,
-  `user.revoke-sessions`), next to article, submission and live-event actions.
+- **Audit**: user creation, role/section changes, password and e-mail changes (without values) and session revocations are written to
+  `audit-logs` (`user.create`, `user.role-change`, `user.password-change`, `user.email-change`, `user.password-reset`, `user.revoke-sessions`),
+  next to article (`correction`, `correction.amend`, `article.restore`), media (`upload`, `media.update`, `media.replace-file`), submission and
+  live-event actions.
 - **Token rotation**: changing `PAYLOAD_SECRET` signs everyone out; `useSessions` means individual tokens can also be revoked without that.
 
 ## 4. Known limitations
 
 1. **Rate limiters are in memory** (`src/lib/rateLimit.ts`): per process, reset on restart, multiplied by the number of instances. Fine for
    the single-VPS design; use a shared store before scaling out. Account lockout and the reset-e-mail interval live in PostgreSQL.
-2. **Client IP depends on `TRUST_PROXY`.** Without a trusted proxy all clients share one bucket (public submissions fail closed; login uses a
-   20x larger bucket so a stranger cannot lock out all staff). With `TRUST_PROXY=true` the proxy must overwrite `X-Forwarded-For`.
+2. **Client IP depends on the reverse proxy.** `TRUST_PROXY=true` is mandatory in production (startup fails otherwise) and the proxy must
+   overwrite `X-Forwarded-For` / `X-Real-IP` (operations §4.4). The IP is taken from the right of `X-Forwarded-For` (`TRUST_PROXY_HOPS`) or
+   from `CLIENT_IP_HEADER`; if the app were reachable around the proxy, a caller could choose its own bucket. In development without a
+   trusted proxy all clients share one bucket (public submissions fail closed; login uses a 20x larger bucket so a stranger cannot lock out all staff).
 3. **Lockout is per account**, so an attacker who knows an e-mail can keep it locked (10-minute windows) — a denial-of-service on one account.
    The locked-account message also reveals that the account exists. Both are Payload behaviours; the per-IP limit bounds the cost to the attacker.
 4. **No two-factor authentication** (not part of Payload core). Mitigations: long passwords, lockout, short sessions, admin two-person rule.
@@ -128,3 +132,53 @@ Test files are in `tests/integration/security.test.ts` (S) and `tests/unit/*` (U
 9. **`legacyUrl` / `legacyId`** on articles are writable by anyone who can edit the article (cosmetic migration fields, no privilege impact).
 10. **No script CSP** for the admin (Payload requires inline scripts); the CSP header only sets `frame-ancestors`.
 11. Sessions list (`sessions` field) shows session ids to the account owner only; ids are not credentials.
+12. **Anonymous visitors can list and download every media file, including images of unpublished articles** (finding 10, not fixed in
+    code). Restricting anonymous `read` to media referenced by a published article is possible (a `usedInPublished` flag kept up to date by
+    article hooks; Payload also applies the collection `read` access to `/api/media/file/:filename`, verified in
+    `payload/dist/uploads/checkFileAccess.js`) but it would (a) break images in **preview links** (`/api/preview/articles?token=`), which
+    are opened by anonymous browsers on the public site, so draft and scheduled articles would show broken images; (b) hide images embedded in
+    the Lexical body, which cannot be queried reliably (they live inside jsonb and are not tracked); and (c) add write-time coupling between
+    two collections that has to stay correct across publish, unpublish, schedule, delete and restore. Risk is limited: media are images
+    uploaded to be published, `uploadedBy` is hidden, and URLs need the file name. Mitigation if pre-publication secrecy matters: have the
+    proxy answer `GET /api/media` (collection listing) only for requests with the `payload-token` cookie, and upload sensitive images late.
+13. **Media "in use" freeze covers `featuredImage` only.** A non-editor can still replace a media file they uploaded if it is used solely
+    inside an article body (Lexical upload node). Editors are never restricted.
+14. **The admin UI shows `currentPassword` as a plain text input** (Payload has no password-type field for custom fields); it is cleared on
+    save and never stored. Prefer using the API/`curl` or a password manager's autofill, or reset via e-mail.
+15. **Live feed after rejection**: rejecting an already-approved live update removes it from the feed, but clients that already received it
+    keep showing it until they reload (the polling protocol has no delete event). Re-approval re-delivers it with a new `sequence`.
+16. **Restoring versions** is audited but is a whole-document overwrite by `admin` / `editor-in-chief`; it can remove corrections entries that
+    were added after the restored version (the audit log keeps the `article.restore` entry; `correction.amend` details hold prior values only
+    for normal PATCH amendments).
+17. **Request-size limits rely on `Content-Length`.** `src/proxy.ts` rejects declared sizes; for chunked uploads the reverse proxy limit (12 MB) and
+    Next's body buffer limit (`experimental.proxyClientMaxBodySize: 12mb`, bodies beyond it are truncated, not rejected) are the backstops. The 411 rule
+    applies to `/api/users/*` only.
+
+## 5. Review fixes (contract v1.2)
+
+Fixes for the verified findings of the security review. Tests marked R are in `tests/integration/review-fixes.test.ts`, U in `tests/unit/`.
+Each integration test was written to fail first against the previous code.
+
+| # | Finding | Fix | Tests |
+| --- | --- | --- | --- |
+| 1 | Any staff could PATCH any media and replace its file; updates not audited | `media.uploadedBy` (server-set, hidden from the public); update access: editors any, others only their own; `beforeChange` blocks non-editors on media that is the `featuredImage` of a published/scheduled article; audit `media.update` / `media.replace-file` (`src/collections/Media.ts`) | R "1. media ownership and replacement" (5 tests) |
+| 2 | `/api/articles/versions` leaked other users' drafts and review notes | `access.readVersions` mirrors the read rule on `version.status` / `version.author` / `version.category`; admin/EIC everything; anonymous 403 (`src/collections/Articles.ts`) | R "2. article versions follow the article read rule" (2 tests, incl. by-id and anonymous 403) |
+| 3 | Live updates approved out of order never reached pollers | `publishSequence` stamped when an update becomes approved (per-event advisory lock, unique `(event, publishSequence)`); the public feed filters/sorts/returns it as `sequence` (`LiveUpdates.ts`, `liveEventUpdates.ts`, migration back-fill) | R "3. live updates are delivered in publication order" (4 tests, incl. concurrent approvals); updated `live.test.ts` |
+| 4 | Spoofable client IP | `getClientIp`: rightmost-by-hops of `X-Forwarded-For` (`TRUST_PROXY_HOPS`), optional `CLIENT_IP_HEADER`, IP syntax validated; `TRUST_PROXY=true` and the two new variables validated at production startup (`rateLimit.ts`, `securityConfig.ts`) | U `rateLimit.test.ts` (5 getClientIp tests), U `securityConfig.test.ts` (2 tests), R "4. client IP for rate limiting" |
+| 5 | No request body limits | `src/proxy.ts` (Next 16 proxy, the renamed middleware) + `lib/requestLimits.ts`: 413 above 1 MB (11 MB for `/api/media`), 411 for length-less writes to `/api/users/*`, 400 for a bad `Content-Length`; `proxyClientMaxBodySize: 12mb`; proxy snippets in operations §4.4 | U `requestLimits.test.ts` (6 tests); manual `next start` check (see report) |
+| 6 | `?pagination=false` bypassed the 100 clamp | shared `lib/clampLimit.ts` `beforeOperation` hook on all eight collections: pagination forced on, limit 1..100 (`find` and `findVersions` both report operation `read`; the operation re-reads `args` after the hook) | U `clampLimit.test.ts` (4 tests), R "6. pagination=false is clamped on every collection" (4 tests) |
+| 7 | Corrections could be rewritten or erased | `workflow/corrections.ts` `reconcileCorrections`: prefix match on `id`/`note`/`correctedAt`, server-set `correctedAt`, 400 otherwise; admin/EIC may amend (`correction.amend` audit); needs content-edit rights | U `corrections.test.ts` (5 tests), R "7. corrections are append-only" (5 tests) |
+| 8 | Unchanged content flagged as a material edit | `lib/deepEqual.ts` (key-sorted canonical JSON) for title/excerpt/content/featuredImage/schedule comparisons | U `deepEqual.test.ts` (6 tests), R "8. canonical comparison of content" (2 tests) |
+| 9 | Contract said out-of-scope live update = 400/404 | Documentation only: code returns 403 (api-contracts §6.2); editors may create `approved` articles (§2) | n/a (existing `live.test.ts` / `articles.test.ts` matrices) |
+| 10 | Anonymous media listing | **Not fixed, documented** (limitation 12): breaks preview-link images and untracked body images, adds cross-collection coupling | n/a |
+| 11 | Restoring a published article always failed | admin/EIC `restoreVersion` is detected through a `beforeOperation` hook (`operation === 'restoreVersion'`, server-side `req.context`), skips the corrections rule and is audited `article.restore`; everyone else keeps the rule (documented in api-contracts §2) | R "11. restoreVersion on a published article" (2 tests) |
+| 12a | Password / e-mail change without the current password | virtual `currentPassword`, verified with Payload-compatible pbkdf2 (`lib/passwordVerify.ts`); failures use Payload's lockout counter; admin changing someone else exempt | U `passwordVerify.test.ts` (3 tests), R "12a. password and e-mail changes" (4 tests); `security.test.ts` updated |
+| 12b | `convert` race created two articles | claim by `UPDATE ... WHERE status <> 'converted' RETURNING` inside one request transaction (`initTransaction`/`commitTransaction`/`killTransaction`), article creation joins it, rollback on failure (`convertSubmission.ts`, `lib/dbTransaction.ts`) | R "12b. converting a submission is atomic" (concurrent 201/409/409, rollback) |
+| 12c | Password and e-mail changes not audited | `user.password-change`, `user.email-change`, `user.password-reset` (no values stored) | R "12a ... audits both kinds without values", R "12c. password reset audit" |
+
+Payload 3.90.2 facts relied on (all read in `node_modules`): `beforeOperation` receives the REST query already parsed into `args` and the operation
+re-destructures `args` afterwards; `findVersions` uses `access.readVersions` (default "any logged-in user") and `version.*` paths; field-level `access.update:false`
+strips client input before `beforeChange`, which can still assign the value; `req.file` carries a multipart PATCH's replacement file; `incrementLoginAttempts` and
+`resetLoginAttempts` are exported; `initTransaction`/`commitTransaction`/`killTransaction` are exported and `payload.create/update(..., { req })` joins
+`req.transactionID`; the drizzle transaction handle is `payload.db.sessions[transactionID].db`; Next 16 renamed `middleware.ts` to `proxy.ts` (Node runtime) and
+buffers/truncates request bodies at `experimental.proxyClientMaxBodySize` (default 10 MB) when a proxy file exists.

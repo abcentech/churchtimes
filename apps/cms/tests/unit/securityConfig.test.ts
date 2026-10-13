@@ -17,6 +17,7 @@ const good = {
   CMS_CORS_ORIGINS: 'https://www.example.org',
   CMS_CSRF_ORIGINS: 'https://cms.example.org',
   PUBLIC_SUBMISSION_ORIGINS: 'https://www.example.org',
+  TRUST_PROXY: 'true',
 } as NodeJS.ProcessEnv
 
 describe('origin helpers', () => {
@@ -74,6 +75,26 @@ describe('validateProductionEnv', () => {
     expect(validateProductionEnv({ ...good, PAYLOAD_SECRET: 'short' }).problems.join()).toMatch(/PAYLOAD_SECRET/)
     expect(validateProductionEnv({ ...good, PREVIEW_SECRET: good.PAYLOAD_SECRET }).problems.join()).toMatch(/differ/)
     expect(validateProductionEnv({ ...good, IP_HASH_SALT: 'short' }).problems.join()).toMatch(/IP_HASH_SALT/)
+  })
+
+  it('requires TRUST_PROXY=true in production (the app always runs behind a reverse proxy)', () => {
+    for (const value of [undefined, '', 'false', 'TRUE', '1', 'yes']) {
+      const env = { ...good, TRUST_PROXY: value } as NodeJS.ProcessEnv
+      expect(validateProductionEnv(env).problems.join(), String(value)).toMatch(/TRUST_PROXY must be "true"/)
+    }
+    expect(validateProductionEnv({ ...good, TRUST_PROXY: 'true' }).problems).toEqual([])
+  })
+
+  it('validates TRUST_PROXY_HOPS and CLIENT_IP_HEADER when set', () => {
+    expect(validateProductionEnv({ ...good, TRUST_PROXY_HOPS: '2' }).problems).toEqual([])
+    for (const bad of ['0', 'abc', '-1', '11', '1.5']) {
+      expect(validateProductionEnv({ ...good, TRUST_PROXY_HOPS: bad }).problems.join(), bad).toMatch(/TRUST_PROXY_HOPS/)
+    }
+    expect(validateProductionEnv({ ...good, CLIENT_IP_HEADER: 'cf-connecting-ip' }).problems).toEqual([])
+    expect(validateProductionEnv({ ...good, CLIENT_IP_HEADER: 'X-Real-IP' }).problems).toEqual([])
+    for (const bad of ['bad header', 'x-real-ip,x-forwarded-for', 'host', 'cookie', 'authorization', 'x-forwarded-for']) {
+      expect(validateProductionEnv({ ...good, CLIENT_IP_HEADER: bad }).problems.join(), bad).toMatch(/CLIENT_IP_HEADER/)
+    }
   })
 
   it('requires a from address when SMTP is configured', () => {

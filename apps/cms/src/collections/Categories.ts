@@ -1,6 +1,7 @@
 import type { CollectionConfig } from 'payload'
 
 import { anyone, editorInChiefOnly } from '../access/roles'
+import { clampLimit } from '../lib/clampLimit'
 
 export const Categories: CollectionConfig = {
   slug: 'categories',
@@ -11,6 +12,7 @@ export const Categories: CollectionConfig = {
     update: editorInChiefOnly,
     delete: editorInChiefOnly,
   },
+  hooks: { beforeOperation: [clampLimit] },
   fields: [
     { name: 'title', type: 'text', required: true },
     {

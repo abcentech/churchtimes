@@ -554,7 +554,10 @@ describe('login, lockout and sessions', () => {
     expect((await me(tokenB)).json.user?.id).toBe(u.id)
 
     const tokenC = await loginToken(u)
-    const change = await api('PATCH', `/api/users/${u.id}`, { token: tokenC, body: { password: STRONG } })
+    const change = await api('PATCH', `/api/users/${u.id}`, {
+      token: tokenC,
+      body: { password: STRONG, currentPassword: u.password },
+    })
     expect(change.status).toBe(200)
     expect((await me(tokenB)).json.user).toBeNull() // other session revoked
     expect((await me(tokenC)).json.user?.id).toBe(u.id) // the one that changed it survives
@@ -593,7 +596,10 @@ describe('password policy and reset flow', () => {
 
     const u = await mkUser('reporter')
     const token = await loginToken(u)
-    const change = await api('PATCH', `/api/users/${u.id}`, { token, body: { password: 'Short-1!' } })
+    const change = await api('PATCH', `/api/users/${u.id}`, {
+      token,
+      body: { password: 'Short-1!', currentPassword: u.password },
+    })
     expect(change.status).toBe(400)
     expect(change.text).toMatch(/at least 12/)
     expect((await login(u.email, u.password)).status).toBe(200) // unchanged

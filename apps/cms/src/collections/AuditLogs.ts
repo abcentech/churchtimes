@@ -1,6 +1,7 @@
 import type { CollectionConfig } from 'payload'
 
 import { editorInChiefOnly } from '../access/roles'
+import { clampLimit } from '../lib/clampLimit'
 
 const ro = { readOnly: true }
 
@@ -17,6 +18,7 @@ export const AuditLogs: CollectionConfig = {
     description: 'Read-only record of workflow and moderation actions.',
   },
   timestamps: true,
+  hooks: { beforeOperation: [clampLimit] },
   access: {
     read: editorInChiefOnly,
     create: () => false,

@@ -1,5 +1,6 @@
-import { ValidationError } from 'payload'
+import { APIError, incrementLoginAttempts, resetLoginAttempts, ValidationError } from 'payload'
 import type {
+  CollectionAfterOperationHook,
   CollectionAfterChangeHook,
   CollectionBeforeOperationHook,
   CollectionBeforeValidateHook,
@@ -19,7 +20,9 @@ import {
 } from '../access/roles'
 import { writeAuditLog } from '../lib/audit'
 import { authRateLimitHook } from '../lib/authRateLimit'
+import { clampLimit } from '../lib/clampLimit'
 import { checkPasswordPolicy } from '../lib/passwordPolicy'
+import { verifyStoredPassword } from '../lib/passwordVerify'
 
 const isProd = process.env.NODE_ENV === 'production'
 
@@ -68,6 +71,79 @@ const resetPasswordPolicy: CollectionBeforeOperationHook = async ({ args, operat
   return args
 }
 
+type UserContext = { seed?: boolean; userPasswordChanged?: boolean }
+
+/**
+ * Changing your OWN password or e-mail address needs your current password, so a stolen session
+ * (cookie or token) cannot be turned into a permanent account takeover. Admins changing someone
+ * else's account are exempt. `currentPassword` is a virtual field: accepted from the request body,
+ * verified here, removed from `data`, never stored and never returned.
+ *
+ * Wrong guesses count towards Payload's account lockout (`incrementLoginAttempts`, 5 / 10 min), so
+ * this endpoint cannot be used as a free password-guessing oracle; a locked account is refused
+ * outright. The verification mirrors Payload's own pbkdf2 check (lib/passwordVerify.ts).
+ */
+async function requireCurrentPassword(args: {
+  data: Record<string, any>
+  originalDoc: Record<string, any> | undefined
+  req: PayloadRequest
+}) {
+  const { data, originalDoc, req } = args
+  const supplied = data.currentPassword
+  delete data.currentPassword // never reaches beforeChange or the database
+
+  const user = req.user as UserLike | null
+  if (!user || !originalDoc || (req.context as UserContext | undefined)?.seed === true) return
+  if (String(user.id) !== String(originalDoc.id)) return // not a self-change
+
+  const changingPassword = typeof data.password === 'string' && data.password !== ''
+  const changingEmail =
+    typeof data.email === 'string' &&
+    data.email.trim().toLowerCase() !== String(originalDoc.email ?? '').trim().toLowerCase()
+  if (!changingPassword && !changingEmail) return
+
+  if (typeof supplied !== 'string' || supplied === '') {
+    throw new ValidationError({
+      collection: 'users',
+      errors: [
+        {
+          message: 'Enter your current password to change your password or e-mail address.',
+          path: 'currentPassword',
+        },
+      ],
+    })
+  }
+
+  const payload = req.payload
+  const stored = (await payload.db.findOne({
+    collection: 'users',
+    req,
+    where: { id: { equals: originalDoc.id } },
+  })) as { hash?: string; salt?: string; lockUntil?: string | null; loginAttempts?: number } | null
+  const locked = Boolean(stored?.lockUntil && new Date(stored.lockUntil).getTime() > Date.now())
+  if (locked) throw new APIError('This account is temporarily locked. Try again later.', 403)
+
+  if (await verifyStoredPassword(stored, supplied)) {
+    if (stored && ((stored.loginAttempts ?? 0) > 0 || stored.lockUntil)) {
+      await resetLoginAttempts({
+        collection: payload.collections.users.config,
+        doc: stored as never,
+        payload,
+        req,
+      })
+    }
+    return
+  }
+  if (stored) {
+    await incrementLoginAttempts({
+      collection: payload.collections.users.config,
+      payload,
+      user: { ...stored, id: originalDoc.id } as never,
+    })
+  }
+  throw new APIError('The current password is incorrect.', 403)
+}
+
 /** Password policy on create and on password change; first registered user is always an admin. */
 const enforcePasswordAndBootstrap: CollectionBeforeValidateHook = async ({
   data,
@@ -76,6 +152,15 @@ const enforcePasswordAndBootstrap: CollectionBeforeValidateHook = async ({
   req,
 }) => {
   if (!data) return data
+
+  if (operation === 'update') {
+    await requireCurrentPassword({ data, originalDoc, req })
+    if (typeof data.password === 'string' && data.password !== '') {
+      ;(req.context as UserContext).userPasswordChanged = true
+    }
+  } else {
+    delete data.currentPassword
+  }
 
   if (typeof data.password === 'string' && data.password !== '') {
     const message = checkPasswordPolicy(data.password, {
@@ -116,20 +201,65 @@ const auditUserChanges: CollectionAfterChangeHook = async ({ doc, previousDoc, o
       toStatus: doc.role,
       summary: `User ${doc.email} created with role ${doc.role}`,
     })
-  } else if (
-    previousDoc &&
-    (previousDoc.role !== doc.role || sectionKey(previousDoc.sections) !== sectionKey(doc.sections))
-  ) {
-    await writeAuditLog(req, {
-      action: 'user.role-change',
-      collection: 'users',
-      docId: doc.id,
-      fromStatus: previousDoc.role,
-      toStatus: doc.role,
-      summary: `User ${doc.email} role ${previousDoc.role} -> ${doc.role}`,
-    })
+  } else if (previousDoc) {
+    if (previousDoc.role !== doc.role || sectionKey(previousDoc.sections) !== sectionKey(doc.sections)) {
+      await writeAuditLog(req, {
+        action: 'user.role-change',
+        collection: 'users',
+        docId: doc.id,
+        fromStatus: previousDoc.role,
+        toStatus: doc.role,
+        summary: `User ${doc.email} role ${previousDoc.role} -> ${doc.role}`,
+      })
+    }
+    // Credential changes are audited without the values (no passwords, no e-mail addresses): who
+    // changed whose, and whether it was the owner.
+    const actorId = (req.user as UserLike | null)?.id
+    const bySelf = actorId !== undefined && String(actorId) === String(doc.id)
+    if ((req.context as UserContext | undefined)?.userPasswordChanged) {
+      await writeAuditLog(req, {
+        action: 'user.password-change',
+        collection: 'users',
+        docId: doc.id,
+        summary: `Password changed for user #${doc.id} (${bySelf ? 'by the account owner' : 'by an administrator'})`,
+        details: { bySelf },
+      })
+    }
+    if (
+      typeof previousDoc.email === 'string' &&
+      typeof doc.email === 'string' &&
+      previousDoc.email.toLowerCase() !== doc.email.toLowerCase()
+    ) {
+      await writeAuditLog(req, {
+        action: 'user.email-change',
+        collection: 'users',
+        docId: doc.id,
+        summary: `E-mail address changed for user #${doc.id} (${bySelf ? 'by the account owner' : 'by an administrator'})`,
+        details: { bySelf },
+      })
+    }
   }
   return doc
+}
+
+/** Password reset through the e-mailed link (the reset operation does not run beforeValidate / afterChange). */
+const auditPasswordReset: CollectionAfterOperationHook = async ({ operation, result, req }) => {
+  if (operation !== 'resetPassword') return result
+  try {
+    const user = (result as { user?: { id?: number | string } } | undefined)?.user
+    if (user?.id !== undefined) {
+      await writeAuditLog(req, {
+        action: 'user.password-reset',
+        collection: 'users',
+        docId: user.id,
+        actor: user.id,
+        summary: `Password reset through the e-mailed link for user #${user.id}`,
+      })
+    }
+  } catch (err) {
+    req.payload.logger.error({ err }, 'could not audit password reset')
+  }
+  return result
 }
 
 /**
@@ -229,7 +359,9 @@ export const Users: CollectionConfig = {
     delete: adminOnly,
   },
   hooks: {
+    afterOperation: [auditPasswordReset],
     beforeOperation: [
+      clampLimit,
       authRateLimitHook('login'),
       authRateLimitHook('forgotPassword'),
       authRateLimitHook('resetPassword'),
@@ -240,6 +372,17 @@ export const Users: CollectionConfig = {
   },
   fields: [
     { name: 'name', type: 'text', required: true },
+    {
+      // Virtual: submitted with the form, verified in `requireCurrentPassword`, never stored.
+      name: 'currentPassword',
+      type: 'text',
+      virtual: true,
+      admin: {
+        description: 'Required only when you change your own password or e-mail address.',
+        autoComplete: 'current-password',
+        condition: (_data, _sibling, { operation }) => operation === 'update',
+      },
+    },
     {
       name: 'role',
       type: 'select',

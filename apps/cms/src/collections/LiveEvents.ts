@@ -12,6 +12,7 @@ import {
 } from '../access/roles'
 import { liveEventUpdatesEndpoint } from '../endpoints/liveEventUpdates'
 import { writeAuditLog } from '../lib/audit'
+import { clampLimit } from '../lib/clampLimit'
 import { cleanText, SLUG_RE, slugify } from '../lib/sanitize'
 
 const asUser = (u: unknown) => u as UserLike | null | undefined
@@ -48,6 +49,7 @@ export const LiveEvents: CollectionConfig = {
     delete: ({ req }) => isEditorInChief(asUser(req.user)),
   },
   hooks: {
+    beforeOperation: [clampLimit],
     beforeChange: [
       ({ data, originalDoc, operation, req }) => {
         const user = asUser(req.user)

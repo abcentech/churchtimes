@@ -1,7 +1,9 @@
+import { commitTransaction, initTransaction, killTransaction } from 'payload'
 import type { Endpoint, PayloadRequest } from 'payload'
 
 import { isEditorForCategory, isEditorRole, type UserLike } from '../access/roles'
 import { writeAuditLog } from '../lib/audit'
+import { claimSubmissionForConversion } from '../lib/dbTransaction'
 import { slugify } from '../lib/sanitize'
 
 const err = (status: number, message: string, field?: string) =>
@@ -107,7 +109,19 @@ export const convertSubmissionEndpoint: Endpoint = {
 
     if (!isEditorForCategory(user, categoryId)) return err(403, 'This category is outside your sections.')
 
+    // Atomic conversion. Everything below runs in ONE transaction: the submission is claimed first
+    // (UPDATE ... WHERE status <> 'converted'), so of two concurrent conversions exactly one gets the
+    // row; the other waits for the row lock, then matches nothing and answers 409. If creating the
+    // article fails, the rollback releases the claim and the submission stays convertible.
+    // (The earlier read-then-check let both requests pass and create two articles.)
+    const ownsTransaction = await initTransaction(req)
     try {
+      const claimed = await claimSubmissionForConversion(req, Number(id))
+      if (!claimed) {
+        if (ownsTransaction) await killTransaction(req)
+        return err(409, 'Submission has already been converted.')
+      }
+
       const body = String(submission.body ?? '')
       const title = String(submission.title ?? '').slice(0, 240)
       const article = (await req.payload.create({
@@ -145,8 +159,10 @@ export const convertSubmissionEndpoint: Endpoint = {
         details: { articleId: article.id, category: categoryId },
       })
 
+      if (ownsTransaction) await commitTransaction(req)
       return Response.json({ ok: true, article: { id: article.id, slug: article.slug } }, { status: 201 })
     } catch (e) {
+      if (ownsTransaction) await killTransaction(req)
       req.payload.logger.error({ err: e }, 'submission convert failed')
       const status = (e as { status?: number })?.status
       if (status === 403) return err(403, 'You are not allowed to create this article.')

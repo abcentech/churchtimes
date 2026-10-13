@@ -23,6 +23,10 @@ const nextConfig = {
   // Payload recommends keeping these external for the server bundle.
   serverExternalPackages: ['embedded-postgres'],
   poweredByHeader: false,
+  // src/proxy.ts exists, so Next buffers every request body in memory and silently truncates it at this
+  // size (default 10 MB). Keep it above the largest accepted body (11 MB for /api/media, see
+  // lib/requestLimits.ts) so uploads are never cut off; the proxy itself rejects bigger requests first.
+  experimental: { proxyClientMaxBodySize: '12mb' },
   async headers() {
     return [
       { source: '/:path*', headers: securityHeaders },

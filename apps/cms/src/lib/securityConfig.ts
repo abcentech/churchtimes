@@ -58,6 +58,19 @@ export function checkOriginList(list: string[], { name, production }: OriginChec
   return problems
 }
 
+/** Headers that can never carry "the client address" (list-valued or unrelated to the connection). */
+const UNSAFE_IP_HEADERS = new Set([
+  'x-forwarded-for',
+  'host',
+  'cookie',
+  'authorization',
+  'user-agent',
+  'origin',
+  'referer',
+  'content-type',
+  'content-length',
+])
+
 export type ProductionEnvCheck = {
   problems: string[]
 }
@@ -97,6 +110,27 @@ export function validateProductionEnv(env: NodeJS.ProcessEnv): ProductionEnvChec
   problems.push(
     ...checkOriginList(csv(env.PUBLIC_SUBMISSION_ORIGINS), { name: 'PUBLIC_SUBMISSION_ORIGINS', production: true }),
   )
+
+  // The app always runs behind a reverse proxy (docs/operations.md). Without TRUST_PROXY every client
+  // shares one rate-limit bucket: public submissions would lock out everybody after a handful of
+  // requests and per-IP login limits would be useless.
+  if (env.TRUST_PROXY !== 'true') {
+    problems.push(
+      'TRUST_PROXY must be "true" in production: the CMS must run behind a reverse proxy (Caddy/nginx) that sets the client address ' +
+        '(see docs/operations.md), otherwise all clients share one rate-limit bucket.',
+    )
+  }
+  const hops = env.TRUST_PROXY_HOPS?.trim()
+  if (hops && !(/^[0-9]{1,3}$/.test(hops) && Number(hops) >= 1 && Number(hops) <= 10)) {
+    problems.push('TRUST_PROXY_HOPS must be an integer between 1 and 10 (number of trusted reverse proxies).')
+  }
+  const ipHeader = env.CLIENT_IP_HEADER?.trim()
+  if (ipHeader && (!/^[A-Za-z0-9-]{1,64}$/.test(ipHeader) || UNSAFE_IP_HEADERS.has(ipHeader.toLowerCase()))) {
+    problems.push(
+      'CLIENT_IP_HEADER must be a single header name that your proxy overwrites with the client address ' +
+        '(for example cf-connecting-ip or x-real-ip).',
+    )
+  }
 
   const smtpHost = env.SMTP_HOST?.trim()
   if (smtpHost && !(env.EMAIL_FROM_ADDRESS ?? '').trim()) {

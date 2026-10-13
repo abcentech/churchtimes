@@ -50,6 +50,22 @@ versions. The backend lane has not edited any frontend file.
 | media `title`, `license`, `dimensions`, `filesize` | `alt`, `caption`, `credit`, `width`, `height`, `filesize`, `sizes.card.url` |
 | media upload as JSON | `multipart/form-data` with `file` and `_payload` (JSON string of `alt`, `caption`, `credit`) |
 
+## Contract v1.2 changes that affect consumers
+
+- **Live timeline:** `sequence` and `nextSince` from `GET /api/live-events/:slug/updates` now mean *publication* order (the shape
+  is unchanged). Keep using `since=<nextSince>`; key rendered items by `id` (an update that is approved again later is delivered again
+  with a higher `sequence`, and a rejected one only disappears on a full reload). Do not compare this `sequence` with the `sequence`
+  of `GET /api/live-updates` (creation order) in the editor UI.
+- **Changing your own password or e-mail** (`PATCH /api/users/:id`) must include `currentPassword`; show a "current password" field.
+  Missing → 400 (`path: "currentPassword"`), wrong → 403. Five wrong attempts lock the account for 10 minutes.
+- **Corrections** are append-only: send `corrections` exactly as read (with `id`s) plus new `{ note }` entries, or omit the field; the server
+  sets `correctedAt`. Only admin/editor-in-chief can edit or remove existing entries.
+- **Lists:** `pagination=false` is ignored and `limit` is capped at 100 everywhere; page with `page`/`hasNextPage`.
+- **Media:** reporters and trusted publishers can edit only their own uploads, and not those used by a published/scheduled article (403).
+  `uploadedBy` is staff-visible only.
+- **Size limits:** JSON bodies over 1 MB (media 11 MB) get `413`; a chunked body without `Content-Length` on `/api/users/*` gets `411`.
+  Browser `fetch` with a string/FormData body is unaffected.
+
 ## Session and permissions
 
 - Use `POST /api/users/login`, `GET /api/users/me` and `POST /api/users/logout` with

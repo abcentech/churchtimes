@@ -3,6 +3,7 @@ import type { Access, CollectionConfig } from 'payload'
 import { isEditorInChief, isEditorRole, type UserLike } from '../access/roles'
 import { convertSubmissionEndpoint } from '../endpoints/convertSubmission'
 import { writeAuditLog } from '../lib/audit'
+import { clampLimit } from '../lib/clampLimit'
 
 const editorsOnly: Access = ({ req }) => isEditorRole(req.user as UserLike | null)
 
@@ -24,6 +25,7 @@ export const Submissions: CollectionConfig = {
     delete: ({ req }) => isEditorInChief(req.user as UserLike | null),
   },
   hooks: {
+    beforeOperation: [clampLimit],
     afterChange: [
       async ({ doc, previousDoc, operation, req }) => {
         if (operation === 'update' && previousDoc?.status !== doc.status) {

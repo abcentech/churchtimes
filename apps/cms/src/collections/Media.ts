@@ -1,13 +1,20 @@
 import { APIError } from 'payload'
 import type {
+  Access,
   CollectionAfterChangeHook,
   CollectionAfterDeleteHook,
+  CollectionBeforeChangeHook,
   CollectionBeforeOperationHook,
   CollectionConfig,
+  FieldAccess,
+  Where,
 } from 'payload'
 
-import { anyone, editorInChiefOnly, staffOnly } from '../access/roles'
+import { anyone, editorInChiefOnly, idOf, isEditorRole, isStaff, staffOnly, type UserLike } from '../access/roles'
 import { writeAuditLog } from '../lib/audit'
+import { clampLimit } from '../lib/clampLimit'
+
+const asUser = (u: unknown): UserLike | null => (u ? (u as UserLike) : null)
 
 const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp'] as const
 
@@ -63,14 +70,108 @@ const checkUpload: CollectionBeforeOperationHook = ({ args, operation }) => {
   return args
 }
 
-const auditUpload: CollectionAfterChangeHook = async ({ doc, operation, req }) => {
-  if ((req.context as { seed?: boolean } | undefined)?.seed === true) return doc
+const never: FieldAccess = () => false
+const staffRead: FieldAccess = ({ req }) => isStaff(asUser(req.user))
+
+/**
+ * Update access. Editors (admin / editor-in-chief / section-editor) may edit any media. Everyone else
+ * only the media they uploaded themselves; rows without `uploadedBy` (uploaded before this field
+ * existed) are therefore editor-only. The "in use by a published article" freeze is enforced in
+ * `guardMediaChange` because it needs a query on another collection.
+ */
+const updateAccess: Access = ({ req }) => {
+  const user = asUser(req.user)
+  if (!isStaff(user)) return false
+  if (isEditorRole(user)) return true
+  return { uploadedBy: { equals: user!.id as number } } as Where
+}
+
+type MediaContext = { seed?: boolean; mediaFileReplaced?: boolean }
+
+/**
+ * - create: `uploadedBy` is set from the authenticated caller (the field is not client-writable;
+ *   trusted server code without a user may supply it).
+ * - update by a non-editor: the media must not be the featured image of a published or scheduled
+ *   article (metadata edits there are public-facing edits, and replacing the file swaps a live
+ *   image). Editors are not restricted.
+ *
+ * VERIFIED against payload@3.90.2: a multipart PATCH carries the new file on `req.file`
+ * (`checkUpload` already relies on this); an update without a file has none.
+ */
+const guardMediaChange: CollectionBeforeChangeHook = async ({ data, originalDoc, operation, req }) => {
+  const ctx = (req.context ?? {}) as MediaContext
+  if (ctx.seed === true) return data
+  const user = asUser(req.user)
+
+  if (operation === 'create') {
+    data.uploadedBy = user ? user.id : (data.uploadedBy ?? null)
+    return data
+  }
+
+  const replacing = Boolean((req as { file?: unknown }).file)
+  if (replacing) ctx.mediaFileReplaced = true
+  if (!user) return data // trusted server-side call
+
+  if (!isEditorRole(user)) {
+    if (String(idOf(originalDoc?.uploadedBy) ?? '') !== String(user.id)) {
+      throw new APIError('You can only edit media you uploaded.', 403)
+    }
+    const used = await req.payload.count({
+      collection: 'articles',
+      where: {
+        and: [{ featuredImage: { equals: originalDoc.id } }, { status: { in: ['published', 'scheduled'] } }],
+      },
+      overrideAccess: true,
+      req,
+    })
+    if (used.totalDocs > 0) {
+      throw new APIError(
+        replacing
+          ? 'This image is used by a published or scheduled article; ask an editor to replace the file.'
+          : 'This image is used by a published or scheduled article; ask an editor to change its details.',
+        403,
+      )
+    }
+    // Ownership is never transferable by the owner (field access already strips this).
+    data.uploadedBy = idOf(originalDoc.uploadedBy) ?? null
+  }
+  return data
+}
+
+const MEDIA_META_FIELDS = ['alt', 'caption', 'credit', 'focalX', 'focalY'] as const
+
+const auditMedia: CollectionAfterChangeHook = async ({ doc, previousDoc, operation, req }) => {
+  const ctx = (req.context ?? {}) as MediaContext
+  if (ctx.seed === true) return doc
   if (operation === 'create') {
     await writeAuditLog(req, {
       action: 'upload',
       collection: 'media',
       docId: doc.id,
       summary: String(doc.filename ?? ''),
+    })
+    return doc
+  }
+
+  const prev = (previousDoc ?? {}) as Record<string, unknown>
+  const replaced = ctx.mediaFileReplaced === true || (prev.filename !== undefined && prev.filename !== doc.filename)
+  const changed = MEDIA_META_FIELDS.filter((k) => (prev[k] ?? null) !== ((doc as Record<string, unknown>)[k] ?? null))
+  if (replaced) {
+    await writeAuditLog(req, {
+      action: 'media.replace-file',
+      collection: 'media',
+      docId: doc.id,
+      summary: `File replaced: ${String(prev.filename ?? '')} -> ${String(doc.filename ?? '')}`,
+      details: { previousFilename: prev.filename ?? null, filename: doc.filename ?? null },
+    })
+  }
+  if (!replaced || changed.length > 0) {
+    await writeAuditLog(req, {
+      action: 'media.update',
+      collection: 'media',
+      docId: doc.id,
+      summary: `Media details updated: ${changed.join(', ') || 'no field changes'}`,
+      details: { fields: changed },
     })
   }
   return doc
@@ -92,12 +193,13 @@ export const Media: CollectionConfig = {
   access: {
     read: anyone,
     create: staffOnly,
-    update: staffOnly,
+    update: updateAccess,
     delete: editorInChiefOnly,
   },
   hooks: {
-    beforeOperation: [checkUpload],
-    afterChange: [auditUpload],
+    beforeOperation: [clampLimit, checkUpload],
+    beforeChange: [guardMediaChange],
+    afterChange: [auditMedia],
     afterDelete: [auditDelete],
   },
   upload: {
@@ -114,5 +216,14 @@ export const Media: CollectionConfig = {
     { name: 'alt', type: 'text', required: true, maxLength: 300 },
     { name: 'caption', type: 'text' },
     { name: 'credit', type: 'text' },
+    {
+      // Server-set on create; see guardMediaChange / updateAccess. Null for rows that predate the field.
+      name: 'uploadedBy',
+      type: 'relationship',
+      relationTo: 'users',
+      index: true,
+      admin: { readOnly: true, position: 'sidebar' },
+      access: { read: staffRead, create: never, update: never },
+    },
   ],
 }

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { isIP } from 'node:net'
 
 /**
  * In-memory fixed-window rate limiter.
@@ -75,19 +76,57 @@ export function createRateLimiter(options: RateLimiterOptions) {
 
 type HeaderReader = { headers: { get(name: string): string | null } }
 
+const MAX_TRUSTED_HOPS = 10
+
+/** Number of trusted reverse proxies in front of the app (TRUST_PROXY_HOPS, 1..10, default 1). */
+export function trustedProxyHops(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.TRUST_PROXY_HOPS?.trim()
+  if (!raw || !/^[0-9]{1,3}$/.test(raw)) return 1
+  const n = Number(raw)
+  return n >= 1 && n <= MAX_TRUSTED_HOPS ? n : 1
+}
+
+/** Normalise a header value to a bare IP address, or null when it is not one. */
+const toIp = (value: string | null | undefined): string | null => {
+  const v = value?.trim().replace(/^\[|\]$/g, '')
+  if (!v || v.length > 64 || isIP(v) === 0) return null
+  return v.toLowerCase()
+}
+
 /**
- * Client IP. Forwarding headers are spoofable, so they are only honoured when TRUST_PROXY === 'true'
- * (set it only when the CMS sits behind a proxy that overwrites x-forwarded-for).
- * Without trusted proxy there is no reliable IP available from a fetch Request, so all clients share
- * the 'unknown' bucket (fail closed for rate limiting).
+ * Client IP, derived only from headers that a trusted reverse proxy controls.
+ *
+ * Forwarding headers are client-controlled unless a proxy overwrites or appends to them, so nothing is
+ * read unless TRUST_PROXY === 'true' (otherwise every client shares the 'unknown' bucket, which fails
+ * closed for rate limiting).
+ *
+ * 1. CLIENT_IP_HEADER (optional, e.g. `cf-connecting-ip` behind Cloudflare, or `x-real-ip` when nginx
+ *    sets it with `proxy_set_header X-Real-IP $remote_addr`) wins when present and valid. The proxy
+ *    must overwrite that header on every request.
+ * 2. Otherwise X-Forwarded-For is read from the RIGHT: each trusted proxy appends the address it
+ *    received the connection from, so with TRUST_PROXY_HOPS=N the client is the Nth entry from the
+ *    right. Entries to its left were supplied by the client (or earlier, untrusted hops) and are
+ *    ignored; a client cannot change which bucket it lands in by prepending addresses. A chain shorter
+ *    than the configured hop count means the proxy setup differs from the configuration, so it fails
+ *    closed ('unknown').
  */
 export function getClientIp(req: HeaderReader): string {
-  if (process.env.TRUST_PROXY === 'true') {
-    const xff = req.headers.get('x-forwarded-for')
-    const first = xff?.split(',')[0]?.trim()
-    if (first) return first.slice(0, 64)
-    const real = req.headers.get('x-real-ip')?.trim()
-    if (real) return real.slice(0, 64)
+  if (process.env.TRUST_PROXY !== 'true') return 'unknown'
+
+  const headerName = process.env.CLIENT_IP_HEADER?.trim().toLowerCase()
+  if (headerName) {
+    const ip = toIp(req.headers.get(headerName))
+    if (ip) return ip
+  }
+
+  const xff = req.headers.get('x-forwarded-for')
+  if (xff) {
+    const hops = trustedProxyHops()
+    const parts = xff.split(',')
+    if (parts.length >= hops) {
+      const ip = toIp(parts[parts.length - hops])
+      if (ip) return ip
+    }
   }
   return 'unknown'
 }

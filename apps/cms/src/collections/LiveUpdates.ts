@@ -17,6 +17,8 @@ import {
   type UserLike,
 } from '../access/roles'
 import { writeAuditLog } from '../lib/audit'
+import { clampLimit } from '../lib/clampLimit'
+import { advisoryTransactionLock } from '../lib/dbTransaction'
 import { cleanText } from '../lib/sanitize'
 
 const asUser = (u: unknown) => u as UserLike | null | undefined
@@ -50,28 +52,54 @@ const staffRead: FieldAccess = ({ req }) => isStaff(asUser(req.user))
 const serverOnly = { create: () => false, update: () => false }
 
 /**
- * Race note: `sequence` = max(sequence)+1 is read-then-write, so two concurrent creates for the same
- * event can compute the same value. The compound unique index (event, sequence) turns that into a
- * constraint violation (the second request fails and the client may retry) instead of duplicate
- * sequence numbers. Retry-once is not possible from inside a collection hook.
+ * Two counters per event, both "max + 1":
+ *
+ * - `sequence`: creation order. Assigned once, never changes, never exposed as the feed cursor.
+ * - `publishSequence`: publication order. Assigned each time an update becomes `approved` (also when
+ *   it is created as approved). The public polling feed filters and sorts by it, so an update that
+ *   was created early but approved late still lands *after* the cursor of pollers that have already
+ *   advanced. (Filtering by `sequence` silently lost such updates.)
+ *
+ * Race: max+1 is read-then-write. The request's transaction takes a per-event advisory lock first
+ * (`pg_advisory_xact_lock`), so concurrent creates/approvals for one event serialise and never compute
+ * the same number; the compound unique indexes remain as the backstop (a violation fails the request
+ * instead of producing duplicates).
  */
-async function nextSequence(
+async function nextCounter(
   req: PayloadRequest,
   eventId: number | string,
+  field: 'sequence' | 'publishSequence',
 ): Promise<number> {
+  await advisoryTransactionLock(req, `live-updates:${field}:${eventId}`)
   const last = await req.payload.find({
     collection: 'live-updates',
-    where: { event: { equals: eventId } },
-    sort: '-sequence',
+    // greater_than 0 skips NULLs, which PostgreSQL would otherwise sort first for DESC.
+    where: { and: [{ event: { equals: eventId } }, { [field]: { greater_than: 0 } }] },
+    sort: `-${field}`,
     limit: 1,
     depth: 0,
     pagination: false,
     overrideAccess: true,
-    select: { sequence: true },
+    select: { [field]: true },
     req,
   })
-  const max = (last.docs[0] as { sequence?: number } | undefined)?.sequence ?? 0
+  const max = (last.docs[0] as unknown as Record<string, number | null | undefined> | undefined)?.[field] ?? 0
   return max + 1
+}
+
+/** Assign publishSequence when an update becomes approved (create-as-approved or a transition into it). */
+async function stampPublishSequence(
+  req: PayloadRequest,
+  eventId: number | string,
+  data: Record<string, unknown>,
+  originalDoc: Record<string, unknown> | undefined,
+  operation: 'create' | 'update',
+) {
+  const to = (data.status ?? originalDoc?.status) as string | undefined
+  const from = operation === 'create' ? undefined : (originalDoc?.status as string | undefined)
+  if (to === 'approved' && from !== 'approved') {
+    data.publishSequence = await nextCounter(req, eventId, 'publishSequence')
+  }
 }
 
 export const LiveUpdates: CollectionConfig = {
@@ -83,12 +111,30 @@ export const LiveUpdates: CollectionConfig = {
     update,
     delete: ({ req }) => isEditorInChief(asUser(req.user)),
   },
-  indexes: [{ fields: ['event', 'sequence'], unique: true }],
+  // (event, publishSequence) is unique too; PostgreSQL treats NULLs as distinct, so any number of
+  // never-approved (NULL) rows per event is fine.
+  indexes: [
+    { fields: ['event', 'sequence'], unique: true },
+    { fields: ['event', 'publishSequence'], unique: true },
+  ],
   hooks: {
+    beforeOperation: [clampLimit],
     beforeChange: [
       async ({ data, originalDoc, operation, req }) => {
         const user = asUser(req.user)
-        if (!user) return data // internal/system call (seed, scheduler): trusted
+        if (!user) {
+          // Internal/system call (seed, scheduler): trusted, but counters must still be stamped.
+          const sysEventId = operation === 'create' ? idOf(data.event) : idOf(originalDoc?.event)
+          if (sysEventId !== undefined) {
+            if (operation === 'create' && data.sequence === undefined) {
+              data.sequence = await nextCounter(req, sysEventId, 'sequence')
+            }
+            if (data.publishSequence === undefined) {
+              await stampPublishSequence(req, sysEventId, data, originalDoc, operation)
+            }
+          }
+          return data
+        }
 
         const eventId = operation === 'create' ? idOf(data.event) : idOf(originalDoc?.event)
         if (eventId === undefined) throw new APIError('A live event is required.', 400)
@@ -124,7 +170,9 @@ export const LiveUpdates: CollectionConfig = {
             data.approvedBy = null
             data.approvedAt = null
           }
-          data.sequence = await nextSequence(req, eventId)
+          data.sequence = await nextCounter(req, eventId, 'sequence')
+          delete data.publishSequence
+          await stampPublishSequence(req, eventId, data, undefined, 'create')
           return data
         }
 
@@ -155,9 +203,11 @@ export const LiveUpdates: CollectionConfig = {
             data.approvedAt = null
           }
         }
-        // Immutable once created.
+        // Immutable once created; publishSequence is only ever stamped by the server.
         delete data.sequence
         delete data.author
+        delete data.publishSequence
+        await stampPublishSequence(req, eventId, data, originalDoc, 'update')
         return data
       },
     ],
@@ -173,7 +223,7 @@ export const LiveUpdates: CollectionConfig = {
             summary: `Live update #${doc.sequence} (event ${idOf(doc.event)}) ${
               operation === 'create' ? 'created as' : 'moved to'
             } ${doc.status}`,
-            details: { event: idOf(doc.event), sequence: doc.sequence },
+            details: { event: idOf(doc.event), sequence: doc.sequence, publishSequence: doc.publishSequence ?? null },
           })
         }
         return doc
@@ -199,6 +249,15 @@ export const LiveUpdates: CollectionConfig = {
     },
     {
       name: 'sequence',
+      type: 'number',
+      index: true,
+      admin: { readOnly: true },
+      access: serverOnly,
+    },
+    {
+      // Publication order, stamped when the update becomes approved. This (not `sequence`) is what the
+      // public feed exposes as `sequence` and uses for `since` / `nextSince`.
+      name: 'publishSequence',
       type: 'number',
       index: true,
       admin: { readOnly: true },

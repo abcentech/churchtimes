@@ -1,7 +1,9 @@
-# Church Times CMS — API contracts (v1.1)
+# Church Times CMS — API contracts (v1.2)
 
-Status: implemented on `agent/payload-core`. v1.1 adds Turnstile, duplicate detection, staff auth/session
-contract and security hardening (see §9 Changelog). Extends and supersedes "API contract v0" in
+Status: implemented on `agent/payload-core`. v1.1 added Turnstile, duplicate detection, staff auth/session
+contract and security hardening; v1.2 closes the verified security-review findings: media ownership, version
+access, publication-ordered live feed, append-only corrections, current-password checks, list limits and request
+size limits (see §9 Changelog). Extends and supersedes "API contract v0" in
 `docs/newsroom-24h-sprint.md`. Breaking changes to anything in this file require a
 version bump here and a note in the PR that introduces them.
 
@@ -42,6 +44,7 @@ draft ──► in_review ──► approved ──► published ──► archi
 | From → To | Who (server-enforced) |
 | --- | --- |
 | (create) `draft` / `in_review` | Any staff role |
+| (create) `approved` | Editors in scope (admin, editor-in-chief, section-editor of the category) may create an article directly as `approved` |
 | (create) `published` / `scheduled` | Editors in scope; trusted-publisher for own article in scope |
 | `draft` → `in_review` | Author, editors in scope |
 | `changes_requested` → `in_review` / `draft` | Author, editors in scope |
@@ -62,7 +65,19 @@ Rules:
 - Reporters may edit content only while their article is `draft` or `changes_requested`.
 - Editing a `published` article requires an editor in scope (or the trusted-publisher author in scope)
   and **must** append a `corrections` entry when `content`, `title` or `excerpt` change materially;
-  every save of a published article creates a version (`versions.maxPerDoc = 50`).
+  every save of a published article creates a version (`versions.maxPerDoc = 50`). "Materially" compares
+  values, not serialisation: sending the same Lexical document with its keys in a different order is not a change.
+- `corrections` is **append-only**. A PATCH that includes `corrections` must start with every existing entry
+  unchanged (same `id`, `note` and `correctedAt`, same order); new entries go after them and may omit `id`.
+  `correctedAt` of a new entry is always set by the server (a client value is ignored). Rewriting, reordering or
+  removing existing entries is `400`, except for `admin` and `editor-in-chief`, who may amend history (audited as
+  `correction.amend`). Only a caller who may edit the article's content may add or amend entries (otherwise `403`).
+  Send `corrections` back exactly as the API returned it (including `id`s) or leave it out of the PATCH body.
+- **Restoring a version** (`POST /api/articles/versions/:id`) of a published article is a full overwrite. For
+  `admin` and `editor-in-chief` it is allowed without a new corrections entry and is audited as `article.restore`
+  (the restored document brings its own, possibly shorter, corrections list). For everyone else the normal rules
+  apply: a restore that changes the title, excerpt or content, or shortens `corrections`, is rejected with `400`;
+  make the change with a normal PATCH that adds a corrections entry instead.
 - `author` is set to the creating user and can only be changed by editors.
 
 ## 3. Data model (public-facing fields)
@@ -96,14 +111,20 @@ Seeded: News, Features, Opinion, Columnists, Interviews, Business, Education, He
 
 ### Media (`/api/media`) — `{ id, alt, caption?, credit?, url, filename, mimeType, width, height, sizes }`
 Accepted uploads: `image/jpeg`, `image/png`, `image/webp`. Max 10 MB. SVG and HTML are rejected.
-Upload is staff-only, as `multipart/form-data` (§6.3).
+Upload is staff-only, as `multipart/form-data` (§6.3). Staff-only, server-set field: `uploadedBy` (user id of the
+uploader; `null` for media uploaded before v1.2). Not client-writable and never returned to anonymous readers.
+Editing is restricted, see §6.3. Anonymous readers can list and fetch **all** media (known limitation,
+`docs/security.md` §4).
 
 ### LiveEvent (`/api/live-events`) — `{ id, title, slug, summary?, status: 'draft'|'live'|'ended', category, startedAt?, endedAt? }`
 Anonymous readers see only `live` and `ended` events.
 
 ### LiveUpdate (`/api/live-updates`) — `{ id, event, body, status: 'pending'|'approved'|'rejected', sequence, occurredAt, approvedAt? }`
-`body` is plain text (≤ 5 000 chars). Anonymous readers see only `approved`. `sequence` is assigned by the server
-(per-event, monotonically increasing) and is not client-writable.
+`body` is plain text (≤ 5 000 chars). Anonymous readers see only `approved`. `sequence` is **creation order**,
+assigned by the server (per event, strictly increasing) and not client-writable. A second server-owned counter,
+`publishSequence` (per event, nullable until the update is first approved), records **publication order**: it is
+assigned `max(publishSequence)+1` every time an update becomes `approved` (also when it is created as
+`approved`). Neither counter is client-writable. The public polling endpoint (§4.3) is driven by `publishSequence`.
 
 ### Submission (`/api/submissions`) — staff-only collection
 `{ id, reference, name, email, phone?, title, body, categorySuggestion?, location?, status: 'new'|'under_review'|'accepted'|'rejected'|'converted', reviewerNotes?, article? }`
@@ -190,7 +211,10 @@ GET /api/categories?limit=100
 
 - `depth=0` returns relationships as IDs (`category: 3`); `depth=1` populates them (`category: { id, title, slug }`,
   `featuredImage: { url, alt, sizes… }`). The public site uses `depth=1` to get `category.title`.
-- Lists are paginated: `limit` (max **100**, larger values are clamped) and `page` (1-based). Response:
+- Lists are paginated: `limit` (max **100**, larger values are clamped; `0`, negative or non-numeric values
+  become the default of 10) and `page` (1-based). `pagination=false` is **ignored** for API callers: lists are
+  always paginated, so `hasNextPage` stays truthful. This applies to every collection and to
+  `/api/articles/versions`. Response:
   `{ docs: Article[], totalDocs, limit, page, totalPages, hasNextPage, hasPrevPage, nextPage, prevPage, pagingCounter }`.
 - Filtering by category must use the category **ID**: `where[category][equals]=<id>`. Look the IDs up with
   `GET /api/categories` (`{ docs: [{ id, title, slug, description? }] }`, public, cacheable). Slug filtering on
@@ -212,7 +236,13 @@ Polling endpoint for live coverage (recommended interval: 15–30 s).
 }
 ```
 
-- Approved updates only, ordered by `sequence` ascending, `sequence > since` (default 0), `limit` ≤ 100 (default 50).
+- Approved updates only, ordered by **publication order** ascending, `sequence > since` (default 0), `limit` ≤ 100
+  (default 50). The `sequence` returned here is the update's `publishSequence` (§3), **not** its creation
+  sequence, and `nextSince` is the `sequence` of the last returned update. This makes the feed safe for updates that
+  are approved out of order: an update created first but approved last gets the highest number and reaches every
+  poller. Clients should de-duplicate and update by `id`: an update that is rejected after approval disappears from
+  the feed (already-delivered copies must be removed by the client, e.g. on a full reload), and an update that is
+  approved again later is delivered again with a new, higher `sequence`.
 - `404` if the event does not exist or is `draft`. `400` if `since`/`limit` are not non-negative integers.
 - `Cache-Control: public, max-age=10`.
 
@@ -285,9 +315,17 @@ logged to the console (development, no SMTP). `429` after 5 requests per IP per 
 - `400 { "errors": [{ "name": "ValidationError", "message": "The following field is invalid: password", "data": { "collection": "users", "errors": [{ "path": "password", "message": "Password must be at least 12 characters." }] } }] }` when the policy fails (the inner `message` carries the policy reason).
 - `403 { "errors": [{ "message": "Token is either invalid or has expired." }] }` — unknown, used or expired token.
 
-`PATCH /api/users/:id` with `{ "password": "…" }` — change a password (self or admin). The policy applies (400 on failure),
-and every session of that user **except the caller's own** is ended. `role` and `sections` in the body are silently
-ignored unless the caller is an `admin`.
+`PATCH /api/users/:id` with `{ "password": "…", "currentPassword": "…" }` — change a password (self or admin). The policy
+applies (400 on failure), and every session of that user **except the caller's own** is ended. `role` and `sections` in
+the body are silently ignored unless the caller is an `admin`.
+
+**Current password required (v1.2).** When the caller changes **their own** password or e-mail address (any role,
+admins included), the body must carry `currentPassword`. Missing → `400` (`ValidationError`, `path: "currentPassword"`);
+wrong → `403 "The current password is incorrect."`; the account is locked → `403`. Wrong values count towards the
+normal lockout (5 failures lock the account for 10 minutes, then logins also fail). An admin changing someone else's
+account does not need it; changing only `name` never does. `currentPassword` is a virtual field: it is never stored and
+never returned. Password and e-mail changes are audited (`user.password-change`, `user.email-change`,
+`user.password-reset`) without the values.
 
 `POST /api/users/unlock` — body `{ "email" }`; **admin only** (403 otherwise).
 
@@ -309,7 +347,8 @@ Send either the cookie (browser, same rules as §5) or `Authorization: JWT <toke
 | `POST /api/users/login` · `POST /api/users/logout` · `GET /api/users/me` · `POST /api/users/refresh` | Session (§5) |
 | `GET/POST/PATCH/DELETE /api/<collection>[/:id]` | Payload CRUD, filtered by role access rules above |
 | `POST /api/articles/:id/preview-token` | Issue a preview token for an article the caller may read. Body optional `{ "ttlSeconds": 900 }` (60–3600). Returns `{ token, expiresAt, url }`. |
-| `POST /api/submissions/:id/convert` | Editors only. Creates a `draft` article (author = caller) from the submission and marks the submission `converted`. Body `{ "category": <id> }`. Returns `{ article: { id, slug } }`. |
+| `POST /api/submissions/:id/convert` | Editors only. Creates a `draft` article (author = caller) from the submission and marks the submission `converted`. Body `{ "category": <id> }`. Returns `{ article: { id, slug } }`. Atomic: with concurrent calls exactly one gets `201`, the others `409`; if creating the article fails nothing changes and the submission can be converted again. |
+| `GET /api/articles/versions[/:id]` | Staff only (anonymous `403`). Admin and editor-in-chief see every version; others see only versions whose stored `status` is `published`, whose `author` is themselves, or (non-reporters) whose `category` is in their `sections`. Filter fields are prefixed `version.` (`where[version.status]`, `where[parent]`). |
 | `GET /api/audit-logs` | Admin and editor-in-chief only |
 
 ### 6.1 Article writes
@@ -328,8 +367,10 @@ Send either the cookie (browser, same rules as §5) or `Authorization: JWT <toke
 1. Editor/section-editor/trusted-publisher creates the event: `POST /api/live-events { title, category, status: "draft" }`;
    `PATCH … { status: "live" }` publishes it (only in their sections), `"ended"` closes it. Anonymous readers see only `live` and `ended`.
 2. Any staff member adds an update: `POST /api/live-updates { "event": <id>, "body": "…", "occurredAt"?: ISO }`.
-   - The server sets `status`, `author`, `sequence`, `approvedBy`, `approvedAt`; those fields in the body are ignored.
+   - The server sets `status`, `author`, `sequence`, `publishSequence`, `approvedBy`, `approvedAt`; those fields in the body are ignored.
    - `reporter` (and out-of-scope users): always created as `pending`.
+   - An update for an event outside a section-editor's sections, or for an `ended` event by anyone who is not an
+     editor in scope, is rejected with **`403`** (not `400`/`404`).
    - `admin`, `editor-in-chief`, `section-editor` of the event's category, and `trusted-publisher` of that category may send
      `"status": "approved"` to publish immediately; otherwise it is `pending`.
 3. Editor review queue: `GET /api/live-updates?where[event][equals]=<id>&where[status][equals]=pending&sort=sequence`
@@ -348,21 +389,60 @@ JPEG, PNG, WebP (content is verified against the declared type), ≤ 10 MB. Resp
 `url` fields are **absolute** (`${CMS_PUBLIC_URL}/api/media/file/<name>`) whenever `CMS_PUBLIC_URL` is set (always in production);
 only in a local setup without it are they root-relative (`/api/media/file/<name>`).
 
+**Editing media (v1.2).** `PATCH /api/media/:id` (JSON for `alt`/`caption`/`credit`, or `multipart/form-data` with a
+new `file` to replace the file):
+- `admin`, `editor-in-chief`, `section-editor`: any media.
+- Everyone else (`trusted-publisher`, `reporter`): only media they uploaded (`uploadedBy` = themselves) — other media
+  answers `403`/`404` — and **not** while the media is the `featuredImage` of an article whose status is `published` or
+  `scheduled` (`403`: metadata edits and file replacement there are public-facing changes; ask an editor).
+- Media without `uploadedBy` (uploaded before v1.2) can only be edited by editors. `uploadedBy` cannot be changed.
+- Every update is audited (`media.update`); a file replacement is audited separately (`media.replace-file`).
+- The "in use" check covers `featuredImage` only, not images embedded inside the Lexical body.
+
 ## 7. Error shape
 
 Payload-native routes return Payload's `{ errors: [{ message, ... }] }`. Custom endpoints in §4 and §6 return
 `{ ok: false, errors: [{ field?, message }] }`. Status codes follow HTTP semantics (400 validation, 401 unauthenticated,
-403 forbidden, 404 not found, 409 conflict, 413, 415, 429).
+403 forbidden, 404 not found, 409 conflict, 411, 413, 415, 429).
+
+**Request size limits (v1.2).** Every `/api/*` request is checked before it reaches a route handler (`src/proxy.ts`):
+a declared `Content-Length` above **1 MB** is `413` (above **11 MB** for `/api/media`), a malformed `Content-Length` is
+`400`, and a body without `Content-Length` (chunked transfer) on `POST`/`PATCH`/`PUT` to `/api/users/*` is `411`.
+These responses are `{ "ok": false, "errors": [{ "message": … }] }`. Normal browser `fetch` calls send
+`Content-Length`; the reverse proxy enforces a 12 MB cap in front of this (`docs/operations.md` §4.4).
 
 ## 8. Environment variables
 
 See `apps/cms/.env.example` (annotated) and `docs/operations.md` §4. Secrets (`PAYLOAD_SECRET`, `PREVIEW_SECRET`,
 `IP_HASH_SALT`, `TURNSTILE_SECRET_KEY`, `SMTP_PASS`, database password) are server-side only and never committed or
 shipped to a frontend. The only value a frontend needs is the public Turnstile **site** key. In production the app
-refuses to start without a valid `TURNSTILE_SECRET_KEY` and https-only `CMS_PUBLIC_URL`/CORS/CSRF settings
-(`docs/security.md`).
+refuses to start without a valid `TURNSTILE_SECRET_KEY`, `TRUST_PROXY=true` (the app always runs behind a reverse
+proxy) and https-only `CMS_PUBLIC_URL`/CORS/CSRF settings (`docs/security.md`). Client-address handling for rate
+limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/operations.md` §4).
 
 ## 9. Changelog
+
+### v1.2
+Security-review fixes (details and tests in `docs/security.md` §5). Consumer-visible changes first:
+- **Live feed `sequence` now means publication order** (§3, §4.3). `GET /api/live-events/:slug/updates` filters, sorts and
+  returns `publishSequence` as `sequence` and `nextSince`; the wire shape is unchanged. Previously an update approved
+  after a later-created one never reached pollers that had already advanced. Existing approved updates were
+  backfilled with `publishSequence = sequence`, so stored cursors stay valid. Clients should treat `id` as the key.
+- **`PATCH /api/users/:id` needs `currentPassword`** when you change your own password or e-mail (§5). **Breaking for
+  clients that change a password without it.**
+- **`corrections` is append-only** (§2); `correctedAt` of new entries is server-set; admin/editor-in-chief can amend
+  (audited `correction.amend`). Send `corrections` back unchanged or omit it. Semantically identical content no
+  longer counts as a material edit. Restore of a version: §2.
+- **`pagination=false` is ignored** and `limit` is clamped to 1..100 on every collection (§4.2).
+- **Media**: new staff-only `uploadedBy`; non-editors can only edit their own, unreferenced media; updates audited (§6.3).
+- **`GET /api/articles/versions`**: new per-role filtering (§6). Anonymous remains `403`.
+- **Request size limits**: `413` / `411` / `400` from `src/proxy.ts` (§7). Proxy cap 12 MB (operations §4.4).
+- Convert-submission is atomic: concurrent calls → one `201`, the rest `409` (§6).
+- Contract clarifications (no code change): a live update for an out-of-scope or ended event is `403` (§6.2);
+  editors in scope may create an article directly as `approved` (§2).
+- Ops: `TRUST_PROXY=true` is required in production; client IP is taken from the right of `X-Forwarded-For`
+  (`TRUST_PROXY_HOPS`, default 1) or from `CLIENT_IP_HEADER`. New migration `review_fixes`
+  (`media.uploaded_by_id`, `live_updates.publish_sequence`, unique `(event, publish_sequence)`).
 
 ### v1.1
 - §4.1 `POST /api/public/submissions` now **requires** `turnstileToken` (Cloudflare Turnstile, server-side Siteverify,

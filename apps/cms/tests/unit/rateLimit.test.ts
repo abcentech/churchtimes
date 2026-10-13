@@ -49,10 +49,58 @@ describe('getClientIp / hashIp', () => {
   it('ignores forwarding headers unless TRUST_PROXY=true', () => {
     delete process.env.TRUST_PROXY
     expect(getClientIp(reqWith({ 'x-forwarded-for': '1.2.3.4' }))).toBe('unknown')
+    process.env.CLIENT_IP_HEADER = 'x-real-ip'
+    expect(getClientIp(reqWith({ 'x-real-ip': '9.9.9.9' }))).toBe('unknown')
     process.env.TRUST_PROXY = 'true'
-    expect(getClientIp(reqWith({ 'x-forwarded-for': '1.2.3.4, 5.6.7.8' }))).toBe('1.2.3.4')
-    expect(getClientIp(reqWith({ 'x-real-ip': '9.9.9.9' }))).toBe('9.9.9.9')
+    expect(getClientIp(reqWith({ 'x-forwarded-for': '1.2.3.4' }))).toBe('1.2.3.4')
     expect(getClientIp(reqWith({}))).toBe('unknown')
+  })
+
+  it('takes the entry appended by the trusted proxy (hops from the right), not the spoofable leftmost', () => {
+    process.env.TRUST_PROXY = 'true'
+    delete process.env.TRUST_PROXY_HOPS
+    delete process.env.CLIENT_IP_HEADER
+    // An attacker sends "X-Forwarded-For: 6.6.6.6"; the proxy appends the real peer address.
+    expect(getClientIp(reqWith({ 'x-forwarded-for': '6.6.6.6, 203.0.113.9' }))).toBe('203.0.113.9')
+    expect(getClientIp(reqWith({ 'x-forwarded-for': '203.0.113.9' }))).toBe('203.0.113.9')
+    expect(getClientIp(reqWith({ 'x-forwarded-for': ' 6.6.6.6 ,  203.0.113.9 ' }))).toBe('203.0.113.9')
+    expect(getClientIp(reqWith({ 'x-forwarded-for': '2001:db8::1' }))).toBe('2001:db8::1')
+
+    process.env.TRUST_PROXY_HOPS = '2'
+    // spoofed prefix, real client, then the address the first proxy saw (appended by the second proxy)
+    expect(getClientIp(reqWith({ 'x-forwarded-for': '6.6.6.6, 198.51.100.4, 172.16.0.8' }))).toBe('198.51.100.4')
+    // Fewer entries than hops: the chain is not what is configured, fail closed.
+    expect(getClientIp(reqWith({ 'x-forwarded-for': '203.0.113.9' }))).toBe('unknown')
+  })
+
+  it('falls back to one hop for an invalid TRUST_PROXY_HOPS', () => {
+    process.env.TRUST_PROXY = 'true'
+    for (const bad of ['', 'abc', '0', '-1', '1.5', '99']) {
+      process.env.TRUST_PROXY_HOPS = bad
+      expect(getClientIp(reqWith({ 'x-forwarded-for': '6.6.6.6, 203.0.113.9' })), bad).toBe('203.0.113.9')
+    }
+  })
+
+  it('prefers CLIENT_IP_HEADER when configured (Cloudflare / nginx X-Real-IP)', () => {
+    process.env.TRUST_PROXY = 'true'
+    process.env.CLIENT_IP_HEADER = 'CF-Connecting-IP'
+    expect(
+      getClientIp(reqWith({ 'cf-connecting-ip': '198.51.100.77', 'x-forwarded-for': '6.6.6.6, 172.16.0.8' })),
+    ).toBe('198.51.100.77')
+    // Header missing (request did not come through the CDN): fall back to the forwarded chain.
+    expect(getClientIp(reqWith({ 'x-forwarded-for': '6.6.6.6, 172.16.0.8' }))).toBe('172.16.0.8')
+
+    process.env.CLIENT_IP_HEADER = 'x-real-ip'
+    expect(getClientIp(reqWith({ 'x-real-ip': '192.0.2.50' }))).toBe('192.0.2.50')
+  })
+
+  it('rejects values that are not IP addresses', () => {
+    process.env.TRUST_PROXY = 'true'
+    delete process.env.CLIENT_IP_HEADER
+    expect(getClientIp(reqWith({ 'x-forwarded-for': 'not-an-ip' }))).toBe('unknown')
+    expect(getClientIp(reqWith({ 'x-forwarded-for': '1.2.3.4, <script>' }))).toBe('unknown')
+    process.env.CLIENT_IP_HEADER = 'x-real-ip'
+    expect(getClientIp(reqWith({ 'x-real-ip': 'garbage', 'x-forwarded-for': '203.0.113.9' }))).toBe('203.0.113.9')
   })
 
   it('hashes with salt', () => {

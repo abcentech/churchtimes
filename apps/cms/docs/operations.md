@@ -103,7 +103,9 @@ message listing every problem (missing secrets, http or wildcard origins, dummy 
 | `SUBMISSION_EMAIL_RATE_LIMIT` / `SUBMISSION_EMAIL_RATE_WINDOW_SECONDS` | no | `3` / `3600` | Submissions per e-mail address per window. |
 | `SUBMISSION_DUPLICATE_WINDOW_HOURS` | no | `72` | Identical email+title+body inside this window is rejected (409). |
 | `AUTH_LOGIN_RATE_LIMIT`, `AUTH_FORGOT_RATE_LIMIT`, `AUTH_RESET_RATE_LIMIT`, `AUTH_RATE_WINDOW_SECONDS` | no | `10`, `5`, `10`, `900` | Per-IP limits for login / forgot-password / reset-password. |
-| `TRUST_PROXY` | no | `true` | Trust `X-Forwarded-For`/`X-Real-IP`. Set to `true` **only** when the app is reachable only through your own reverse proxy that overwrites those headers. Without it every client shares one bucket. |
+| `TRUST_PROXY` | **yes (production)** | `true` | The app always runs behind a reverse proxy, so production startup **fails** unless this is exactly `true`. Make sure the app is reachable only through that proxy (it listens on `127.0.0.1`). Without trust every client would share one rate-limit bucket. |
+| `TRUST_PROXY_HOPS` | no | `1` | Number of trusted reverse proxies in front of the app (1 to 10, default 1). The client address is the entry that many places from the **right** of `X-Forwarded-For` (the address your own proxy appended), never the leftmost, which clients can forge. A chain shorter than this fails closed (shared bucket). The §4.4 blocks overwrite the header, so `1`; use `2` only if two proxies each append (for example nginx with `$proxy_add_x_forwarded_for` behind another proxy). |
+| `CLIENT_IP_HEADER` | no | `cf-connecting-ip` or `x-real-ip` | Optional single header carrying the client address. When set (and `TRUST_PROXY=true`) it takes precedence over `X-Forwarded-For`; if the header is absent or not an IP address the forwarded chain is used. Only set it if your proxy overwrites that header on every request (§4.4). |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_SECURE` | for reset e-mails | `smtp.example.org`, `587`, `cms@example.org`, (secret), `false` | SMTP transport. Setting `SMTP_HOST` turns the mailer on; `SMTP_PASS` is a secret. In production without `SMTP_SECURE=true`, STARTTLS is required. |
 | `EMAIL_FROM_ADDRESS`, `EMAIL_FROM_NAME` | with SMTP | `cms@example.org`, `Church Times CMS` | Sender of reset e-mails. |
 | `SCHEDULER_ENABLED` | no | `true` on exactly one instance | Enables the in-process scheduled-publishing loop. |
@@ -169,6 +171,116 @@ refused as soon as one user exists.
 Changing `PAYLOAD_SECRET` signs every user out. Changing `PREVIEW_SECRET` invalidates all outstanding preview links.
 Changing `IP_HASH_SALT` makes older IP hashes incomparable. Rotating `TURNSTILE_SECRET_KEY` or `SMTP_PASS` needs a restart.
 Plan rotations for a quiet period.
+
+### 4.4 Reverse proxy: TLS, body limits, client address, compression
+
+Payload's core routes read request bodies without a size limit, and the rate limiters trust whatever client address
+the proxy reports. So the proxy must (1) cap request bodies at **12 MB** (the largest legitimate request is an 11 MB
+media upload; everything else is under 1 MB and the app itself rejects `Content-Length` above 1 MB with `413`, above 11 MB
+on `/api/media`, see `src/proxy.ts`), (2) **overwrite** the client-address headers instead of passing client values
+through, (3) terminate TLS, and (4) compress text. The app listens on `127.0.0.1:3000` only.
+
+Pick the block that matches your setup and set `TRUST_PROXY=true` (required) plus the matching variables:
+
+| Setup | `TRUST_PROXY_HOPS` | `CLIENT_IP_HEADER` |
+| --- | --- | --- |
+| Caddy or nginx directly on the internet (blocks below) | `1` (default) | unset (or `x-real-ip`) |
+| Cloudflare in front of Caddy/nginx; origin firewall allows Cloudflare ranges only | `1` | `cf-connecting-ip` |
+| Cloudflare in front of nginx using `real_ip_header CF-Connecting-IP` (nginx block, option B) | `1` | `x-real-ip` |
+
+**Caddyfile** (`/etc/caddy/Caddyfile`; TLS certificates are obtained and renewed automatically):
+
+```caddyfile
+cms.example.org {
+	encode zstd gzip
+
+	# Reject oversized bodies before they reach the app (413).
+	request_body {
+		max_size 12MB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=15552000"
+		-Server
+	}
+
+	reverse_proxy 127.0.0.1:3000 {
+		# Overwrite, never append to, anything the client sent. With one hop the app reads the last
+		# X-Forwarded-For entry, which is therefore exactly the peer address Caddy saw.
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		# Behind Cloudflare use instead (and set CLIENT_IP_HEADER=cf-connecting-ip), and allow only
+		# Cloudflare's published ranges (https://www.cloudflare.com/ips/) through the firewall:
+		#   header_up CF-Connecting-IP {http.request.header.CF-Connecting-IP}
+		transport http {
+			read_timeout 60s
+		}
+	}
+}
+```
+
+**nginx** (`/etc/nginx/sites-available/churchtimes-cms`; certificates from certbot or your CA):
+
+```nginx
+server {
+    listen 80;
+    server_name cms.example.org;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name cms.example.org;
+
+    ssl_certificate     /etc/letsencrypt/live/cms.example.org/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/cms.example.org/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    add_header Strict-Transport-Security "max-age=15552000" always;
+    server_tokens off;
+
+    # Largest accepted request body (413 above it). Keep request buffering on (the default): nginx then
+    # always forwards a Content-Length, which the app requires on /api/users writes (411 otherwise).
+    client_max_body_size 12m;
+    client_body_timeout 30s;
+    proxy_request_buffering on;
+
+    gzip on;
+    gzip_min_length 1024;
+    gzip_types application/json text/css application/javascript text/plain;   # images are already compressed
+
+    # Option B (Cloudflare in front): trust Cloudflare's ranges only, then $remote_addr is the visitor.
+    #   set_real_ip_from 173.245.48.0/20;   # ...all ranges from https://www.cloudflare.com/ips-v4 and -v6
+    #   real_ip_header   CF-Connecting-IP;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        # Overwrite, never $proxy_add_x_forwarded_for, so a client-supplied header cannot reach the app.
+        proxy_set_header X-Forwarded-For   $remote_addr;
+        proxy_set_header X-Real-IP         $remote_addr;
+        # Cloudflare option A (CLIENT_IP_HEADER=cf-connecting-ip): pass the header through unchanged.
+        #   proxy_set_header CF-Connecting-IP $http_cf_connecting_ip;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+    }
+}
+```
+
+Verify after deploying (from outside the server):
+
+```sh
+# 12 MB limit at the proxy (413 from Caddy/nginx), 1 MB limit at the app for JSON
+head -c 13000000 /dev/zero | curl -s -o /dev/null -w '%{http_code}\n' -X POST https://cms.example.org/api/media --data-binary @-
+head -c 1100000  /dev/zero | curl -s -o /dev/null -w '%{http_code}\n' -X POST https://cms.example.org/api/articles -H 'Content-Type: application/json' --data-binary @-
+# Forged X-Forwarded-For must not change the rate-limit bucket: after the limit, a fresh forged value is still 429
+for i in $(seq 1 12); do curl -s -o /dev/null -w '%{http_code} ' -X POST https://cms.example.org/api/users/login \
+  -H 'Content-Type: application/json' -H "X-Forwarded-For: 10.0.0.$i" -d '{"email":"nobody@example.org","password":"not-a-password"}'; done; echo
+```
+
+The last command should print ten `401` followed by `429` (`AUTH_LOGIN_RATE_LIMIT` is 10 per 15 minutes per address).
+Remember that the in-memory counters are per process and reset on restart (§8).
 
 ### Secrets handling
 
@@ -276,7 +388,12 @@ Confirm each item before go-live and again after any change to the server:
 - [ ] Staff accounts that leave the newsroom are disabled the same day.
 - [ ] Backups are encrypted, restored in a test at least monthly, and the last test passed.
 - [ ] The system packages are updated (`unattended-upgrades` enabled), and Node 24 patch releases are applied.
-- [ ] `TRUST_PROXY=true` is set only when the app is reachable exclusively through the reverse proxy, and the proxy overwrites `X-Forwarded-For`.
+- [ ] `TRUST_PROXY=true` (the app refuses to start in production without it), the app is reachable exclusively through the reverse proxy,
+      and the proxy **overwrites** `X-Forwarded-For` / `X-Real-IP` (§4.4). `TRUST_PROXY_HOPS` matches the number of proxies; `CLIENT_IP_HEADER`
+      is set only when the proxy (or Cloudflare, with the origin firewalled to its ranges) always supplies it.
+- [ ] The proxy caps request bodies at 12 MB (`request_body max_size 12MB` / `client_max_body_size 12m`); the §4.4 verification commands return
+      `413` / `429` as described.
+- [ ] `npm run migrate` has applied `review_fixes` (adds `media.uploaded_by_id`, `live_updates.publish_sequence`, back-fills it for approved updates).
 - [ ] `NODE_ENV=production` and the service starts (startup validation passes: https `CMS_PUBLIC_URL`, no `*`/http origins).
 - [ ] `TURNSTILE_SECRET_KEY` is the real secret from the Cloudflare dashboard (not a dummy key); the widget's hostnames match the public site;
       `TURNSTILE_ALLOWED_HOSTNAMES` (and optionally `TURNSTILE_EXPECTED_ACTION`) are set. The secret exists only in the server `.env`.
@@ -304,4 +421,6 @@ Confirm each item before go-live and again after any change to the server:
 - Production deployment: **not performed**. Requires explicit approval.
 - Restore test: **not yet performed**.
 - Security hardening (Turnstile, sessions, password policy, rate limits): implemented and covered by `tests/integration/security.test.ts`; see `docs/security.md`.
+- Security-review fixes (media ownership, version access, live feed order, client IP, request limits, corrections, current password):
+  implemented and covered by `tests/integration/review-fixes.test.ts` and the unit tests listed in `docs/security.md` §5.
 - Scheduler, rate limiting and seed fixtures: implemented (single-instance limits, see §8).

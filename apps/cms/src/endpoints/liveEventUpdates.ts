@@ -47,20 +47,23 @@ export const liveEventUpdatesEndpoint: Endpoint = {
               and: [
                 { event: { equals: event.id } },
                 { status: { equals: 'approved' } },
-                { sequence: { greater_than: since } },
+                // Publication order, not creation order: an update approved late must still reach
+                // pollers whose cursor already passed its creation sequence.
+                { publishSequence: { greater_than: since } },
               ],
             },
-            sort: 'sequence',
+            sort: 'publishSequence',
             limit,
             depth: 0,
             pagination: false,
             overrideAccess: true,
-            select: { sequence: true, body: true, occurredAt: true, approvedAt: true },
+            select: { publishSequence: true, body: true, occurredAt: true, approvedAt: true },
           })
 
+    // The wire field stays named `sequence` (contract stability); its value is the publication sequence.
     const docs = (updates.docs as Array<Record<string, any>>).map((d) => ({
       id: d.id,
-      sequence: d.sequence,
+      sequence: d.publishSequence,
       body: d.body,
       occurredAt: d.occurredAt,
       approvedAt: d.approvedAt ?? null,

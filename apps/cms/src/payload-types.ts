@@ -136,6 +136,10 @@ export interface UserAuthOperations {
 export interface User {
   id: number;
   name: string;
+  /**
+   * Required only when you change your own password or e-mail address.
+   */
+  currentPassword?: string | null;
   role: 'admin' | 'editor-in-chief' | 'section-editor' | 'trusted-publisher' | 'reporter';
   /**
    * Categories this user edits (section-editor) or may publish in (trusted-publisher).
@@ -182,6 +186,7 @@ export interface Media {
   alt: string;
   caption?: string | null;
   credit?: string | null;
+  uploadedBy?: (number | null) | User;
   updatedAt: string;
   createdAt: string;
   url?: string | null;
@@ -319,6 +324,7 @@ export interface LiveUpdate {
   body: string;
   status: 'pending' | 'approved' | 'rejected';
   sequence?: number | null;
+  publishSequence?: number | null;
   occurredAt: string;
   author?: (number | null) | User;
   approvedBy?: (number | null) | User;
@@ -458,6 +464,7 @@ export interface PayloadMigration {
  */
 export interface UsersSelect<T extends boolean = true> {
   name?: T;
+  currentPassword?: T;
   role?: T;
   sections?: T;
   updatedAt?: T;
@@ -497,6 +504,7 @@ export interface MediaSelect<T extends boolean = true> {
   alt?: T;
   caption?: T;
   credit?: T;
+  uploadedBy?: T;
   updatedAt?: T;
   createdAt?: T;
   url?: T;
@@ -618,6 +626,7 @@ export interface LiveUpdatesSelect<T extends boolean = true> {
   body?: T;
   status?: T;
   sequence?: T;
+  publishSequence?: T;
   occurredAt?: T;
   author?: T;
   approvedBy?: T;

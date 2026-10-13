@@ -77,8 +77,11 @@ describe('live updates', () => {
     expect(all.headers.get('cache-control')).toContain('max-age')
     expect(all.json.event).toMatchObject({ slug: ev.slug, status: 'live' })
     expect(all.json.docs.map((d: { id: number }) => d.id)).toEqual([u2.id, u4.id])
-    expect(all.json.docs.map((d: { sequence: number }) => d.sequence)).toEqual([u2.sequence, u4.sequence])
-    expect(all.json.nextSince).toBe(u4.sequence)
+    // `sequence` in the public feed is the publication order (u2 was approved first, then u4), not
+    // the creation order (u2.sequence=2, u4.sequence=4).
+    expect(all.json.docs.map((d: { sequence: number }) => d.sequence)).toEqual([1, 2])
+    expect([u2.sequence, u4.sequence]).toEqual([2, 4])
+    expect(all.json.nextSince).toBe(2)
     for (const d of all.json.docs) {
       expect(Object.keys(d).sort()).toEqual(['approvedAt', 'body', 'id', 'occurredAt', 'sequence'])
       expect(d.approvedAt).toBeTruthy()
@@ -86,17 +89,17 @@ describe('live updates', () => {
     expect(all.text).not.toContain(u1.body)
     expect(all.text).not.toContain(u3.body)
 
-    const since = await poll(ev.slug, `?since=${u2.sequence}`)
+    const since = await poll(ev.slug, '?since=1')
     expect(since.json.docs.map((d: { id: number }) => d.id)).toEqual([u4.id])
-    expect(since.json.nextSince).toBe(u4.sequence)
+    expect(since.json.nextSince).toBe(2)
 
-    const caughtUp = await poll(ev.slug, `?since=${u4.sequence}`)
+    const caughtUp = await poll(ev.slug, '?since=2')
     expect(caughtUp.json.docs).toEqual([])
-    expect(caughtUp.json.nextSince).toBe(u4.sequence)
+    expect(caughtUp.json.nextSince).toBe(2)
 
     const limited = await poll(ev.slug, '?limit=1')
     expect(limited.json.docs).toHaveLength(1)
-    expect(limited.json.nextSince).toBe(u2.sequence)
+    expect(limited.json.nextSince).toBe(1)
   })
 
   it('returns 404 for a draft or unknown event and 400 for bad parameters', async () => {
