@@ -74,16 +74,16 @@ Story payload:
 }
 ```
 
-Contact payload: `name`, `email`, optional `phone`, `subject`, `message`, `consent`,
+Contact payload: `name`, `email`, `phone`, `subject`, `message`, `consent`,
 `turnstileToken`. A contact message is not sent to the article endpoint.
 There are no client-supplied workflow states, roles or privileges.
 Categories are provisional human-readable labels; adjust the adapter if Claude's
 backend requires relation IDs. Limits: name 100, email 254, title/subject 180,
-body/message 12,000 characters. All fields except phone are required, including consent.
-Phone is optional (32 characters maximum, 7–15 digits when provided), accepts local
-and international formatting, and is omitted from requests when blank. Formatting
+body/message 12,000 characters. All fields are required, including phone and consent.
+Phone is required (32 characters maximum, 7–15 digits), accepts local
+and international formatting, and blocks sending when blank. Formatting
 is preserved after trimming; no country code is inferred. Claude must confirm
-support for this optional field in both backend endpoints.
+support for this required field in both backend endpoints.
 
 Expected responses:
 

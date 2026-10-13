@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { validateSubmission, submissionPayload, submissionEndpoint, sendPublicSubmission } from '../src/lib/public-submissions.js';
-const values={ name:' Reader ',email:'reader@example.test',title:' A local story ',message:' Key facts and source links. ',category:'News',consent:true };
+const values={ name:' Reader ',email:'reader@example.test',phone:'+234 803 123 4567',title:' A local story ',message:' Key facts and source links. ',category:'News',consent:true };
 const response=(status,body,headers={})=>({status,ok:status>=200&&status<300,headers:new Headers(headers),json:async()=>body});
 test('required fields, email, category, consent and field lengths are validated',()=>{
-  assert.equal(Object.keys(validateSubmission({})).length,6);
+  assert.equal(Object.keys(validateSubmission({})).length,7);
   assert.deepEqual(validateSubmission(values),{});
   assert.ok(validateSubmission({...values,email:'invalid'}).email);
   assert.ok(validateSubmission({...values,title:'x'.repeat(181)}).title);
@@ -20,20 +20,20 @@ test('endpoint configuration keeps contact separate and rejects insecure or cred
   assert.equal(submissionEndpoint({storyUrl:'javascript:alert(1)'}),'');
   assert.equal(submissionEndpoint({storyUrl:'http://127.0.0.1:3000/api'}),'http://127.0.0.1:3000/api');
 });
-test('optional phone accepts local and international formatting and is omitted when blank',()=>{
-  for (const phone of [undefined,'','  ','08031234567','+234 803 123 4567','+1 (202) 555-0123']) {
+test('phone is required and accepts local and international formatting',()=>{
+  for (const phone of ['08031234567','+234 803 123 4567','+1 (202) 555-0123']) {
     assert.equal(validateSubmission({...values,phone}).phone,undefined);
   }
-  for (const phone of ['call me','123','1234567890123456','++2348031234567','1'.repeat(33)]) {
+  for (const phone of [undefined,'','  ','call me','123','1234567890123456','++2348031234567','1'.repeat(33)]) {
     assert.ok(validateSubmission({...values,phone}).phone);
   }
   for (const kind of ['story','contact']) {
     assert.equal(submissionPayload({...values,phone:' +234 803 123 4567 '},'opaque',kind).phone,'+234 803 123 4567');
-    assert.equal('phone' in submissionPayload({...values,phone:'  '},'opaque',kind),false);
+    assert.ok(validateSubmission({...values,phone:'  '},kind).phone);
   }
 });
 test('payload sends only intended fields and the opaque challenge token',()=>{
-  assert.deepEqual(submissionPayload({...values,status:'published',role:'editor',secret:'bad'},'opaque'),{name:'Reader',email:'reader@example.test',title:'A local story',body:'Key facts and source links.',category:'News',consent:true,turnstileToken:'opaque'});
+  assert.deepEqual(submissionPayload({...values,status:'published',role:'editor',secret:'bad'},'opaque'),{name:'Reader',email:'reader@example.test',phone:'+234 803 123 4567',title:'A local story',body:'Key facts and source links.',category:'News',consent:true,turnstileToken:'opaque'});
   assert.equal(submissionPayload(values,'opaque','contact').subject,'A local story');
   assert.equal(submissionPayload(values,'opaque','contact').body,undefined);
 });

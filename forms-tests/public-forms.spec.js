@@ -18,6 +18,7 @@ async function complete(page){ await page.getByRole('button',{name:'Complete tes
 async function fill(page,kind='story'){
   await page.getByLabel('Your name').fill('A reader');
   await page.getByLabel('Email address').fill('reader@example.test');
+  await page.getByLabel('Phone number (required)',{exact:true}).fill('+234 803 123 4567');
   await page.getByLabel(kind==='story'?'Headline or story subject':'Subject',{exact:false}).fill('A story from the community');
   if(kind==='story') await page.getByLabel('Section (required)',{exact:true}).selectOption('News');
   await page.getByLabel(kind==='story'?'Your story or tip':'Your message').fill('The key facts and source links for the newsroom.');
@@ -32,7 +33,7 @@ test('accessible field errors focus the summary and never call the API',async({p
   await page.goto('/#submit');
   await submit(page).click();
   await expect(page.locator('#form-errors')).toBeFocused();
-  await expect(page.locator('#form-errors li')).toHaveCount(7);
+  await expect(page.locator('#form-errors li')).toHaveCount(8);
   await expect(page.getByLabel('Your name')).toHaveAttribute('aria-invalid','true');
   await page.locator('#form-errors').getByRole('link',{name:'Enter your name.',exact:true}).click();
   await expect(page.getByLabel('Your name')).toBeFocused();
@@ -180,7 +181,7 @@ test('late widget load after navigation does not mount into a detached page',asy
 });
 
 for (const kind of ['story','contact']) {
-  test(`${kind} form validates and sends an optional phone number`,async({page})=>{
+  test(`${kind} form requires, validates and sends a phone number`,async({page})=>{
     await widget(page);
     let calls=0;
     await page.route(kind==='story'?'**/api/public/submissions':'**/api/public/contact',route=>{
@@ -188,9 +189,13 @@ for (const kind of ['story','contact']) {
       return route.fulfill({status:202,json:{accepted:true}});
     });
     await page.goto(kind==='story'?'/#submit':'/#contact');await fill(page,kind);await complete(page);
-    const phone=page.getByLabel('Phone number (optional)',{exact:true});
+    const phone=page.getByLabel('Phone number (required)',{exact:true});
     await expect(phone).toHaveAttribute('type','tel');
     await expect(phone).toHaveAttribute('autocomplete','tel');
+    await expect(phone).toHaveAttribute('required','');
+    await phone.fill('');await page.locator('#send-submission').click();
+    await expect(page.locator('#error-phone')).toHaveText('Enter a phone number so the newsroom can contact you.');
+    expect(calls).toBe(0);
     await phone.fill('not a phone');
     await page.locator('#send-submission').click();
     await expect(phone).toHaveAttribute('aria-invalid','true');

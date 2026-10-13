@@ -9,7 +9,8 @@ export function validateSubmission(values, kind = 'story') {
   else if (values.name.trim().length > FIELD_LIMITS.name) errors.name = 'Use no more than 100 characters for your name.';
   if (!values.email?.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.email.trim()) || values.email.trim().length > FIELD_LIMITS.email) errors.email = 'Enter a valid email address so the newsroom can reply.';
   const phone = values.phone?.trim() || '';
-  if (phone && (phone.length > FIELD_LIMITS.phone || !/^\+?[\d ().-]+$/.test(phone) || !/^\d{7,15}$/.test(phone.replace(/\D/g, '')))) {
+  if (!phone) errors.phone = 'Enter a phone number so the newsroom can contact you.';
+  else if (phone.length > FIELD_LIMITS.phone || !/^\+?[\d ().-]+$/.test(phone) || !/^\d{7,15}$/.test(phone.replace(/\D/g, ''))) {
     errors.phone = 'Enter a phone number with 7–15 digits. Spaces, brackets, hyphens and a leading + are allowed.';
   }
   if (!values.title?.trim()) errors.title = kind === 'story' ? 'Enter a headline or a short description of your story.' : 'Enter a subject for your message.';
@@ -35,8 +36,7 @@ export function submissionEndpoint({ kind = 'story', cmsUrl, storyUrl, contactUr
 }
 
 export function submissionPayload(values, token, kind = 'story') {
-  const shared = { name: values.name.trim(), email: values.email.trim(), consent: values.consent === true, turnstileToken: token };
-  if (values.phone?.trim()) shared.phone = values.phone.trim();
+  const shared = { name: values.name.trim(), email: values.email.trim(), phone: values.phone?.trim() || '', consent: values.consent === true, turnstileToken: token };
   return kind === 'contact'
     ? { ...shared, subject: values.title.trim(), message: values.message.trim() }
     : { ...shared, title: values.title.trim(), category: values.category, body: values.message.trim() };
