@@ -178,3 +178,28 @@ test('late widget load after navigation does not mount into a detached page',asy
   await expect.poll(()=>page.evaluate(()=>Boolean(window.turnstile))).toBe(true);
   expect(await page.evaluate(()=>window.__widgetOptions)).toBeUndefined();
 });
+
+for (const kind of ['story','contact']) {
+  test(`${kind} form validates and sends an optional phone number`,async({page})=>{
+    await widget(page);
+    let calls=0;
+    await page.route(kind==='story'?'**/api/public/submissions':'**/api/public/contact',route=>{
+      calls++;expect(route.request().postDataJSON().phone).toBe('+234 803 123 4567');
+      return route.fulfill({status:202,json:{accepted:true}});
+    });
+    await page.goto(kind==='story'?'/#submit':'/#contact');await fill(page,kind);await complete(page);
+    const phone=page.getByLabel('Phone number (optional)',{exact:true});
+    await expect(phone).toHaveAttribute('type','tel');
+    await expect(phone).toHaveAttribute('autocomplete','tel');
+    await phone.fill('not a phone');
+    await page.locator('#send-submission').click();
+    await expect(phone).toHaveAttribute('aria-invalid','true');
+    await expect(page.locator('#error-phone')).toContainText('7–15 digits');
+    await expect(page.locator('#form-errors')).toBeFocused();
+    await page.locator('#form-errors a').click();await expect(phone).toBeFocused();
+    expect(calls).toBe(0);
+    await phone.fill('+234 803 123 4567');await page.locator('#send-submission').click();
+    await expect(page.locator('#form-result')).toBeVisible();expect(calls).toBe(1);
+    await expect(phone).toHaveValue('');
+  });
+}

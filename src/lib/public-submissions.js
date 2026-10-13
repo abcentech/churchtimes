@@ -1,13 +1,17 @@
 // Public-only transport. Backend fields are provisional and documented in
 // docs/public-forms.md. No authentication or secret verification belongs here.
 export const STORY_CATEGORIES = ['News', 'Features', 'Interviews', 'Business', 'Health & education', 'Opinion', 'Other'];
-export const FIELD_LIMITS = { name: 100, email: 254, title: 180, message: 12000 };
+export const FIELD_LIMITS = { name: 100, email: 254, phone: 32, title: 180, message: 12000 };
 
 export function validateSubmission(values, kind = 'story') {
   const errors = {};
   if (!values.name?.trim()) errors.name = 'Enter your name.';
   else if (values.name.trim().length > FIELD_LIMITS.name) errors.name = 'Use no more than 100 characters for your name.';
   if (!values.email?.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.email.trim()) || values.email.trim().length > FIELD_LIMITS.email) errors.email = 'Enter a valid email address so the newsroom can reply.';
+  const phone = values.phone?.trim() || '';
+  if (phone && (phone.length > FIELD_LIMITS.phone || !/^\+?[\d ().-]+$/.test(phone) || !/^\d{7,15}$/.test(phone.replace(/\D/g, '')))) {
+    errors.phone = 'Enter a phone number with 7–15 digits. Spaces, brackets, hyphens and a leading + are allowed.';
+  }
   if (!values.title?.trim()) errors.title = kind === 'story' ? 'Enter a headline or a short description of your story.' : 'Enter a subject for your message.';
   else if (values.title.trim().length > FIELD_LIMITS.title) errors.title = 'Use no more than 180 characters.';
   if (!values.message?.trim()) errors.message = kind === 'story' ? 'Tell us about your story.' : 'Enter your message.';
@@ -32,6 +36,7 @@ export function submissionEndpoint({ kind = 'story', cmsUrl, storyUrl, contactUr
 
 export function submissionPayload(values, token, kind = 'story') {
   const shared = { name: values.name.trim(), email: values.email.trim(), consent: values.consent === true, turnstileToken: token };
+  if (values.phone?.trim()) shared.phone = values.phone.trim();
   return kind === 'contact'
     ? { ...shared, subject: values.title.trim(), message: values.message.trim() }
     : { ...shared, title: values.title.trim(), category: values.category, body: values.message.trim() };
@@ -72,7 +77,7 @@ export async function sendPublicSubmission({ endpoint, values, token, kind = 'st
     if (response.status === 400 || response.status === 422) {
       const fields = {};
       // Translate known backend field names; never echo raw backend messages.
-      const mapping = { name:'name', email:'email', title:'title', subject:'title', body:'message', message:'message', category:'category', consent:'consent' };
+      const mapping = { name:'name', email:'email', phone:'phone', title:'title', subject:'title', body:'message', message:'message', category:'category', consent:'consent' };
       for (const key of Object.keys(result?.errors || {})) {
         if (mapping[key]) fields[mapping[key]] = 'Please check this field and try again.';
       }

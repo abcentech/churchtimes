@@ -20,6 +20,18 @@ test('endpoint configuration keeps contact separate and rejects insecure or cred
   assert.equal(submissionEndpoint({storyUrl:'javascript:alert(1)'}),'');
   assert.equal(submissionEndpoint({storyUrl:'http://127.0.0.1:3000/api'}),'http://127.0.0.1:3000/api');
 });
+test('optional phone accepts local and international formatting and is omitted when blank',()=>{
+  for (const phone of [undefined,'','  ','08031234567','+234 803 123 4567','+1 (202) 555-0123']) {
+    assert.equal(validateSubmission({...values,phone}).phone,undefined);
+  }
+  for (const phone of ['call me','123','1234567890123456','++2348031234567','1'.repeat(33)]) {
+    assert.ok(validateSubmission({...values,phone}).phone);
+  }
+  for (const kind of ['story','contact']) {
+    assert.equal(submissionPayload({...values,phone:' +234 803 123 4567 '},'opaque',kind).phone,'+234 803 123 4567');
+    assert.equal('phone' in submissionPayload({...values,phone:'  '},'opaque',kind),false);
+  }
+});
 test('payload sends only intended fields and the opaque challenge token',()=>{
   assert.deepEqual(submissionPayload({...values,status:'published',role:'editor',secret:'bad'},'opaque'),{name:'Reader',email:'reader@example.test',title:'A local story',body:'Key facts and source links.',category:'News',consent:true,turnstileToken:'opaque'});
   assert.equal(submissionPayload(values,'opaque','contact').subject,'A local story');
