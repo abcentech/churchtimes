@@ -124,6 +124,8 @@ const corsHeaders = (origin: string | null): Record<string, string> =>
         'Access-Control-Allow-Origin': origin,
         'Access-Control-Allow-Methods': 'POST, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type',
+        // Retry-After is not CORS-safelisted: without this a cross-origin script reads null on a 429.
+        'Access-Control-Expose-Headers': 'Retry-After',
         'Access-Control-Max-Age': '600',
         Vary: 'Origin',
       }

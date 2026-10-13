@@ -89,3 +89,94 @@ versions. The backend lane has not edited any frontend file.
   returned to anonymous readers.
 - Available but not yet rendered: `bylineName`, `corrections` (should be shown on corrected articles) and
   `featuredImage` (its `url` is relative to the CMS origin, so prefix it with the CMS base URL).
+
+---
+
+# Verified workflows (13 October 2026, contract v1.3)
+
+Every row below is replayed by `tests/integration/frontend-workflows.test.ts` with the exact requests the consumer code sends
+(file:line comments in the test) against the real REST handlers. Status key: **SUPPORTED** (backend and consumer agree),
+**CONSUMER-MISMATCH** (backend fine, the consumer request or reader must change; the test sends the correct request) and
+**BACKEND-GAP** (nothing to call). Consumer refs: PUB = `origin/feat/newsroom-mvp:src/lib/published-articles.js`; PR4 =
+`origin/agent/codex-public-forms`; PR2 = `origin/agent/gemini-ui-support` (committed `adapter.js` is mock-only and sends no
+credentials) plus the uncommitted `adapter.js` in the shared checkout (PR2w); PR5 = `origin/agent/homepage-advertising`.
+
+| Workflow | Status | Evidence (describe > it) |
+| --- | --- | --- |
+| Public: list published (`depth=1`, `sort=-publishedAt`, pagination, `nextPage`) | SUPPORTED | public site > lists published articles / paginates |
+| Public: read by slug (`where[slug][equals]`, `limit=1`); drafts never returned | SUPPORTED | public site > reads one article by slug |
+| Public: Lexical content renders in the site's renderer; categories; corrections | SUPPORTED (corrections not rendered yet) | serves Lexical content / lists categories / shows corrections |
+| Public: `featuredImage.url`, `sizes.card.url` (relative to the CMS unless `CMS_PUBLIC_URL` is set) | SUPPORTED (not rendered yet) | exposes featuredImage.url |
+| Public: CORS from the site origin, no wildcard, errors readable | SUPPORTED (origin must be in `CMS_CORS_ORIGINS`) | answers cross-origin |
+| Public: live timeline polling (`since=<nextSince>`, `Cache-Control: public, max-age=10`) | SUPPORTED (no consumer yet) | live event timeline polling |
+| Tip: PR4 story payload, Turnstile, 400/403/409/413/415/429, `Retry-After` readable cross-origin | SUPPORTED by backend; PR4 CONSUMER-MISMATCH (items below) | public forms (PR #4) > all |
+| Tip: PR2w payload (`categorySuggestion`, `website`) | SUPPORTED | accepts the PR #2 working-copy payload |
+| Tip: PR2 committed `createPublicSubmission` (mock fields) | CONSUMER-MISMATCH | PR #2 committed adapter |
+| Contact form (PR4 `#contact`, `subject`/`message`) | BACKEND-GAP: no contact endpoint; keep the form disabled | contact payload is NOT accepted |
+| Newsroom: CORS preflight, login, `me`, logout from `:5174` with `credentials:'include'` | SUPPORTED (same-site deployment requirement, see below) | login / me / logout cross-origin |
+| Newsroom: create draft | SUPPORTED with the contract body; PR2 sends mock fields | create draft |
+| Newsroom: submit, request changes, resubmit, approve, publish, correction | SUPPORTED; PR2 patch extras (`updatedAt`, `publishedAt`) are ignored | full path |
+| Newsroom: schedule, trusted-publisher own publish | SUPPORTED | schedule / trusted publisher |
+| Newsroom: submission queue, reject, convert | SUPPORTED; PR2 uses `approved`/`editorNotes` and local-only convert | submission queue and conversion |
+| Newsroom: live event create/update/approve | SUPPORTED; PR2 live view is local-only and omits `category` | live events and updates |
+| Newsroom: media upload (multipart) + featured image | SUPPORTED; PR2 `uploadMedia` is local-only | media upload |
+| Newsroom: category filter by slug (`adapter.js:415`) | CONSUMER-MISMATCH: now `400` (was 500); use the numeric ID | `tests/unit/queryGuards.test.ts` |
+| Homepage advertising (PR5) | No CMS call today (static JSON bootstrap). A live feed is a BACKEND-GAP | homepage advertising |
+
+Also run against a live `next dev` server with the **real** `published-articles.js`, `article-content.js` and
+`public-submissions.js` from PR #4 and Cloudflare's real Siteverify (test secret/token): list, slug lookup and rendering work;
+a submission is stored (`201`) but PR4's code reports `unconfirmed` (item 1 below).
+
+## Deployment requirements
+
+- **Same site for the newsroom.** The staff cookie is `SameSite=Lax`, host-only. It works from `http://localhost:5174` to
+  `http://localhost:3000` (same-site). In production the newsroom UI and CMS must share a registrable domain
+  (`newsroom.example.org` + `cms.example.org`) or sit behind one reverse proxy. A newsroom on `*.github.io`, `*.pages.dev` or any other
+  registrable domain cannot authenticate: login returns 200 but later requests are anonymous. We do not use `SameSite=None`.
+- **Origins** (all exact `scheme://host[:port]`, no wildcards): the newsroom origin in `CMS_CORS_ORIGINS` **and** `CMS_CSRF_ORIGINS`;
+  the public site origin in `CMS_CORS_ORIGINS` (article/live reads) and `PUBLIC_SUBMISSION_ORIGINS` (tips). The CMS origin itself is
+  always CSRF-allowed.
+- **Turnstile:** register the site key for the public hostname, set `TURNSTILE_ALLOWED_HOSTNAMES` to it and, if you pin the action,
+  `TURNSTILE_EXPECTED_ACTION=submit-story,public_story` (PR4 sends `public_story`; the list form is v1.3). PR4's contact action
+  `public_contact` is intentionally not listed.
+- Public CDN caching: API responses carry `Vary: Origin`; anonymous article lists have no `Cache-Control`, so cache them only with an
+  explicit short TTL on the public hostname, never on a path that can carry the staff cookie.
+
+## Action list per PR
+
+**PR #4 `agent/codex-public-forms` (public forms)**
+1. `src/lib/public-submissions.js:87` success check. The CMS answers `201 { ok: true, reference, message }`. Replace
+   `if (result?.accepted !== true && result?.status !== 'pending') throw ...unconfirmed` with
+   `if (response.status !== 201 || result?.ok !== true) throw new SubmissionError('unconfirmed')`.
+2. `public-submissions.js:76-84` field errors and Turnstile. `errors` is an **array** `[{ field, message }]`, not an object: use
+   `for (const e of result?.errors ?? []) if (mapping[e.field]) fields[mapping[e.field]] = ...`. There is no `code`
+   (`TURNSTILE_INVALID`, line 76): a Turnstile failure is `403` (or `400` for a missing token) with `errors[0].field === 'turnstileToken'`;
+   treat that as "reset the challenge". `403` for a wrong origin and `409` duplicate arrive as `{ errors: [{ message }] }` without `field`.
+3. `public-submissions.js:39-43` payload: send `categorySuggestion` (not `category`); `consent` is ignored by the CMS (keep it client-side);
+   `phone` is accepted (optional, up to 40 characters). Optionally send `location`.
+4. Contact form: there is no CMS endpoint (`subject`/`message` are rejected with 400). Keep it disabled or mail-to until one exists.
+5. `Retry-After` now works cross-origin (`Access-Control-Expose-Headers`); nothing to change in `retryDelay`.
+
+**PR #2 `agent/gemini-ui-support` (newsroom UI)**: everything in "Launch blockers" and "Field mapping" above still applies. Verified extras:
+1. The committed `adapter.js` is mock-first and sends no `credentials`; the working copy adds `credentials:'include'` for login/me/logout and
+   article/submission GETs, which is correct. Every other live call (`saveArticle`, `updateArticleStatus`, `deleteArticle`) must also use
+   `credentials: 'include'` and must not fall back to the mock when `!res.ok`.
+2. `adapter.js:202` expects `429`/`423` for a locked account: the CMS answers `401` with "This user is locked..." (and `429` only for the
+   per-IP limit). Show `errors[0].message` for both.
+3. `adapter.js:415` `where[category][equals]=<slug>` is now `400`; use the numeric ID from `GET /api/categories`.
+4. PATCH bodies: send only `{ status, reviewNotes }` (editor-only note) or the changed fields; `updatedAt`/`publishedAt` are ignored.
+   `saveArticle` must map `body` to `content` (Lexical), `standfirst` to `excerpt`, and drop `id`/`author`/`featuredImage` objects.
+5. Submissions: statuses are `new|under_review|accepted|rejected|converted` with `reviewerNotes`; convert is
+   `POST /api/submissions/:id/convert { category }` and returns `{ article: { id, slug } }`.
+6. Live events need `category`; live updates are `{ event, body, occurredAt }`. Media upload is multipart (`file` + `_payload`); do not set
+   `Content-Type` yourself.
+7. Deploy the newsroom on the same registrable domain as the CMS (see above).
+
+**PR #5 `agent/homepage-advertising`**: no CMS dependency today and nothing breaks. `docs/advertising-contract.md` proposes
+`GET /api/public/advertising`; the backend has **no advertising collection or endpoint**. A live feed would need a `campaigns` collection
+(sponsor, alt, destination, schedule, priority, placements, creatives as media), an editor-only workflow, and a public read projection with
+schedule enforcement and cache headers. That is a product and security decision (payments, creative approval), so it is not built here.
+
+**Public site (`feat/newsroom-mvp`, `src/lib/published-articles.js`)**: request shape, filtering, pagination and the Lexical renderer
+match the contract. Not yet used but available: `featuredImage` (prefix a relative `url` with the CMS origin unless `CMS_PUBLIC_URL` is set),
+`bylineName`, `corrections`, categories and the live timeline. Add the site origin to `CMS_CORS_ORIGINS`.
