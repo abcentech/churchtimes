@@ -129,9 +129,9 @@ publication permissions. CMS availability and latency were tested with mocks,
 not a live service. No new backend infrastructure or deployment caching policy
 was introduced; hashed assets can use deployment-supported cache headers later.
 
-GitHub's API is currently denied by the environment egress proxy, although Git
-fetch works. The network draft adds `api.github.com`; applying that setting is
-required to create and inspect the requested PR. Git refs confirm the frontend
-changes are not yet in the integration branch. After PR #1 merges, update this
-branch against the integration branch and verify that the PR diff contains only
-these quality changes; do not merge the PR automatically.
+[PR #3](https://github.com/abcentech/churchtimes/pull/3) is open for review,
+targeting `feat/newsroom-mvp` from `agent/codex-mobile-quality`. GitHub API access
+was restored after adding `api.github.com` to the environment network draft.
+The frontend changes are not yet in the integration branch. After PR #1 merges,
+update this branch against the integration branch and verify that the PR diff
+contains only these quality changes; do not merge the PR automatically.
