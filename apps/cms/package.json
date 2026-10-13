@@ -27,6 +27,7 @@
     "test:e2e:api": "vitest run -c vitest.e2e.config.ts",
     "test:e2e:browser": "playwright test -c playwright.config.ts",
     "test:e2e:browser:install": "playwright install chromium",
+    "test:e2e:cross-app": "playwright test -c playwright.cross-app.config.ts",
     "test:e2e": "npm run test:e2e:api && npm run test:e2e:browser"
   },
   "dependencies": {

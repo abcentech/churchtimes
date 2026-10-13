@@ -341,3 +341,64 @@ MFA for admin/editor-in-chief is not implemented.
 Staging is disposable and touches nothing outside `apps/cms/.staging/` (and `apps/cms/media` for transient uploads): `npm run staging:down` stops the server and PostgreSQL (by recorded PIDs;
 `taskkill /T /F` on Windows, process group on POSIX) and deletes `.staging/`. There is no production, WordPress, DNS or Truehost interaction. To roll back the code change itself: revert
 `src/lib/securityConfig.ts` (the `CMS_ALLOW_INSECURE_LOCAL_STAGING` flag; production behaviour is identical without it) together with `tests/unit/securityConfig.test.ts`. Never set the flag in a real deployment: it will refuse to start there anyway.
+
+## 13. Cross-app real UI E2E
+
+Answers issue #16 ("one real browser cross-app scenario ... actual newsroom and public UIs"). **Real UI, no mocks**: Chromium drives the compiled public
+site (repository root, `vite build`) and the compiled newsroom SPA (`apps/newsroom`, `vite build`) against a real Payload CMS (`next start` on the existing
+production `.next`) and a disposable embedded PostgreSQL. The real Cloudflare Turnstile widget (always-pass TEST site key
+`1x00000000000000000000AA`, network required) produces the token; the CMS verifies it with Cloudflare's always-pass TEST secret. A test whose title
+contains **HARNESS** is not a pure UI path (only one: an in-flight request edit, see below). Nothing here is the old mocked harness of section 7.1; the
+browser lane in section 7.1 still tests cookies/CORS with static pages and is not a UI E2E.
+
+```bash
+cd apps/cms
+npm run test:e2e:cross-app          # = playwright test -c playwright.cross-app.config.ts ; never runs `next build` (needs apps/cms/.next)
+# faster developer loop (stack stays up between runs):
+npx tsx e2e/cross-app/dev-stack.ts <scratch>/xapp.json                      # terminal 1, stop with Ctrl+C
+XAPP_ATTACH=<scratch>/xapp.json npx playwright test -c playwright.cross-app.config.ts 02-newsroom   # terminal 2
+```
+
+Ports (this lane only): CMS 3400 (recording proxy) to 3401 (`next start`), PostgreSQL 55435, public site 5373, newsroom 5374, 5375 (second public build, known-gap
+evidence). Origins: `http://cms|newsroom|www.churchtimes.localhost:<port>` (same-site, `--host-resolver-rules`). `XAPP_KEEP_EVIDENCE=0` skips writing `docs/evidence/cross-app-*`.
+Instance-only settings: `AUTH_LOGIN_RATE_LIMIT`, `SUBMISSION_RATE_LIMIT`, `SUBMISSION_EMAIL_RATE_LIMIT` raised to 500 (browsers send no `X-Forwarded-For`).
+Uploaded test images land in `apps/cms/media` with a per-run prefix and are removed on teardown.
+
+### Journeys (files in `e2e/cross-app/`, run for `desktop-chrome` 1280x800 and `android-pixel7` 412x915)
+
+| File | Scenario | What is asserted |
+| --- | --- | --- |
+| `01-public-tip.spec.ts` | B (reader), C (public failures) | real Turnstile iframe from challenges.cloudflare.com verifies; real form shows the receipt `SUB-xxxxxxxx`; the same reference exists in PostgreSQL with `status=new`; tip is absent from the public API and Latest list. Duplicate: CMS 409 shown as an error, no receipt, one row. **HARNESS tamper:** token blanked in flight (the real widget cannot fail with the test key) gives CMS 400 shown as "Verification was not accepted", no receipt. Incomplete form sends nothing. |
+| `02-newsroom-article.spec.ts` | A | reporter logs in (LIVE CMS banner, no mock store), writes title/standfirst/category/body, uploads a generated PNG through the media picker (multipart `POST /api/media` 201), saves (server `draft`), submits (server `in_review`); approve/publish buttons absent AND direct `PATCH` from the newsroom origin returns 403 (status unchanged); section editor inspects, approves, publishes (`publishedAt` set); fresh anonymous context sees card + article page, `naturalWidth > 0` for card and hero image, no draft/staff-only fields, no cookie sent by the public origin. |
+| `03-newsroom-tip-review.spec.ts` | B (newsroom) | editor finds the tip by its reference in Reader Tips, converts it (`POST /api/submissions/:id/convert`), editor opens the new draft; submission `converted`, article `draft`; anonymous API 404, public site "Article unavailable". Reporter sees "only editors", direct `GET /api/submissions` refused. |
+| `04-newsroom-unauthorized.spec.ts` | C | logged-out newsroom shows only sign-in on every route and loads no protected data; wrong password shows the server error; logout ends the server session; stale editor save forbidden by the CMS shows the CMS error (no success toast, nothing changed); non-image upload shows the CMS rejection; revoked session on a write is refused with nothing created; revoked session on read-only navigation returns to sign-in ("Your session has ended") and the server agrees `user: null`. |
+| `05-public-gap.spec.ts` | known gap (public site) | `test.fail()` markers (see below): green while the gap exists, red when it is fixed. |
+| `06-newsroom-mobile-layout.spec.ts` | D | no newsroom view forces horizontal page scrolling at the project viewport (`KNOWN_OVERFLOW` lists any view that still does). |
+
+Evidence: `docs/evidence/cross-app-2026-10-13.txt` (per-step log, server-side checks, results), headline screenshots `docs/evidence/cross-app-<scenario>-<project>.png`,
+every step in `docs/evidence/cross-app-steps/`. Screenshots contain synthetic data only (the login screenshot is taken before any password is typed).
+
+### Frontend gaps found (owners: public-site lane and newsroom lane)
+
+1. **Public site: the story form is disabled for `VITE_PUBLIC_CMS_URL=http://cms.churchtimes.localhost:<port>`** (the value in section 9 A). `src/lib/public-submissions.js`
+   `submissionEndpoint()` accepts `http:` only for hostnames `localhost`, `127.0.0.1`, `[::1]`; the form then shows "Online sending is not available yet", `#send-submission` is
+   disabled and no Turnstile widget mounts. Evidence: `05-public-gap.spec.ts`. This lane builds the public site with `VITE_PUBLIC_SUBMISSIONS_URL=http://localhost:3400/api/public/submissions`
+   (same CMS) so tips can be tested; the section 9 checklist item "Submit a tip" fails as written. Fix: allow `*.localhost` (or any host under an explicit dev flag).
+2. **Newsroom: a revoked/expired session is not noticed on read-only navigation.** Payload turns a dead token into an anonymous request, so `GET /api/articles` answers 200 (published
+   only) and `/api/users/me` answers `user: null`; the SPA only reacts to 401/403, so after "revoke sessions" the Review view renders with the signed-in chrome and an empty "In Review 0"
+   queue. Writes were refused correctly and shown as errors. **Fixed on the integration branch**: the router calls `CmsAdapter.verifySession()` (`GET /api/users/me`) before rendering
+   every staff view and signs out on `user: null`; the test in `04` is now a normal assertion (was `test.fail()`).
+3. **Newsroom, mobile (Pixel 7, 412 px): the Review view forced a 544 px layout** (`.review-tabs` did not wrap or scroll), pushing the bottom nav and every modal wider than the screen, so
+   pointer clicks on inspect/approve/publish/convert were physically blocked (found in this lane's first mobile run; steps then used keyboard activation, logged as "pointer click was blocked").
+   **Fixed by the newsroom lane during this work**: `06-newsroom-mobile-layout.spec.ts` now asserts no horizontal overflow for all five views at 412 px and the final run needs no keyboard fallback.
+   (The Dashboard table is wider than the screen but scroll-contained.)
+4. Minor: the "Log out" button text was dark on the dark header. **Fixed on the integration branch** (`.session-chip .btn-outline` in `apps/newsroom/styles/newsroom.css`).
+
+Limits: Turnstile action/hostname enforcement is not exercised (Cloudflare's test secret returns no `action`, so a non-empty `TURNSTILE_EXPECTED_ACTION` would fail closed; the
+CMS unit tests cover it with a stubbed transport). Scheduled publishing, live coverage UI, correction notes and Firefox/Safari are not covered. Chromium only.
+
+### Teardown message `next start exited with code 1` (e2e/browser stack)
+
+Not a crash. Windows `taskkill /T /F` (and any forced kill) gives the killed process exit code 1; a healthy idle `node` killed the same way also exits 1. Before the kill the server was
+still running with 0 error lines in its output (16/16 browser tests passed). `e2e/browser/support/stack.ts` and the new stack now log "next start stopped by teardown (code 1; non-zero
+after a forced kill is expected, not a crash)" for exits during teardown and `UNEXPECTED: next start exited on its own` plus the output tail for any earlier exit.

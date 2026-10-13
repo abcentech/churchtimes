@@ -53,6 +53,10 @@ let cms: ChildProcess | undefined
 let recorder: Recorder | undefined
 let harnesses: Harness[] = []
 let tmpDir: string | undefined
+/** Set by stopStack() just before the forced kill, so an exit during teardown is not reported as a crash. */
+let cmsStopping = false
+/** Last output of `next start` (kept so teardown can say whether the server logged an error before the kill). */
+const cmsTail: string[] = []
 
 const log = (...a: unknown[]) => console.log('[e2e-stack]', ...a)
 
@@ -204,14 +208,25 @@ export async function startStack(): Promise<E2EConfig> {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   })
-  const cmsOut: string[] = []
+  const cmsOut = cmsTail
+  cmsOut.length = 0
+  cmsStopping = false
   const keep = (b: Buffer) => {
     cmsOut.push(b.toString())
     if (cmsOut.length > 200) cmsOut.shift()
   }
   cms.stdout?.on('data', keep)
   cms.stderr?.on('data', keep)
-  cms.on('exit', (code) => log('next start exited with code', code))
+  cms.on('exit', (code, signal) => {
+    const how = signal ? `signal ${signal}` : `code ${code}`
+    if (cmsStopping) {
+      // taskkill /T /F (Windows) and SIGKILL (POSIX) are forced kills: a non-zero code / signal is the expected result.
+      log(`next start stopped by teardown (${how}; a non-zero code after a forced kill is expected, not a crash)`)
+    } else {
+      log(`UNEXPECTED: next start exited on its own with ${how} while the suite was running`)
+      log('--- next start output (tail) ---\n' + cmsOut.join('').slice(-2000))
+    }
+  })
   const state: State = { dir: tmpDir, cmsPid: cms.pid }
   fs.writeFileSync(path.join(tmpDir, 'state.json'), JSON.stringify(state))
 
@@ -256,6 +271,15 @@ export async function stopStack(): Promise<void> {
   await recorder?.close()
   recorder = undefined
   if (cms) {
+    // Before the forced kill, record whether the server was still running and had logged any error. This
+    // separates "killed while serving normally" (what the exit code then means) from a real crash.
+    const alive = cms.exitCode === null && cms.signalCode === null
+    const errors = cmsTail
+      .join('')
+      .split(/\r?\n/)
+      .filter((l) => /\b(error|fatal|unhandled|uncaught|ELIFECYCLE)\b/i.test(l)).length
+    log(`next start before teardown: ${alive ? 'still running' : 'ALREADY EXITED'}; error-looking lines in its output: ${errors}`)
+    cmsStopping = true
     killTree(cms.pid)
     cms = undefined
   }

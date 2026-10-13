@@ -1,0 +1,72 @@
+/** Minimal static file server for a Vite build output directory (no SPA fallback: both apps use hash routes). */
+import fs from 'node:fs'
+import http from 'node:http'
+import type { Socket } from 'node:net'
+import path from 'node:path'
+
+const MIME: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.avif': 'image/avif',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ico': 'image/x-icon',
+  '.txt': 'text/plain; charset=utf-8',
+  '.xml': 'application/xml',
+}
+
+export type StaticServer = { port: number; close: () => Promise<void> }
+
+export function startStaticServer(root: string, port: number): Promise<StaticServer> {
+  const base = path.resolve(root)
+  const sockets = new Set<Socket>()
+  const server = http.createServer((req, res) => {
+    let rel = '/'
+    try {
+      rel = decodeURIComponent(new URL(req.url ?? '/', 'http://x').pathname)
+    } catch {
+      res.writeHead(400).end()
+      return
+    }
+    let file = path.resolve(base, '.' + rel)
+    if (file !== base && !file.startsWith(base + path.sep)) {
+      res.writeHead(403).end()
+      return
+    }
+    if (fs.existsSync(file) && fs.statSync(file).isDirectory()) file = path.join(file, 'index.html')
+    if (!fs.existsSync(file)) {
+      res.writeHead(404, { 'content-type': 'text/plain' }).end('not found')
+      return
+    }
+    res.writeHead(200, {
+      'content-type': MIME[path.extname(file).toLowerCase()] ?? 'application/octet-stream',
+      'cache-control': 'no-store',
+    })
+    fs.createReadStream(file).pipe(res)
+  })
+  server.on('connection', (s) => {
+    sockets.add(s)
+    s.on('close', () => sockets.delete(s))
+  })
+  return new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(port, '127.0.0.1', () =>
+      resolve({
+        port,
+        close: () =>
+          new Promise<void>((r) => {
+            for (const s of sockets) s.destroy()
+            server.close(() => r())
+          }),
+      }),
+    )
+  })
+}
