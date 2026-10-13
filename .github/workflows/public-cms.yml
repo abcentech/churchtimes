@@ -1,5 +1,15 @@
 name: Public CMS integration
 on:
+  push:
+    branches: [feat/newsroom-mvp]
+    paths:
+      - 'src/**'
+      - 'apps/cms/**'
+      - 'cms-integration-tests/**'
+      - 'tools/*public-cms*'
+      - 'playwright.cms.config.js'
+      - 'package*.json'
+      - '.github/workflows/public-cms.yml'
   pull_request:
     branches: [feat/newsroom-mvp]
     paths:
