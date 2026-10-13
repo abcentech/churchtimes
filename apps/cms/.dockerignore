@@ -1,0 +1,11 @@
+node_modules
+.next
+.env
+.env.*
+.local-postgres
+media
+coverage
+*.log
+*.tsbuildinfo
+next-env.d.ts
+.git

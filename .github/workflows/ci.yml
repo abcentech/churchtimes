@@ -1,7 +1,7 @@
 name: Website checks
 on:
   push:
-    branches: [main]
+    branches: [main, feat/newsroom-mvp]
   pull_request:
 permissions:
   contents: read
@@ -15,6 +15,10 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      - run: npm run test:unit
       - run: npm run build
+      - run: npm run check:pages
       - run: npx playwright install --with-deps chromium
       - run: npm test -- --workers=2
+      - run: npm run test:newsroom -- --workers=2
+      - run: npm run test:forms -- --workers=2
