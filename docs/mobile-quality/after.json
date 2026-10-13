@@ -1,0 +1,472 @@
+{
+  "phase": "after",
+  "layouts": [
+    {
+      "width": 320,
+      "route": "home",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 320,
+      "route": "search/faith",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 320,
+      "route": "saved",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 320,
+      "route": "contact",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 320,
+      "route": "advertise",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 320,
+      "route": "latest",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 320,
+      "route": "story/sowore-holds-private-meeting-with-pastor-adeboye-recounts-his-encounter",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 360,
+      "route": "home",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 360,
+      "route": "search/faith",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 360,
+      "route": "saved",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 360,
+      "route": "contact",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 360,
+      "route": "advertise",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 360,
+      "route": "latest",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 360,
+      "route": "story/sowore-holds-private-meeting-with-pastor-adeboye-recounts-his-encounter",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 390,
+      "route": "home",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 390,
+      "route": "search/faith",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 390,
+      "route": "saved",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 390,
+      "route": "contact",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 390,
+      "route": "advertise",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 390,
+      "route": "latest",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 390,
+      "route": "story/sowore-holds-private-meeting-with-pastor-adeboye-recounts-his-encounter",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 430,
+      "route": "home",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 430,
+      "route": "search/faith",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 430,
+      "route": "saved",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 430,
+      "route": "contact",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 430,
+      "route": "advertise",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 430,
+      "route": "latest",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 430,
+      "route": "story/sowore-holds-private-meeting-with-pastor-adeboye-recounts-his-encounter",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 768,
+      "route": "home",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 768,
+      "route": "search/faith",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 768,
+      "route": "saved",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 768,
+      "route": "contact",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 768,
+      "route": "advertise",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 768,
+      "route": "latest",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 768,
+      "route": "story/sowore-holds-private-meeting-with-pastor-adeboye-recounts-his-encounter",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 1024,
+      "route": "home",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 1024,
+      "route": "search/faith",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 1024,
+      "route": "saved",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 1024,
+      "route": "contact",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 1024,
+      "route": "advertise",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 1024,
+      "route": "latest",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 1024,
+      "route": "story/sowore-holds-private-meeting-with-pastor-adeboye-recounts-his-encounter",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 1440,
+      "route": "home",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 1440,
+      "route": "search/faith",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 1440,
+      "route": "saved",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 1440,
+      "route": "contact",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 1440,
+      "route": "advertise",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 1440,
+      "route": "latest",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 1440,
+      "route": "story/sowore-holds-private-meeting-with-pastor-adeboye-recounts-his-encounter",
+      "overflow": 0,
+      "outside": []
+    }
+  ],
+  "accessibility": [
+    {
+      "route": "home",
+      "violations": []
+    },
+    {
+      "route": "contact",
+      "violations": []
+    },
+    {
+      "route": "advertise",
+      "violations": []
+    },
+    {
+      "route": "search/faith",
+      "violations": []
+    }
+  ],
+  "performance": [
+    {
+      "lcp": 2420,
+      "cls": 0.0007848810089584632,
+      "resources": [
+        {
+          "name": "index-mj9kTpwQ.js",
+          "bytes": 19691
+        },
+        {
+          "name": "index-DXFLG9uT.css",
+          "bytes": 9401
+        },
+        {
+          "name": "dm-sans-latin-wght-normal-Xz1IZZA0.woff2",
+          "bytes": 36932
+        },
+        {
+          "name": "newsreader-latin-wght-normal-CCVVNp6i.woff2",
+          "bytes": 58084
+        },
+        {
+          "name": "newsreader-latin-wght-italic-Bxi8ein9.woff2",
+          "bytes": 64520
+        },
+        {
+          "name": "29259-640.webp",
+          "bytes": 48582
+        },
+        {
+          "name": "29276-320.webp",
+          "bytes": 9968
+        },
+        {
+          "name": "29267-320.webp",
+          "bytes": 24298
+        },
+        {
+          "name": "29264-250.webp",
+          "bytes": 9408
+        },
+        {
+          "name": "29276-640.webp",
+          "bytes": 23288
+        },
+        {
+          "name": "favicon.svg",
+          "bytes": 270
+        }
+      ],
+      "totalBytes": 304442
+    },
+    {
+      "lcp": 2448,
+      "cls": 0.0007848810089584632,
+      "resources": [
+        {
+          "name": "index-mj9kTpwQ.js",
+          "bytes": 19691
+        },
+        {
+          "name": "index-DXFLG9uT.css",
+          "bytes": 9401
+        },
+        {
+          "name": "dm-sans-latin-wght-normal-Xz1IZZA0.woff2",
+          "bytes": 36932
+        },
+        {
+          "name": "newsreader-latin-wght-normal-CCVVNp6i.woff2",
+          "bytes": 58084
+        },
+        {
+          "name": "newsreader-latin-wght-italic-Bxi8ein9.woff2",
+          "bytes": 64520
+        },
+        {
+          "name": "29259-640.webp",
+          "bytes": 48582
+        },
+        {
+          "name": "29276-320.webp",
+          "bytes": 9968
+        },
+        {
+          "name": "29267-320.webp",
+          "bytes": 24298
+        },
+        {
+          "name": "29264-250.webp",
+          "bytes": 9408
+        },
+        {
+          "name": "29276-640.webp",
+          "bytes": 23288
+        },
+        {
+          "name": "favicon.svg",
+          "bytes": 270
+        }
+      ],
+      "totalBytes": 304442
+    },
+    {
+      "lcp": 2472,
+      "cls": 0.0007848810089584632,
+      "resources": [
+        {
+          "name": "index-mj9kTpwQ.js",
+          "bytes": 19691
+        },
+        {
+          "name": "index-DXFLG9uT.css",
+          "bytes": 9401
+        },
+        {
+          "name": "dm-sans-latin-wght-normal-Xz1IZZA0.woff2",
+          "bytes": 36932
+        },
+        {
+          "name": "newsreader-latin-wght-normal-CCVVNp6i.woff2",
+          "bytes": 58084
+        },
+        {
+          "name": "newsreader-latin-wght-italic-Bxi8ein9.woff2",
+          "bytes": 64520
+        },
+        {
+          "name": "29259-640.webp",
+          "bytes": 48582
+        },
+        {
+          "name": "29276-320.webp",
+          "bytes": 9968
+        },
+        {
+          "name": "29267-320.webp",
+          "bytes": 24298
+        },
+        {
+          "name": "29264-250.webp",
+          "bytes": 9408
+        },
+        {
+          "name": "29276-640.webp",
+          "bytes": 23288
+        },
+        {
+          "name": "favicon.svg",
+          "bytes": 270
+        }
+      ],
+      "totalBytes": 304442
+    }
+  ]
+}

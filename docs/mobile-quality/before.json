@@ -1,0 +1,514 @@
+{
+  "phase": "before",
+  "layouts": [
+    {
+      "width": 320,
+      "route": "home",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 320,
+      "route": "search/faith",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 320,
+      "route": "saved",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 320,
+      "route": "contact",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 320,
+      "route": "advertise",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 320,
+      "route": "latest",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 320,
+      "route": "story/sowore-holds-private-meeting-with-pastor-adeboye-recounts-his-encounter",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 360,
+      "route": "home",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 360,
+      "route": "search/faith",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 360,
+      "route": "saved",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 360,
+      "route": "contact",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 360,
+      "route": "advertise",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 360,
+      "route": "latest",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 360,
+      "route": "story/sowore-holds-private-meeting-with-pastor-adeboye-recounts-his-encounter",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 390,
+      "route": "home",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 390,
+      "route": "search/faith",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 390,
+      "route": "saved",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 390,
+      "route": "contact",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 390,
+      "route": "advertise",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 390,
+      "route": "latest",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 390,
+      "route": "story/sowore-holds-private-meeting-with-pastor-adeboye-recounts-his-encounter",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 430,
+      "route": "home",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 430,
+      "route": "search/faith",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 430,
+      "route": "saved",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 430,
+      "route": "contact",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 430,
+      "route": "advertise",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 430,
+      "route": "latest",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 430,
+      "route": "story/sowore-holds-private-meeting-with-pastor-adeboye-recounts-his-encounter",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 768,
+      "route": "home",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 768,
+      "route": "search/faith",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 768,
+      "route": "saved",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 768,
+      "route": "contact",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 768,
+      "route": "advertise",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 768,
+      "route": "latest",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 768,
+      "route": "story/sowore-holds-private-meeting-with-pastor-adeboye-recounts-his-encounter",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 1024,
+      "route": "home",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 1024,
+      "route": "search/faith",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 1024,
+      "route": "saved",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 1024,
+      "route": "contact",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 1024,
+      "route": "advertise",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 1024,
+      "route": "latest",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 1024,
+      "route": "story/sowore-holds-private-meeting-with-pastor-adeboye-recounts-his-encounter",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 1440,
+      "route": "home",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 1440,
+      "route": "search/faith",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 1440,
+      "route": "saved",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 1440,
+      "route": "contact",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 1440,
+      "route": "advertise",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 1440,
+      "route": "latest",
+      "overflow": 0,
+      "outside": []
+    },
+    {
+      "width": 1440,
+      "route": "story/sowore-holds-private-meeting-with-pastor-adeboye-recounts-his-encounter",
+      "overflow": 0,
+      "outside": []
+    }
+  ],
+  "accessibility": [
+    {
+      "route": "home",
+      "violations": [
+        {
+          "id": "color-contrast",
+          "nodes": [
+            {
+              "target": [
+                ".perspective-feature > div > p"
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.36 (foreground color: #657071, background color: #eceee6, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+            },
+            {
+              "target": [
+                "article:nth-child(1) > .perspective-number"
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 1.88 (foreground color: #b1b7ac, background color: #f7f5ef, font size: 26.3pt (35px), font weight: normal). Expected contrast ratio of 3:1"
+            },
+            {
+              "target": [
+                "article:nth-child(2) > .perspective-number"
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 1.88 (foreground color: #b1b7ac, background color: #f7f5ef, font size: 26.3pt (35px), font weight: normal). Expected contrast ratio of 3:1"
+            },
+            {
+              "target": [
+                "article:nth-child(3) > .perspective-number"
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 1.88 (foreground color: #b1b7ac, background color: #f7f5ef, font size: 26.3pt (35px), font weight: normal). Expected contrast ratio of 3:1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "route": "contact",
+      "violations": [
+        {
+          "id": "color-contrast",
+          "nodes": [
+            {
+              "target": [
+                ".contact-callout > div > p"
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.27 (foreground color: #657071, background color: #e9ece4, font size: 9.0pt (12px), font weight: normal). Expected contrast ratio of 4.5:1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "route": "advertise",
+      "violations": [
+        {
+          "id": "color-contrast",
+          "nodes": [
+            {
+              "target": [
+                ".advert-card > small"
+              ],
+              "summary": "Fix any of the following:\n  Element has insufficient color contrast of 4.27 (foreground color: #657071, background color: #e9ece4, font size: 6.8pt (9px), font weight: normal). Expected contrast ratio of 4.5:1"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "route": "search/faith",
+      "violations": []
+    }
+  ],
+  "performance": [
+    {
+      "lcp": 4008,
+      "cls": 0.0007848810089584632,
+      "resources": [
+        {
+          "name": "index-D8Su_hKj.js",
+          "bytes": 18655
+        },
+        {
+          "name": "index-BYlbf4b5.css",
+          "bytes": 8895
+        },
+        {
+          "name": "dm-sans-latin-wght-normal-Xz1IZZA0.woff2",
+          "bytes": 36932
+        },
+        {
+          "name": "newsreader-latin-wght-normal-CCVVNp6i.woff2",
+          "bytes": 58084
+        },
+        {
+          "name": "newsreader-latin-wght-italic-Bxi8ein9.woff2",
+          "bytes": 64520
+        },
+        {
+          "name": "29259.jpg",
+          "bytes": 125995
+        },
+        {
+          "name": "29276.jpg",
+          "bytes": 169176
+        },
+        {
+          "name": "29264.jpg",
+          "bytes": 15481
+        },
+        {
+          "name": "29267.jpg",
+          "bytes": 73226
+        },
+        {
+          "name": "favicon.svg",
+          "bytes": 270
+        }
+      ],
+      "totalBytes": 571234
+    },
+    {
+      "lcp": 4012,
+      "cls": 0.0007848810089584632,
+      "resources": [
+        {
+          "name": "index-D8Su_hKj.js",
+          "bytes": 18655
+        },
+        {
+          "name": "index-BYlbf4b5.css",
+          "bytes": 8895
+        },
+        {
+          "name": "dm-sans-latin-wght-normal-Xz1IZZA0.woff2",
+          "bytes": 36932
+        },
+        {
+          "name": "newsreader-latin-wght-normal-CCVVNp6i.woff2",
+          "bytes": 58084
+        },
+        {
+          "name": "newsreader-latin-wght-italic-Bxi8ein9.woff2",
+          "bytes": 64520
+        },
+        {
+          "name": "29259.jpg",
+          "bytes": 125995
+        },
+        {
+          "name": "29276.jpg",
+          "bytes": 169176
+        },
+        {
+          "name": "29267.jpg",
+          "bytes": 73226
+        },
+        {
+          "name": "29264.jpg",
+          "bytes": 15481
+        },
+        {
+          "name": "favicon.svg",
+          "bytes": 270
+        }
+      ],
+      "totalBytes": 571234
+    },
+    {
+      "lcp": 4028,
+      "cls": 0.0007848810089584632,
+      "resources": [
+        {
+          "name": "index-D8Su_hKj.js",
+          "bytes": 18655
+        },
+        {
+          "name": "index-BYlbf4b5.css",
+          "bytes": 8895
+        },
+        {
+          "name": "dm-sans-latin-wght-normal-Xz1IZZA0.woff2",
+          "bytes": 36932
+        },
+        {
+          "name": "newsreader-latin-wght-normal-CCVVNp6i.woff2",
+          "bytes": 58084
+        },
+        {
+          "name": "newsreader-latin-wght-italic-Bxi8ein9.woff2",
+          "bytes": 64520
+        },
+        {
+          "name": "29259.jpg",
+          "bytes": 125995
+        },
+        {
+          "name": "29276.jpg",
+          "bytes": 169176
+        },
+        {
+          "name": "29267.jpg",
+          "bytes": 73226
+        },
+        {
+          "name": "29264.jpg",
+          "bytes": 15481
+        },
+        {
+          "name": "favicon.svg",
+          "bytes": 270
+        }
+      ],
+      "totalBytes": 571234
+    }
+  ]
+}
