@@ -25,24 +25,30 @@ The homepage adds up to three published reports when configured; an unavailable
 CMS leaves the current edition intact. CMS stories are not yet included in the
 static edition's search or reading list.
 
-## Contract awaiting backend verification
+## Verified CMS contract v1.2
 
-Only the sprint's API v0 and existing frontend adapter were available when this
-change was implemented. Browser integration is tested against fixtures, **not a
-running Payload backend**. Confirm these fields with the backend owner before
-enabling the feed on a deployed site:
+The adapter follows [the merged CMS API contract](../apps/cms/docs/api-contracts.md).
+Real Payload REST handlers and PostgreSQL are exercised by `npm run test:cms`;
+local Next.js dev-server reads were also verified. No staff credentials are sent
+by public views.
 
 - `GET /api/articles` returns Payload pagination (`docs`, `hasNextPage`, `nextPage`).
 - The adapter sends `where[status][equals]=published`, `sort=-publishedAt`,
   `depth=1`, `limit`, and `page`. Article lookup adds `where[slug][equals]`.
-- Documents require `status: published`, a lowercase hyphenated `slug`, and `title`.
-- Optional fields: `excerpt` (or `summary`), `publishedAt` (ISO timestamp),
-  `category` (string or a populated relation with `title`), and `content`.
-- `content` supports plain text or Payload Lexical `{ root: ... }`. The renderer
-  supports paragraphs, headings (h2–h4), bold/italic text, lists, quotes and
-  absolute HTTP(S)/mailto links. Unsupported nodes, raw HTML and uploads are
-  omitted. Images, author relations, internal document links and live updates
-  need a confirmed contract before rendering.
+- Records require published status, a valid slug and title. Public fields include
+  `excerpt`, `publishedAt`, populated `category.title`, `bylineName`, `content`,
+  `featuredImage`, `corrections` and the original `legacyUrl`.
+- Featured/card/hero and populated Lexical media URLs are resolved against the CMS
+  origin. Only HTTP(S) `/api/media/file/` images from that origin with supported
+  JPEG/PNG/WebP MIME are rendered. SVG, HTML, unsafe/foreign URLs and unpopulated
+  upload IDs are dropped. Images carry alt text, intrinsic dimensions when available,
+  captions and credits. No anonymous media-library discovery is added.
+- Corrections retain their server-provided order and dates and render as escaped text.
+  Byline uses public `bylineName`, never staff `author`. Validated HTTPS original
+  Church Times URLs remain available as attribution links.
+- Lexical paragraphs, headings, lists, quotes, bold/italic, safe absolute links and
+  populated media nodes are supported. Raw HTML/unknown blocks are omitted.
+  Internal document-link schema and live timelines remain outside this change.
 
 Client filtering is defense in depth. Payload must enforce published-only access
 on the server; returning draft data to an anonymous client is a backend defect
@@ -54,6 +60,7 @@ unavailable state without showing draft content.
 
 ```bash
 npm run test:unit
+npm run test:cms
 npm run build
 npm test -- --workers=2
 npm run test:newsroom -- --workers=2
