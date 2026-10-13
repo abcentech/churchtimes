@@ -1,29 +1,61 @@
-import type { CollectionConfig } from 'payload'
+import type { Access, CollectionConfig } from 'payload'
 
-import { staffOnly } from '../access/roles'
+import { isEditorInChief, isEditorRole, type UserLike } from '../access/roles'
 import { convertSubmissionEndpoint } from '../endpoints/convertSubmission'
+import { writeAuditLog } from '../lib/audit'
 
-// TODO(phase2): editor-only access, create via public endpoint only (overrideAccess), reference generation,
-// field validation/sanitising, audit hooks.
+const editorsOnly: Access = ({ req }) => isEditorRole(req.user as UserLike | null)
+
+const noClientWrite = { create: () => false, update: () => false }
+
+/**
+ * Staff-only inbox. Public creation happens only through POST /api/public/submissions
+ * (overrideAccess), so `create` is closed for the REST API. MVP: every editor role (including
+ * section-editors) can read and triage all submissions.
+ */
 export const Submissions: CollectionConfig = {
   slug: 'submissions',
   admin: { useAsTitle: 'title', defaultColumns: ['reference', 'title', 'status', 'createdAt'] },
   endpoints: [convertSubmissionEndpoint],
   access: {
-    read: staffOnly,
-    create: staffOnly,
-    update: staffOnly,
-    delete: staffOnly,
+    read: editorsOnly,
+    create: () => false,
+    update: editorsOnly,
+    delete: ({ req }) => isEditorInChief(req.user as UserLike | null),
+  },
+  hooks: {
+    afterChange: [
+      async ({ doc, previousDoc, operation, req }) => {
+        if (operation === 'update' && previousDoc?.status !== doc.status) {
+          await writeAuditLog(req, {
+            action: 'submission.status',
+            collection: 'submissions',
+            docId: doc.id,
+            fromStatus: previousDoc?.status,
+            toStatus: doc.status,
+            summary: `Submission ${doc.reference} moved to ${doc.status}`,
+          })
+        }
+        return doc
+      },
+    ],
   },
   fields: [
-    { name: 'reference', type: 'text', unique: true, index: true },
-    { name: 'name', type: 'text', required: true },
+    {
+      name: 'reference',
+      type: 'text',
+      unique: true,
+      index: true,
+      admin: { readOnly: true },
+      access: noClientWrite,
+    },
+    { name: 'name', type: 'text', required: true, maxLength: 120 },
     { name: 'email', type: 'email', required: true },
-    { name: 'phone', type: 'text' },
-    { name: 'title', type: 'text', required: true },
-    { name: 'body', type: 'textarea', required: true },
-    { name: 'categorySuggestion', type: 'text' },
-    { name: 'location', type: 'text' },
+    { name: 'phone', type: 'text', maxLength: 40 },
+    { name: 'title', type: 'text', required: true, maxLength: 200 },
+    { name: 'body', type: 'textarea', required: true, maxLength: 20000 },
+    { name: 'categorySuggestion', type: 'text', maxLength: 100 },
+    { name: 'location', type: 'text', maxLength: 120 },
     {
       name: 'status',
       type: 'select',
@@ -37,6 +69,7 @@ export const Submissions: CollectionConfig = {
     },
     { name: 'reviewerNotes', type: 'textarea' },
     { name: 'article', type: 'relationship', relationTo: 'articles' },
-    { name: 'ipHash', type: 'text', admin: { readOnly: true } },
+    { name: 'ipHash', type: 'text', admin: { readOnly: true }, access: noClientWrite },
+    { name: 'userAgent', type: 'text', maxLength: 300, admin: { readOnly: true }, access: noClientWrite },
   ],
 }

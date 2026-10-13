@@ -15,7 +15,11 @@ import { Media } from './collections/Media'
 import { Submissions } from './collections/Submissions'
 import { Users } from './collections/Users'
 import { previewArticleEndpoint } from './endpoints/previewArticle'
-import { publicSubmissionsEndpoint } from './endpoints/publicSubmissions'
+import {
+  publicSubmissionsEndpoint,
+  publicSubmissionsPreflightEndpoint,
+} from './endpoints/publicSubmissions'
+import { startScheduler } from './lib/scheduler'
 
 const filename = fileURLToPath(import.meta.url)
 const dirname = path.dirname(filename)
@@ -44,13 +48,16 @@ export default buildConfig({
     importMap: { baseDir: path.resolve(dirname) },
   },
   collections: [Users, Categories, Media, Articles, Submissions, LiveEvents, LiveUpdates, AuditLogs],
-  endpoints: [publicSubmissionsEndpoint, previewArticleEndpoint],
+  endpoints: [publicSubmissionsEndpoint, publicSubmissionsPreflightEndpoint, previewArticleEndpoint],
   editor: lexicalEditor(),
   db: postgresAdapter({
     pool: { connectionString: process.env.DATABASE_URL },
     migrationDir: path.resolve(dirname, 'migrations'),
     push: process.env.NODE_ENV !== 'production' && process.env.PAYLOAD_DB_PUSH === 'true',
   }),
+  onInit: async (payload) => {
+    startScheduler(payload)
+  },
   sharp,
   upload: { limits: { fileSize: 10 * 1024 * 1024 } },
   graphQL: { disable: true },
