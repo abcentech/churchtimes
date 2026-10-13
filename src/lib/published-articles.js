@@ -47,6 +47,7 @@ async function requestPublishedArticles({
   timeoutMs = DEFAULT_TIMEOUT_MS,
   page = 1,
   slug,
+  signal,
 } = {}) {
   if (!baseUrl) throw new Error('CMS base URL is required');
   const origin = new URL(baseUrl, 'https://invalid.local');
@@ -63,6 +64,9 @@ async function requestPublishedArticles({
   if (slug) url.searchParams.set('where[slug][equals]', slug);
 
   const controller = new AbortController();
+  const abort = () => controller.abort();
+  if (signal?.aborted) abort();
+  else signal?.addEventListener('abort', abort, { once: true });
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetchImpl(url.toString(), {
@@ -80,6 +84,7 @@ async function requestPublishedArticles({
     return { articles, nextPage };
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener('abort', abort);
   }
 }
 

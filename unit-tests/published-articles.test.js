@@ -62,3 +62,10 @@ test('bounds deeply nested rich text and handles missing content', () => {
   assert.equal(renderArticleContent({root:{type:'root',children:[node]}}),'');
   assert.equal(renderArticleContent(null),'');
 });
+
+test('navigation cancellation aborts the public request without changing its contract', async () => {
+  const controller = new AbortController();
+  const result = fetchPublishedPage({baseUrl:'https://cms.example.test',signal:controller.signal,fetchImpl:(_url,{signal})=>new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>reject(new Error('navigation aborted'))))});
+  controller.abort();
+  await assert.rejects(result,/navigation aborted/);
+});
