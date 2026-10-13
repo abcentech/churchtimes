@@ -1,678 +1,663 @@
 /**
- * Story Editor View for Church Times Nigeria Newsroom
- * 
- * Features:
- * - Headline with auto-slug generator
- * - Category picker, standfirst and body editor with markdown formatting
- * - Image selection with accessible alt text and credits
- * - Real-time word count & reading time calculation
- * - Debounced autosave engine with visual status indicator
- * - Live reader preview (desktop split view / mobile tab toggle)
- * - Role-governed workflow: Save Draft -> Submit for Review -> Request Changes -> Approve -> Publish
+ * Story Editor View
+ *
+ * - Headline, standfirst (CMS `excerpt`), category (CMS category id), slug, featured image (media id), body.
+ * - Body is edited as a markdown subset and stored as Lexical JSON (`content`); see ../lexical.js.
+ * - Save sends ONLY changed, allowlisted fields. Status transitions are separate explicit PATCHes whose
+ *   result comes from the server response; nothing is shown as done until the CMS answered 2xx.
+ * - Autosave runs only for already-saved drafts / changes_requested stories; never for published stories
+ *   (those need an explicit save with a correction note) and never creates records.
+ * - All story state lives in a per-render state object keyed by the view's container element, never in module
+ *   variables: a slow load or save belonging to a view that was navigated away from can only touch its own
+ *   (detached) state, so a PATCH always targets the story whose form is on screen.
  */
 
-import { apiAdapter } from '../api/adapter.js';
+import { api } from '../api/index.js';
 import { store } from '../store.js';
 import { showToast } from '../components/toast.js';
-import { openModal, closeModal } from '../components/modal.js';
+import { askText, askConfirm } from '../components/modal.js';
+import { showApiError } from '../components/notify.js';
+import { openMediaPicker } from '../components/media-picker.js';
+import { markdownToHtml, countWords } from '../lexical.js';
+import { ApiError } from '../api/errors.js';
+import { escapeHtml, slugify, statusBadge, formatDate } from '../util.js';
 
-let autosaveTimer = null;
-let currentStory = null;
+const states = new WeakMap();
+const stateOf = container => states.get(container);
+
+// UI preferences only (not story state)
 let isSplitPreviewActive = true;
 let isMobilePreviewActive = false;
 
-export async function renderEditor(container, storyId = null) {
-  const currentUser = store.getCurrentUser();
+const TIP_BYLINE_WARNING = "This story came from a reader tip. The submitter's name is pre-filled as the byline. Clear the byline before publishing if the source must stay anonymous.";
 
+/** Trimmed on BOTH sides of every comparison (see formValues) so a stray space never looks like an edit. */
+function snapshot(story) {
+  return {
+    title: (story.title || '').trim(),
+    slug: (story.slug || '').trim(),
+    standfirst: (story.standfirst || '').trim(),
+    bylineName: (story.bylineName || '').trim(),
+    bodyMd: (story.bodyMd || '').trim(),
+    categoryId: story.categoryId ? String(story.categoryId) : '',
+    featuredImageId: story.featuredImage?.id ? String(story.featuredImage.id) : ''
+  };
+}
+
+function blankStory(user, categories) {
+  return {
+    id: null, title: '', slug: '', standfirst: '', bylineName: '', bodyMd: '', lossy: false,
+    categoryId: categories[0] ? String(categories[0].id) : '', categoryTitle: categories[0]?.title || '',
+    featuredImage: null, status: 'draft', authorId: user?.id || null, authorName: user?.name || '',
+    updatedAt: null, publishedAt: null, reviewNotes: '', corrections: []
+  };
+}
+
+function errorPanel(container, message) {
+  container.innerHTML = `
+    <div class="card" style="padding: 2rem; text-align:center;" data-testid="editor-load-error" role="alert">
+      <h2 style="margin-bottom:0.5rem;">Could not open this story</h2>
+      <p id="editor-load-error-text" style="color: var(--color-muted); margin-bottom: 1rem;"></p>
+      <button type="button" class="btn btn-outline" id="btn-back-dashboard">Back to the desk</button>
+    </div>`;
+  container.querySelector('#editor-load-error-text').textContent = message;
+  container.querySelector('#btn-back-dashboard').addEventListener('click', () => store.setCurrentView('dashboard'));
+}
+
+export async function renderEditor(container, storyId = null) {
+  const user = api.getCurrentUser();
+
+  // Every await below can outlive this view (the router replaces the host element on navigation): bail out as soon as
+  // the container is detached so a stale load can never render or become the active story.
+  let categories;
+  try {
+    categories = await api.getCategories();
+  } catch (err) {
+    if (!container.isConnected) return;
+    showApiError(err);
+    return errorPanel(container, err.message);
+  }
+  if (!container.isConnected) return;
+
+  let story;
   if (storyId) {
     try {
-      const res = await apiAdapter.getArticle(storyId);
-      currentStory = res.data;
+      story = (await api.getArticle(storyId)).data;
     } catch (err) {
-      showToast('Could not load requested story, creating new draft', 'error');
-      currentStory = createBlankStory(currentUser);
+      if (!container.isConnected) return;
+      showApiError(err);
+      return errorPanel(container, err.message);
     }
+    if (!container.isConnected) return;
   } else {
-    currentStory = createBlankStory(currentUser);
+    story = blankStory(user, categories);
   }
 
+  const st = {
+    container,
+    categories,
+    currentStory: story,
+    baseline: snapshot(story),
+    slugTouched: Boolean(story.id),
+    inflight: null,
+    autosavePending: false,
+    autosaveTimer: null,
+    fromTip: false
+  };
+  states.set(container, st);
+
+  const editable = canEdit(story);
+  const readonlyAttr = editable ? '' : 'readonly';
+  const bodyReadonly = !editable || story.lossy ? 'readonly' : '';
+
   container.innerHTML = `
-    <!-- Top Bar: Navigation, Status and Actions -->
     <div class="editor-sticky-bar" id="editor-actions-bar">
       <div style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
         <button type="button" class="btn btn-outline btn-sm" id="btn-back-dashboard" aria-label="Return to newsroom dashboard">
-          ← Dashboard
+          &larr; Dashboard
         </button>
-        <div id="story-status-badge-container">
-          ${renderStatusBadge(currentStory.status)}
+        <div id="story-status-badge-container" data-testid="editor-status" data-status="${escapeHtml(story.status)}">
+          ${statusBadge(story.status)}
         </div>
         <div class="autosave-indicator" id="autosave-indicator" aria-live="polite">
           <span class="autosave-dot" id="autosave-dot"></span>
-          <span id="autosave-label">Saved</span>
+          <span id="autosave-label">${story.id ? 'Saved' : 'Not saved yet'}</span>
         </div>
       </div>
 
       <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
-        <span style="font-size: 0.75rem; color: var(--color-muted); margin-right: 0.5rem;" id="word-count-badge">
-          0 words · 0 min read
-        </span>
-
-        <!-- Mobile Preview Toggle -->
-        <button type="button" class="btn btn-outline btn-sm" id="btn-toggle-preview" aria-pressed="false">
-          👁️ Toggle Preview
+        <span style="font-size: 0.75rem; color: var(--color-muted); margin-right: 0.5rem;" id="word-count-badge">0 words &middot; 0 min read</span>
+        <button type="button" class="btn btn-outline btn-sm" id="btn-toggle-preview" aria-pressed="false">Toggle Preview</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="btn-save-draft" data-testid="editor-save-draft" ${editable ? '' : 'disabled'}>
+          Save Draft
         </button>
-
-        <!-- Save Draft Button -->
-        <button type="button" class="btn btn-secondary btn-sm" id="btn-save-draft">
-          💾 Save Draft
-        </button>
-
-        <!-- Dynamic Role-Governed Workflow Action Buttons -->
-        <div id="workflow-action-buttons" style="display: inline-flex; gap: 0.5rem;">
-          ${renderWorkflowButtons(currentStory, currentUser)}
-        </div>
+        <div id="workflow-action-buttons" style="display: inline-flex; gap: 0.5rem; flex-wrap: wrap;"></div>
       </div>
     </div>
 
-    <!-- Review Notes Callout (if changes requested or reviewed) -->
-    <div id="review-notes-banner" style="${currentStory.reviewNotes ? 'display: block;' : 'display: none;'}" class="ethics-notice-box" style="margin-bottom: 1rem;">
+    <div id="editor-error" data-testid="editor-error" role="alert" class="validation-summary-alert" style="display:none; margin-bottom: 1rem;"></div>
+    ${!editable ? `<div class="ethics-notice-box" data-testid="editor-readonly-note" style="margin-bottom:1rem;"><p style="margin:0;">You can read this story but not edit it in its current status.</p></div>` : ''}
+    ${story.lossy ? `<div class="ethics-notice-box" data-testid="editor-lossy-note" style="margin-bottom:1rem;"><p style="margin:0;">This story contains elements the newsroom editor cannot represent (for example embedded images, nested lists, underline, alignment or links that open in a new tab). The body is read-only here so nothing is lost; edit the body in the CMS admin.</p></div>` : ''}
+
+    <div id="review-notes-banner" class="ethics-notice-box" style="display:none; margin-bottom: 1rem;" data-testid="editor-review-notes">
       <h4 id="review-notes-title">Editorial Review Notes</h4>
-      <p id="review-notes-text">${escapeHtml(currentStory.reviewNotes || '')}</p>
+      <p id="review-notes-text"></p>
     </div>
 
-    <!-- Main Workspace: Editor Form + Preview -->
     <div class="editor-workspace split-active" id="editor-workspace-grid">
-      <!-- Editor Column -->
       <div class="editor-pane" id="editor-input-pane">
-        <!-- Headline -->
         <div class="form-group">
           <label for="story-headline-input" class="form-label">Headline (Story Title)</label>
-          <textarea
-            id="story-headline-input"
-            class="headline-textarea"
-            rows="2"
-            placeholder="Enter working headline..."
-            aria-required="true"
-          >${escapeHtml(currentStory.title || '')}</textarea>
+          <textarea id="story-headline-input" data-testid="editor-title" class="headline-textarea" rows="2" maxlength="240"
+            placeholder="Enter working headline..." aria-required="true" ${readonlyAttr}>${escapeHtml(story.title)}</textarea>
         </div>
 
-        <!-- Standfirst / Lead Summary -->
         <div class="form-group">
-          <label for="story-standfirst-input" class="form-label">Standfirst / Deck (1-2 sentence lead)</label>
-          <textarea
-            id="story-standfirst-input"
-            class="standfirst-textarea"
-            rows="2"
-            placeholder="Brief editorial summary introducing the report to readers..."
-          >${escapeHtml(currentStory.standfirst || '')}</textarea>
+          <label for="story-standfirst-input" class="form-label">Standfirst / Deck (max 600 characters)</label>
+          <textarea id="story-standfirst-input" data-testid="editor-standfirst" class="standfirst-textarea" rows="2" maxlength="600"
+            placeholder="Brief editorial summary introducing the report to readers..." ${readonlyAttr}>${escapeHtml(story.standfirst)}</textarea>
         </div>
 
-        <!-- Metadata Row: Category, Reporter Byline, Slug -->
         <div class="form-grid-2">
           <div class="form-group">
             <label for="story-category-select" class="form-label">Editorial Section</label>
-            <select id="story-category-select" class="form-select">
-              <option value="faith-society" ${currentStory.category === 'faith-society' ? 'selected' : ''}>Faith & Society</option>
-              <option value="church-ministry" ${currentStory.category === 'church-ministry' ? 'selected' : ''}>Church & Ministry</option>
-              <option value="people-purpose" ${currentStory.category === 'people-purpose' ? 'selected' : ''}>People & Purpose</option>
-              <option value="business-vocation" ${currentStory.category === 'business-vocation' ? 'selected' : ''}>Business & Vocation</option>
-              <option value="culture-ideas" ${currentStory.category === 'culture-ideas' ? 'selected' : ''}>Culture & Ideas</option>
+            <select id="story-category-select" data-testid="editor-category" class="form-select" ${editable ? '' : 'disabled'}>
+              ${categories.map(c => `<option value="${escapeHtml(c.id)}" ${String(c.id) === String(story.categoryId) ? 'selected' : ''}>${escapeHtml(c.title)}</option>`).join('')}
             </select>
           </div>
-
           <div class="form-group">
             <label for="story-slug-input" class="form-label">URL Slug</label>
-            <input
-              type="text"
-              id="story-slug-input"
-              class="form-input"
-              value="${escapeHtml(currentStory.slug || '')}"
-              placeholder="e.g. omololu-falobi-legacy"
-            />
+            <input type="text" id="story-slug-input" data-testid="editor-slug" class="form-input" maxlength="160"
+              value="${escapeHtml(story.slug)}" placeholder="generated from the headline" ${readonlyAttr} />
           </div>
         </div>
 
-        <!-- Featured Media Section -->
         <div class="form-group">
-          <label class="form-label">Featured Photograph & Rights</label>
-          <div class="featured-image-box" id="featured-image-container">
-            ${renderFeaturedImageContent(currentStory.featuredImage)}
+          <label for="story-byline-input" class="form-label">Byline shown to readers (optional)</label>
+          <input type="text" id="story-byline-input" data-testid="editor-byline" class="form-input" maxlength="200"
+            value="${escapeHtml(story.bylineName)}" placeholder="leave empty to use the author's name" ${readonlyAttr} />
+          <div id="tip-byline-warning" class="ethics-notice-box" data-testid="editor-tip-byline-warning" role="note" style="display:none; margin-top:0.5rem;">
+            <p style="margin:0;"></p>
           </div>
         </div>
 
-        <!-- Body Formatting Toolbar -->
+        <div class="form-group">
+          <label class="form-label">Featured Photograph</label>
+          <div class="featured-image-box" id="featured-image-container" data-testid="editor-featured-image"></div>
+        </div>
+
         <div class="form-group">
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.25rem;">
             <label for="story-body-input" class="form-label" style="margin: 0;">Story Content (Markdown / Text)</label>
-            <span style="font-size: 0.75rem; color: var(--color-muted);">Supports paragraphs, quotes and lists</span>
+            <span style="font-size: 0.75rem; color: var(--color-muted);">Paragraphs, h2/h3 headings, bold, italic, quotes, lists, links</span>
           </div>
-
           <div class="format-bar" role="toolbar" aria-label="Text formatting toolbar">
-            <button type="button" class="format-btn" data-fmt="bold" title="Bold text"><strong>B</strong></button>
-            <button type="button" class="format-btn" data-fmt="italic" title="Italic text"><em>I</em></button>
-            <button type="button" class="format-btn" data-fmt="h2" title="Section Heading">H2</button>
-            <button type="button" class="format-btn" data-fmt="h3" title="Sub-heading">H3</button>
-            <button type="button" class="format-btn" data-fmt="quote" title="Pullquote / Blockquote">Quote</button>
-            <button type="button" class="format-btn" data-fmt="list" title="Bullet List">• List</button>
+            <button type="button" class="format-btn" data-fmt="bold" title="Bold text" ${bodyReadonly ? 'disabled' : ''}><strong>B</strong></button>
+            <button type="button" class="format-btn" data-fmt="italic" title="Italic text" ${bodyReadonly ? 'disabled' : ''}><em>I</em></button>
+            <button type="button" class="format-btn" data-fmt="h2" title="Section Heading" ${bodyReadonly ? 'disabled' : ''}>H2</button>
+            <button type="button" class="format-btn" data-fmt="h3" title="Sub-heading" ${bodyReadonly ? 'disabled' : ''}>H3</button>
+            <button type="button" class="format-btn" data-fmt="quote" title="Pullquote / Blockquote" ${bodyReadonly ? 'disabled' : ''}>Quote</button>
+            <button type="button" class="format-btn" data-fmt="list" title="Bullet List" ${bodyReadonly ? 'disabled' : ''}>&bull; List</button>
+            <button type="button" class="format-btn" data-fmt="link" title="Link" ${bodyReadonly ? 'disabled' : ''}>Link</button>
           </div>
-
-          <textarea
-            id="story-body-input"
-            class="story-body-textarea"
-            placeholder="Write the full report here with independent sourcing and evidence..."
-            aria-required="true"
-          >${escapeHtml(currentStory.body || '')}</textarea>
+          <textarea id="story-body-input" data-testid="editor-body" class="story-body-textarea"
+            placeholder="Write the full report here with independent sourcing and evidence..." aria-required="true" ${bodyReadonly}>${escapeHtml(story.bodyMd)}</textarea>
         </div>
       </div>
 
-      <!-- Live Reader Preview Column -->
       <div class="preview-pane" id="editor-preview-pane" aria-label="Reader Preview of article">
         <span class="preview-watermark">Live Reader Preview</span>
-        <div class="preview-category-tag" id="preview-category">
-          ${getCategoryTitle(currentStory.category)}
-        </div>
-        <h1 class="preview-headline" id="preview-headline">
-          ${escapeHtml(currentStory.title || 'Untitled Headline')}
-        </h1>
-        <div class="preview-standfirst" id="preview-standfirst">
-          ${escapeHtml(currentStory.standfirst || 'Lead summary will appear here.')}
-        </div>
-        <div class="preview-byline" id="preview-byline">
-          By <strong>${escapeHtml(currentStory.author?.name || currentUser.name)}</strong> ·
-          <span>${formatDate(currentStory.publishedAt || currentStory.updatedAt)}</span>
-        </div>
-
-        <div id="preview-image-box">
-          ${currentStory.featuredImage ? `
-            <img src="${escapeHtml(currentStory.featuredImage.url)}" alt="${escapeHtml(currentStory.featuredImage.alt)}" class="preview-hero-img" id="preview-img-el">
-            <div class="preview-img-caption" id="preview-img-caption">
-              ${escapeHtml(currentStory.featuredImage.caption || '')} · Credit: ${escapeHtml(currentStory.featuredImage.credit || '')}
-            </div>
-          ` : ''}
-        </div>
-
-        <div class="preview-body" id="preview-body-content">
-          ${formatBodyMarkdown(currentStory.body || 'Story body will render here as you type...')}
-        </div>
+        <div class="preview-category-tag" id="preview-category"></div>
+        <h1 class="preview-headline" id="preview-headline"></h1>
+        <div class="preview-standfirst" id="preview-standfirst"></div>
+        <div class="preview-byline" id="preview-byline"></div>
+        <div id="preview-image-box"></div>
+        <div class="preview-body" id="preview-body-content"></div>
       </div>
     </div>
   `;
 
-  // Bind Listeners
-  bindEditorListeners(container);
+  renderFeaturedImage(container);
+  updateStatusDisplay(container);
+  updatePreview(container);
   updateWordCount(container);
+  bindEditorListeners(container);
+  loadTipOrigin(container);
 }
 
-function createBlankStory(author) {
+/** Called by the router before leaving the editor: stop timers and flush a pending autosave. */
+export async function flushEditor(container) {
+  const st = container && stateOf(container);
+  if (!st) return;
+  clearTimeout(st.autosaveTimer);
+  const stillSignedIn = Boolean(api.getCurrentUser());
+  if (st.autosavePending && stillSignedIn && container.querySelector('#story-headline-input')) {
+    st.autosavePending = false;
+    await performSave(container, { auto: true });
+  }
+}
+
+function canEdit(story) {
+  return api.can('story.edit', ctxFor(story));
+}
+
+function ctxFor(story) {
+  const user = api.getCurrentUser();
   return {
-    id: null,
-    title: '',
-    slug: '',
-    category: 'faith-society',
-    standfirst: '',
-    body: '',
-    featuredImage: null,
-    status: 'draft',
-    author: author || { name: 'Gbenga Osinaike', desk: 'Reporter' },
-    reviewNotes: '',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    revisionCount: 1
+    status: story.status,
+    categoryId: story.categoryId,
+    isAuthor: !story.id || (user && story.authorId && String(story.authorId) === String(user.id))
   };
 }
 
+function formValues(container) {
+  const st = stateOf(container);
+  return {
+    title: container.querySelector('#story-headline-input').value.trim(),
+    slug: container.querySelector('#story-slug-input').value.trim(),
+    standfirst: container.querySelector('#story-standfirst-input').value.trim(),
+    bylineName: container.querySelector('#story-byline-input').value.trim(),
+    bodyMd: container.querySelector('#story-body-input').value.trim(),
+    categoryId: container.querySelector('#story-category-select').value,
+    featuredImageId: st.currentStory.featuredImage?.id ? String(st.currentStory.featuredImage.id) : ''
+  };
+}
+
+/** Only fields that differ from what the server last returned. */
+function computeChanges(st, vals) {
+  const changes = {};
+  for (const key of Object.keys(vals)) {
+    if (vals[key] !== st.baseline[key]) changes[key] = vals[key];
+  }
+  if (st.currentStory.lossy) delete changes.bodyMd; // never rewrite a body the editor cannot represent
+  return changes;
+}
+
+function setInlineError(container, message) {
+  const el = container.querySelector('#editor-error');
+  if (!el) return;
+  el.textContent = message || '';
+  el.style.display = message ? 'block' : 'none';
+}
+
+/**
+ * Persist pending edits. Resolves { ok: true, changed } when the server state is up to date (`changed` is false when
+ * there was nothing to send, so no CMS call was made) and { ok: false } when the save failed or was cancelled
+ * (an error is shown). A save requested while another one is in flight waits for it, then runs on the fresh baseline.
+ */
+async function performSave(container, { auto = false } = {}) {
+  const st = stateOf(container);
+  let carriedChange = false;
+  while (st.inflight) {
+    const earlier = await st.inflight.catch(() => null);
+    if (earlier?.ok && earlier.changed) carriedChange = true;
+  }
+  const run = doSave(container, { auto });
+  st.inflight = run;
+  try {
+    const result = await run;
+    if (result.ok && carriedChange) result.changed = true;
+    return result;
+  } finally {
+    if (st.inflight === run) st.inflight = null;
+  }
+}
+
+async function doSave(container, { auto }) {
+  const st = stateOf(container);
+  try {
+    const vals = formValues(container);
+    if (!st.currentStory.id) {
+      if (!vals.title) throw new ApiError('Enter a headline before saving.', { status: 400 });
+      const fields = { title: vals.title, standfirst: vals.standfirst, bodyMd: vals.bodyMd, categoryId: vals.categoryId };
+      if (vals.slug) fields.slug = vals.slug;
+      if (vals.bylineName) fields.bylineName = vals.bylineName;
+      if (vals.featuredImageId) fields.featuredImageId = vals.featuredImageId;
+      const res = await api.createArticle(fields);
+      st.currentStory = res.data;
+      // Only move the address bar when this editor is still the one on screen.
+      if (container.isConnected) history.replaceState(null, '', `#editor?id=${encodeURIComponent(st.currentStory.id)}`);
+    } else {
+      const changes = computeChanges(st, vals);
+      if (!Object.keys(changes).length) return { ok: true, changed: false };
+
+      const material = 'title' in changes || 'standfirst' in changes || 'bodyMd' in changes;
+      if (st.currentStory.status === 'published' && material) {
+        if (auto) return { ok: false };
+        const note = await askText({
+          title: 'Add a correction note',
+          label: 'This story is published. The CMS requires a correction note describing what changed.',
+          confirmLabel: 'Save with correction',
+          testid: 'correction-note'
+        });
+        if (!note) return { ok: false };
+        changes.corrections = [
+          ...st.currentStory.corrections.map(c => ({ id: c.id, note: c.note, correctedAt: c.correctedAt })),
+          { note }
+        ];
+      }
+      const res = await api.updateArticle(st.currentStory.id, changes);
+      st.currentStory = res.data;
+    }
+    st.baseline = snapshot(st.currentStory);
+    setInlineError(container, '');
+    updateStatusDisplay(container);
+    return { ok: true, changed: true };
+  } catch (err) {
+    const msg = auto ? err.message : showApiError(err);
+    setInlineError(container, msg);
+    return { ok: false };
+  }
+}
+
 function bindEditorListeners(container) {
+  const st = stateOf(container);
   const headlineInput = container.querySelector('#story-headline-input');
   const standfirstInput = container.querySelector('#story-standfirst-input');
+  container.querySelector('#story-byline-input').addEventListener('input', () => {
+    triggerAutosave(container);
+    updatePreview(container);
+    updateTipBylineWarning(container);
+  });
   const categorySelect = container.querySelector('#story-category-select');
   const slugInput = container.querySelector('#story-slug-input');
   const bodyInput = container.querySelector('#story-body-input');
-  const backBtn = container.querySelector('#btn-back-dashboard');
-  const saveDraftBtn = container.querySelector('#btn-save-draft');
   const togglePreviewBtn = container.querySelector('#btn-toggle-preview');
 
-  backBtn.addEventListener('click', () => {
-    store.setCurrentView('dashboard');
-  });
+  container.querySelector('#btn-back-dashboard').addEventListener('click', () => store.setCurrentView('dashboard'));
 
-  // Auto-slug when headline changes and slug is empty or matches previous auto-slug
   headlineInput.addEventListener('input', () => {
-    const title = headlineInput.value;
-    if (!currentStory.id || !slugInput.value) {
-      slugInput.value = slugify(title);
-    }
-    triggerAutosave(container);
-    updatePreview(container);
-    updateWordCount(container);
-  });
-
-  standfirstInput.addEventListener('input', () => {
-    triggerAutosave(container);
-    updatePreview(container);
-    updateWordCount(container);
-  });
-
-  categorySelect.addEventListener('change', () => {
+    if (!st.slugTouched) slugInput.value = slugify(headlineInput.value);
     triggerAutosave(container);
     updatePreview(container);
   });
+  slugInput.addEventListener('input', () => { st.slugTouched = true; triggerAutosave(container); });
+  standfirstInput.addEventListener('input', () => { triggerAutosave(container); updatePreview(container); });
+  categorySelect.addEventListener('change', () => { triggerAutosave(container); updatePreview(container); });
+  bodyInput.addEventListener('input', () => { triggerAutosave(container); updatePreview(container); updateWordCount(container); });
 
-  slugInput.addEventListener('input', () => {
-    triggerAutosave(container);
-  });
-
-  bodyInput.addEventListener('input', () => {
-    triggerAutosave(container);
-    updatePreview(container);
-    updateWordCount(container);
-  });
-
-  // Formatting Toolbar
   container.querySelectorAll('.format-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      const fmt = btn.getAttribute('data-fmt');
-      applyFormatting(bodyInput, fmt);
+      applyFormatting(bodyInput, btn.getAttribute('data-fmt'));
       triggerAutosave(container);
       updatePreview(container);
       updateWordCount(container);
     });
   });
 
-  // Featured Image Actions
-  bindImageSelector(container);
-
-  // Toggle Preview
   togglePreviewBtn.addEventListener('click', () => {
     const workspace = container.querySelector('#editor-workspace-grid');
     const previewPane = container.querySelector('#editor-preview-pane');
     const inputPane = container.querySelector('#editor-input-pane');
-
     if (window.innerWidth <= 768) {
       isMobilePreviewActive = !isMobilePreviewActive;
-      if (isMobilePreviewActive) {
-        inputPane.style.display = 'none';
-        previewPane.style.display = 'block';
-        togglePreviewBtn.textContent = '✏️ Show Editor';
-      } else {
-        inputPane.style.display = 'flex';
-        previewPane.style.display = 'none';
-        togglePreviewBtn.textContent = '👁️ Show Preview';
-      }
+      inputPane.style.display = isMobilePreviewActive ? 'none' : 'flex';
+      previewPane.style.display = isMobilePreviewActive ? 'block' : 'none';
+      togglePreviewBtn.textContent = isMobilePreviewActive ? 'Show Editor' : 'Show Preview';
     } else {
       isSplitPreviewActive = !isSplitPreviewActive;
-      if (isSplitPreviewActive) {
-        workspace.classList.add('split-active');
-        previewPane.style.display = 'block';
-      } else {
-        workspace.classList.remove('split-active');
-        previewPane.style.display = 'none';
-      }
+      workspace.classList.toggle('split-active', isSplitPreviewActive);
+      previewPane.style.display = isSplitPreviewActive ? 'block' : 'none';
     }
   });
 
-  // Manual Save Draft
-  saveDraftBtn.addEventListener('click', async () => {
-    await performSave(container, false);
-    showToast('Draft saved successfully', 'success');
+  container.querySelector('#btn-save-draft').addEventListener('click', async () => {
+    clearTimeout(st.autosaveTimer);
+    st.autosavePending = false;
+    const result = await performSave(container); // waits for an in-flight autosave first
+    if (!result.ok) return;
+    markSaved(container, 'All changes saved');
+    if (result.changed) showToast('Draft saved successfully', 'success');
+    else showToast('No changes to save', 'info');
   });
-
-  // Workflow Action Buttons
-  bindWorkflowActions(container);
 }
 
-function bindImageSelector(container) {
-  const chooseBtn = container.querySelector('#btn-choose-media');
-  const removeBtn = container.querySelector('#btn-remove-media');
+function markSaved(container, text) {
+  const dot = container.querySelector('#autosave-dot');
+  const label = container.querySelector('#autosave-label');
+  if (dot) dot.className = 'autosave-dot';
+  if (label) label.textContent = text;
+}
 
-  if (chooseBtn) {
-    chooseBtn.addEventListener('click', async () => {
-      openMediaPickerModal(async (selectedMedia) => {
-        currentStory.featuredImage = selectedMedia;
-        container.querySelector('#featured-image-container').innerHTML = renderFeaturedImageContent(selectedMedia);
-        bindImageSelector(container);
+function triggerAutosave(container) {
+  const st = stateOf(container);
+  const dot = container.querySelector('#autosave-dot');
+  const label = container.querySelector('#autosave-label');
+  if (dot) dot.className = 'autosave-dot dirty';
+  const autosaveAllowed = st.currentStory.id && ['draft', 'changes_requested'].includes(st.currentStory.status) && canEdit(st.currentStory);
+  if (label) label.textContent = autosaveAllowed ? 'Unsaved changes...' : 'Unsaved changes (use Save Draft)';
+  clearTimeout(st.autosaveTimer);
+  st.autosavePending = false;
+  if (!autosaveAllowed) return;
+  st.autosavePending = true;
+  st.autosaveTimer = setTimeout(async () => {
+    st.autosavePending = false;
+    if (!container.isConnected) return; // the view was replaced; the router already flushed what it needed to
+    if (label) label.textContent = 'Autosaving...';
+    const result = await performSave(container, { auto: true });
+    if (result.ok) markSaved(container, `Autosaved ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`);
+    else if (label) label.textContent = 'Autosave failed (see message above)';
+  }, 1500);
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Reader-tip provenance
+// ---------------------------------------------------------------------------------------------------
+
+/** The CMS convert endpoint pre-fills the byline with the submitter's name; warn editors who open such a story. */
+async function loadTipOrigin(container) {
+  const st = stateOf(container);
+  if (!st.currentStory.id || !api.can('submission.review')) return;
+  try {
+    const tip = await api.getSubmissionForArticle(st.currentStory.id);
+    if (!container.isConnected || stateOf(container) !== st) return;
+    st.fromTip = Boolean(tip);
+    updateTipBylineWarning(container);
+  } catch { /* the warning is advisory; failures are not worth interrupting editing */ }
+}
+
+function updateTipBylineWarning(container) {
+  const st = stateOf(container);
+  const box = container.querySelector('#tip-byline-warning');
+  const input = container.querySelector('#story-byline-input');
+  if (!st || !box || !input) return;
+  const show = st.fromTip && Boolean(input.value.trim());
+  box.querySelector('p').textContent = show ? TIP_BYLINE_WARNING : '';
+  box.style.display = show ? 'block' : 'none';
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Featured image
+// ---------------------------------------------------------------------------------------------------
+
+function renderFeaturedImage(container) {
+  const st = stateOf(container);
+  const box = container.querySelector('#featured-image-container');
+  const img = st.currentStory.featuredImage;
+  const editable = canEdit(st.currentStory);
+  if (img) {
+    box.innerHTML = `
+      ${img.thumbUrl || img.url ? `<img src="${escapeHtml(img.thumbUrl || img.url)}" alt="${escapeHtml(img.alt)}" class="featured-image-thumb" data-testid="editor-featured-image-img">` : ''}
+      <div class="featured-image-meta">
+        <div style="font-weight: 600; font-size: 0.875rem;" data-testid="editor-featured-image-alt">${escapeHtml(img.alt || 'Selected image')}</div>
+        <div style="font-size: 0.75rem; color: var(--color-muted);">
+          ${escapeHtml(img.caption || 'No caption')} &middot; Credit: ${escapeHtml(img.credit || 'none recorded')}
+        </div>
+        ${editable ? `
+        <div style="display: flex; gap: 0.5rem; margin-top: 0.35rem;">
+          <button type="button" class="btn btn-outline btn-sm" id="btn-choose-media" data-testid="editor-choose-image">Change Image</button>
+          <button type="button" class="btn btn-outline btn-sm" id="btn-remove-media" data-testid="editor-remove-image" style="color: #DC2626;">Remove</button>
+        </div>` : ''}
+      </div>`;
+  } else {
+    box.innerHTML = `
+      <div style="text-align: center; width: 100%; padding: 0.5rem;">
+        <p style="font-size: 0.8125rem; color: var(--color-muted); margin-bottom: 0.5rem;">
+          No featured photograph selected.
+        </p>
+        ${editable ? `<button type="button" class="btn btn-secondary btn-sm" id="btn-choose-media" data-testid="editor-choose-image">Choose or upload a photograph</button>` : ''}
+      </div>`;
+  }
+
+  box.querySelector('#btn-choose-media')?.addEventListener('click', () => {
+    openMediaPicker({
+      onSelect: media => {
+        st.currentStory.featuredImage = media;
+        renderFeaturedImage(container);
         updatePreview(container);
         triggerAutosave(container);
-      });
+      }
     });
-  }
-
-  if (removeBtn) {
-    removeBtn.addEventListener('click', () => {
-      currentStory.featuredImage = null;
-      container.querySelector('#featured-image-container').innerHTML = renderFeaturedImageContent(null);
-      bindImageSelector(container);
-      updatePreview(container);
-      triggerAutosave(container);
-    });
-  }
-
-  // Handle alt text and caption inline edits
-  const altInput = container.querySelector('#story-image-alt-input');
-  const captionInput = container.querySelector('#story-image-caption-input');
-  if (altInput && currentStory.featuredImage) {
-    altInput.addEventListener('input', () => {
-      currentStory.featuredImage.alt = altInput.value;
-      updatePreview(container);
-      triggerAutosave(container);
-    });
-  }
-  if (captionInput && currentStory.featuredImage) {
-    captionInput.addEventListener('input', () => {
-      currentStory.featuredImage.caption = captionInput.value;
-      updatePreview(container);
-      triggerAutosave(container);
-    });
-  }
+  });
+  box.querySelector('#btn-remove-media')?.addEventListener('click', () => {
+    st.currentStory.featuredImage = null;
+    renderFeaturedImage(container);
+    updatePreview(container);
+    triggerAutosave(container);
+  });
 }
 
-async function openMediaPickerModal(onSelect) {
-  const res = await apiAdapter.getMedia();
-  const mediaList = res.data;
+// ---------------------------------------------------------------------------------------------------
+// Workflow (each button is one explicit server transition)
+// ---------------------------------------------------------------------------------------------------
 
-  const html = `
-    <div style="margin-bottom: 1rem;">
-      <p style="font-size: 0.875rem; color: var(--color-muted);">
-        Select a verified photograph from the newsroom archive or upload a new asset.
-      </p>
-    </div>
-    <div class="media-grid" style="max-height: 400px; overflow-y: auto;">
-      ${mediaList.map(item => `
-        <div class="media-item-card" data-media-id="${item.id}" role="button" tabindex="0">
-          <img src="${escapeHtml(item.url)}" alt="${escapeHtml(item.alt)}" class="media-item-thumb">
-          <div class="media-item-info">
-            <div class="media-item-title">${escapeHtml(item.title)}</div>
-            <div class="media-item-meta">${escapeHtml(item.credit || 'Church Times')}</div>
-          </div>
-        </div>
-      `).join('')}
-    </div>
-  `;
+function renderWorkflowButtons(story) {
+  const ctx = ctxFor(story);
+  let html = '';
+  if (api.can('story.submit_review', ctx)) {
+    html += `<button type="button" class="btn btn-accent btn-sm" id="btn-submit-review" data-testid="editor-submit-review">Submit for Review</button>`;
+  }
+  if (story.id && api.can('story.request_changes', ctx)) {
+    html += `<button type="button" class="btn btn-danger btn-sm" id="btn-request-changes" data-testid="editor-request-changes">Request Changes</button>`;
+  }
+  if (story.id && api.can('story.approve', ctx)) {
+    html += `<button type="button" class="btn btn-success btn-sm" id="btn-approve-story" data-testid="editor-approve">Approve Story</button>`;
+  }
+  if (api.can('story.publish', ctx)) {
+    html += `<button type="button" class="btn btn-primary btn-sm" id="btn-publish-story" data-testid="editor-publish" style="background-color: var(--color-forest-dark);">Publish Story</button>`;
+  }
+  if (story.id && api.can('story.archive', ctx)) {
+    html += `<button type="button" class="btn btn-outline btn-sm" id="btn-archive-story" data-testid="editor-archive">Archive</button>`;
+  }
+  return html;
+}
 
-  openModal({
-    title: 'Select Featured Photograph',
-    contentHtml: html,
-    onRender: (modalBody, close) => {
-      modalBody.querySelectorAll('.media-item-card').forEach(card => {
-        card.addEventListener('click', () => {
-          const id = card.getAttribute('data-media-id');
-          const found = mediaList.find(m => m.id === id);
-          if (found) {
-            onSelect(found);
-            close();
-          }
-        });
-      });
+async function runTransition(container, status, { reviewNotes, success, savePending = true }) {
+  const st = stateOf(container);
+  clearTimeout(st.autosaveTimer);
+  st.autosavePending = false;
+  try {
+    if (savePending) {
+      const saved = await performSave(container);
+      if (!saved.ok) return;
     }
-  });
+    const res = await api.transitionArticle(st.currentStory.id, status, reviewNotes !== undefined ? { reviewNotes } : {});
+    st.currentStory = res.data;
+    st.baseline = snapshot(st.currentStory);
+    setInlineError(container, '');
+    updateStatusDisplay(container);
+    showToast(success, 'success');
+  } catch (err) {
+    setInlineError(container, showApiError(err));
+  }
 }
 
 function bindWorkflowActions(container) {
-  const actionWrapper = container.querySelector('#workflow-action-buttons');
-  if (!actionWrapper) return;
+  const wrap = container.querySelector('#workflow-action-buttons');
+  if (!wrap) return;
 
-  // Submit for Review
-  const submitReviewBtn = actionWrapper.querySelector('#btn-submit-review');
-  if (submitReviewBtn) {
-    submitReviewBtn.addEventListener('click', async () => {
-      await performSave(container, false);
-      const res = await apiAdapter.updateArticleStatus(currentStory.id, 'in_review', 'Submitted by reporter for editorial review');
-      currentStory = res.data;
-      updateStatusDisplay(container);
-      showToast('Story submitted for editorial review! Moved to Review Queue.', 'success');
-    });
-  }
+  wrap.querySelector('#btn-submit-review')?.addEventListener('click', () =>
+    runTransition(container, 'in_review', { success: 'Story submitted for editorial review! Moved to Review Queue.' }));
 
-  // Request Changes
-  const reqChangesBtn = actionWrapper.querySelector('#btn-request-changes');
-  if (reqChangesBtn) {
-    reqChangesBtn.addEventListener('click', () => {
-      openModal({
-        title: 'Request Editorial Changes',
-        contentHtml: `
-          <div class="form-group" style="margin-bottom: 1rem;">
-            <label for="modal-feedback-notes" class="form-label">Feedback & Revision Guidance for Reporter:</label>
-            <textarea id="modal-feedback-notes" class="form-textarea" rows="4" placeholder="Explain what facts need corroboration, missing sources, or stylistic adjustments..."></textarea>
-          </div>
-          <div style="display: flex; justify-content: flex-end; gap: 0.5rem;">
-            <button type="button" class="btn btn-outline" id="modal-cancel-feedback">Cancel</button>
-            <button type="button" class="btn btn-accent" id="modal-submit-feedback">Send Revision Request</button>
-          </div>
-        `,
-        onRender: (modalBody, close) => {
-          modalBody.querySelector('#modal-cancel-feedback').addEventListener('click', close);
-          modalBody.querySelector('#modal-submit-feedback').addEventListener('click', async () => {
-            const notes = modalBody.querySelector('#modal-feedback-notes').value.trim();
-            if (!notes) {
-              alert('Please enter revision guidance notes for the reporter.');
-              return;
-            }
-            await performSave(container, false);
-            const res = await apiAdapter.updateArticleStatus(currentStory.id, 'changes_requested', notes);
-            currentStory = res.data;
-            updateStatusDisplay(container);
-            close();
-            showToast('Changes requested. Story flagged for revisions.', 'info');
-          });
-        }
-      });
+  wrap.querySelector('#btn-request-changes')?.addEventListener('click', async () => {
+    const notes = await askText({
+      title: 'Request Editorial Changes',
+      label: 'Feedback and revision guidance for the reporter:',
+      confirmLabel: 'Send Revision Request',
+      placeholder: 'Explain what needs corroboration, sourcing or style changes...',
+      testid: 'request-changes'
     });
-  }
+    if (!notes) return;
+    await runTransition(container, 'changes_requested', { reviewNotes: notes, success: 'Changes requested. Story flagged for revisions.' });
+  });
 
-  // Approve Story
-  const approveBtn = actionWrapper.querySelector('#btn-approve-story');
-  if (approveBtn) {
-    approveBtn.addEventListener('click', async () => {
-      await performSave(container, false);
-      const res = await apiAdapter.updateArticleStatus(currentStory.id, 'approved', 'Editorial fact-check and dignity checks passed');
-      currentStory = res.data;
-      updateStatusDisplay(container);
-      showToast('Story approved for publication!', 'success');
-    });
-  }
+  wrap.querySelector('#btn-approve-story')?.addEventListener('click', () =>
+    runTransition(container, 'approved', { success: 'Story approved for publication!' }));
 
-  // Publish Story
-  const publishBtn = actionWrapper.querySelector('#btn-publish-story');
-  if (publishBtn) {
-    publishBtn.addEventListener('click', async () => {
-      const confirmed = confirm('Publish this story to the Church Times Nigeria live web feed now?');
-      if (!confirmed) return;
-      await performSave(container, false);
-      const res = await apiAdapter.updateArticleStatus(currentStory.id, 'published', 'Published by Editor-in-Chief');
-      currentStory = res.data;
-      updateStatusDisplay(container);
-      showToast('🚀 Story is now live and published!', 'success');
+  wrap.querySelector('#btn-publish-story')?.addEventListener('click', async () => {
+    const ok = await askConfirm({
+      title: 'Publish story',
+      message: 'Publish this story to the Church Times Nigeria live web feed now?',
+      confirmLabel: 'Publish now',
+      testid: 'publish'
     });
-  }
+    if (!ok) return;
+    await runTransition(container, 'published', { success: 'Story is now live and published!' });
+  });
+
+  wrap.querySelector('#btn-archive-story')?.addEventListener('click', async () => {
+    const ok = await askConfirm({ title: 'Archive story', message: 'Archive this story and remove it from the public site?', confirmLabel: 'Archive', testid: 'archive' });
+    if (!ok) return;
+    await runTransition(container, 'archived', { success: 'Story archived.', savePending: false });
+  });
 }
 
 function updateStatusDisplay(container) {
-  const badgeContainer = container.querySelector('#story-status-badge-container');
-  if (badgeContainer) {
-    badgeContainer.innerHTML = renderStatusBadge(currentStory.status);
+  const st = stateOf(container);
+  const badge = container.querySelector('#story-status-badge-container');
+  if (badge) {
+    badge.innerHTML = statusBadge(st.currentStory.status);
+    badge.setAttribute('data-status', st.currentStory.status);
   }
 
-  const notesBanner = container.querySelector('#review-notes-banner');
-  const notesText = container.querySelector('#review-notes-text');
-  if (notesBanner && notesText) {
-    if (currentStory.reviewNotes) {
-      notesText.textContent = currentStory.reviewNotes;
-      notesBanner.style.display = 'block';
-    } else {
-      notesBanner.style.display = 'none';
-    }
+  const banner = container.querySelector('#review-notes-banner');
+  const text = container.querySelector('#review-notes-text');
+  if (banner && text) {
+    text.textContent = st.currentStory.reviewNotes || '';
+    banner.style.display = st.currentStory.reviewNotes ? 'block' : 'none';
   }
 
-  const actionWrapper = container.querySelector('#workflow-action-buttons');
-  if (actionWrapper) {
-    actionWrapper.innerHTML = renderWorkflowButtons(currentStory, store.getCurrentUser());
+  const wrap = container.querySelector('#workflow-action-buttons');
+  if (wrap) {
+    wrap.innerHTML = renderWorkflowButtons(st.currentStory);
     bindWorkflowActions(container);
   }
 }
 
-function triggerAutosave(container) {
-  const dot = container.querySelector('#autosave-dot');
-  const label = container.querySelector('#autosave-label');
-  if (dot) dot.className = 'autosave-dot dirty';
-  if (label) label.textContent = 'Unsaved changes...';
-
-  clearTimeout(autosaveTimer);
-  autosaveTimer = setTimeout(async () => {
-    if (dot) dot.className = 'autosave-dot dirty';
-    if (label) label.textContent = 'Autosaving...';
-
-    await performSave(container, true);
-
-    if (dot) dot.className = 'autosave-dot';
-    if (label) {
-      const now = new Date();
-      label.textContent = `Autosaved ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
-    }
-  }, 1200);
-}
-
-async function performSave(container, isAutosave = false) {
-  const title = container.querySelector('#story-headline-input').value.trim();
-  const standfirst = container.querySelector('#story-standfirst-input').value.trim();
-  const category = container.querySelector('#story-category-select').value;
-  const slug = container.querySelector('#story-slug-input').value.trim() || slugify(title);
-  const body = container.querySelector('#story-body-input').value;
-
-  const payload = {
-    ...currentStory,
-    title,
-    standfirst,
-    category,
-    slug,
-    body
-  };
-
-  const res = await apiAdapter.saveArticle(payload);
-  currentStory = res.data;
-
-  if (!isAutosave) {
-    const dot = container.querySelector('#autosave-dot');
-    const label = container.querySelector('#autosave-label');
-    if (dot) dot.className = 'autosave-dot';
-    if (label) label.textContent = 'All changes saved';
-  }
-}
+// ---------------------------------------------------------------------------------------------------
+// Preview, word count, formatting
+// ---------------------------------------------------------------------------------------------------
 
 function updatePreview(container) {
+  const st = stateOf(container);
   const headline = container.querySelector('#story-headline-input').value;
   const standfirst = container.querySelector('#story-standfirst-input').value;
-  const category = container.querySelector('#story-category-select').value;
+  const categoryId = container.querySelector('#story-category-select').value;
   const body = container.querySelector('#story-body-input').value;
+  const catTitle = st.categories.find(c => String(c.id) === String(categoryId))?.title || '';
 
-  const pCat = container.querySelector('#preview-category');
-  const pHead = container.querySelector('#preview-headline');
-  const pStand = container.querySelector('#preview-standfirst');
-  const pBody = container.querySelector('#preview-body-content');
-  const pImgBox = container.querySelector('#preview-image-box');
+  container.querySelector('#preview-category').textContent = catTitle;
+  container.querySelector('#preview-headline').textContent = headline || 'Untitled Headline';
+  container.querySelector('#preview-standfirst').textContent = standfirst || 'Lead summary will appear here.';
+  container.querySelector('#preview-byline').innerHTML =
+    `By <strong>${escapeHtml(container.querySelector('#story-byline-input').value.trim() || st.currentStory.authorName || api.getCurrentUser()?.name || '')}</strong> &middot; <span>${escapeHtml(formatDate(st.currentStory.publishedAt || st.currentStory.updatedAt))}</span>`;
+  container.querySelector('#preview-body-content').innerHTML =
+    body.trim() ? markdownToHtml(body) : '<p>Story body will render here as you type...</p>';
 
-  if (pCat) pCat.textContent = getCategoryTitle(category);
-  if (pHead) pHead.textContent = headline || 'Untitled Headline';
-  if (pStand) pStand.textContent = standfirst || 'Lead summary will appear here.';
-  if (pBody) pBody.innerHTML = formatBodyMarkdown(body || 'Story body will render here as you type...');
-
-  if (pImgBox) {
-    if (currentStory.featuredImage) {
-      pImgBox.innerHTML = `
-        <img src="${escapeHtml(currentStory.featuredImage.url)}" alt="${escapeHtml(currentStory.featuredImage.alt)}" class="preview-hero-img">
-        <div class="preview-img-caption">
-          ${escapeHtml(currentStory.featuredImage.caption || '')} · Credit: ${escapeHtml(currentStory.featuredImage.credit || '')}
-        </div>
-      `;
-    } else {
-      pImgBox.innerHTML = '';
-    }
-  }
+  const img = st.currentStory.featuredImage;
+  container.querySelector('#preview-image-box').innerHTML = img && (img.url || img.thumbUrl) ? `
+    <img src="${escapeHtml(img.url || img.thumbUrl)}" alt="${escapeHtml(img.alt)}" class="preview-hero-img">
+    <div class="preview-img-caption">${escapeHtml(img.caption || '')}${img.credit ? ` &middot; Credit: ${escapeHtml(img.credit)}` : ''}</div>` : '';
 }
 
 function updateWordCount(container) {
-  const body = container.querySelector('#story-body-input').value.trim();
-  const words = body ? body.split(/\s+/).length : 0;
-  const readTime = Math.ceil(words / 200);
+  const words = countWords(container.querySelector('#story-body-input').value);
   const badge = container.querySelector('#word-count-badge');
-  if (badge) {
-    badge.textContent = `${words} words · ${readTime} min read`;
-  }
-}
-
-function renderStatusBadge(status) {
-  const labels = {
-    draft: 'Draft',
-    in_review: 'In Review',
-    changes_requested: 'Changes Requested',
-    approved: 'Approved',
-    published: 'Published'
-  };
-  return `<span class="badge badge-${status}">${labels[status] || status}</span>`;
-}
-
-function renderWorkflowButtons(story, user) {
-  if (!user) {
-    return `<button type="button" class="btn btn-outline btn-sm" id="btn-editor-login-prompt">🔐 Sign in to Edit</button>`;
-  }
-
-  const status = story?.status || 'draft';
-  let buttons = '';
-
-  // Submit for Review: Reporter, Section Editor, EIC, Admin
-  if (apiAdapter.hasPermission('story.submit_review') && (status === 'draft' || status === 'changes_requested')) {
-    buttons += `<button type="button" class="btn btn-accent btn-sm" id="btn-submit-review">📤 Submit for Review</button>`;
-  }
-
-  // Request Changes: Section Editor, EIC, Admin
-  if (apiAdapter.hasPermission('story.request_changes') && status === 'in_review') {
-    buttons += `<button type="button" class="btn btn-danger btn-sm" id="btn-request-changes">✏️ Request Changes</button>`;
-  }
-
-  // Approve: Section Editor, EIC, Admin
-  if (apiAdapter.hasPermission('story.approve') && status === 'in_review') {
-    buttons += `<button type="button" class="btn btn-success btn-sm" id="btn-approve-story">✅ Approve Story</button>`;
-  }
-
-  // Publish: Editor-in-Chief, Admin, or Trusted-Publisher (for own story)
-  const isAuthor = story?.author?.id === user?.id || story?.author?.email === user?.email;
-  if (apiAdapter.hasPermission('story.publish', { isAuthor }) && (status === 'approved' || status === 'in_review')) {
-    buttons += `<button type="button" class="btn btn-primary btn-sm" id="btn-publish-story" style="background-color: var(--color-forest-dark);">🚀 Publish Story</button>`;
-  }
-
-  return buttons;
-}
-
-function renderFeaturedImageContent(img) {
-  if (img) {
-    return `
-      <img src="${escapeHtml(img.url)}" alt="${escapeHtml(img.alt)}" class="featured-image-thumb">
-      <div class="featured-image-meta">
-        <div style="font-weight: 600; font-size: 0.875rem;">${escapeHtml(img.title || 'Selected Image')}</div>
-        <div class="form-group" style="margin-top: 0.25rem;">
-          <input type="text" id="story-image-alt-input" class="form-input" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;" placeholder="Accessible Alt text description..." value="${escapeHtml(img.alt || '')}">
-        </div>
-        <div class="form-group" style="margin-top: 0.25rem;">
-          <input type="text" id="story-image-caption-input" class="form-input" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;" placeholder="Caption & Photo Credit..." value="${escapeHtml(img.caption || '')}">
-        </div>
-        <div style="display: flex; gap: 0.5rem; margin-top: 0.35rem;">
-          <button type="button" class="btn btn-outline btn-sm" id="btn-choose-media">Change Image</button>
-          <button type="button" class="btn btn-outline btn-sm" id="btn-remove-media" style="color: #DC2626;">Remove</button>
-        </div>
-      </div>
-    `;
-  }
-  return `
-    <div style="text-align: center; width: 100%; padding: 0.5rem;">
-      <p style="font-size: 0.8125rem; color: var(--color-muted); margin-bottom: 0.5rem;">
-        No featured photograph selected. Add a verified documentary image with rights clearance.
-      </p>
-      <button type="button" class="btn btn-secondary btn-sm" id="btn-choose-media">
-        🖼️ Choose Photograph from Media Library
-      </button>
-    </div>
-  `;
+  if (badge) badge.textContent = `${words} words · ${Math.ceil(words / 200)} min read`;
 }
 
 function applyFormatting(textarea, format) {
+  if (textarea.readOnly) return;
   const start = textarea.selectionStart;
   const end = textarea.selectionEnd;
   const val = textarea.value;
@@ -680,83 +665,17 @@ function applyFormatting(textarea, format) {
 
   let replacement = '';
   switch (format) {
-    case 'bold':
-      replacement = `**${selected || 'bold text'}**`;
-      break;
-    case 'italic':
-      replacement = `*${selected || 'italic text'}*`;
-      break;
-    case 'h2':
-      replacement = `\n\n## ${selected || 'Section Heading'}\n\n`;
-      break;
-    case 'h3':
-      replacement = `\n\n### ${selected || 'Sub-heading'}\n\n`;
-      break;
-    case 'quote':
-      replacement = `\n\n> "${selected || 'Important source quote or editorial pullquote'}"\n\n`;
-      break;
-    case 'list':
-      replacement = `\n- ${selected || 'First item'}\n- Second item\n`;
-      break;
-    default:
-      return;
+    case 'bold': replacement = `**${selected || 'bold text'}**`; break;
+    case 'italic': replacement = `*${selected || 'italic text'}*`; break;
+    case 'h2': replacement = `\n\n## ${selected || 'Section Heading'}\n\n`; break;
+    case 'h3': replacement = `\n\n### ${selected || 'Sub-heading'}\n\n`; break;
+    case 'quote': replacement = `\n\n> ${selected || 'Important source quote'}\n\n`; break;
+    case 'list': replacement = `\n- ${selected || 'First item'}\n- Second item\n`; break;
+    case 'link': replacement = `[${selected || 'link text'}](https://)`; break;
+    default: return;
   }
 
   textarea.value = val.substring(0, start) + replacement + val.substring(end);
   textarea.focus();
-  textarea.selectionStart = start + replacement.length;
-  textarea.selectionEnd = start + replacement.length;
-}
-
-function formatBodyMarkdown(raw) {
-  if (!raw) return '';
-  const escaped = escapeHtml(raw);
-
-  // Parse simple markdown headings, quotes, bold, italic
-  return escaped
-    .replace(/^### (.*$)/gim, '<h3 style="font-family: var(--font-serif); font-size: 1.25rem; margin: 1.25rem 0 0.5rem 0; color: var(--color-forest);">$1</h3>')
-    .replace(/^## (.*$)/gim, '<h2 style="font-family: var(--font-serif); font-size: 1.45rem; margin: 1.5rem 0 0.5rem 0; color: var(--color-forest); border-bottom: 1px solid var(--color-rule-soft); padding-bottom: 0.25rem;">$1</h2>')
-    .replace(/^\> "(.*)"$/gim, '<blockquote style="border-left: 3px solid var(--color-clay); padding-left: 1rem; font-style: italic; margin: 1rem 0; color: var(--color-ink-light); font-size: 1.2rem;">"$1"</blockquote>')
-    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.*?)\*/g, '<em>$1</em>')
-    .replace(/\n\n/g, '<p style="margin-bottom: 1rem;"></p>')
-    .replace(/\n/g, '<br>');
-}
-
-function slugify(text) {
-  return String(text || '')
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '');
-}
-
-function getCategoryTitle(slug) {
-  const map = {
-    'faith-society': 'Faith & Society',
-    'church-ministry': 'Church & Ministry',
-    'people-purpose': 'People & Purpose',
-    'business-vocation': 'Business & Vocation',
-    'culture-ideas': 'Culture & Ideas'
-  };
-  return map[slug] || slug || 'General';
-}
-
-function formatDate(iso) {
-  if (!iso) return 'Today';
-  try {
-    return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-  } catch (e) {
-    return 'Recently';
-  }
-}
-
-function escapeHtml(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
+  textarea.selectionStart = textarea.selectionEnd = start + replacement.length;
 }

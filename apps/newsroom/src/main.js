@@ -1,564 +1,331 @@
 /**
- * Main Newsroom Application Entry Point
- * Church Times Nigeria
+ * Newsroom SPA entry point (Church Times Nigeria staff app).
+ *
+ * Boot sequence: choose the adapter (live CMS; mock only in a dev server with VITE_NEWSROOM_MOCK=1), ask the CMS
+ * who we are (GET /api/users/me). Without a server-verified user only the sign-in screen is reachable.
  */
 
-import { apiAdapter } from './api/adapter.js';
+import { initApi, api, getDevUi } from './api/index.js';
+import { PUBLIC_SITE_URL } from './config.js';
 import { store } from './store.js';
 import { showToast } from './components/toast.js';
-import { openModal, closeModal } from './components/modal.js';
+import { renderLogin } from './views/login.js';
 import { renderDashboard } from './views/dashboard.js';
-import { renderEditor } from './views/editor.js';
+import { renderEditor, flushEditor } from './views/editor.js';
 import { renderReview } from './views/review.js';
-import { renderSubmit } from './views/submit.js';
-import { renderLive } from './views/live.js';
+import { renderLive, stopLivePolling } from './views/live.js';
 import { renderMedia } from './views/media.js';
+import { escapeHtml, formatRoleName } from './util.js';
+
+const ID_RE = /^\d+$/;
 
 class NewsroomApp {
   constructor() {
     this.mainEl = document.getElementById('main-content');
-    this.modeBannerEl = document.getElementById('mode-banner');
-    this.roleSelect = document.getElementById('user-role-select');
     this.sessionChipEl = document.getElementById('session-chip');
     this.themeToggleBtn = document.getElementById('theme-toggle-btn');
+    this.lastView = null;
+    this.host = null;
+    this.loginNotice = '';
+    this.returnHash = '';
+    this.navToken = 0; // incremented by every route() call; older (stale) calls stop after their next await
   }
 
-  init() {
-    this.initRolePicker();
-    this.initSessionDisplay();
+  async start() {
     this.initTheme();
-    this.initModeBanner();
     this.initNavLinks();
     this.initKeyboardShortcuts();
-    this.initRouter();
-    this.updateBadges();
+    this.initPublicLink();
 
-    // Subscribe to store changes
-    store.subscribe((event, data) => {
-      if (event === 'user_changed') {
-        showToast(`Switched active role: ${data.name} (${data.role})`, 'info');
+    try {
+      await initApi();
+    } catch (err) {
+      console.error(err);
+      this.showBootError('The newsroom failed to start.');
+      return;
+    }
+
+    this.updateModeBanner();
+    api.subscribe((event) => {
+      if (event === 'unauthorized') this.onSessionLost('Your session has ended. Please sign in again.', { keepReturn: true });
+      else if (event === 'session') {
         this.updateSessionDisplay();
-        this.syncRolePicker();
-        this.route();
-      } else if (event === 'view_changed') {
-        this.updateNavActiveStates(data.view);
-        window.location.hash = data.view + (data.payload?.storyId ? `?id=${data.payload.storyId}` : '');
+        getDevUi()?.syncMockRolePicker(api);
       }
     });
 
-    apiAdapter.subscribe(() => {
-      this.updateModeBanner();
-      this.updateSessionDisplay();
-      this.updateBadges();
+    const devUi = getDevUi();
+    if (devUi) {
+      devUi.installMockUi({ adapter: api, onSwitch: () => { this.updateSessionDisplay(); this.route(); } });
+    }
+
+    try {
+      await api.restoreSession();
+    } catch (err) {
+      this.showBootError(err.message);
+      return;
+    }
+
+    window.addEventListener('hashchange', () => this.route());
+    store.subscribe((event, data) => {
+      if (event === 'view_changed') {
+        const id = data.payload?.storyId;
+        window.location.hash = data.view + (id ? `?id=${encodeURIComponent(id)}` : '');
+      }
     });
-  }
-
-  initRolePicker() {
-    if (!this.roleSelect) return;
-    this.syncRolePicker();
-
-    this.roleSelect.addEventListener('change', () => {
-      store.setCurrentUser(this.roleSelect.value);
-    });
-  }
-
-  syncRolePicker() {
-    if (!this.roleSelect) return;
-    const users = apiAdapter.getUsers();
-    const current = apiAdapter.getCurrentUser();
-    this.roleSelect.innerHTML = users.map(u => `
-      <option value="${u.id}" ${current && u.id === current.id ? 'selected' : ''}>
-        ${u.name} (${formatRoleName(u.role)})
-      </option>
-    `).join('');
-  }
-
-  initSessionDisplay() {
     this.updateSessionDisplay();
+    await this.route();
   }
+
+  /** Each route renders into its own container so a slow, stale view can never overwrite a newer one. */
+  newHost() {
+    const host = document.createElement('div');
+    host.className = 'view-host';
+    this.mainEl.replaceChildren(host);
+    return host;
+  }
+
+  showBootError(message) {
+    document.body.dataset.auth = 'out';
+    this.mainEl.innerHTML = `
+      <section class="card login-card" data-testid="boot-error" role="alert" style="max-width: 32rem; margin: 3rem auto; padding: 1.5rem;">
+        <h1 class="view-title" style="font-size: 1.35rem;">Cannot reach the CMS</h1>
+        <p id="boot-error-text" style="color: var(--color-muted); margin: 0.5rem 0 1rem;"></p>
+        <button type="button" class="btn btn-primary" id="btn-retry-boot" data-testid="boot-retry">Try again</button>
+      </section>`;
+    this.mainEl.querySelector('#boot-error-text').textContent = message;
+    this.mainEl.querySelector('#btn-retry-boot').addEventListener('click', () => window.location.reload());
+  }
+
+  // ---- session --------------------------------------------------------------------------------------
 
   updateSessionDisplay() {
+    const user = api.getCurrentUser();
+    document.body.dataset.auth = user ? 'in' : 'out';
     if (!this.sessionChipEl) return;
-    const user = apiAdapter.getCurrentUser();
-
-    if (user) {
-      this.sessionChipEl.innerHTML = `
-        <div class="session-user-badge" id="session-user-badge" title="${escapeHtml(user.email || user.name)}">
-          <span class="session-avatar">${escapeHtml(user.avatar || user.name.slice(0, 2).toUpperCase())}</span>
-          <div class="session-meta">
-            <span class="session-user-name">${escapeHtml(user.name)}</span>
-            <span class="badge badge-role">${escapeHtml(formatRoleName(user.role))}</span>
-          </div>
-        </div>
-        <button type="button" class="btn btn-outline btn-xs" id="btn-staff-logout" aria-label="Sign out of newsroom session">
-          Log out
-        </button>
-      `;
-
-      const logoutBtn = this.sessionChipEl.querySelector('#btn-staff-logout');
-      if (logoutBtn) {
-        logoutBtn.addEventListener('click', async () => {
-          await apiAdapter.logout();
-          showToast('Logged out. Session cleared.', 'info');
-        });
-      }
-    } else {
-      this.sessionChipEl.innerHTML = `
-        <button type="button" class="btn btn-primary btn-sm" id="btn-staff-login" aria-label="Staff login">
-          🔐 Staff Login
-        </button>
-      `;
-
-      const loginBtn = this.sessionChipEl.querySelector('#btn-staff-login');
-      if (loginBtn) {
-        loginBtn.addEventListener('click', () => this.openStaffLoginModal());
-      }
+    if (!user) {
+      this.sessionChipEl.innerHTML = '';
+      return;
     }
+    this.sessionChipEl.innerHTML = `
+      <div class="session-user-badge" id="session-user-badge" data-testid="session-user" title="${escapeHtml(user.email || user.name)}">
+        <span class="session-avatar">${escapeHtml(user.avatar || String(user.name).slice(0, 2).toUpperCase())}</span>
+        <div class="session-meta">
+          <span class="session-user-name" data-testid="session-user-name">${escapeHtml(user.name)}</span>
+          <span class="badge badge-role" data-testid="session-user-role" data-role="${escapeHtml(user.role)}">${escapeHtml(formatRoleName(user.role))}</span>
+        </div>
+      </div>
+      <button type="button" class="btn btn-outline btn-xs" id="btn-staff-logout" data-testid="logout" aria-label="Sign out of newsroom session">Log out</button>`;
+    this.sessionChipEl.querySelector('#btn-staff-logout').addEventListener('click', async () => {
+      const result = await api.logout();
+      if (result && result.ok === false) {
+        showToast('Signed out in this browser, but the CMS did not confirm the logout. The server session may still be active: close this browser window or sign out from another device.', 'error', 9000);
+      } else {
+        showToast('Logged out. Session cleared.', 'info');
+      }
+      this.onSessionLost('You have been signed out.');
+    });
   }
 
-  openStaffLoginModal() {
-    openModal({
-      title: 'Staff Authentication',
-      onClose: () => {
-        if (window.location.hash === '#login') {
-          window.location.hash = '#dashboard';
-        }
-      },
-      contentHtml: `
-        <div style="display: flex; flex-direction: column; gap: 1rem;">
-          <div class="ethics-notice-box" style="margin-bottom: 0;">
-            <h4 style="margin: 0 0 0.25rem 0;">Church Times Nigeria — Newsroom Access</h4>
-            <p style="margin: 0; font-size: 0.8125rem;">
-              Secure authenticated access for accredited journalists and editors.
-              In live mode, sessions use HttpOnly cookies. Passwords and tokens are <strong>never stored in localStorage</strong>.
-            </p>
-          </div>
+  /** No server-verified user: drop everything and show the sign-in screen only. */
+  onSessionLost(notice, { keepReturn = false } = {}) {
+    stopLivePolling();
+    const current = window.location.hash.slice(1);
+    this.returnHash = keepReturn && current && current !== 'login' ? current : '';
+    this.updateSessionDisplay();
+    this.loginNotice = notice || '';
+    if (window.location.hash && window.location.hash !== '#login') {
+      history.replaceState(null, '', '#login');
+    }
+    this.route();
+  }
 
-          <div class="validation-summary-alert" id="login-error-alert" style="display: none; margin-bottom: 0;" role="alert">
-            <span id="login-error-msg"></span>
-          </div>
-
-          <form id="staff-login-form" novalidate>
-            <div class="form-group" style="margin-bottom: 1rem;">
-              <label for="login-email-input" class="form-label">Staff Email Address <span style="color: #DC2626;">*</span></label>
-              <input
-                type="email"
-                id="login-email-input"
-                class="form-input"
-                placeholder="editor@churchtimesnigeria.net"
-                required
-                autocomplete="username"
-              />
-            </div>
-
-            <div class="form-group" style="margin-bottom: 1rem;">
-              <label for="login-password-input" class="form-label">Password <span style="color: #DC2626;">*</span></label>
-              <input
-                type="password"
-                id="login-password-input"
-                class="form-input"
-                placeholder="••••••••••••"
-                required
-                autocomplete="current-password"
-              />
-            </div>
-
-            <div style="margin-bottom: 1.25rem; background: var(--color-parchment-light); padding: 0.75rem; border-radius: var(--radius-sm); border: 1px dashed var(--color-rule);">
-              <div style="font-size: 0.75rem; font-weight: 700; color: var(--color-muted); text-transform: uppercase; margin-bottom: 0.35rem;">
-                Demo Credentials (Claude Payload CMS Matrix)
-              </div>
-              <div style="display: flex; gap: 0.35rem; flex-wrap: wrap;">
-                <button type="button" class="btn btn-outline btn-xs demo-fill-btn" data-email="reporter@churchtimes.local">Reporter</button>
-                <button type="button" class="btn btn-outline btn-xs demo-fill-btn" data-email="news-editor@churchtimes.local">Section Editor</button>
-                <button type="button" class="btn btn-outline btn-xs demo-fill-btn" data-email="eic@churchtimes.local">Editor-in-Chief</button>
-                <button type="button" class="btn btn-outline btn-xs demo-fill-btn" data-email="admin@churchtimes.local">Admin</button>
-              </div>
-              <div style="font-size: 0.75rem; color: var(--color-muted); margin-top: 0.35rem;">
-                Default demo password: <code>churchtimes2026!</code>
-              </div>
-            </div>
-
-            <div style="display: flex; justify-content: flex-end; gap: 0.5rem;">
-              <button type="button" class="btn btn-outline" id="modal-cancel-login">Cancel</button>
-              <button type="submit" class="btn btn-primary" id="btn-submit-login">
-                🔐 Sign In to Newsroom
-              </button>
-            </div>
-          </form>
-        </div>
-      `,
-      onRender: (modalBody, close) => {
-        const form = modalBody.querySelector('#staff-login-form');
-        const emailInput = modalBody.querySelector('#login-email-input');
-        const passwordInput = modalBody.querySelector('#login-password-input');
-        const errorAlert = modalBody.querySelector('#login-error-alert');
-        const errorMsg = modalBody.querySelector('#login-error-msg');
-        const submitBtn = modalBody.querySelector('#btn-submit-login');
-
-        modalBody.querySelector('#modal-cancel-login').addEventListener('click', () => {
-          close();
-          if (window.location.hash === '#login') {
-            window.location.hash = '#dashboard';
-          }
-        });
-
-        // Demo quick fill
-        modalBody.querySelectorAll('.demo-fill-btn').forEach(btn => {
-          btn.addEventListener('click', () => {
-            emailInput.value = btn.getAttribute('data-email');
-            passwordInput.value = 'churchtimes2026!';
-            errorAlert.style.display = 'none';
-          });
-        });
-
-        form.addEventListener('submit', async (e) => {
-          e.preventDefault();
-          errorAlert.style.display = 'none';
-
-          const email = emailInput.value.trim();
-          const password = passwordInput.value;
-
-          if (!email || !password) {
-            errorMsg.textContent = 'Please enter both email and password.';
-            errorAlert.style.display = 'block';
-            return;
-          }
-
-          submitBtn.disabled = true;
-          submitBtn.textContent = 'Authenticating...';
-
-          try {
-            const res = await apiAdapter.login({ email, password });
-            showToast(`Welcome, ${res.user.name}! Authenticated as ${formatRoleName(res.user.role)}.`, 'success');
-            close();
-            this.updateSessionDisplay();
-            this.syncRolePicker();
-            if (window.location.hash === '#login') {
-              window.location.hash = '#dashboard';
-            } else {
-              this.route();
-            }
-          } catch (err) {
-            submitBtn.disabled = false;
-            submitBtn.textContent = '🔐 Sign In to Newsroom';
-            errorMsg.textContent = err.message;
-            errorAlert.style.display = 'block';
-          }
-        });
+  showLogin() {
+    document.body.dataset.auth = 'out';
+    const notice = this.loginNotice;
+    this.loginNotice = '';
+    renderLogin(this.host || (this.host = this.newHost()), {
+      notice,
+      onSuccess: async (user) => {
+        showToast(`Welcome, ${user.name}! Signed in as ${formatRoleName(user.role)}.`, 'success');
+        this.updateSessionDisplay();
+        getDevUi()?.syncMockRolePicker(api);
+        history.replaceState(null, '', this.returnHash ? `#${this.returnHash}` : '#dashboard');
+        this.returnHash = '';
+        await this.route();
       }
     });
   }
+
+  // ---- chrome ---------------------------------------------------------------------------------------
 
   initTheme() {
     if (!this.themeToggleBtn) return;
-    const savedTheme = localStorage.getItem('ctn_theme') || 'light';
-    if (savedTheme === 'dark') {
+    let saved = 'light';
+    try { saved = localStorage.getItem('ctn_theme') || 'light'; } catch { /* ignore */ }
+    if (saved === 'dark') {
       document.documentElement.setAttribute('data-theme', 'dark');
-      this.themeToggleBtn.textContent = '☀️';
+      this.themeToggleBtn.textContent = 'Light';
     }
-
     this.themeToggleBtn.addEventListener('click', () => {
-      const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-      if (isDark) {
-        document.documentElement.removeAttribute('data-theme');
-        localStorage.setItem('ctn_theme', 'light');
-        this.themeToggleBtn.textContent = '🌙';
-      } else {
-        document.documentElement.setAttribute('data-theme', 'dark');
-        localStorage.setItem('ctn_theme', 'dark');
-        this.themeToggleBtn.textContent = '☀️';
-      }
+      const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+      if (dark) document.documentElement.removeAttribute('data-theme');
+      else document.documentElement.setAttribute('data-theme', 'dark');
+      this.themeToggleBtn.textContent = dark ? 'Dark' : 'Light';
+      try { localStorage.setItem('ctn_theme', dark ? 'light' : 'dark'); } catch { /* ignore */ }
     });
-  }
-
-  initModeBanner() {
-    this.updateModeBanner();
-
-    const configBtn = document.getElementById('btn-cms-settings');
-    if (configBtn) {
-      configBtn.addEventListener('click', () => this.openCmsSettingsModal());
-    }
   }
 
   updateModeBanner() {
-    const info = apiAdapter.getModeInfo();
+    const info = api.getModeInfo();
     const banner = document.getElementById('mode-banner');
     const badge = document.getElementById('mode-banner-badge');
     const text = document.getElementById('mode-banner-desc');
-    const mockWrapper = document.getElementById('mock-role-picker-wrapper');
     if (!banner || !badge || !text) return;
-
-    if (info.isMock) {
-      banner.className = 'mode-banner';
-      badge.textContent = 'LOCAL MOCK MODE';
-      text.textContent = 'Running in Local Storage Mock Mode. All edits persist in browser.';
-      if (mockWrapper) mockWrapper.style.display = 'flex';
-    } else {
-      banner.className = 'mode-banner is-live';
-      badge.textContent = 'LIVE CMS CONNECTED';
-      text.textContent = `Connected to Payload CMS at ${info.backendUrl}`;
-      if (mockWrapper) mockWrapper.style.display = 'none';
-    }
+    banner.className = info.isMock ? 'mode-banner' : 'mode-banner is-live';
+    badge.textContent = info.label;
+    text.textContent = info.detail;
   }
 
-  openCmsSettingsModal() {
-    const info = apiAdapter.getModeInfo();
-    openModal({
-      title: 'Backend & Storage Configuration',
-      contentHtml: `
-        <div style="display: flex; flex-direction: column; gap: 1rem;">
-          <div class="ethics-notice-box" style="margin-bottom: 0;">
-            <h4>Payload CMS Integration Contract</h4>
-            <p>
-              Claude owns the Payload CMS backend on <code>agent/payload-core</code>.
-              When running locally, PostgreSQL + Payload run at <code>http://localhost:3000</code>.
-            </p>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label" style="font-weight: 600;">Operating Mode</label>
-            <div style="display: flex; gap: 1.5rem; margin-top: 0.35rem;">
-              <label style="display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.875rem;">
-                <input type="radio" name="cms-mode" id="radio-mode-mock" value="mock" ${info.isMock ? 'checked' : ''} />
-                <span>🛠 Local Mock Mode</span>
-              </label>
-              <label style="display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 0.875rem;">
-                <input type="radio" name="cms-mode" id="radio-mode-live" value="live" ${!info.isMock ? 'checked' : ''} />
-                <span>🌐 Live Payload CMS</span>
-              </label>
-            </div>
-            <span class="form-help">In Mock mode, role switcher is enabled. In Live CMS mode, real authenticated sessions are enforced.</span>
-          </div>
-
-          <div class="form-group">
-            <label for="cms-url-input" class="form-label">Payload CMS Base URL</label>
-            <input type="url" id="cms-url-input" class="form-input" value="${escapeHtml(info.backendUrl)}" />
-            <input type="hidden" id="modal-cms-url" value="${escapeHtml(info.backendUrl)}" />
-            <span class="form-help">Default: http://localhost:3000</span>
-          </div>
-
-          <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; background: var(--color-parchment-light); padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--color-rule);">
-            <div>
-              <div style="font-weight: 700; font-size: 0.875rem;">Reset Mock Test Fixtures</div>
-              <div style="font-size: 0.75rem; color: var(--color-muted);">Restore original Church Times story and tips dataset.</div>
-            </div>
-            <button type="button" class="btn btn-outline btn-sm" id="modal-reset-fixtures-btn">
-              🔄 Reset Data
-            </button>
-          </div>
-
-          <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.5rem;">
-            <button type="button" class="btn btn-outline" id="modal-close-settings">Close</button>
-            <button type="button" class="btn btn-outline" id="modal-test-conn-btn">
-              Test Connection
-            </button>
-            <button type="button" class="btn btn-primary" id="btn-save-cms-config">
-              Save Configuration
-            </button>
-          </div>
-        </div>
-      `,
-      onRender: (modalBody, close) => {
-        const urlInput = modalBody.querySelector('#cms-url-input');
-        const legacyUrlInput = modalBody.querySelector('#modal-cms-url');
-        if (urlInput && legacyUrlInput) {
-          urlInput.addEventListener('input', () => { legacyUrlInput.value = urlInput.value; });
-        }
-
-        modalBody.querySelector('#modal-close-settings').addEventListener('click', close);
-
-        modalBody.querySelector('#modal-reset-fixtures-btn').addEventListener('click', () => {
-          apiAdapter.resetStorage();
-          showToast('Mock data reset to original seed fixtures!', 'success');
-          close();
-          this.route();
-        });
-
-        modalBody.querySelector('#modal-test-conn-btn').addEventListener('click', async () => {
-          const url = (urlInput ? urlInput.value : legacyUrlInput.value).trim();
-          showToast('Pinging Payload CMS endpoint...', 'info');
-          const res = await apiAdapter.testBackendConnection(url);
-          if (res.success) {
-            showToast(res.message, 'success');
-            close();
-            this.updateModeBanner();
-          } else {
-            showToast(res.message, 'error', 4500);
-            this.updateModeBanner();
-          }
-        });
-
-        const saveBtn = modalBody.querySelector('#btn-save-cms-config');
-        if (saveBtn) {
-          saveBtn.addEventListener('click', () => {
-            const isLive = modalBody.querySelector('#radio-mode-live')?.checked;
-            const url = (urlInput ? urlInput.value : legacyUrlInput.value).trim();
-            if (isLive) {
-              apiAdapter.backendUrl = url || 'http://localhost:3000';
-              apiAdapter.isMockActive = false;
-              apiAdapter.connectionStatus = `Connected to Payload CMS (${apiAdapter.backendUrl})`;
-              showToast(`Switched to Live Payload CMS mode (${apiAdapter.backendUrl})`, 'success');
-            } else {
-              apiAdapter.isMockActive = true;
-              apiAdapter.connectionStatus = 'Local Mock Mode';
-              showToast('Switched to Local Mock Mode', 'info');
-            }
-            this.updateModeBanner();
-            this.updateSessionDisplay();
-            close();
-          });
-        }
-      }
-    });
+  initPublicLink() {
+    const link = document.getElementById('nav-public-site-link');
+    if (link && PUBLIC_SITE_URL) {
+      link.href = `${PUBLIC_SITE_URL}/#submit`;
+      link.hidden = false;
+    }
   }
 
   initNavLinks() {
-    // Quick write button in nav
-    const quickWriteBtn = document.getElementById('nav-quick-write-btn');
-    if (quickWriteBtn) {
-      quickWriteBtn.addEventListener('click', () => {
-        store.setCurrentView('editor', { storyId: null });
-      });
-    }
-
-    // Intercept nav clicks
+    document.getElementById('nav-quick-write-btn')?.addEventListener('click', () => {
+      store.setCurrentView('editor', { storyId: null });
+    });
     document.querySelectorAll('[data-view-nav]').forEach(link => {
-      link.addEventListener('click', (e) => {
+      link.addEventListener('click', () => {
         const view = link.getAttribute('data-view-nav');
-        if (view) {
-          store.setCurrentView(view);
-        }
+        if (view) store.setCurrentView(view);
       });
     });
   }
 
   initKeyboardShortcuts() {
     document.addEventListener('keydown', (e) => {
-      // Avoid shortcuts when typing in inputs/textareas
-      const tag = e.target.tagName.toLowerCase();
-      const isInput = tag === 'input' || tag === 'textarea' || tag === 'select';
-
-      // Alt + Number navigation
+      if (!api.getCurrentUser()) return;
       if (e.altKey && !e.ctrlKey && !e.shiftKey) {
-        if (e.key === '1') { e.preventDefault(); store.setCurrentView('dashboard'); }
-        if (e.key === '2') { e.preventDefault(); store.setCurrentView('editor'); }
-        if (e.key === '3') { e.preventDefault(); store.setCurrentView('review'); }
-        if (e.key === '4') { e.preventDefault(); store.setCurrentView('live'); }
-        if (e.key === '5') { e.preventDefault(); store.setCurrentView('media'); }
-        if (e.key === '6') { e.preventDefault(); store.setCurrentView('submit'); }
+        const map = { 1: 'dashboard', 2: 'editor', 3: 'review', 4: 'live', 5: 'media' };
+        if (map[e.key]) { e.preventDefault(); store.setCurrentView(map[e.key]); }
       }
-
-      // Ctrl + S quick save
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-        e.preventDefault();
-        const saveDraftBtn = document.getElementById('btn-save-draft');
-        if (saveDraftBtn) {
-          saveDraftBtn.click();
-        } else {
-          showToast('Draft saved', 'success');
-        }
+        const saveBtn = document.getElementById('btn-save-draft');
+        if (saveBtn && !saveBtn.disabled) { e.preventDefault(); saveBtn.click(); }
       }
     });
   }
 
-  initRouter() {
-    window.addEventListener('hashchange', () => this.route());
-    this.route();
-  }
+  // ---- router ---------------------------------------------------------------------------------------
 
   async route() {
+    // Navigation token: route() is async and can be re-entered (hash changes, session events). Only the latest call may
+    // create a host or render; every earlier call returns as soon as it resumes from an await.
+    const token = ++this.navToken;
+    const isStale = () => token !== this.navToken;
     const hash = window.location.hash.slice(1) || 'dashboard';
     const [viewName, queryString] = hash.split('?');
     const params = new URLSearchParams(queryString || '');
-    const storyId = params.get('id');
 
+    // Leaving the editor: stop timers and flush a pending autosave while its DOM still exists.
+    if (this.lastView === 'editor') {
+      if (this.host) await flushEditor(this.host);
+      if (isStale()) return;
+    }
+    stopLivePolling();
+
+    const user = api.getCurrentUser(); // read after the flush: the session may have ended meanwhile
+    if (!user) {
+      this.host = this.newHost();
+      if (viewName !== 'login' && !this.returnHash) this.returnHash = hash;
+      this.lastView = 'login';
+      this.showLogin();
+      return;
+    }
+    if (viewName === 'login') {
+      window.location.hash = '#dashboard';
+      return;
+    }
+    // A revoked/expired session reads as anonymous (200), never 401: confirm it with the server before rendering a staff view.
+    if (!api.isMock) {
+      const valid = await api.verifySession();
+      if (isStale()) return;
+      if (!valid) return;
+    }
+
+    document.body.dataset.auth = 'in';
+    const rawId = params.get('id');
+    let storyId = null;
+    if (rawId) {
+      if (!api.isMock && !ID_RE.test(rawId)) {
+        showToast('That story link is not valid.', 'error');
+        window.location.hash = '#dashboard';
+        return;
+      }
+      storyId = rawId;
+    }
+
+    const host = this.newHost();
+    this.host = host;
+    this.lastView = viewName;
+    store.currentView = viewName;
     this.updateNavActiveStates(viewName);
 
     switch (viewName) {
+      case 'editor': await renderEditor(host, storyId); break;
+      case 'review': await renderReview(host, storyId); break;
+      case 'live': await renderLive(host); break;
+      case 'media': await renderMedia(host); break;
+      case 'submit': this.renderPublicTipNotice(host); break;
       case 'dashboard':
-        await renderDashboard(this.mainEl);
-        break;
-      case 'editor':
-        await renderEditor(this.mainEl, storyId);
-        break;
-      case 'review':
-        await renderReview(this.mainEl, storyId);
-        break;
-      case 'submit':
-        renderSubmit(this.mainEl);
-        break;
-      case 'live':
-        await renderLive(this.mainEl);
-        break;
-      case 'media':
-        await renderMedia(this.mainEl);
-        break;
-      case 'login':
-        this.openStaffLoginModal();
-        break;
       default:
-        await renderDashboard(this.mainEl);
+        await renderDashboard(host);
         break;
     }
 
+    if (isStale()) return;
     this.updateBadges();
     window.scrollTo(0, 0);
+  }
+
+  renderPublicTipNotice(host) {
+    host.innerHTML = `
+      <div class="card" style="padding: 2rem; max-width: 40rem; margin: 1rem auto;" data-testid="public-tip-notice">
+        <h1 class="view-title" style="font-size: 1.35rem;">Reader tips are submitted on the public site</h1>
+        <p style="margin: 0.75rem 0;">The story and tip form is part of the public Church Times Nigeria website. Tips arrive in the
+          <a href="#review">Review Queue</a> under Reader Tips, where editors can review and convert them.</p>
+        ${PUBLIC_SITE_URL ? `<p><a class="btn btn-outline" href="${escapeHtml(PUBLIC_SITE_URL)}/#submit" target="_blank" rel="noopener noreferrer" data-testid="public-tip-form-link">Open the public submission form</a></p>` : ''}
+      </div>`;
   }
 
   updateNavActiveStates(activeView) {
     document.querySelectorAll('[data-view-nav]').forEach(el => {
       const match = el.getAttribute('data-view-nav') === activeView;
       el.classList.toggle('active', match);
-      if (el.tagName.toLowerCase() === 'a') {
-        el.setAttribute('aria-current', match ? 'page' : 'false');
-      }
+      if (el.tagName.toLowerCase() === 'a') el.setAttribute('aria-current', match ? 'page' : 'false');
     });
   }
 
   async updateBadges() {
     try {
-      const [articlesRes, subsRes] = await Promise.all([
-        apiAdapter.getArticles(),
-        apiAdapter.getSubmissions()
-      ]);
-      const pendingCount = articlesRes.data.filter(a => a.status === 'in_review').length;
-      const subsCount = subsRes.data.filter(s => s.status === 'pending').length;
-      const totalReview = pendingCount + subsCount;
-
-      const reviewBadges = document.querySelectorAll('.review-count-badge');
-      reviewBadges.forEach(badge => {
-        badge.textContent = totalReview;
-        badge.style.display = totalReview > 0 ? 'inline-block' : 'none';
+      const counts = await api.getArticleCounts();
+      let total = counts.in_review || 0;
+      if (api.can('submission.review')) {
+        total += (await api.getSubmissions({ statuses: ['new', 'under_review'] })).totalDocs || 0;
+      }
+      document.querySelectorAll('.review-count-badge').forEach(badge => {
+        badge.textContent = String(total);
+        badge.style.display = total > 0 ? 'inline-block' : 'none';
       });
-    } catch (e) {}
+    } catch { /* badges are decorative; errors surface in the views */ }
   }
 }
 
-function formatRoleName(role) {
-  if (!role) return 'Contributor';
-  const clean = role.replace(/_/g, '-');
-  const map = {
-    reporter: 'Reporter',
-    'section-editor': 'Section Editor',
-    'editor-in-chief': 'Editor-in-Chief',
-    admin: 'Administrator',
-    'trusted-publisher': 'Trusted Publisher',
-    public: 'Public Contributor'
-  };
-  return map[clean] || map[role] || role;
-}
-
-function escapeHtml(str) {
-  if (!str) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
-
 document.addEventListener('DOMContentLoaded', () => {
-  const app = new NewsroomApp();
-  app.init();
+  new NewsroomApp().start();
 });

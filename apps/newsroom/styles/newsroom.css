@@ -279,6 +279,15 @@ html, body {
   align-items: center;
   gap: 0.5rem;
 }
+/* The masthead is dark in both themes: keep the outline Log out button legible on it. */
+.session-chip .btn-outline {
+  color: var(--color-parchment);
+  border-color: rgba(255, 255, 255, 0.45);
+}
+.session-chip .btn-outline:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: var(--color-parchment);
+}
 .session-user-badge {
   display: flex;
   align-items: center;
@@ -1504,4 +1513,84 @@ html, body {
     right: 1rem;
     left: 1rem;
   }
+}
+
+/* ---- Auth gating, login screen, rendered rich text (live-CMS build) ---- */
+body[data-auth="out"] .nav-bar,
+body[data-auth="out"] .mobile-nav-bar,
+body[data-auth="out"] .session-chip:empty {
+  display: none;
+}
+.login-view {
+  display: flex;
+  justify-content: center;
+  padding: 2rem 0 4rem;
+}
+.login-card {
+  width: 100%;
+  max-width: 26rem;
+  padding: 1.75rem;
+}
+.mock-login-helper {
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  border: 1px dashed var(--color-rule);
+  border-radius: var(--radius-sm);
+  background: var(--color-parchment-light);
+}
+.mock-login-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  margin-bottom: 0.35rem;
+}
+.mock-login-buttons {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+.preview-body h2 {
+  font-family: var(--font-serif);
+  font-size: 1.45rem;
+  margin: 1.5rem 0 0.5rem;
+  color: var(--color-forest);
+  border-bottom: 1px solid var(--color-rule-soft);
+  padding-bottom: 0.25rem;
+}
+.preview-body h3 {
+  font-family: var(--font-serif);
+  font-size: 1.25rem;
+  margin: 1.25rem 0 0.5rem;
+  color: var(--color-forest);
+}
+.preview-body p { margin: 0 0 1rem; }
+.preview-body blockquote {
+  border-left: 3px solid var(--color-clay);
+  padding-left: 1rem;
+  font-style: italic;
+  margin: 1rem 0;
+  color: var(--color-ink-light);
+  font-size: 1.15rem;
+}
+.preview-body ul,
+.preview-body ol { margin: 0 0 1rem 1.25rem; }
+.preview-body a { color: var(--color-forest); text-decoration: underline; }
+[hidden] { display: none !important; }
+/* Modal content must scroll inside the box, never shrink and overlap (visible on short/mobile viewports) */
+.modal-box > * { flex-shrink: 0; }
+/* Long unbroken strings (slugs, URLs) must wrap inside the modal instead of widening it past the viewport */
+.modal-box { min-width: 0; max-width: min(600px, 100%); box-sizing: border-box; }
+.modal-body, .modal-body * { min-width: 0; overflow-wrap: anywhere; }
+/* Prevent horizontal page overflow on narrow screens (tabs row, long select options) */
+.review-tabs { flex-wrap: wrap; overflow-x: auto; max-width: 100%; }
+.select-input, .form-select { max-width: 100%; }
+.view-header-row > div { min-width: 0; max-width: 100%; }
+@media (max-width: 768px) {
+  .masthead { gap: 0.25rem; }
+  .masthead-controls { min-width: 0; flex-wrap: nowrap; }
+  .theme-btn { padding: 0.2rem 0.4rem; font-size: 0.6875rem; width: auto; height: auto; min-width: 0; }
+  .session-chip { min-width: 0; }
+  .session-chip .btn { padding: 0.2rem 0.4rem; font-size: 0.6875rem; }
+  .brand-subtitle { display: none; }
 }

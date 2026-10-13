@@ -1,130 +1,93 @@
-# Church Times Nigeria — Newsroom UI
+# Church Times Nigeria — Staff Newsroom App
 
-**Internal Newsroom Editorial Interface**  
-*Branch:* `agent/gemini-ui-support` · *Target:* `feat/newsroom-mvp`  
-*Aesthetic System:* Church Times Nigeria Brand Guide (Forest `#173B32`, Parchment `#F6F3EA`, Ink `#222A25`, Clay `#A45336`, Sage `#DFE5D8`, Muted `#61675E`)  
-*Accessibility Standard:* WCAG 2.2 AA compliant with high-contrast visible focus, screen reader live regions, and semantic landmarks.
+Vanilla JS + CSS single-page app for reporters and editors (dashboard, story editor, review queue and reader tips,
+live coverage, media library). It talks to the real Payload CMS (`apps/cms`, contract `apps/cms/docs/api-contracts.md`
+v1.3). **There is no mock in a production build.**
 
----
+The public tip form is **not** part of this app: it lives on the public site. Tips arrive in the Review Queue
+(Reader Tips tab) from the staff-only `/api/submissions` collection. Set `VITE_PUBLIC_SITE_URL` to show a link to it.
 
-## 1. Overview & Architecture
+## Live mode configuration (the only mode in production)
 
-The Church Times Newsroom UI is an isolated, lightweight, production-oriented single-page application built using pure Vanilla JS and Vanilla CSS. It provides church reporters, section editors, and the editor-in-chief with a streamlined workspace for writing, reviewing, fact-checking, approving, and publishing journalism, as well as managing live event coverage and public submissions.
+| Build-time variable | Meaning |
+| --- | --- |
+| `VITE_CMS_URL` | CMS base URL, no trailing slash, e.g. `https://cms.example.org`. Baked in at build time; there is no user-editable backend URL. Empty = same origin (CMS reverse-proxied under `/api`). |
+| `VITE_PUBLIC_SITE_URL` | Optional public site origin, used only to link to its tip form. |
 
-### Project Separation of Concerns
-- **Newsroom UI (`apps/newsroom/` & `tests/newsroom.spec.js`)**: Owned by Gemini. Completely decoupled from public site templates and backend database code.
-- **Public Vite Website (`src/`)**: Owned by ChatGPT on `agent/chatgpt-frontend`. Preserved without modification.
-- **Payload CMS & PostgreSQL (`apps/cms/`)**: Owned by Claude on `agent/payload-core`. Integrated via typed adapter contracts.
+Requirements on the CMS side (see `apps/cms/docs/api-contracts.md` §5 and `docs/staging.md` §7):
 
----
+- **Same site.** The session is an `HttpOnly`, `SameSite=Lax`, host-only `payload-token` cookie. The newsroom and the CMS
+  must share a registrable domain (`newsroom.example.org` + `cms.example.org`) or be served from one origin behind a
+  reverse proxy. A newsroom on `*.github.io` / `*.pages.dev` or another registrable domain can log in but every later
+  request is anonymous.
+- **Origins.** The newsroom origin must be in both `CMS_CORS_ORIGINS` and `CMS_CSRF_ORIGINS`.
+- Every request uses `fetch(..., { credentials: 'include' })`. The JWT in the login response body is ignored; nothing
+  credential-like is ever stored. Boot calls `GET /api/users/me` (200 `{ user: null }` means signed out); without a
+  server-verified user only the sign-in screen is reachable. Logout calls `POST /api/users/logout` and clears memory and
+  `ctn_*` localStorage keys (the theme preference is kept).
+- Roles and sections come from the server user object. Buttons are shown by role as a convenience only; the CMS enforces
+  every rule and its error messages (401 returns to sign-in, 403 "not permitted", 400/409 messages) are shown verbatim.
 
-## 2. Key Features Implemented
+### Build and run
 
-### 1. Newsroom Dashboard (`#dashboard`)
-- **Editorial Pipeline KPIs**: Real-time metric cards tracking Drafts, In Review, Revisions Requested, Approved Stories, Published Stories, and Reader Tips.
-- **Quick Action Launchpad**: One-click navigation to Write Story, Review Submissions, Go Live, and Media Library.
-- **Filterable Story Pipeline**: Search by reporter or headline keywords; filter by status and category.
-- **Active Role Switcher**: Switch between Reporter (*Gbenga Osinaike*), Section Editor (*Derin Adeogun*), Editor-in-Chief (*Lanre Ogundipe*), and Public Contributor.
-
-### 2. Story Editor (`#editor`)
-- **Headline & Auto-Slug Engine**: Formats display headlines and automatically derives clean URL slugs.
-- **Standfirst / Deck Summary**: Editorial italicized lead text.
-- **Category Selector**: Faith & Society, Church & Ministry, People & Purpose, Business & Vocation, Culture & Ideas.
-- **Body Editor**: Markdown formatting toolbar (Bold, Italic, H2, H3, Blockquotes, Bullet Lists) with dynamic word counter and reading-time estimates.
-- **Featured Photograph Selection**: Attach images with verified captions, photographer credits, and accessible alt-text descriptions.
-- **Autosave Engine**: Visual debounce indicator (`Saved just now` / `Autosaving...` / `Unsaved changes...`).
-- **Live Reader Preview**: Desktop side-by-side split screen; mobile tabbed toggle (`✏️ Edit` / `👁️ Preview`) rendering article exactly as public readers see it.
-- **Role-Governed Workflow**:
-  - *Reporter*: Save Draft, Submit for Review (`draft` -> `in_review`).
-  - *Section Editor*: Request Changes with feedback notes, Approve Story (`in_review` -> `approved`).
-  - *Editor-in-Chief*: Publish Story immediately to public feed (`approved` -> `published`).
-
-### 3. Review Queue (`#review`)
-- **Tabbed Review Stages**: In Review, Reader Tips & Submissions, Revisions Requested, and Approved Ready.
-- **Story Inspection Drawer**: Read complete text, verify fact-checking checklist (corroborated sources, subject dignity/consent, photo rights), and approve or request revisions.
-- **Editorial Revision Loop**: Send feedback guidance notes back to reporters.
-
-### 4. Public Submission Interface (`#submit`)
-- **Citizen Journalism & Tip Form**: Public endpoint for anonymous or named story tips.
-- **Strict Ethical Notice**: Clear disclaimer that submissions are **NEVER automatically published**.
-- **Anti-Spam & Rate Limiting Protection**: Integrated honeypot and client-side validation.
-- **Submission Tracking Receipt**: Generates verified tracking reference ID (e.g. `CTN-SUB-1048`) and sends tips straight to the editor's review queue.
-- **One-Click Tip Conversion**: Editors can convert any verified tip into a pre-filled draft story.
-
-### 5. Live Event Coverage Center (`#live`)
-- **Event Switcher**: Manage ongoing conferences, synods, and breaking events with live viewer ticker.
-- **Rapid Update Composer**: Timestamp auto-generation (WAT), breaking headline alert, and pinned highlight toggle.
-- **Editorial Approval Step**: Field reporters submit updates; editors approve before timeline broadcast.
-- **Live Reader Stream**: Reverse-chronological timeline with pulsing red `LIVE` badges and auto-polling simulation (8s).
-
-### 6. Media Library (`#media`)
-- **Photographic Archive**: High-resolution documentary news photos with dimensions and file sizes.
-- **Rights & Accessibility Inspector**: View and edit alt text, photographer credits, and license type (*Staff Photograph*, *Editorial Archive Use*).
-- **Upload Modal**: Enforces alt-text descriptions before saving assets.
-- **Insert into Story**: Attach chosen photo directly into the active story draft.
-
----
-
-## 3. Backend Adapter & Mock Status Transparency
-
-Per sprint rules, mock functionality is transparently declared and never disguised as a connected backend:
-
-- **Mode Banner**: Always visible at the top of the workspace:
-  - `[LOCAL MOCK MODE]`: In-memory and `localStorage` storage mode with initial seed fixtures.
-  - `[LIVE CMS CONNECTED]`: Active connection to Claude's Payload CMS.
-- **Payload CMS Contract Coordinator**:
-  - `GET /api/articles` (supports `where[status][equals]`, `limit`, `sort`)
-  - `POST /api/articles` (create story)
-  - `PATCH /api/articles/:id` (update story / change status)
-  - `POST /api/public/submissions` (anonymous tip submission)
-  - `GET /api/submissions` & `PATCH /api/submissions/:id` (review queue)
-  - `GET /api/live-events`, `POST /api/live-updates`, `PATCH /api/live-updates/:id` (live coverage)
-  - `GET /api/media` & `POST /api/media` (media library)
-- **CMS Settings Dialog**: Accessible via the `⚙️ CMS Settings` button in the header. Allows testing connectivity to `http://localhost:3000` or resetting mock data to fresh fixtures.
-
----
-
-## 4. Accessibility & Mobile Optimization
-
-- **Android Phone Support**: Optimized for 390px (Pixel 7) screens with a thumb-friendly bottom navigation bar, collapsed toolbars, and responsive modal dialogues with clearance above navigation.
-- **Desktop Workstation Support**: Multi-column layouts, sticky toolbars, side-by-side live reader preview.
-- **Keyboard Navigation**:
-  - `Alt + 1`: Go to Dashboard
-  - `Alt + 2`: Go to Story Editor
-  - `Alt + 3`: Go to Review Queue
-  - `Alt + 4`: Go to Live Coverage
-  - `Alt + 5`: Go to Media Library
-  - `Alt + 6`: Go to Public Submission
-  - `Ctrl + S`: Quick Save Draft
-  - `Escape`: Dismiss open dialogs/modals
-  - Accessible skip link: `Skip to main editorial content`
-- **Dark Mode**: Toggleable night-desk mode with contrast compliant with WCAG 2.2 AA.
-
----
-
-## 5. Running Locally & Testing
-
-### Development Server
 ```bash
-# Start standard dev server (serves public site at / and newsroom at /apps/newsroom/)
-npm run dev
-
-# Or start isolated newsroom dev server
-npm run dev:newsroom
+VITE_CMS_URL=https://cms.example.org npm run build:newsroom   # output: apps/newsroom/dist
+npm run dev:newsroom                                          # dev server against VITE_CMS_URL (default http://localhost:3000)
 ```
 
-### Production Build
+## Development mock mode (dev server only)
+
 ```bash
-# Build newsroom application bundle
-npm run build:newsroom
+npm run dev:newsroom:mock     # vite apps/newsroom --mode mock  (loads .env.mock: VITE_NEWSROOM_MOCK=1)
 ```
 
-### Automated Testing (Playwright)
-```bash
-# Run all tests (Public website tests + Newsroom tests)
-npm test
+`MOCK = import.meta.env.DEV && VITE_NEWSROOM_MOCK === '1'`. The mock backend (`src/api/mock.js`, `mock-data.js`,
+`mock-ui.js`: localStorage data, role switcher, dev accounts on the login screen) is loaded with dynamic `import()` behind
+that constant, so it is removed from production bundles even if the variable is set. `newsroom-security.spec.js`
+builds the app and asserts the bundle contains no demo password, mock data, role switcher or settings dialog.
 
-# Run newsroom UI test suite specifically
-npm run test:newsroom
+## Editing model
+
+- Body is edited as a markdown subset and stored as Lexical JSON in `content` (`src/lexical.js`): paragraphs, h2/h3,
+  bold, italic, quotes, bullet and numbered lists, `http(s)`/`mailto` links. Stories containing anything else (images,
+  nested lists, underline, ...) open with a read-only body so nothing is lost.
+- Saving PATCHes only changed, allowlisted fields (`title`, `slug`, `excerpt` = standfirst, `content`, `category` id,
+  `featuredImage` id, `bylineName`). Workflow actions are separate PATCHes (`status`, plus `reviewNotes` for request
+  changes). Editing a published story asks for the correction note the CMS requires. Autosave only applies to
+  already-saved drafts / changes-requested stories and never creates records.
+- Tips become stories only through `POST /api/submissions/:id/convert { category }`. Note: the CMS credits the
+  submitter's name (not email/phone) as the draft's `bylineName`; the editor shows it so an editor can change or clear it.
+- Media: multipart `POST /api/media` (`file` + `_payload` JSON with `alt`, `caption`, `credit`); featured images are
+  picked from `GET /api/media`. Image URLs come from the CMS response (made absolute with `VITE_CMS_URL` if relative).
+- All HTML interpolation goes through one `escapeHtml` helper (`src/util.js`); record ids are validated as `/^\d+$/`
+  and `encodeURIComponent`-ed before use in API paths.
+
+## Tests
+
+```bash
+npm run test:newsroom-unit   # Lexical mapping round trips (node --test)
+npm run test:newsroom-app    # Playwright: production-bundle audit + mock-mode UI (dev mock server on :5276)
 ```
-All 34 project tests pass (14 newsroom tests + 20 public site regression tests) across both Desktop Chrome and Android Pixel 7 viewports.
+
+Live-CMS tests (real login, workflow, media, tips, live coverage) run in the same command when pointed at a
+`staging:up` instance (see `apps/cms/docs/staging.md`), for example:
+
+```bash
+# in apps/cms: STAGING_DIR=.staging-newsroom STAGING_PORT=3300 STAGING_PG_PORT=55434 STAGING_SKIP_BUILD=1 \
+#   STAGING_NEWSROOM_ORIGIN=http://newsroom.churchtimes.localhost:5274 \
+#   STAGING_PUBLIC_ORIGIN=http://www.churchtimes.localhost:5273 STAGING_AUTH_LOGIN_RATE_LIMIT=200 npm run staging:up
+NEWSROOM_LIVE_CMS_URL=http://cms.churchtimes.localhost:3300 \
+NEWSROOM_LIVE_CREDENTIALS=apps/cms/.staging-newsroom/credentials.json \
+npm run test:newsroom-app
+```
+
+The config then builds the app with that `VITE_CMS_URL` and serves the production bundle on
+`http://newsroom.churchtimes.localhost:5274` (`NEWSROOM_LIVE_PORT`); credentials are read from the file and never printed.
+
+## Stable test selectors
+
+Elements carry `data-testid` plus stable ids, for example: `login-form`, `login-email`, `login-password`, `login-submit`,
+`login-error`, `logout`, `story-list`, `story-row`, `dash-new-story`, `nav-new-story`, `editor-title`, `editor-standfirst`,
+`editor-body`, `editor-category`, `editor-slug`, `editor-byline`, `editor-featured-image`, `editor-choose-image`,
+`editor-save-draft`, `editor-submit-review`, `editor-approve`, `editor-request-changes`, `editor-publish`,
+`review-card`, `review-inspect`, `tip-list`, `tip-card`, `tip-convert`, `tip-convert-confirm`, `media-upload-input`.

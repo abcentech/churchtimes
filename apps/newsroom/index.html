@@ -4,26 +4,22 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#173B32" />
-    <meta name="description" content="Production editorial workspace for Church Times Nigeria journalists and editors." />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="description" content="Staff editorial workspace for Church Times Nigeria journalists and editors." />
     <title>Newsroom Workspace — Church Times Nigeria</title>
-    <link rel="icon" type="image/svg+xml" href="/site/favicon.svg" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <link rel="stylesheet" href="./styles/newsroom.css" />
   </head>
-  <body>
+  <body data-auth="out">
     <!-- Accessible Skip Link -->
     <a href="#main-content" class="skip-link">Skip to main editorial content</a>
 
     <div class="app-container">
-      <!-- Mode Status & CMS Connection Banner -->
-      <aside class="mode-banner" id="mode-banner" aria-label="System environment status">
+      <!-- Environment banner: filled from the active adapter (LIVE CMS, or the dev-only mock label) -->
+      <aside class="mode-banner is-live" id="mode-banner" aria-label="System environment status">
         <div class="mode-banner-text">
-          <span class="mode-banner-badge" id="mode-banner-badge">LOCAL MOCK MODE</span>
-          <span id="mode-banner-desc">Running in Local Storage Mock Mode. All edits persist in browser.</span>
-        </div>
-        <div class="mode-banner-actions">
-          <button type="button" class="mode-banner-btn" id="btn-cms-settings" aria-label="Configure Payload CMS backend connection">
-            ⚙️ CMS Settings
-          </button>
+          <span class="mode-banner-badge" id="mode-banner-badge">LIVE CMS</span>
+          <span id="mode-banner-desc"></span>
         </div>
       </aside>
 
@@ -37,61 +33,40 @@
           <span class="brand-workspace-tag">Newsroom</span>
         </a>
 
-        <!-- Controls: Active Role Switcher, Theme Toggle -->
         <div class="masthead-controls">
-          <div class="role-picker" id="mock-role-picker-wrapper">
-            <label for="user-role-select">Active Role:</label>
-            <select id="user-role-select" class="role-select" aria-label="Switch active newsroom role"></select>
-          </div>
-          <!-- Authenticated User Session Widget (replaces mock role picker in live mode) -->
+          <!-- Authenticated user (filled from the server user object) -->
           <div class="session-chip" id="session-chip" aria-label="User session"></div>
-          <button type="button" class="theme-btn" id="theme-toggle-btn" aria-label="Toggle dark mode theme" title="Toggle theme">
-            🌙
-          </button>
+          <button type="button" class="theme-btn" id="theme-toggle-btn" aria-label="Toggle dark mode theme" title="Toggle theme">Dark</button>
         </div>
       </header>
 
       <!-- Desktop Primary Navigation Bar -->
       <nav class="nav-bar" aria-label="Editorial workspace navigation">
         <ul class="nav-links">
+          <li><a href="#dashboard" class="nav-link active" data-view-nav="dashboard" data-testid="nav-dashboard">Newsroom Desk</a></li>
+          <li><a href="#editor" class="nav-link" data-view-nav="editor" data-testid="nav-editor">Write Story</a></li>
           <li>
-            <a href="#dashboard" class="nav-link active" data-view-nav="dashboard">
-              📊 Newsroom Desk
-            </a>
-          </li>
-          <li>
-            <a href="#editor" class="nav-link" data-view-nav="editor">
-              ✍️ Write Story
-            </a>
-          </li>
-          <li>
-            <a href="#review" class="nav-link" data-view-nav="review">
-              📥 Review Queue
+            <a href="#review" class="nav-link" data-view-nav="review" data-testid="nav-review">
+              Review Queue
               <span class="nav-badge review-count-badge" style="display: none;">0</span>
             </a>
           </li>
           <li>
-            <a href="#live" class="nav-link" data-view-nav="live">
-              🔴 Go Live Coverage
+            <a href="#live" class="nav-link" data-view-nav="live" data-testid="nav-live">
+              Live Coverage
               <span class="nav-badge live-pulse">LIVE</span>
             </a>
           </li>
+          <li><a href="#media" class="nav-link" data-view-nav="media" data-testid="nav-media">Media Library</a></li>
           <li>
-            <a href="#media" class="nav-link" data-view-nav="media">
-              🖼️ Media Library
-            </a>
-          </li>
-          <li>
-            <a href="#submit" class="nav-link" data-view-nav="submit">
-              📨 Public Submission (/submit)
+            <a href="#" class="nav-link" id="nav-public-site-link" data-testid="nav-public-tip-form" target="_blank" rel="noopener noreferrer" hidden>
+              Public tip form &#8599;
             </a>
           </li>
         </ul>
 
         <div class="nav-actions">
-          <button type="button" class="btn-quick-write" id="nav-quick-write-btn">
-            + New Story
-          </button>
+          <button type="button" class="btn-quick-write" id="nav-quick-write-btn" data-testid="nav-new-story">+ New Story</button>
         </div>
       </nav>
 
@@ -103,43 +78,16 @@
       <!-- Mobile Android Bottom Navigation Bar -->
       <nav class="mobile-nav-bar" aria-label="Mobile quick navigation">
         <ul class="mobile-nav-items">
-          <li class="mobile-nav-item">
-            <a href="#dashboard" data-view-nav="dashboard" class="active">
-              <span class="mobile-nav-icon">📊</span>
-              <span>Desk</span>
-            </a>
-          </li>
-          <li class="mobile-nav-item">
-            <a href="#editor" data-view-nav="editor">
-              <span class="mobile-nav-icon">✍️</span>
-              <span>Write</span>
-            </a>
-          </li>
+          <li class="mobile-nav-item"><a href="#dashboard" data-view-nav="dashboard" class="active"><span class="mobile-nav-icon">&#128202;</span><span>Desk</span></a></li>
+          <li class="mobile-nav-item"><a href="#editor" data-view-nav="editor"><span class="mobile-nav-icon">&#9997;</span><span>Write</span></a></li>
           <li class="mobile-nav-item">
             <a href="#review" data-view-nav="review">
-              <span class="mobile-nav-icon">📥</span>
-              <span>Review</span>
+              <span class="mobile-nav-icon">&#128229;</span><span>Review</span>
               <span class="mobile-nav-badge review-count-badge" style="display: none;">0</span>
             </a>
           </li>
-          <li class="mobile-nav-item">
-            <a href="#live" data-view-nav="live">
-              <span class="mobile-nav-icon">🔴</span>
-              <span>Live</span>
-            </a>
-          </li>
-          <li class="mobile-nav-item">
-            <a href="#media" data-view-nav="media">
-              <span class="mobile-nav-icon">🖼️</span>
-              <span>Media</span>
-            </a>
-          </li>
-          <li class="mobile-nav-item">
-            <a href="#submit" data-view-nav="submit">
-              <span class="mobile-nav-icon">📨</span>
-              <span>Submit</span>
-            </a>
-          </li>
+          <li class="mobile-nav-item"><a href="#live" data-view-nav="live"><span class="mobile-nav-icon">&#128308;</span><span>Live</span></a></li>
+          <li class="mobile-nav-item"><a href="#media" data-view-nav="media"><span class="mobile-nav-icon">&#128444;</span><span>Media</span></a></li>
         </ul>
       </nav>
 
@@ -147,7 +95,6 @@
       <div id="toast-container" class="toast-container" role="region" aria-label="Editorial notifications"></div>
     </div>
 
-    <!-- Application Script -->
     <script type="module" src="./src/main.js"></script>
   </body>
 </html>

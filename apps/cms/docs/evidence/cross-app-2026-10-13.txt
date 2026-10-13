@@ -1,158 +1,158 @@
 Church Times cross-app REAL UI E2E (Playwright + Chromium) - synthetic data only, no credentials.
-Run started: 2026-10-13T21:33:48.976Z  Node v24.19.0  win32
+Run started: 2026-10-13T22:02:27.267Z  Node v24.19.0  win32
 Stack: embedded PostgreSQL :55435; Payload CMS (next start, production build) http://cms.churchtimes.localhost:3400 (proxy) -> :3401;
        REAL public site (vite build) http://www.churchtimes.localhost:5373; REAL newsroom SPA (vite build apps/newsroom) http://newsroom.churchtimes.localhost:5374.
 Turnstile: real Cloudflare widget from challenges.cloudflare.com with the always-pass TEST site key; the CMS verifies against the always-pass TEST secret.
 Nothing in this lane is mocked unless a test title says HARNESS.
-2026-10-13T21:33:57.394Z  [B-public-tip][desktop-chrome] step 01: public submit form with real Turnstile widget verified
-2026-10-13T21:33:59.775Z  [B-public-tip][desktop-chrome] step 02: receipt shows server reference SUB-R8NFDGDE
-2026-10-13T21:34:00.974Z  [B-public-tip][desktop-chrome] reference SUB-R8NFDGDE stored by CMS with status=new; UI calls: POST /api/public/submissions -> 201
-2026-10-13T21:34:01.288Z  [B-public-tip][desktop-chrome] step 03: public Latest list does not show the tip
-2026-10-13T21:34:10.553Z  [C-public-duplicate][desktop-chrome] step 01: duplicate: real 409 shown as an error, no receipt
-2026-10-13T21:34:15.205Z  [C-public-turnstile-HARNESS][desktop-chrome] step 01: blank Turnstile token: CMS 400 shown as verification error
-2026-10-13T21:34:18.968Z  [C-public-validation][desktop-chrome] step 01: incomplete form: field errors, nothing sent
-2026-10-13T21:34:19.786Z  [A1-reporter-draft-submit][desktop-chrome] step 01: logged out newsroom shows only the sign-in form
-2026-10-13T21:34:20.534Z  [A1-reporter-draft-submit][desktop-chrome] step 02: reporter signed in (server-verified session, LIVE CMS banner)
-2026-10-13T21:34:22.495Z  [A1-reporter-draft-submit][desktop-chrome] step 03: draft written, image uploaded and shown as featured photograph
-2026-10-13T21:34:24.249Z  [A1-reporter-draft-submit][desktop-chrome] step 04: submitted for review: server status in_review
-2026-10-13T21:34:24.514Z  [A1-reporter-draft-submit][desktop-chrome] reporter direct fetch: PATCH status=approved -> 403, status=published -> 403; server status still in_review
-2026-10-13T21:34:24.515Z  [A1-reporter-draft-submit][desktop-chrome] step 05: reporter blocked: no approve/publish buttons, direct PATCH returns 403
-2026-10-13T21:34:24.960Z  [A1-reporter-draft-submit][desktop-chrome] calls: GET /api/users/me -> 200; GET /api/users/me -> 200; POST /api/users/login -> 200; GET /api/users/me -> 200; GET /api/categories -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/users/me -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/media -> 200; POST /api/media -> 201; GET /api/media/file/xappmv7765ur-desktop-chrome-choir.png -> 200; GET /api/media/file/xappmv7765ur-desktop-chrome-choir-800x450.png -> 200; POST /api/articles -> 201; PATCH /api/articles/4 -> 200; PATCH /api/articles/4 -> 403; PATCH /api/articles/4 -> 403; POST /api/users/logout -> 200
-2026-10-13T21:34:27.000Z  [A2-editor-approve-publish][desktop-chrome] step 01: review queue lists the reporter story (In Review)
-2026-10-13T21:34:27.963Z  [A2-editor-approve-publish][desktop-chrome] step 02: approved: story left the In Review queue (server status approved)
-2026-10-13T21:34:29.593Z  [A2-editor-approve-publish][desktop-chrome] step 03: published from the newsroom: server status published
-2026-10-13T21:34:29.870Z  [A2-editor-approve-publish][desktop-chrome] calls: GET /api/users/me -> 200; POST /api/users/login -> 200; GET /api/users/me -> 200; GET /api/categories -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/users/me -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/media/file/xappmv7765ur-desktop-chrome-choir.png -> 200; PATCH /api/articles/4 -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/articles -> 200; GET /api/articles -> 200; PATCH /api/articles/4 -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/articles -> 200
-2026-10-13T21:34:31.124Z  [A3-anonymous-public][desktop-chrome] step 01: anonymous public article page with the uploaded featured image
-2026-10-13T21:34:31.433Z  [A3][desktop-chrome] 10 public-origin requests reached the CMS, none with a cookie
-2026-10-13T21:34:33.424Z  [B-newsroom-tip-review][desktop-chrome] step 01: review queue lists reader tip SUB-R8NFDGDE (status NEW)
-2026-10-13T21:34:34.220Z  [B-newsroom-tip-review][desktop-chrome] step 02: tip converted: editor opens the new DRAFT story
-2026-10-13T21:34:35.245Z  [B-newsroom-tip-review][desktop-chrome] submission SUB-R8NFDGDE -> converted, article 5 status=draft, bylineName="Ada Obi"
-2026-10-13T21:34:35.864Z  [B-newsroom-tip-review][desktop-chrome] step 03: public site: converted tip is not published (article unavailable)
-2026-10-13T21:34:37.745Z  [B-reporter-tips-forbidden][desktop-chrome] reporter direct GET /api/submissions -> 403
-2026-10-13T21:34:37.746Z  [B-reporter-tips-forbidden][desktop-chrome] step 01: reporter: tips tab says only editors can review tips
-2026-10-13T21:34:39.475Z  [C-newsroom-logged-out][desktop-chrome] logged-out CMS traffic: GET /api/users/me -> 200; GET /api/users/me -> 200; GET /api/users/me -> 200; GET /api/users/me -> 200; GET /api/users/me -> 200; GET /api/users/me -> 200; GET /api/users/me -> 200
-2026-10-13T21:34:39.476Z  [C-newsroom-logged-out][desktop-chrome] step 01: logged out: sign-in form only
-2026-10-13T21:34:41.267Z  [C-newsroom-bad-login][desktop-chrome] step 01: wrong password: error from the CMS, still signed out
-2026-10-13T21:34:42.370Z  [C-newsroom-revoked-session][desktop-chrome] step 01: reporter signed in
-2026-10-13T21:34:43.137Z  [C-newsroom-revoked-session][desktop-chrome] after revoke + navigation to Review: signed-in chrome still shown=true; review tabs rendered=0
-2026-10-13T21:34:43.186Z  [C-newsroom-revoked-session][desktop-chrome] step 02: revoked session: back at sign-in with an explanation
-2026-10-13T21:34:44.841Z  [C-newsroom-revoked-write][desktop-chrome] revoked write: login view=0 editor-error=1
-2026-10-13T21:34:44.842Z  [C-newsroom-revoked-write][desktop-chrome] step 01: revoked session write: refused, nothing created
-2026-10-13T21:34:46.684Z  [C-newsroom-logout][desktop-chrome] after logout: /me user=null, GET /api/submissions -> 403
-2026-10-13T21:34:46.686Z  [C-newsroom-logout][desktop-chrome] step 01: after logout
-2026-10-13T21:34:48.662Z  [C-newsroom-forbidden-save][desktop-chrome] forbidden save shown as error: "You are not allowed to perform this action."; server title unchanged, status=in_review
-2026-10-13T21:34:48.664Z  [C-newsroom-forbidden-save][desktop-chrome] step 01: forbidden save: error banner, no success toast
-2026-10-13T21:34:51.689Z  [C-newsroom-bad-upload][desktop-chrome] bad upload error shown: "Unsupported or corrupt image. Use JPEG, PNG or WebP."; no media row created
-2026-10-13T21:34:51.690Z  [C-newsroom-bad-upload][desktop-chrome] step 01: bad upload: CMS rejection shown, nothing selected
-2026-10-13T21:34:53.856Z  [GAP-public-form-http-localhost-subdomain][desktop-chrome] GAP observed: notice="Online sending is not available yet. You can read the form below, or email info@churchtimesnigeria.net to contact the newsroom. No information will be sent from this form until online sending is available." submitDisabled=true turnstileIframes=0 challengeStatus="Verification will be available when online sending is enabled."
-2026-10-13T21:34:53.856Z  [GAP-public-form-http-localhost-subdomain][desktop-chrome] step 01: GAP: form notice says online sending is not available
-2026-10-13T21:35:16.817Z  [D-mobile-layout-dashboard][desktop-chrome] dashboard: layout width 1280px, client 1280px, scroll 1280px; first overflowing elements: none
-2026-10-13T21:35:16.821Z  [D-mobile-layout-dashboard][desktop-chrome] step 01: dashboard view
-2026-10-13T21:35:19.065Z  [D-mobile-layout-review][desktop-chrome] review: layout width 1280px, client 1280px, scroll 1280px; first overflowing elements: none
-2026-10-13T21:35:19.066Z  [D-mobile-layout-review][desktop-chrome] step 01: review view
-2026-10-13T21:35:21.317Z  [D-mobile-layout-editor][desktop-chrome] editor: layout width 1280px, client 1280px, scroll 1280px; first overflowing elements: none
-2026-10-13T21:35:21.318Z  [D-mobile-layout-editor][desktop-chrome] step 01: editor view
-2026-10-13T21:35:24.407Z  [D-mobile-layout-media][desktop-chrome] media: layout width 1280px, client 1280px, scroll 1280px; first overflowing elements: none
-2026-10-13T21:35:24.408Z  [D-mobile-layout-media][desktop-chrome] step 01: media view
-2026-10-13T21:35:27.241Z  [D-mobile-layout-live][desktop-chrome] live: layout width 1280px, client 1280px, scroll 1280px; first overflowing elements: none
-2026-10-13T21:35:27.242Z  [D-mobile-layout-live][desktop-chrome] step 01: live view
-2026-10-13T21:35:34.521Z  [B-public-tip][android-pixel7] step 01: public submit form with real Turnstile widget verified
-2026-10-13T21:35:35.839Z  [B-public-tip][android-pixel7] step 02: receipt shows server reference SUB-AM934TUA
-2026-10-13T21:35:36.413Z  [B-public-tip][android-pixel7] reference SUB-AM934TUA stored by CMS with status=new; UI calls: POST /api/public/submissions -> 201
-2026-10-13T21:35:36.613Z  [B-public-tip][android-pixel7] step 03: public Latest list does not show the tip
-2026-10-13T21:35:44.991Z  [C-public-duplicate][android-pixel7] step 01: duplicate: real 409 shown as an error, no receipt
-2026-10-13T21:35:49.505Z  [C-public-turnstile-HARNESS][android-pixel7] step 01: blank Turnstile token: CMS 400 shown as verification error
-2026-10-13T21:35:53.366Z  [C-public-validation][android-pixel7] step 01: incomplete form: field errors, nothing sent
-2026-10-13T21:35:54.189Z  [A1-reporter-draft-submit][android-pixel7] step 01: logged out newsroom shows only the sign-in form
-2026-10-13T21:35:55.532Z  [A1-reporter-draft-submit][android-pixel7] step 02: reporter signed in (server-verified session, LIVE CMS banner)
-2026-10-13T21:35:56.923Z  [A1-reporter-draft-submit][android-pixel7] step 03: draft written, image uploaded and shown as featured photograph
-2026-10-13T21:35:58.396Z  [A1-reporter-draft-submit][android-pixel7] step 04: submitted for review: server status in_review
-2026-10-13T21:35:58.589Z  [A1-reporter-draft-submit][android-pixel7] reporter direct fetch: PATCH status=approved -> 403, status=published -> 403; server status still in_review
-2026-10-13T21:35:58.590Z  [A1-reporter-draft-submit][android-pixel7] step 05: reporter blocked: no approve/publish buttons, direct PATCH returns 403
-2026-10-13T21:35:58.955Z  [A1-reporter-draft-submit][android-pixel7] calls: GET /api/users/me -> 200; GET /api/users/me -> 200; POST /api/users/login -> 200; GET /api/users/me -> 200; GET /api/categories -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/users/me -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/media -> 200; GET /api/media/file/xappmv7765ur-desktop-chrome-choir-800x450.png -> 200; POST /api/media -> 201; GET /api/media/file/xappmv7765ur-android-pixel7-choir-800x450.png -> 200; GET /api/media/file/xappmv7765ur-android-pixel7-choir.png -> 200; POST /api/articles -> 201; PATCH /api/articles/7 -> 200; PATCH /api/articles/7 -> 403; PATCH /api/articles/7 -> 403; POST /api/users/logout -> 200
-2026-10-13T21:36:01.723Z  [A2-editor-approve-publish][android-pixel7] step 01: review queue lists the reporter story (In Review)
-2026-10-13T21:36:02.669Z  [A2-editor-approve-publish][android-pixel7] step 02: approved: story left the In Review queue (server status approved)
-2026-10-13T21:36:03.714Z  [A2-editor-approve-publish][android-pixel7] step 03: published from the newsroom: server status published
-2026-10-13T21:36:03.934Z  [A2-editor-approve-publish][android-pixel7] calls: GET /api/users/me -> 200; POST /api/users/login -> 200; GET /api/users/me -> 200; GET /api/categories -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/users/me -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/submissions -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/media/file/xappmv7765ur-android-pixel7-choir.png -> 200; PATCH /api/articles/7 -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/articles -> 200; GET /api/articles -> 200; PATCH /api/articles/7 -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/articles -> 200
-2026-10-13T21:36:05.653Z  [A3-anonymous-public][android-pixel7] step 01: anonymous public article page with the uploaded featured image
-2026-10-13T21:36:05.980Z  [A3][android-pixel7] 23 public-origin requests reached the CMS, none with a cookie
-2026-10-13T21:36:08.899Z  [B-newsroom-tip-review][android-pixel7] step 01: review queue lists reader tip SUB-AM934TUA (status NEW)
-2026-10-13T21:36:09.808Z  [B-newsroom-tip-review][android-pixel7] step 02: tip converted: editor opens the new DRAFT story
-2026-10-13T21:36:10.634Z  [B-newsroom-tip-review][android-pixel7] submission SUB-AM934TUA -> converted, article 8 status=draft, bylineName="Ada Obi"
-2026-10-13T21:36:11.610Z  [B-newsroom-tip-review][android-pixel7] step 03: public site: converted tip is not published (article unavailable)
-2026-10-13T21:36:14.464Z  [B-reporter-tips-forbidden][android-pixel7] reporter direct GET /api/submissions -> 403
-2026-10-13T21:36:14.465Z  [B-reporter-tips-forbidden][android-pixel7] step 01: reporter: tips tab says only editors can review tips
-2026-10-13T21:36:16.727Z  [C-newsroom-logged-out][android-pixel7] logged-out CMS traffic: GET /api/users/me -> 200; GET /api/users/me -> 200; GET /api/users/me -> 200; GET /api/users/me -> 200; GET /api/users/me -> 200; GET /api/users/me -> 200; GET /api/users/me -> 200
-2026-10-13T21:36:16.728Z  [C-newsroom-logged-out][android-pixel7] step 01: logged out: sign-in form only
-2026-10-13T21:36:19.050Z  [C-newsroom-bad-login][android-pixel7] step 01: wrong password: error from the CMS, still signed out
-2026-10-13T21:36:20.898Z  [C-newsroom-revoked-session][android-pixel7] step 01: reporter signed in
-2026-10-13T21:36:21.380Z  [C-newsroom-revoked-session][android-pixel7] after revoke + navigation to Review: signed-in chrome still shown=true; review tabs rendered=0
-2026-10-13T21:36:21.437Z  [C-newsroom-revoked-session][android-pixel7] step 02: revoked session: back at sign-in with an explanation
-2026-10-13T21:36:23.705Z  [C-newsroom-revoked-write][android-pixel7] revoked write: login view=0 editor-error=1
-2026-10-13T21:36:23.706Z  [C-newsroom-revoked-write][android-pixel7] step 01: revoked session write: refused, nothing created
-2026-10-13T21:36:25.761Z  [C-newsroom-logout][android-pixel7] after logout: /me user=null, GET /api/submissions -> 403
-2026-10-13T21:36:25.762Z  [C-newsroom-logout][android-pixel7] step 01: after logout
-2026-10-13T21:36:28.255Z  [C-newsroom-forbidden-save][android-pixel7] forbidden save shown as error: "You are not allowed to perform this action."; server title unchanged, status=in_review
-2026-10-13T21:36:28.256Z  [C-newsroom-forbidden-save][android-pixel7] step 01: forbidden save: error banner, no success toast
-2026-10-13T21:36:32.186Z  [C-newsroom-bad-upload][android-pixel7] bad upload error shown: "Unsupported or corrupt image. Use JPEG, PNG or WebP."; no media row created
-2026-10-13T21:36:32.187Z  [C-newsroom-bad-upload][android-pixel7] step 01: bad upload: CMS rejection shown, nothing selected
-2026-10-13T21:36:34.196Z  [GAP-public-form-http-localhost-subdomain][android-pixel7] GAP observed: notice="Online sending is not available yet. You can read the form below, or email info@churchtimesnigeria.net to contact the newsroom. No information will be sent from this form until online sending is available." submitDisabled=true turnstileIframes=0 challengeStatus="Verification will be available when online sending is enabled."
-2026-10-13T21:36:34.199Z  [GAP-public-form-http-localhost-subdomain][android-pixel7] step 01: GAP: form notice says online sending is not available
-2026-10-13T21:36:57.078Z  [D-mobile-layout-dashboard][android-pixel7] dashboard: layout width 412px, client 412px, scroll 412px; first overflowing elements: table.data-table right=854 | thead. right=854 | tr. right=854 | th. right=523
-2026-10-13T21:36:57.079Z  [D-mobile-layout-dashboard][android-pixel7] step 01: dashboard view
-2026-10-13T21:36:59.494Z  [D-mobile-layout-review][android-pixel7] review: layout width 412px, client 412px, scroll 412px; first overflowing elements: none
-2026-10-13T21:36:59.495Z  [D-mobile-layout-review][android-pixel7] step 01: review view
-2026-10-13T21:37:01.883Z  [D-mobile-layout-editor][android-pixel7] editor: layout width 412px, client 412px, scroll 412px; first overflowing elements: none
-2026-10-13T21:37:01.884Z  [D-mobile-layout-editor][android-pixel7] step 01: editor view
-2026-10-13T21:37:04.323Z  [D-mobile-layout-media][android-pixel7] media: layout width 412px, client 412px, scroll 412px; first overflowing elements: none
-2026-10-13T21:37:04.324Z  [D-mobile-layout-media][android-pixel7] step 01: media view
-2026-10-13T21:37:06.718Z  [D-mobile-layout-live][android-pixel7] live: layout width 412px, client 412px, scroll 412px; first overflowing elements: none
-2026-10-13T21:37:06.719Z  [D-mobile-layout-live][android-pixel7] step 01: live view
+2026-10-13T22:02:31.953Z  [B-public-tip][desktop-chrome] step 01: public submit form with real Turnstile widget verified
+2026-10-13T22:02:33.157Z  [B-public-tip][desktop-chrome] step 02: receipt shows server reference SUB-VX9Q78M5
+2026-10-13T22:02:33.621Z  [B-public-tip][desktop-chrome] reference SUB-VX9Q78M5 stored by CMS with status=new; UI calls: POST /api/public/submissions -> 201
+2026-10-13T22:02:33.788Z  [B-public-tip][desktop-chrome] step 03: public Latest list does not show the tip
+2026-10-13T22:02:40.189Z  [C-public-duplicate][desktop-chrome] step 01: duplicate: real 409 shown as an error, no receipt
+2026-10-13T22:02:44.039Z  [C-public-turnstile-HARNESS][desktop-chrome] step 01: blank Turnstile token: CMS 400 shown as verification error
+2026-10-13T22:02:47.270Z  [C-public-validation][desktop-chrome] step 01: incomplete form: field errors, nothing sent
+2026-10-13T22:02:47.737Z  [A1-reporter-draft-submit][desktop-chrome] step 01: logged out newsroom shows only the sign-in form
+2026-10-13T22:02:48.325Z  [A1-reporter-draft-submit][desktop-chrome] step 02: reporter signed in (server-verified session, LIVE CMS banner)
+2026-10-13T22:02:49.089Z  [A1-reporter-draft-submit][desktop-chrome] step 03: draft written, image uploaded and shown as featured photograph
+2026-10-13T22:02:49.886Z  [A1-reporter-draft-submit][desktop-chrome] step 04: submitted for review: server status in_review
+2026-10-13T22:02:50.081Z  [A1-reporter-draft-submit][desktop-chrome] reporter direct fetch: PATCH status=approved -> 403, status=published -> 403; server status still in_review
+2026-10-13T22:02:50.082Z  [A1-reporter-draft-submit][desktop-chrome] step 05: reporter blocked: no approve/publish buttons, direct PATCH returns 403
+2026-10-13T22:02:50.430Z  [A1-reporter-draft-submit][desktop-chrome] calls: GET /api/users/me -> 200; GET /api/users/me -> 200; POST /api/users/login -> 200; GET /api/users/me -> 200; GET /api/categories -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/users/me -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/media -> 200; POST /api/media -> 201; GET /api/media/file/xappmv787ne4-desktop-chrome-choir.png -> 200; GET /api/media/file/xappmv787ne4-desktop-chrome-choir-800x450.png -> 200; POST /api/articles -> 201; PATCH /api/articles/4 -> 200; PATCH /api/articles/4 -> 403; PATCH /api/articles/4 -> 403; POST /api/users/logout -> 200
+2026-10-13T22:02:51.557Z  [A2-editor-approve-publish][desktop-chrome] step 01: review queue lists the reporter story (In Review)
+2026-10-13T22:02:52.092Z  [A2-editor-approve-publish][desktop-chrome] step 02: approved: story left the In Review queue (server status approved)
+2026-10-13T22:02:52.783Z  [A2-editor-approve-publish][desktop-chrome] step 03: published from the newsroom: server status published
+2026-10-13T22:02:52.920Z  [A2-editor-approve-publish][desktop-chrome] calls: GET /api/users/me -> 200; POST /api/users/login -> 200; GET /api/users/me -> 200; GET /api/categories -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/users/me -> 200; GET /api/submissions -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/media/file/xappmv787ne4-desktop-chrome-choir.png -> 200; PATCH /api/articles/4 -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/articles -> 200; GET /api/articles -> 200; PATCH /api/articles/4 -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/articles -> 200
+2026-10-13T22:02:53.686Z  [A3-anonymous-public][desktop-chrome] step 01: anonymous public article page with the uploaded featured image
+2026-10-13T22:02:53.883Z  [A3][desktop-chrome] 10 public-origin requests reached the CMS, none with a cookie
+2026-10-13T22:02:54.823Z  [B-newsroom-tip-review][desktop-chrome] step 01: review queue lists reader tip SUB-VX9Q78M5 (status NEW)
+2026-10-13T22:02:55.293Z  [B-newsroom-tip-review][desktop-chrome] step 02: tip converted: editor opens the new DRAFT story
+2026-10-13T22:02:55.840Z  [B-newsroom-tip-review][desktop-chrome] submission SUB-VX9Q78M5 -> converted, article 5 status=draft, bylineName="Ada Obi"
+2026-10-13T22:02:56.096Z  [B-newsroom-tip-review][desktop-chrome] step 03: public site: converted tip is not published (article unavailable)
+2026-10-13T22:02:57.012Z  [B-reporter-tips-forbidden][desktop-chrome] reporter direct GET /api/submissions -> 403
+2026-10-13T22:02:57.013Z  [B-reporter-tips-forbidden][desktop-chrome] step 01: reporter: tips tab says only editors can review tips
+2026-10-13T22:02:57.909Z  [C-newsroom-logged-out][desktop-chrome] logged-out CMS traffic: GET /api/users/me -> 200; GET /api/users/me -> 200; GET /api/users/me -> 200; GET /api/users/me -> 200; GET /api/users/me -> 200; GET /api/users/me -> 200; GET /api/users/me -> 200
+2026-10-13T22:02:57.910Z  [C-newsroom-logged-out][desktop-chrome] step 01: logged out: sign-in form only
+2026-10-13T22:02:58.708Z  [C-newsroom-bad-login][desktop-chrome] step 01: wrong password: error from the CMS, still signed out
+2026-10-13T22:02:59.524Z  [C-newsroom-revoked-session][desktop-chrome] step 01: reporter signed in
+2026-10-13T22:03:00.010Z  [C-newsroom-revoked-session][desktop-chrome] after revoke + navigation to Review: signed-in chrome still shown=true; review tabs rendered=0
+2026-10-13T22:03:00.035Z  [C-newsroom-revoked-session][desktop-chrome] step 02: revoked session: back at sign-in with an explanation
+2026-10-13T22:03:01.255Z  [C-newsroom-revoked-write][desktop-chrome] revoked write: login view=0 editor-error=1
+2026-10-13T22:03:01.255Z  [C-newsroom-revoked-write][desktop-chrome] step 01: revoked session write: refused, nothing created
+2026-10-13T22:03:02.259Z  [C-newsroom-logout][desktop-chrome] after logout: /me user=null, GET /api/submissions -> 403
+2026-10-13T22:03:02.259Z  [C-newsroom-logout][desktop-chrome] step 01: after logout
+2026-10-13T22:03:03.486Z  [C-newsroom-forbidden-save][desktop-chrome] forbidden save shown as error: "You are not allowed to perform this action."; server title unchanged, status=in_review
+2026-10-13T22:03:03.487Z  [C-newsroom-forbidden-save][desktop-chrome] step 01: forbidden save: error banner, no success toast
+2026-10-13T22:03:04.750Z  [C-newsroom-bad-upload][desktop-chrome] bad upload error shown: "Unsupported or corrupt image. Use JPEG, PNG or WebP."; no media row created
+2026-10-13T22:03:04.750Z  [C-newsroom-bad-upload][desktop-chrome] step 01: bad upload: CMS rejection shown, nothing selected
+2026-10-13T22:03:05.600Z  [GAP-public-form-http-localhost-subdomain][desktop-chrome] GAP observed: notice="Online sending is not available yet. You can read the form below, or email info@churchtimesnigeria.net to contact the newsroom. No information will be sent from this form until online sending is available." submitDisabled=true turnstileIframes=0 challengeStatus="Verification will be available when online sending is enabled."
+2026-10-13T22:03:05.601Z  [GAP-public-form-http-localhost-subdomain][desktop-chrome] step 01: GAP: form notice says online sending is not available
+2026-10-13T22:03:27.574Z  [D-mobile-layout-dashboard][desktop-chrome] dashboard: layout width 1280px, client 1280px, scroll 1280px; first overflowing elements: none
+2026-10-13T22:03:27.575Z  [D-mobile-layout-dashboard][desktop-chrome] step 01: dashboard view
+2026-10-13T22:03:29.516Z  [D-mobile-layout-review][desktop-chrome] review: layout width 1280px, client 1280px, scroll 1280px; first overflowing elements: none
+2026-10-13T22:03:29.516Z  [D-mobile-layout-review][desktop-chrome] step 01: review view
+2026-10-13T22:03:31.370Z  [D-mobile-layout-editor][desktop-chrome] editor: layout width 1280px, client 1280px, scroll 1280px; first overflowing elements: none
+2026-10-13T22:03:31.371Z  [D-mobile-layout-editor][desktop-chrome] step 01: editor view
+2026-10-13T22:03:33.233Z  [D-mobile-layout-media][desktop-chrome] media: layout width 1280px, client 1280px, scroll 1280px; first overflowing elements: none
+2026-10-13T22:03:33.234Z  [D-mobile-layout-media][desktop-chrome] step 01: media view
+2026-10-13T22:03:35.174Z  [D-mobile-layout-live][desktop-chrome] live: layout width 1280px, client 1280px, scroll 1280px; first overflowing elements: none
+2026-10-13T22:03:35.175Z  [D-mobile-layout-live][desktop-chrome] step 01: live view
+2026-10-13T22:03:40.183Z  [B-public-tip][android-pixel7] step 01: public submit form with real Turnstile widget verified
+2026-10-13T22:03:41.308Z  [B-public-tip][android-pixel7] step 02: receipt shows server reference SUB-D3JGXKYT
+2026-10-13T22:03:41.700Z  [B-public-tip][android-pixel7] reference SUB-D3JGXKYT stored by CMS with status=new; UI calls: POST /api/public/submissions -> 201
+2026-10-13T22:03:41.862Z  [B-public-tip][android-pixel7] step 03: public Latest list does not show the tip
+2026-10-13T22:03:48.863Z  [C-public-duplicate][android-pixel7] step 01: duplicate: real 409 shown as an error, no receipt
+2026-10-13T22:03:52.807Z  [C-public-turnstile-HARNESS][android-pixel7] step 01: blank Turnstile token: CMS 400 shown as verification error
+2026-10-13T22:03:55.674Z  [C-public-validation][android-pixel7] step 01: incomplete form: field errors, nothing sent
+2026-10-13T22:03:56.126Z  [A1-reporter-draft-submit][android-pixel7] step 01: logged out newsroom shows only the sign-in form
+2026-10-13T22:03:56.671Z  [A1-reporter-draft-submit][android-pixel7] step 02: reporter signed in (server-verified session, LIVE CMS banner)
+2026-10-13T22:03:57.446Z  [A1-reporter-draft-submit][android-pixel7] step 03: draft written, image uploaded and shown as featured photograph
+2026-10-13T22:03:58.104Z  [A1-reporter-draft-submit][android-pixel7] step 04: submitted for review: server status in_review
+2026-10-13T22:03:58.225Z  [A1-reporter-draft-submit][android-pixel7] reporter direct fetch: PATCH status=approved -> 403, status=published -> 403; server status still in_review
+2026-10-13T22:03:58.225Z  [A1-reporter-draft-submit][android-pixel7] step 05: reporter blocked: no approve/publish buttons, direct PATCH returns 403
+2026-10-13T22:03:58.456Z  [A1-reporter-draft-submit][android-pixel7] calls: GET /api/users/me -> 200; GET /api/users/me -> 200; POST /api/users/login -> 200; GET /api/users/me -> 200; GET /api/categories -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/users/me -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/media -> 200; GET /api/media/file/xappmv787ne4-desktop-chrome-choir-800x450.png -> 200; POST /api/media -> 201; GET /api/media/file/xappmv787ne4-android-pixel7-choir-800x450.png -> 200; GET /api/media/file/xappmv787ne4-android-pixel7-choir.png -> 200; POST /api/articles -> 201; PATCH /api/articles/7 -> 200; PATCH /api/articles/7 -> 403; PATCH /api/articles/7 -> 403; POST /api/users/logout -> 200
+2026-10-13T22:03:59.497Z  [A2-editor-approve-publish][android-pixel7] step 01: review queue lists the reporter story (In Review)
+2026-10-13T22:03:59.932Z  [A2-editor-approve-publish][android-pixel7] step 02: approved: story left the In Review queue (server status approved)
+2026-10-13T22:04:00.471Z  [A2-editor-approve-publish][android-pixel7] step 03: published from the newsroom: server status published
+2026-10-13T22:04:00.545Z  [A2-editor-approve-publish][android-pixel7] calls: GET /api/users/me -> 200; POST /api/users/login -> 200; GET /api/users/me -> 200; GET /api/categories -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/users/me -> 200; GET /api/submissions -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/media/file/xappmv787ne4-android-pixel7-choir.png -> 200; PATCH /api/articles/7 -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/articles -> 200; GET /api/articles -> 200; PATCH /api/articles/7 -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/articles -> 200
+2026-10-13T22:04:01.355Z  [A3-anonymous-public][android-pixel7] step 01: anonymous public article page with the uploaded featured image
+2026-10-13T22:04:01.494Z  [A3][android-pixel7] 23 public-origin requests reached the CMS, none with a cookie
+2026-10-13T22:04:02.561Z  [B-newsroom-tip-review][android-pixel7] step 01: review queue lists reader tip SUB-D3JGXKYT (status NEW)
+2026-10-13T22:04:02.850Z  [B-newsroom-tip-review][android-pixel7] step 02: tip converted: editor opens the new DRAFT story
+2026-10-13T22:04:03.313Z  [B-newsroom-tip-review][android-pixel7] submission SUB-D3JGXKYT -> converted, article 8 status=draft, bylineName="Ada Obi"
+2026-10-13T22:04:03.559Z  [B-newsroom-tip-review][android-pixel7] step 03: public site: converted tip is not published (article unavailable)
+2026-10-13T22:04:04.534Z  [B-reporter-tips-forbidden][android-pixel7] reporter direct GET /api/submissions -> 403
+2026-10-13T22:04:04.534Z  [B-reporter-tips-forbidden][android-pixel7] step 01: reporter: tips tab says only editors can review tips
+2026-10-13T22:04:05.469Z  [C-newsroom-logged-out][android-pixel7] logged-out CMS traffic: GET /api/users/me -> 200; GET /api/users/me -> 200; GET /api/users/me -> 200; GET /api/users/me -> 200; GET /api/users/me -> 200; GET /api/users/me -> 200
+2026-10-13T22:04:05.469Z  [C-newsroom-logged-out][android-pixel7] step 01: logged out: sign-in form only
+2026-10-13T22:04:06.329Z  [C-newsroom-bad-login][android-pixel7] step 01: wrong password: error from the CMS, still signed out
+2026-10-13T22:04:07.178Z  [C-newsroom-revoked-session][android-pixel7] step 01: reporter signed in
+2026-10-13T22:04:07.572Z  [C-newsroom-revoked-session][android-pixel7] after revoke + navigation to Review: signed-in chrome still shown=true; review tabs rendered=0
+2026-10-13T22:04:07.739Z  [C-newsroom-revoked-session][android-pixel7] step 02: revoked session: back at sign-in with an explanation
+2026-10-13T22:04:08.885Z  [C-newsroom-revoked-write][android-pixel7] revoked write: login view=0 editor-error=1
+2026-10-13T22:04:08.885Z  [C-newsroom-revoked-write][android-pixel7] step 01: revoked session write: refused, nothing created
+2026-10-13T22:04:09.957Z  [C-newsroom-logout][android-pixel7] after logout: /me user=null, GET /api/submissions -> 403
+2026-10-13T22:04:09.957Z  [C-newsroom-logout][android-pixel7] step 01: after logout
+2026-10-13T22:04:11.237Z  [C-newsroom-forbidden-save][android-pixel7] forbidden save shown as error: "You are not allowed to perform this action."; server title unchanged, status=in_review
+2026-10-13T22:04:11.238Z  [C-newsroom-forbidden-save][android-pixel7] step 01: forbidden save: error banner, no success toast
+2026-10-13T22:04:12.595Z  [C-newsroom-bad-upload][android-pixel7] bad upload error shown: "Unsupported or corrupt image. Use JPEG, PNG or WebP."; no media row created
+2026-10-13T22:04:12.596Z  [C-newsroom-bad-upload][android-pixel7] step 01: bad upload: CMS rejection shown, nothing selected
+2026-10-13T22:04:13.471Z  [GAP-public-form-http-localhost-subdomain][android-pixel7] GAP observed: notice="Online sending is not available yet. You can read the form below, or email info@churchtimesnigeria.net to contact the newsroom. No information will be sent from this form until online sending is available." submitDisabled=true turnstileIframes=0 challengeStatus="Verification will be available when online sending is enabled."
+2026-10-13T22:04:13.471Z  [GAP-public-form-http-localhost-subdomain][android-pixel7] step 01: GAP: form notice says online sending is not available
+2026-10-13T22:04:35.562Z  [D-mobile-layout-dashboard][android-pixel7] dashboard: layout width 412px, client 412px, scroll 412px; first overflowing elements: table.data-table right=854 | thead. right=854 | tr. right=854 | th. right=523
+2026-10-13T22:04:35.563Z  [D-mobile-layout-dashboard][android-pixel7] step 01: dashboard view
+2026-10-13T22:04:37.514Z  [D-mobile-layout-review][android-pixel7] review: layout width 412px, client 412px, scroll 412px; first overflowing elements: none
+2026-10-13T22:04:37.515Z  [D-mobile-layout-review][android-pixel7] step 01: review view
+2026-10-13T22:04:39.416Z  [D-mobile-layout-editor][android-pixel7] editor: layout width 412px, client 412px, scroll 412px; first overflowing elements: none
+2026-10-13T22:04:39.417Z  [D-mobile-layout-editor][android-pixel7] step 01: editor view
+2026-10-13T22:04:41.350Z  [D-mobile-layout-media][android-pixel7] media: layout width 412px, client 412px, scroll 412px; first overflowing elements: none
+2026-10-13T22:04:41.351Z  [D-mobile-layout-media][android-pixel7] step 01: media view
+2026-10-13T22:04:43.287Z  [D-mobile-layout-live][android-pixel7] live: layout width 412px, client 412px, scroll 412px; first overflowing elements: none
+2026-10-13T22:04:43.288Z  [D-mobile-layout-live][android-pixel7] step 01: live view
 
 === RESULTS ===
-PASS  [desktop-chrome] reader submits a tip with the real Turnstile widget and sees the genuine server receipt  (8s)
-PASS  [desktop-chrome] duplicate submission: the CMS answers 409 and the form shows the duplicate error without a receipt  (9s)
+PASS  [desktop-chrome] reader submits a tip with the real Turnstile widget and sees the genuine server receipt  (5s)
+PASS  [desktop-chrome] duplicate submission: the CMS answers 409 and the form shows the duplicate error without a receipt  (7s)
 PASS  [desktop-chrome] HARNESS tamper: server rejects a request whose Turnstile token was blanked in flight; UI shows the error, no receipt  (4s)
-PASS  [desktop-chrome] form validation blocks an incomplete submission client-side and sends nothing to the CMS  (4s)
-PASS  [desktop-chrome] A1 reporter: login, draft with featured image upload, submit for review; approve/publish is blocked (UI hidden + direct fetch 403)  (6s)
-PASS  [desktop-chrome] A2 section editor: sees the story in the review queue, approves, publishes  (5s)
+PASS  [desktop-chrome] form validation blocks an incomplete submission client-side and sends nothing to the CMS  (3s)
+PASS  [desktop-chrome] A1 reporter: login, draft with featured image upload, submit for review; approve/publish is blocked (UI hidden + direct fetch 403)  (3s)
+PASS  [desktop-chrome] A2 section editor: sees the story in the review queue, approves, publishes  (3s)
 PASS  [desktop-chrome] A3 anonymous reader: article + featured image visible on the public site, no draft content, no cookie  (1s)
-PASS  [desktop-chrome] editor sees the reader tip with its server reference in the review queue and converts it to a draft that stays unpublished  (4s)
-PASS  [desktop-chrome] reporter cannot read reader tips: UI says editors only, direct fetch is refused  (2s)
+PASS  [desktop-chrome] editor sees the reader tip with its server reference in the review queue and converts it to a draft that stays unpublished  (2s)
+PASS  [desktop-chrome] reporter cannot read reader tips: UI says editors only, direct fetch is refused  (1s)
 PASS  [desktop-chrome] logged-out newsroom shows only the sign-in form on every route and loads no protected data  (1s)
-PASS  [desktop-chrome] wrong password shows the server error and no session  (2s)
-PASS  [desktop-chrome] revoked session (admin force-logout): navigating to a protected view returns to the sign-in screen  (2s)
-PASS  [desktop-chrome] revoked session on a write: Save Draft after force-logout does not report success and the story is not created  (2s)
-PASS  [desktop-chrome] logout ends the server session: /api/users/me is anonymous and protected reads are refused  (2s)
-PASS  [desktop-chrome] stale editor: a save the CMS forbids (story moved to review meanwhile) shows an error, not a success toast, and changes nothing  (2s)
-PASS  [desktop-chrome] failed image upload (not a real PNG) shows the CMS error and selects no featured image  (4s)
+PASS  [desktop-chrome] wrong password shows the server error and no session  (1s)
+PASS  [desktop-chrome] revoked session (admin force-logout): navigating to a protected view returns to the sign-in screen  (1s)
+PASS  [desktop-chrome] revoked session on a write: Save Draft after force-logout does not report success and the story is not created  (1s)
+PASS  [desktop-chrome] logout ends the server session: /api/users/me is anonymous and protected reads are refused  (1s)
+PASS  [desktop-chrome] stale editor: a save the CMS forbids (story moved to review meanwhile) shows an error, not a success toast, and changes nothing  (1s)
+PASS  [desktop-chrome] failed image upload (not a real PNG) shows the CMS error and selects no featured image  (2s)
 PASS  [desktop-chrome] KNOWN GAP (public site): built as docs/staging.md section 9 says, the story form is disabled for an http://cms.churchtimes.localhost CMS  (21s)  [expected failure: known gap still present]
-PASS  [desktop-chrome] newsroom dashboard view has no horizontal page overflow at the project viewport (REAL UI)  (3s)
+PASS  [desktop-chrome] newsroom dashboard view has no horizontal page overflow at the project viewport (REAL UI)  (2s)
 PASS  [desktop-chrome] newsroom review view has no horizontal page overflow at the project viewport (REAL UI)  (2s)
 PASS  [desktop-chrome] newsroom editor view has no horizontal page overflow at the project viewport (REAL UI)  (2s)
-PASS  [desktop-chrome] newsroom media view has no horizontal page overflow at the project viewport (REAL UI)  (3s)
-PASS  [desktop-chrome] newsroom live view has no horizontal page overflow at the project viewport (REAL UI)  (3s)
-PASS  [android-pixel7] reader submits a tip with the real Turnstile widget and sees the genuine server receipt  (6s)
-PASS  [android-pixel7] duplicate submission: the CMS answers 409 and the form shows the duplicate error without a receipt  (8s)
-PASS  [android-pixel7] HARNESS tamper: server rejects a request whose Turnstile token was blanked in flight; UI shows the error, no receipt  (5s)
-PASS  [android-pixel7] form validation blocks an incomplete submission client-side and sends nothing to the CMS  (4s)
-PASS  [android-pixel7] A1 reporter: login, draft with featured image upload, submit for review; approve/publish is blocked (UI hidden + direct fetch 403)  (5s)
-PASS  [android-pixel7] A2 section editor: sees the story in the review queue, approves, publishes  (5s)
-PASS  [android-pixel7] A3 anonymous reader: article + featured image visible on the public site, no draft content, no cookie  (2s)
-PASS  [android-pixel7] editor sees the reader tip with its server reference in the review queue and converts it to a draft that stays unpublished  (6s)
-PASS  [android-pixel7] reporter cannot read reader tips: UI says editors only, direct fetch is refused  (3s)
-PASS  [android-pixel7] logged-out newsroom shows only the sign-in form on every route and loads no protected data  (2s)
-PASS  [android-pixel7] wrong password shows the server error and no session  (2s)
-PASS  [android-pixel7] revoked session (admin force-logout): navigating to a protected view returns to the sign-in screen  (2s)
-PASS  [android-pixel7] revoked session on a write: Save Draft after force-logout does not report success and the story is not created  (2s)
-PASS  [android-pixel7] logout ends the server session: /api/users/me is anonymous and protected reads are refused  (2s)
-PASS  [android-pixel7] stale editor: a save the CMS forbids (story moved to review meanwhile) shows an error, not a success toast, and changes nothing  (3s)
-PASS  [android-pixel7] failed image upload (not a real PNG) shows the CMS error and selects no featured image  (5s)
+PASS  [desktop-chrome] newsroom media view has no horizontal page overflow at the project viewport (REAL UI)  (2s)
+PASS  [desktop-chrome] newsroom live view has no horizontal page overflow at the project viewport (REAL UI)  (2s)
+PASS  [android-pixel7] reader submits a tip with the real Turnstile widget and sees the genuine server receipt  (5s)
+PASS  [android-pixel7] duplicate submission: the CMS answers 409 and the form shows the duplicate error without a receipt  (7s)
+PASS  [android-pixel7] HARNESS tamper: server rejects a request whose Turnstile token was blanked in flight; UI shows the error, no receipt  (4s)
+PASS  [android-pixel7] form validation blocks an incomplete submission client-side and sends nothing to the CMS  (3s)
+PASS  [android-pixel7] A1 reporter: login, draft with featured image upload, submit for review; approve/publish is blocked (UI hidden + direct fetch 403)  (3s)
+PASS  [android-pixel7] A2 section editor: sees the story in the review queue, approves, publishes  (2s)
+PASS  [android-pixel7] A3 anonymous reader: article + featured image visible on the public site, no draft content, no cookie  (1s)
+PASS  [android-pixel7] editor sees the reader tip with its server reference in the review queue and converts it to a draft that stays unpublished  (2s)
+PASS  [android-pixel7] reporter cannot read reader tips: UI says editors only, direct fetch is refused  (1s)
+PASS  [android-pixel7] logged-out newsroom shows only the sign-in form on every route and loads no protected data  (1s)
+PASS  [android-pixel7] wrong password shows the server error and no session  (1s)
+PASS  [android-pixel7] revoked session (admin force-logout): navigating to a protected view returns to the sign-in screen  (1s)
+PASS  [android-pixel7] revoked session on a write: Save Draft after force-logout does not report success and the story is not created  (1s)
+PASS  [android-pixel7] logout ends the server session: /api/users/me is anonymous and protected reads are refused  (1s)
+PASS  [android-pixel7] stale editor: a save the CMS forbids (story moved to review meanwhile) shows an error, not a success toast, and changes nothing  (1s)
+PASS  [android-pixel7] failed image upload (not a real PNG) shows the CMS error and selects no featured image  (2s)
 PASS  [android-pixel7] KNOWN GAP (public site): built as docs/staging.md section 9 says, the story form is disabled for an http://cms.churchtimes.localhost CMS  (21s)  [expected failure: known gap still present]
-PASS  [android-pixel7] newsroom dashboard view has no horizontal page overflow at the project viewport (REAL UI)  (3s)
+PASS  [android-pixel7] newsroom dashboard view has no horizontal page overflow at the project viewport (REAL UI)  (2s)
 PASS  [android-pixel7] newsroom review view has no horizontal page overflow at the project viewport (REAL UI)  (2s)
 PASS  [android-pixel7] newsroom editor view has no horizontal page overflow at the project viewport (REAL UI)  (2s)
 PASS  [android-pixel7] newsroom media view has no horizontal page overflow at the project viewport (REAL UI)  (2s)
 PASS  [android-pixel7] newsroom live view has no horizontal page overflow at the project viewport (REAL UI)  (2s)
 
-Total: {"PASS":44}  overall: passed  finished 2026-10-13T21:37:09.810Z
+Total: {"PASS":44}  overall: passed  finished 2026-10-13T22:04:45.247Z
