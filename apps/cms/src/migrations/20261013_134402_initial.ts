@@ -64,7 +64,25 @@ export async function up({ db, payload, req }: MigrateUpArgs): Promise<void> {
   	"width" numeric,
   	"height" numeric,
   	"focal_x" numeric,
-  	"focal_y" numeric
+  	"focal_y" numeric,
+  	"sizes_thumbnail_url" varchar,
+  	"sizes_thumbnail_width" numeric,
+  	"sizes_thumbnail_height" numeric,
+  	"sizes_thumbnail_mime_type" varchar,
+  	"sizes_thumbnail_filesize" numeric,
+  	"sizes_thumbnail_filename" varchar,
+  	"sizes_card_url" varchar,
+  	"sizes_card_width" numeric,
+  	"sizes_card_height" numeric,
+  	"sizes_card_mime_type" varchar,
+  	"sizes_card_filesize" numeric,
+  	"sizes_card_filename" varchar,
+  	"sizes_hero_url" varchar,
+  	"sizes_hero_width" numeric,
+  	"sizes_hero_height" numeric,
+  	"sizes_hero_mime_type" varchar,
+  	"sizes_hero_filesize" numeric,
+  	"sizes_hero_filename" varchar
   );
   
   CREATE TABLE "articles_corrections" (
@@ -141,6 +159,7 @@ export async function up({ db, payload, req }: MigrateUpArgs): Promise<void> {
   	"reviewer_notes" varchar,
   	"article_id" integer,
   	"ip_hash" varchar,
+  	"user_agent" varchar,
   	"updated_at" timestamp(3) with time zone DEFAULT now() NOT NULL,
   	"created_at" timestamp(3) with time zone DEFAULT now() NOT NULL
   );
@@ -165,6 +184,8 @@ export async function up({ db, payload, req }: MigrateUpArgs): Promise<void> {
   	"status" "enum_live_updates_status" DEFAULT 'pending' NOT NULL,
   	"sequence" numeric,
   	"occurred_at" timestamp(3) with time zone NOT NULL,
+  	"author_id" integer,
+  	"approved_by_id" integer,
   	"approved_at" timestamp(3) with time zone,
   	"updated_at" timestamp(3) with time zone DEFAULT now() NOT NULL,
   	"created_at" timestamp(3) with time zone DEFAULT now() NOT NULL
@@ -180,6 +201,7 @@ export async function up({ db, payload, req }: MigrateUpArgs): Promise<void> {
   	"from_status" varchar,
   	"to_status" varchar,
   	"summary" varchar,
+  	"details" jsonb,
   	"updated_at" timestamp(3) with time zone DEFAULT now() NOT NULL,
   	"created_at" timestamp(3) with time zone DEFAULT now() NOT NULL
   );
@@ -251,6 +273,8 @@ export async function up({ db, payload, req }: MigrateUpArgs): Promise<void> {
   ALTER TABLE "submissions" ADD CONSTRAINT "submissions_article_id_articles_id_fk" FOREIGN KEY ("article_id") REFERENCES "public"."articles"("id") ON DELETE set null ON UPDATE no action;
   ALTER TABLE "live_events" ADD CONSTRAINT "live_events_category_id_categories_id_fk" FOREIGN KEY ("category_id") REFERENCES "public"."categories"("id") ON DELETE set null ON UPDATE no action;
   ALTER TABLE "live_updates" ADD CONSTRAINT "live_updates_event_id_live_events_id_fk" FOREIGN KEY ("event_id") REFERENCES "public"."live_events"("id") ON DELETE set null ON UPDATE no action;
+  ALTER TABLE "live_updates" ADD CONSTRAINT "live_updates_author_id_users_id_fk" FOREIGN KEY ("author_id") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;
+  ALTER TABLE "live_updates" ADD CONSTRAINT "live_updates_approved_by_id_users_id_fk" FOREIGN KEY ("approved_by_id") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;
   ALTER TABLE "audit_logs" ADD CONSTRAINT "audit_logs_actor_id_users_id_fk" FOREIGN KEY ("actor_id") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;
   ALTER TABLE "payload_locked_documents_rels" ADD CONSTRAINT "payload_locked_documents_rels_parent_fk" FOREIGN KEY ("parent_id") REFERENCES "public"."payload_locked_documents"("id") ON DELETE cascade ON UPDATE no action;
   ALTER TABLE "payload_locked_documents_rels" ADD CONSTRAINT "payload_locked_documents_rels_users_fk" FOREIGN KEY ("users_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;
@@ -278,6 +302,9 @@ export async function up({ db, payload, req }: MigrateUpArgs): Promise<void> {
   CREATE INDEX "media_updated_at_idx" ON "media" USING btree ("updated_at");
   CREATE INDEX "media_created_at_idx" ON "media" USING btree ("created_at");
   CREATE UNIQUE INDEX "media_filename_idx" ON "media" USING btree ("filename");
+  CREATE INDEX "media_sizes_thumbnail_sizes_thumbnail_filename_idx" ON "media" USING btree ("sizes_thumbnail_filename");
+  CREATE INDEX "media_sizes_card_sizes_card_filename_idx" ON "media" USING btree ("sizes_card_filename");
+  CREATE INDEX "media_sizes_hero_sizes_hero_filename_idx" ON "media" USING btree ("sizes_hero_filename");
   CREATE INDEX "articles_corrections_order_idx" ON "articles_corrections" USING btree ("_order");
   CREATE INDEX "articles_corrections_parent_id_idx" ON "articles_corrections" USING btree ("_parent_id");
   CREATE UNIQUE INDEX "articles_slug_idx" ON "articles" USING btree ("slug");
@@ -318,8 +345,11 @@ export async function up({ db, payload, req }: MigrateUpArgs): Promise<void> {
   CREATE INDEX "live_updates_event_idx" ON "live_updates" USING btree ("event_id");
   CREATE INDEX "live_updates_status_idx" ON "live_updates" USING btree ("status");
   CREATE INDEX "live_updates_sequence_idx" ON "live_updates" USING btree ("sequence");
+  CREATE INDEX "live_updates_author_idx" ON "live_updates" USING btree ("author_id");
+  CREATE INDEX "live_updates_approved_by_idx" ON "live_updates" USING btree ("approved_by_id");
   CREATE INDEX "live_updates_updated_at_idx" ON "live_updates" USING btree ("updated_at");
   CREATE INDEX "live_updates_created_at_idx" ON "live_updates" USING btree ("created_at");
+  CREATE UNIQUE INDEX "event_sequence_idx" ON "live_updates" USING btree ("event_id","sequence");
   CREATE INDEX "audit_logs_action_idx" ON "audit_logs" USING btree ("action");
   CREATE INDEX "audit_logs_collection_idx" ON "audit_logs" USING btree ("collection");
   CREATE INDEX "audit_logs_doc_id_idx" ON "audit_logs" USING btree ("doc_id");

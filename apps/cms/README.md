@@ -7,8 +7,7 @@ and roles, public submissions, and live-event updates.
 The public website (the Vite static site in the repository root) is separate and stays separate.
 It will read published content through the API in a later integration step.
 
-**Status: MVP in progress, not production-ready.** Not yet implemented: the seed script (`npm run seed`
-is a placeholder), scheduled publishing, and the in-memory submission rate limiter. See
+**Status: MVP in progress, not production-ready.** Seed script, scheduled publishing and the in-memory submission rate limiter are implemented. See
 [docs/api-contracts.md](docs/api-contracts.md) for the API contract and
 [docs/operations.md](docs/operations.md) for hosting, deployment, backup and rollback.
 
@@ -50,7 +49,7 @@ Both paths start from the same setup.
 3. Terminal 2:
    ```sh
    npm run migrate
-   npm run seed        # placeholder for now; safe to skip
+   npm run seed        # categories + 21 legacy articles; idempotent
    npm run dev
    ```
 4. Open http://localhost:3000/admin and create the first admin account (see below).
@@ -91,8 +90,8 @@ becomes the first admin, so do this immediately after the first start:
 - Use a strong, unique password (16+ characters, stored in a password manager). Do not reuse one from elsewhere.
 - Then create every other staff account from **Admin > Users**, with the role that matches their job.
 - Never share accounts. Each person logs in with their own account, so the audit log stays meaningful.
-- Demo or seed users are **not implemented yet**. If they are added later, they will be created only when
-  `SEED_DEMO_USERS=true` is set locally, with passwords read from environment variables. Do not use seeded
+- Demo users (`demo` accounts at `@churchtimes.local`) are created by `npm run seed` only when
+  `SEED_DEMO_USERS=true` and `SEED_DEMO_PASSWORD` are set locally (never in production). Do not use seeded
   passwords anywhere else.
 
 ## Roles
@@ -119,17 +118,27 @@ The full workflow and permission matrix is in [docs/api-contracts.md](docs/api-c
 | `npm run migrate:create` | Create a new migration after a schema change. |
 | `npm run generate:types` | Regenerate `src/payload-types.ts`. |
 | `npm run generate:importmap` | Regenerate the admin import map. |
-| `npm run seed` | Seed fixtures (placeholder; not implemented yet). |
+| `npm run seed` | Idempotent seed: 9 categories and the 21 legacy published articles. Add `SEED_DEMO_USERS=true SEED_DEMO_PASSWORD=<12+ chars>` (local only) for demo users and a draft demo live event. |
 | `npm run db:local` | Start the embedded local PostgreSQL database on port 54329 (data in `.local-postgres/`). |
 | `npm run typecheck` | TypeScript check with no emit. |
-| `npm test` | Run the test suite (Vitest). |
+| `npm test` | Run unit and integration tests (Vitest). |
+| `npm run test:unit` | Unit tests only (no database). |
+| `npm run test:integration` | Integration tests only (boots Payload against PostgreSQL). |
 
 ## Testing
 
-- `npm test` runs Vitest.
-- The test harness uses `TEST_DATABASE_URL` when it is set. CI sets it to a PostgreSQL service container.
-  When it is not set, the harness is designed to start its own embedded PostgreSQL instead.
-- Locally, you do not need `npm run db:local` running to run tests, unless your test setup says otherwise.
+- `npm test` runs both Vitest projects: `unit` (`tests/unit`, no database) and `integration`
+  (`tests/integration`). `npm run test:unit` runs only the first.
+- Integration tests boot Payload with the real config and call the real REST route handlers
+  (`REST_GET`, `REST_POST`, ... from `@payloadcms/next/routes`) with `Request` objects and
+  `Authorization: JWT <token>`. They apply the committed migrations (not schema push).
+- Database: when `TEST_DATABASE_URL` is set (CI sets it to a PostgreSQL service container) it is used as is.
+  Otherwise the harness starts embedded PostgreSQL on a free port in a temporary directory and removes it
+  afterwards, so you do not need `npm run db:local` running. Do not point `TEST_DATABASE_URL` at a database
+  you care about: tests create and delete records (all under a unique per-run prefix).
+- Integration files run sequentially (one worker) and clean up after themselves.
+- After changing collections: `npm run generate:types`, `npm run generate:importmap` and
+  `npm run migrate:create <name>`, then commit the new migration.
 
 ## Configuration
 

@@ -193,6 +193,32 @@ export interface Media {
   height?: number | null;
   focalX?: number | null;
   focalY?: number | null;
+  sizes?: {
+    thumbnail?: {
+      url?: string | null;
+      width?: number | null;
+      height?: number | null;
+      mimeType?: string | null;
+      filesize?: number | null;
+      filename?: string | null;
+    };
+    card?: {
+      url?: string | null;
+      width?: number | null;
+      height?: number | null;
+      mimeType?: string | null;
+      filesize?: number | null;
+      filename?: string | null;
+    };
+    hero?: {
+      url?: string | null;
+      width?: number | null;
+      height?: number | null;
+      mimeType?: string | null;
+      filesize?: number | null;
+      filename?: string | null;
+    };
+  };
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
@@ -201,6 +227,9 @@ export interface Media {
 export interface Article {
   id: number;
   title: string;
+  /**
+   * Generated from the title when left empty.
+   */
   slug: string;
   excerpt?: string | null;
   content: {
@@ -256,6 +285,7 @@ export interface Submission {
   reviewerNotes?: string | null;
   article?: (number | null) | Article;
   ipHash?: string | null;
+  userAgent?: string | null;
   updatedAt: string;
   createdAt: string;
 }
@@ -266,6 +296,9 @@ export interface Submission {
 export interface LiveEvent {
   id: number;
   title: string;
+  /**
+   * Auto-generated from the title when left empty.
+   */
   slug: string;
   summary?: string | null;
   status: 'draft' | 'live' | 'ended';
@@ -286,11 +319,15 @@ export interface LiveUpdate {
   status: 'pending' | 'approved' | 'rejected';
   sequence?: number | null;
   occurredAt: string;
+  author?: (number | null) | User;
+  approvedBy?: (number | null) | User;
   approvedAt?: string | null;
   updatedAt: string;
   createdAt: string;
 }
 /**
+ * Read-only record of workflow and moderation actions.
+ *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "audit-logs".
  */
@@ -304,6 +341,15 @@ export interface AuditLog {
   fromStatus?: string | null;
   toStatus?: string | null;
   summary?: string | null;
+  details?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
   updatedAt: string;
   createdAt: string;
 }
@@ -461,6 +507,40 @@ export interface MediaSelect<T extends boolean = true> {
   height?: T;
   focalX?: T;
   focalY?: T;
+  sizes?:
+    | T
+    | {
+        thumbnail?:
+          | T
+          | {
+              url?: T;
+              width?: T;
+              height?: T;
+              mimeType?: T;
+              filesize?: T;
+              filename?: T;
+            };
+        card?:
+          | T
+          | {
+              url?: T;
+              width?: T;
+              height?: T;
+              mimeType?: T;
+              filesize?: T;
+              filename?: T;
+            };
+        hero?:
+          | T
+          | {
+              url?: T;
+              width?: T;
+              height?: T;
+              mimeType?: T;
+              filesize?: T;
+              filename?: T;
+            };
+      };
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
@@ -508,6 +588,7 @@ export interface SubmissionsSelect<T extends boolean = true> {
   reviewerNotes?: T;
   article?: T;
   ipHash?: T;
+  userAgent?: T;
   updatedAt?: T;
   createdAt?: T;
 }
@@ -536,6 +617,8 @@ export interface LiveUpdatesSelect<T extends boolean = true> {
   status?: T;
   sequence?: T;
   occurredAt?: T;
+  author?: T;
+  approvedBy?: T;
   approvedAt?: T;
   updatedAt?: T;
   createdAt?: T;
@@ -553,6 +636,7 @@ export interface AuditLogsSelect<T extends boolean = true> {
   fromStatus?: T;
   toStatus?: T;
   summary?: T;
+  details?: T;
   updatedAt?: T;
   createdAt?: T;
 }

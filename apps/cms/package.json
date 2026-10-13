@@ -18,7 +18,9 @@
     "seed": "payload run src/seed/index.ts",
     "db:local": "node scripts/local-db.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration"
   },
   "dependencies": {
     "@payloadcms/db-postgres": "3.90.2",

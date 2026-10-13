@@ -75,6 +75,7 @@ export const LiveEvents: CollectionConfig = {
     ],
     afterChange: [
       async ({ doc, previousDoc, operation, req }) => {
+        if ((req.context as { seed?: boolean } | undefined)?.seed === true) return doc
         if (operation === 'create' || previousDoc?.status !== doc.status) {
           await writeAuditLog(req, {
             action: operation === 'create' ? 'live-event.create' : 'live-event.status',
