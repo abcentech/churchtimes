@@ -131,3 +131,26 @@ button:disabled{cursor:wait;opacity:.75}
 .connect-monogram{width:460px;height:350px}
 @media(max-width:760px){.connect-monogram{width:365px;height:278px}}
 .lead-content a:focus-visible,.lead-save:focus-visible,.interview-copy a:focus-visible,.connect-band a:focus-visible{outline-color:var(--white)}
+
+/* A shorter homepage: featured reporting, latest stories and one perspective section. */
+.homepage-latest{padding-top:42px;padding-bottom:42px}
+.homepage-perspectives{padding:38px 0 48px;border-top:1px solid var(--line)}
+.advertising-slot{margin:30px auto;max-width:970px;border-block:1px solid var(--line);padding:12px 0;clear:both}
+.advertising-label{display:flex;justify-content:space-between;gap:16px;margin-bottom:10px;font:11px/1.5 var(--sans);color:var(--muted);overflow-wrap:anywhere}
+.advertising-label>span:first-child{text-transform:uppercase;letter-spacing:1.3px;font-weight:600}
+.advertising-creative{width:100%;aspect-ratio:970/250;background:var(--sage)}
+.advertising-creative>a,.advertising-creative picture{display:block;width:100%;height:100%}
+.advertising-creative img{width:100%;height:100%;object-fit:contain}
+.advertising-creative>ins{display:block;width:100%;height:100%;max-width:100%;overflow:hidden}
+.advertising-slot--article-inline{max-width:728px;margin-block:36px}
+.advertising-slot--article-inline .advertising-creative{aspect-ratio:728/90}
+.advertising-slot--mobile-banner{display:none}
+@media(max-width:760px){
+  .homepage-latest{padding-block:32px}
+  .homepage-perspectives{padding-block:30px 38px}
+  .advertising-slot{max-width:320px;margin-block:24px}
+  .advertising-creative,.advertising-slot--article-inline .advertising-creative{aspect-ratio:320/100}
+  .advertising-slot--mobile-banner{display:block}
+  .advertising-slot--mobile-banner .advertising-creative{aspect-ratio:320/50}
+  .advertising-label{font-size:10px;gap:10px}
+}

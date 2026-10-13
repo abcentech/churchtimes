@@ -22,3 +22,4 @@ jobs:
       - run: npm test -- --workers=2
       - run: npm run test:newsroom -- --workers=2
       - run: npm run test:forms -- --workers=2
+      - run: npm run test:advertising -- --workers=2

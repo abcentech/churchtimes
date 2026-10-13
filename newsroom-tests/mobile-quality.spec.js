@@ -54,3 +54,18 @@ test('report sharing offers a selectable URL when clipboard access fails', async
   await page.keyboard.press('Escape');
   await expect(page.getByRole('button', { name: 'Copy article link' })).toBeFocused();
 });
+
+test('homepage avoids CMS duplicates of displayed edition stories, including after filtering',async({page})=>{
+  const {default:edition}=await import('../src/data/stories.json',{with:{type:'json'}});
+  await page.route('**/api/articles?**',route=>route.fulfill({json:{docs:[
+    {...report,slug:edition.stories[3].slug,title:edition.stories[3].title},
+    {...report,slug:'new-report',title:'A newly published report'},
+    {...report,slug:'new-report',title:'A newly published report'},
+  ]}}));
+  await page.goto('/');
+  await expect(page.locator('#newsroom-home .newsroom-card')).toHaveCount(1);
+  await page.getByRole('button',{name:'Opinion',exact:true}).click();
+  const slugs=await page.locator('main article[data-story-slug]').evaluateAll(els=>els.map(el=>el.dataset.storySlug));
+  expect(new Set(slugs).size).toBe(slugs.length);
+  await expect(page.locator('#newsroom-home .newsroom-card')).toHaveCount(1);
+});

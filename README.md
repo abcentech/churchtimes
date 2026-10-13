@@ -87,3 +87,21 @@ Commit the resulting `index.html`, `site/` and `.nojekyll` with the source chang
 The real-content website has 20 desktop/mobile browser checks. The branch export must pass them on a plain static server under `/churchtimes/` before publication.
 
 [Desktop preview](docs/previews/website-first-screen.png) · [Full homepage](docs/previews/website-desktop.png) · [Mobile preview](docs/previews/website-mobile.png)
+
+## Homepage advertising readiness
+
+The homepage allocates stories once across featured reporting, latest stories
+and perspectives. Public newsroom reports remain opt-in.
+
+Advertising is unsold/collapsed by default. Reusable billboard, article and
+mobile placements accept approved direct-campaign delivery data; AdSense fallback
+stays disabled until the existing publisher configuration is reviewed.
+See [the advertising contract](docs/advertising-contract.md) and
+[the homepage refinement report](docs/homepage-advertising-report.md).
+
+```bash
+npm run test:advertising -- --workers=2
+```
+
+The advertising suite uses labelled test creatives and a mocked fallback provider;
+it does not serve paid campaigns or contact Google.
