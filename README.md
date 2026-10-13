@@ -23,6 +23,36 @@ npm test -- --workers=2
 
 Playwright uses system Chromium when available; set `CHROMIUM_PATH` to choose another system Chromium. Otherwise run `npx playwright install chromium`. Tests run against the development server by default. Set `TEST_BASE_URL` to test an already-running deployment, including a repository subpath.
 
+## Public newsroom development
+
+The public newsroom feed and article pages are opt-in through
+`VITE_PUBLIC_CMS_URL`. The current edition remains available without a CMS.
+See [the integration contract and validation commands](docs/public-newsroom-integration.md).
+
+```bash
+npm run test:unit
+npm run test:newsroom -- --workers=2
+```
+
+The newsroom suite uses API fixtures. `npm run test:cms` additionally exercises real
+Payload REST handlers and PostgreSQL; its external Turnstile transport is stubbed.
+
+## Public submissions and contact forms
+
+The public site includes `#submit` and a contact form on `#contact`. All public
+submissions require editorial review and are never automatically published.
+Online sending requires a public Turnstile site key and anonymous API
+endpoints; otherwise the site offers email contact.
+
+See [public forms configuration and the CMS v1.2 backend contract](docs/public-forms.md).
+Use `.env.example` as a guide for public build-time values; never include secret keys.
+
+```bash
+npm run test:forms -- --workers=2
+```
+
+The forms tests mock both Turnstile and API responses. They do not send to the real newsroom.
+
 ## Source and scope
 
 - [Current content and media manifest](docs/current-content-manifest.json)
