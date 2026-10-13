@@ -1,0 +1,53 @@
+# Local development stack for the Church Times CMS.
+#
+#   docker compose up -d postgres                       # database only (recommended for dev)
+#   docker compose --profile app up -d --build cms      # optional: CMS in a container too
+#
+# Secrets: copy .env.example to .env and fill it in. .env is never committed.
+# POSTGRES_PASSWORD is optional; the default is a LOCAL-ONLY value bound to 127.0.0.1.
+# If you change it, use the same password in DATABASE_URL in .env.
+name: churchtimes-cms
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: churchtimes
+      POSTGRES_USER: churchtimes
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-churchtimes-local}
+    ports:
+      # Localhost only. Never publish Postgres on a public interface.
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U churchtimes -d churchtimes"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  cms:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    init: true
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Inside the compose network the database is reachable as host "postgres",
+      # not 127.0.0.1. This overrides DATABASE_URL from .env for this container only.
+      DATABASE_URL: postgres://churchtimes:${POSTGRES_PASSWORD:-churchtimes-local}@postgres:5432/churchtimes
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - cms-media:/app/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  cms-media:
