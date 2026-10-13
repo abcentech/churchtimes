@@ -5,9 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
+    "dev:newsroom": "vite apps/newsroom --port 5174 --host 0.0.0.0",
     "build": "vite build && node tools/prepare-pages.mjs",
+    "build:newsroom": "vite build apps/newsroom",
     "preview": "vite preview --host 0.0.0.0",
     "test": "playwright test",
+    "test:newsroom": "playwright test tests/newsroom.spec.js",
     "export:pages": "npm run build && node tools/export-pages.mjs",
     "check:pages": "node tools/check-pages-export.mjs"
   },
