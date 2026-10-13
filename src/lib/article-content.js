@@ -1,5 +1,6 @@
-// Render a deliberately small subset of Payload Lexical content. Unknown nodes,
-// uploads and embedded HTML are omitted until the backend contract defines them.
+import { normalizePublicMedia } from './published-articles.js';
+// Render supported Payload Lexical nodes. Raw HTML, unknown blocks and
+// unpopulated uploads are omitted; only safe published-document media is shown.
 const escape = text => String(text).replace(/[&<>"']/g, char => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
 })[char]);
@@ -12,7 +13,7 @@ function safeLink(value) {
   } catch { return null; }
 }
 
-export function renderArticleContent(content) {
+export function renderArticleContent(content, { baseUrl } = {}) {
   if (typeof content === 'string') {
     return content.trim().split(/\n\s*\n/).filter(Boolean).map(text => `<p>${escape(text)}</p>`).join('');
   }
@@ -26,6 +27,12 @@ export function renderArticleContent(content) {
       return text;
     }
     if (node.type === 'linebreak') return '<br>';
+    if (node.type === 'upload' && node.relationTo === 'media') {
+      const image = normalizePublicMedia(node.value, baseUrl);
+      if (!image) return '';
+      const dimensions = image.width && image.height ? `width="${image.width}" height="${image.height}"` : '';
+      return `<figure><img src="${escape(image.url)}" alt="${escape(image.alt)}" ${dimensions} loading="lazy" decoding="async">${image.caption || image.credit ? `<figcaption>${escape(image.caption)}${image.credit ? ` · Photo: ${escape(image.credit)}` : ''}</figcaption>` : ''}</figure>`;
+    }
     const supported = ['root', 'paragraph', 'heading', 'quote', 'list', 'listitem', 'link', 'autolink'];
     if (!supported.includes(node.type)) return '';
     const children = Array.isArray(node.children) ? node.children.map(child => render(child, depth + 1)).join('') : '';

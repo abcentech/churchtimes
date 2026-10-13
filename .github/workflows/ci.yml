@@ -21,3 +21,4 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm test -- --workers=2
       - run: npm run test:newsroom -- --workers=2
+      - run: npm run test:forms -- --workers=2
