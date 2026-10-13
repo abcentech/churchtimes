@@ -140,6 +140,18 @@ describe('verifyTurnstile', () => {
     expect(bad).toMatchObject({ ok: false, reason: 'action-mismatch' })
   })
 
+  it('accepts any action in a comma-separated TURNSTILE_EXPECTED_ACTION list and still fails closed', async () => {
+    const e = env({ TURNSTILE_EXPECTED_ACTION: ' submit-story , public_story ' })
+    const run = (body: Record<string, unknown>) =>
+      verifyTurnstile({ token: 't', secret: 's', fetchImpl: reply(body), env: e, logger: quiet })
+    expect((await run({ success: true, action: 'submit-story' })).ok).toBe(true)
+    expect((await run({ success: true, action: 'public_story' })).ok).toBe(true)
+    expect(await run({ success: true, action: 'public_contact' })).toMatchObject({ ok: false, reason: 'action-mismatch' })
+    expect(await run({ success: true, action: 'PUBLIC_STORY' })).toMatchObject({ ok: false, reason: 'action-mismatch' })
+    expect(await run({ success: true })).toMatchObject({ ok: false, reason: 'action-mismatch' })
+    expect(await run({ success: true, action: '' })).toMatchObject({ ok: false, reason: 'action-mismatch' })
+  })
+
   it('fails closed in production when TURNSTILE_SECRET_KEY is missing (never falls back to the test secret)', async () => {
     const fetchImpl = vi.fn()
     const r = await verifyTurnstile({ token: 't', fetchImpl, env: { NODE_ENV: 'production' } as never, logger: quiet })

@@ -173,8 +173,13 @@ export async function verifyTurnstile(args: VerifyTurnstileArgs): Promise<Verify
     return fail(403, 'hostname-mismatch')
   }
 
-  const expectedAction = env.TURNSTILE_EXPECTED_ACTION?.trim()
-  if (expectedAction && action !== expectedAction) {
+  // Comma-separated allowlist (e.g. "submit-story,public_story"); exact, case-sensitive match. When set,
+  // a token without an action, or with one outside the list, is rejected (fail closed).
+  const expectedActions = (env.TURNSTILE_EXPECTED_ACTION ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  if (expectedActions.length > 0 && !(action !== undefined && expectedActions.includes(action))) {
     logger.warn({ action }, '[turnstile] action does not match TURNSTILE_EXPECTED_ACTION.')
     return fail(403, 'action-mismatch')
   }
