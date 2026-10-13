@@ -5,6 +5,8 @@ import type { Endpoint, PayloadRequest } from 'payload'
 import { writeAuditLog } from '../lib/audit'
 import { createRateLimiter, getClientIp, hashIp } from '../lib/rateLimit'
 import { cleanText, isValidEmail } from '../lib/sanitize'
+import { computeContentHash } from '../lib/submissionHash'
+import { verifyTurnstile } from '../lib/turnstile'
 
 const MAX_BODY_BYTES = 64 * 1024
 const REF_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789' // no 0/O/1/I/L
@@ -128,6 +130,30 @@ const corsHeaders = (origin: string | null): Record<string, string> =>
     : {}
 
 let limiter: ReturnType<typeof createRateLimiter> | undefined
+let emailLimiter: ReturnType<typeof createRateLimiter> | undefined
+
+const positiveInt = (value: string | undefined, fallback: number): number => {
+  const n = Number.parseInt(value ?? '', 10)
+  return n > 0 ? n : fallback
+}
+
+/** Per-email limiter: SUBMISSION_EMAIL_RATE_LIMIT (default 3) per SUBMISSION_EMAIL_RATE_WINDOW_SECONDS (default 3600). */
+const getEmailLimiter = () => {
+  if (!emailLimiter) {
+    emailLimiter = createRateLimiter({
+      limit: positiveInt(process.env.SUBMISSION_EMAIL_RATE_LIMIT, 3),
+      windowMs: positiveInt(process.env.SUBMISSION_EMAIL_RATE_WINDOW_SECONDS, 3600) * 1000,
+    })
+  }
+  return emailLimiter
+}
+
+/** Test helper: drop all counters and re-read limits from the environment. */
+export function resetPublicSubmissionLimiters(): void {
+  limiter = undefined
+  emailLimiter = undefined
+}
+
 const getLimiter = () => {
   if (!limiter) {
     const limit = Number.parseInt(process.env.SUBMISSION_RATE_LIMIT ?? '', 10)
@@ -205,6 +231,51 @@ export const publicSubmissionsEndpoint: Endpoint = {
     }
     if (result.honeypot) return json(okBody, 201, cors)
 
+    // Turnstile (mandatory, server-side Siteverify). Runs after the IP rate limit and input
+    // validation so bots cannot burn our Siteverify quota. Fails closed.
+    const rawInput = parsed as Record<string, unknown>
+    const turnstileToken = rawInput.turnstileToken ?? rawInput['cf-turnstile-response']
+    const verdict = await verifyTurnstile({
+      token: turnstileToken,
+      remoteip: ip,
+      logger: req.payload.logger,
+    })
+    if (!verdict.ok) {
+      return json(
+        { ok: false, errors: [{ field: verdict.field, message: verdict.message }] },
+        verdict.status,
+        cors,
+      )
+    }
+
+    // Duplicate detection (same email + title + body within the window).
+    const contentHash = computeContentHash(result.data)
+    const windowHours = positiveInt(process.env.SUBMISSION_DUPLICATE_WINDOW_HOURS, 72)
+    const since = new Date(Date.now() - windowHours * 3600 * 1000).toISOString()
+    try {
+      const dup = await req.payload.find({
+        collection: 'submissions',
+        where: { and: [{ contentHash: { equals: contentHash } }, { createdAt: { greater_than: since } }] },
+        limit: 1,
+        depth: 0,
+        pagination: false,
+        select: { contentHash: true },
+        overrideAccess: true,
+      })
+      if (dup.docs.length > 0) return fail(409, 'We already received this submission.')
+    } catch (err) {
+      req.payload.logger.error({ err }, 'duplicate check failed')
+      return fail(500, 'Could not save your submission. Please try again.')
+    }
+
+    // Per-email limit (counted only for verified, non-duplicate submissions).
+    const emailRl = getEmailLimiter().check(result.data.email.toLowerCase())
+    if (!emailRl.allowed) {
+      return fail(429, 'Too many submissions from this email address. Try again later.', {
+        'Retry-After': String(emailRl.retryAfterSeconds),
+      })
+    }
+
     let ipHash: string
     try {
       ipHash = hashIp(ip)
@@ -218,7 +289,7 @@ export const publicSubmissionsEndpoint: Endpoint = {
     try {
       const doc = await req.payload.create({
         collection: 'submissions',
-        data: { ...result.data, status: 'new', reference, ipHash, userAgent } as never,
+        data: { ...result.data, status: 'new', reference, ipHash, userAgent, contentHash } as never,
         overrideAccess: true,
       })
       await writeAuditLog(req, {

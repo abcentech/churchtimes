@@ -108,6 +108,8 @@ describe('media uploads', () => {
     expect(ok.status).toBe(201)
     expect(ok.json.doc.mimeType).toBe('image/png')
     expect(ok.json.doc.filename).toMatch(/^[A-Za-z0-9_.-]+$/)
+    // CMS_PUBLIC_URL is unset in tests, so Payload returns a root-relative URL; with it set the URL is absolute.
+    expect(ok.json.doc.url).toMatch(/^\/api\/media\/file\/[A-Za-z0-9_.-]+$/)
     f.created.media.push(ok.json.doc.id)
 
     const anon = await upload(undefined, PNG_1X1, 'anon.png', 'image/png')

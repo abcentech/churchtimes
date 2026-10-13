@@ -7,8 +7,10 @@ and roles, public submissions, and live-event updates.
 The public website (the Vite static site in the repository root) is separate and stays separate.
 It will read published content through the API in a later integration step.
 
-**Status: MVP in progress, not production-ready.** Seed script, scheduled publishing and the in-memory submission rate limiter are implemented. See
-[docs/api-contracts.md](docs/api-contracts.md) for the API contract and
+**Status: MVP in progress, not production-ready.** Seed script, scheduled publishing, in-memory rate limiters and the
+security hardening (Turnstile, sessions, password policy) are implemented. See
+[docs/api-contracts.md](docs/api-contracts.md) for the API contract,
+[docs/security.md](docs/security.md) for the security model and
 [docs/operations.md](docs/operations.md) for hosting, deployment, backup and rollback.
 
 ## Prerequisites
@@ -81,6 +83,19 @@ docker compose --profile app run --rm cms npm run migrate
 docker compose --profile app up -d --build cms     # serves on http://127.0.0.1:3000
 ```
 
+## Security configuration (read before deploying)
+
+Secrets live only in the server's environment (`.env`), never in frontend code. The ones that matter:
+
+| Variable | Notes |
+| --- | --- |
+| `PAYLOAD_SECRET`, `PREVIEW_SECRET`, `IP_HASH_SALT` | Random, different from each other (`node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`). |
+| `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile **secret** key. **Required in production** (the server refuses to start without it). In development it falls back to Cloudflare's always-pass test secret with a warning. The public **site** key (`TURNSTILE_SITE_KEY`) goes in the frontend only. |
+| `CMS_PUBLIC_URL`, `CMS_CORS_ORIGINS`, `CMS_CSRF_ORIGINS`, `PUBLIC_SUBMISSION_ORIGINS` | In production: https origins only, no `*`, no trailing slash. Startup fails otherwise. |
+| `SMTP_HOST` (+ `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_SECURE`, `EMAIL_FROM_ADDRESS`, `EMAIL_FROM_NAME`) | Needed to deliver password-reset e-mails. Without `SMTP_HOST` e-mails are only printed to the console. |
+
+Full list with comments: `.env.example`. Step-by-step Turnstile and SMTP setup: [docs/operations.md](docs/operations.md).
+
 ## Creating the first admin account
 
 On an empty database, `/admin` shows Payload's create-first-user screen. Whoever reaches that screen first
@@ -88,11 +103,24 @@ becomes the first admin, so do this immediately after the first start:
 
 - Do it on `localhost`, or over HTTPS only. Do not expose an empty instance to the internet.
 - Use a strong, unique password (16+ characters, stored in a password manager). Do not reuse one from elsewhere.
+  The server enforces a minimum of 12 characters, rejects very common passwords and your own e-mail address.
+- `/api/users/first-register` only works while the database has no users; the first account is always created as `admin`.
 - Then create every other staff account from **Admin > Users**, with the role that matches their job.
 - Never share accounts. Each person logs in with their own account, so the audit log stays meaningful.
 - Demo users (`demo` accounts at `@churchtimes.local`) are created by `npm run seed` only when
   `SEED_DEMO_USERS=true` and `SEED_DEMO_PASSWORD` are set locally (never in production). Do not use seeded
   passwords anywhere else.
+
+## Password reset and sessions
+
+- Staff click **Forgot password?** on `/admin/login`. An e-mail with a one-hour, single-use link
+  (`${CMS_PUBLIC_URL}/admin/reset/<token>`) is sent through the configured SMTP server. The response is the same whether
+  or not the e-mail exists. In development without SMTP, the link is printed in the server console.
+- Resetting or changing a password signs the account out everywhere else. Logging out ends the session on the server.
+- 5 wrong passwords lock an account for 10 minutes; an admin can unlock it (`POST /api/users/unlock`) or force a user
+  to sign out everywhere (`POST /api/users/:id/revoke-sessions`). Sessions last 8 hours.
+- If someone is locked out and e-mail is not working, an admin can set a new temporary password for them in
+  **Admin > Users** (this also ends their sessions). If no admin can sign in, see [docs/operations.md](docs/operations.md) (account recovery).
 
 ## Roles
 
@@ -137,6 +165,9 @@ The full workflow and permission matrix is in [docs/api-contracts.md](docs/api-c
   afterwards, so you do not need `npm run db:local` running. Do not point `TEST_DATABASE_URL` at a database
   you care about: tests create and delete records (all under a unique per-run prefix).
 - Integration files run sequentially (one worker) and clean up after themselves.
+- Tests never contact Cloudflare: `tests/integration/turnstileStub.ts` replaces only the Siteverify HTTP transport
+  (`setTurnstileFetchForTests`, which throws unless `NODE_ENV=test`). `tests/integration/security.test.ts` holds the
+  security regression suite (Turnstile, duplicates, lockout, sessions, role escalation, CORS/CSRF, cookies).
 - After changing collections: `npm run generate:types`, `npm run generate:importmap` and
   `npm run migrate:create <name>`, then commit the new migration.
 
@@ -147,7 +178,8 @@ All environment variables are documented in `.env.example` and in
 
 ## Documentation
 
-- [docs/api-contracts.md](docs/api-contracts.md): roles, article workflow, data model, public and staff endpoints.
+- [docs/api-contracts.md](docs/api-contracts.md): roles, article workflow, data model, public and staff endpoints, auth contract.
+- [docs/security.md](docs/security.md): threat model, controls mapped to requirements and tests, known limitations.
 - [docs/operations.md](docs/operations.md): hosting requirements, deployment, backups, rollback, security checklist.
 - [../../docs/newsroom-24h-sprint.md](../../docs/newsroom-24h-sprint.md): sprint objectives and definition of done.
 

@@ -192,7 +192,7 @@ export async function setupFixtures(runId: string) {
       or: [
         { actor: { in: userIds } },
         ...(articleIds.length ? [{ and: [{ collection: { equals: 'articles' } }, { docId: { in: articleIds.map(String) } }] }] : []),
-        { and: [{ collection: { in: ['live-events', 'live-updates', 'submissions'] } }, { summary: { like: runId } }] },
+        { and: [{ collection: { in: ['live-events', 'live-updates', 'submissions', 'users'] } }, { summary: { like: runId } }] },
       ],
     })
     await del('users', like('email'))

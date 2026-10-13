@@ -59,6 +59,10 @@ export async function setup(): Promise<void> {
   process.env.PUBLIC_SUBMISSION_ORIGINS = 'http://allowed.test'
   process.env.SUBMISSION_RATE_LIMIT = '5'
   process.env.SUBMISSION_RATE_WINDOW_SECONDS = '900'
+  process.env.SUBMISSION_EMAIL_RATE_LIMIT = '3'
+  process.env.CMS_CORS_ORIGINS = 'http://localhost:5174,http://cors-allowed.test'
+  process.env.CMS_CSRF_ORIGINS = 'http://csrf-allowed.test'
+  delete process.env.TURNSTILE_SECRET_KEY // tests use the Cloudflare TEST secret with a stubbed transport
   process.env.TRUST_PROXY = 'true' // tests isolate rate-limit buckets with x-forwarded-for
   process.env.SCHEDULER_ENABLED = 'false'
   process.env.PAYLOAD_DB_PUSH = 'false'

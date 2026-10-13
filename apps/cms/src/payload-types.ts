@@ -285,6 +285,7 @@ export interface Submission {
   reviewerNotes?: string | null;
   article?: (number | null) | Article;
   ipHash?: string | null;
+  contentHash?: string | null;
   userAgent?: string | null;
   updatedAt: string;
   createdAt: string;
@@ -588,6 +589,7 @@ export interface SubmissionsSelect<T extends boolean = true> {
   reviewerNotes?: T;
   article?: T;
   ipHash?: T;
+  contentHash?: T;
   userAgent?: T;
   updatedAt?: T;
   createdAt?: T;

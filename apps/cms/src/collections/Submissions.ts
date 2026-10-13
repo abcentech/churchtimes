@@ -70,6 +70,14 @@ export const Submissions: CollectionConfig = {
     { name: 'reviewerNotes', type: 'textarea' },
     { name: 'article', type: 'relationship', relationTo: 'articles' },
     { name: 'ipHash', type: 'text', admin: { readOnly: true }, access: noClientWrite },
+    {
+      // sha256 of normalised email + title + body (lib/submissionHash.ts); duplicate detection.
+      name: 'contentHash',
+      type: 'text',
+      index: true,
+      admin: { readOnly: true },
+      access: { read: ({ req }) => isEditorRole(req.user as UserLike | null), create: () => false, update: () => false },
+    },
     { name: 'userAgent', type: 'text', maxLength: 300, admin: { readOnly: true }, access: noClientWrite },
   ],
 }

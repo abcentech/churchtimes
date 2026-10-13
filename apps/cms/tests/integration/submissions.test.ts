@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { api, newRunId, setupFixtures, type Fixtures } from './helpers'
+import { installTurnstileStub, removeTurnstileStub, TURNSTILE_OK } from './turnstileStub'
 
 const runId = newRunId()
 const ALLOWED = 'http://allowed.test'
@@ -12,17 +13,21 @@ let ipCounter = 0
 const nextIp = () => `10.${Math.floor(ipCounter / 250)}.${(ipCounter += 1) % 250}.${Math.floor(Math.random() * 200) + 1}`
 
 beforeAll(async () => {
+  installTurnstileStub()
   f = await setupFixtures(runId)
 })
 
 afterAll(async () => {
+  removeTurnstileStub()
   await f?.cleanup()
 })
 
 let n = 0
 const valid = (extra: Record<string, unknown> = {}) => ({
   name: 'Ada Obi',
-  email: 'ada@example.com',
+  // unique per call so the per-email limit and duplicate detection never interfere between tests
+  email: `ada${n}.${runId}@example.com`,
+  turnstileToken: TURNSTILE_OK,
   title: `${runId} Church opens clinic ${++n}`,
   body: 'The church opened a free clinic in Ibadan this week for residents of the district.',
   ...extra,
