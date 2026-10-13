@@ -23,6 +23,19 @@ npm test -- --workers=2
 
 Playwright uses system Chromium when available; set `CHROMIUM_PATH` to choose another system Chromium. Otherwise run `npx playwright install chromium`. Tests run against the development server by default. Set `TEST_BASE_URL` to test an already-running deployment, including a repository subpath.
 
+## Public newsroom development
+
+The public newsroom feed and article pages are opt-in through
+`VITE_PUBLIC_CMS_URL`. The current edition remains available without a CMS.
+See [the integration contract and validation commands](docs/public-newsroom-integration.md).
+
+```bash
+npm run test:unit
+npm run test:newsroom -- --workers=2
+```
+
+The newsroom suite uses API fixtures; live Payload integration awaits the backend contract.
+
 ## Source and scope
 
 - [Current content and media manifest](docs/current-content-manifest.json)
