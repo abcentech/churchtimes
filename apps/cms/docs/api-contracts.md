@@ -1,9 +1,9 @@
-# Church Times CMS — API contracts (v1.2)
+# Church Times CMS — API contracts (v1.3)
 
 Status: implemented on `agent/payload-core`. v1.1 added Turnstile, duplicate detection, staff auth/session
 contract and security hardening; v1.2 closes the verified security-review findings: media ownership, version
 access, publication-ordered live feed, append-only corrections, current-password checks, list limits and request
-size limits (see §9 Changelog). Extends and supersedes "API contract v0" in
+size limits; v1.3 is the frontend contract verification (see §9 Changelog). Extends and supersedes "API contract v0" in
 `docs/newsroom-24h-sprint.md`. Breaking changes to anything in this file require a
 version bump here and a note in the PR that introduces them.
 
@@ -145,7 +145,11 @@ the submission lands as `status: "new"` in a staff-only inbox and only an editor
 **draft** article (§6).
 
 Request headers: `Content-Type: application/json` (anything else → 415). If `Origin` is sent it must be in
-`PUBLIC_SUBMISSION_ORIGINS` (→ 403). Send the request with `credentials: 'omit'`.
+`PUBLIC_SUBMISSION_ORIGINS` (→ 403). Send the request with `credentials: 'omit'`. Every response to an allowlisted
+origin carries `Access-Control-Allow-Origin` (exact echo) and `Access-Control-Expose-Headers: Retry-After` (v1.3), so a
+cross-origin script can read `Retry-After` on a 429. A 403 for an origin that is not allowlisted has no CORS grant
+(the browser reports a network error). If `TURNSTILE_EXPECTED_ACTION` is set (comma list, e.g. `submit-story,public_story`)
+the widget's `action` must be one of the entries, otherwise 403.
 
 ```json
 {
@@ -218,7 +222,10 @@ GET /api/categories?limit=100
   `{ docs: Article[], totalDocs, limit, page, totalPages, hasNextPage, hasPrevPage, nextPage, prevPage, pagingCounter }`.
 - Filtering by category must use the category **ID**: `where[category][equals]=<id>`. Look the IDs up with
   `GET /api/categories` (`{ docs: [{ id, title, slug, description? }] }`, public, cacheable). Slug filtering on
-  a populated relationship (`where[category.slug]`) is not part of this contract.
+  a populated relationship (`where[category.slug]`) is not part of this contract. Relationship filters (`category`, `featuredImage`,
+  `author`, `event`, `article`, `actor`, `approvedBy`, `uploadedBy`, `sections`, `parent`; operators `equals`, `not_equals`,
+  `in`, `not_in`, `all`) must carry numeric IDs: anything else (e.g. `where[category][equals]=news`) is `400
+  { ok: false, errors: [{ field: "where[category][equals]", message }] }` (v1.3; it used to be a generic 500).
 - `GET /api/articles/:id` for an unpublished article returns 404 to anonymous callers.
 - Staff-only fields (`author`, `reviewNotes`, `scheduledFor`) are never returned to anonymous callers.
 
@@ -274,6 +281,14 @@ same-origin|same-site|none`. Otherwise the request is treated as anonymous. **CO
 `CMS_CORS_ORIGINS` receive `Access-Control-Allow-Origin` (exact echo, never `*`) and
 `Access-Control-Allow-Credentials: true`. Browser clients on another origin (e.g. the newsroom UI on
 `http://localhost:5174`) must be in **both** lists and call with `credentials: 'include'`.
+
+**Deployment requirement (v1.3): same site.** The cookie is `SameSite=Lax` and host-only, so a browser sends it (and accepts
+it from `Set-Cookie`) only on **same-site** requests. `http://localhost:5174` → `http://localhost:3000` is same-site (ports do
+not matter). In production the newsroom UI and the CMS must share a registrable domain (for example `newsroom.example.org`
+and `cms.example.org`) or be served from one origin through a reverse proxy. A newsroom on another registrable domain, or on a
+public-suffix host such as `*.github.io` / `*.pages.dev`, cannot log in with the cookie: login would succeed but every later
+request would be anonymous. We do not relax this to `SameSite=None`. The public website needs no cookie (it calls with
+`credentials: 'omit'`) and may be on any domain listed in `CMS_CORS_ORIGINS` / `PUBLIC_SUBMISSION_ORIGINS`.
 
 ### Endpoints (Payload built-ins, all under `/api/users`)
 
@@ -421,6 +436,15 @@ proxy) and https-only `CMS_PUBLIC_URL`/CORS/CSRF settings (`docs/security.md`). 
 limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/operations.md` §4).
 
 ## 9. Changelog
+
+### v1.3
+Frontend contract verification (`tests/integration/frontend-workflows.test.ts`, matrix in `docs/frontend-integration.md`). No
+breaking changes.
+- `POST /api/public/submissions`: every response to an allowlisted origin now sends `Access-Control-Expose-Headers: Retry-After`
+  (browsers could not read it before); `TURNSTILE_EXPECTED_ACTION` accepts a comma-separated list (§4.1).
+- Non-numeric relationship filters are `400` instead of `500` (§4.2). Rejections produced by `src/proxy.ts` (413, 411, 400 and this
+  one) now carry CORS headers for allowlisted origins so browsers can read them, and every `/api/*` response gains `Vary: Origin`.
+- Documented: the same-site deployment requirement for the staff cookie (§5).
 
 ### v1.2
 Security-review fixes (details and tests in `docs/security.md` §5). Consumer-visible changes first:

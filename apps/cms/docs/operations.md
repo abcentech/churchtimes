@@ -94,7 +94,7 @@ message listing every problem (missing secrets, http or wildcard origins, dummy 
 | `IP_HASH_SALT` | yes | 32 hex chars | Salt for hashing client IPs on submissions, at least 16 characters. |
 | `TURNSTILE_SECRET_KEY` | **yes (production)** | `0x4AAAA…` (secret) | Cloudflare Turnstile secret key. Startup fails in production without it, or with a Cloudflare dummy test secret. Dev fallback: always-pass test secret + warning. |
 | `TURNSTILE_ALLOWED_HOSTNAMES` | recommended | `www.churchtimesnigeria.net` | Comma list. Siteverify's `hostname` must match (case-insensitive). Do not set it with dummy/test keys (they return a fixed hostname). |
-| `TURNSTILE_EXPECTED_ACTION` | no | `submit-story` | If set, the widget's `action` must match. |
+| `TURNSTILE_EXPECTED_ACTION` | no | `submit-story,public_story` | Comma list. If set, the widget's `action` must be exactly one of the entries (case-sensitive); a token without an action is rejected. |
 | `CMS_PUBLIC_URL` | **yes (production)** | `https://cms.example.org` | Public origin of the CMS: https, no trailing slash. Used as Payload `serverURL` (also added to the CSRF allowlist), reset links, absolute media URLs. |
 | `CMS_CORS_ORIGINS` | yes | `https://www.example.org,https://newsroom.example.org` | Browser origins allowed to call the API (CORS). Explicit origins only. |
 | `CMS_CSRF_ORIGINS` | yes | `https://newsroom.example.org` | Extra origins allowed to make cookie-authenticated requests (the CMS origin is always included). |
@@ -126,7 +126,8 @@ Frontends need only the **public** Turnstile site key (`TURNSTILE_SITE_KEY` in t
    - **Site key** (public): put it in the public website's build configuration and pass it to the widget
      (`data-sitekey`). Safe to expose.
    - **Secret key**: put it **only** in the CMS server's `.env` as `TURNSTILE_SECRET_KEY`. Never in git, frontend code or chat.
-4. Optionally set `data-action="submit-story"` on the widget and `TURNSTILE_EXPECTED_ACTION=submit-story`, and set
+4. Optionally set an `action` on the widget and list it in `TURNSTILE_EXPECTED_ACTION` (comma list, e.g.
+   `submit-story,public_story`; the public site's story form sends `public_story`), and set
    `TURNSTILE_ALLOWED_HOSTNAMES` to the same hostnames as step 2.
 5. The frontend sends the token in the JSON body as `turnstileToken`. Tokens are single use and expire after 5 minutes;
    after any error call `turnstile.reset()` and let the visitor retry.

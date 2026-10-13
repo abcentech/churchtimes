@@ -1,4 +1,3 @@
-import { normalizePublicMedia } from './cms-media.js';
 /**
  * Church Times published-content adapter.
  *
@@ -35,6 +34,38 @@ const publicationDate = value => {
   return text && Number.isFinite(Date.parse(text)) ? new Date(text).toISOString() : '';
 };
 
+function mediaUrl(value, baseUrl) {
+  if (typeof value !== 'string' || !value.trim()) return '';
+  try {
+    const url = new URL(value, baseUrl);
+    if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) return '';
+    if (baseUrl && url.origin !== new URL(baseUrl).origin) return '';
+    return url.pathname.startsWith('/api/media/file/') ? url.href : '';
+  } catch { return ''; }
+}
+export function normalizePublicMedia(record, baseUrl) {
+  if (!record || typeof record !== 'object') return null;
+  if (!['image/jpeg','image/png','image/webp'].includes(record.mimeType)) return null;
+  const url = mediaUrl(record.url, baseUrl);
+  if (!url) return null;
+  const dimension = value => Number.isSafeInteger(value) && value > 0 && value <= 20000 ? value : null;
+  return {
+    url, cardUrl:mediaUrl(record.sizes?.card?.url, baseUrl) || url,
+    heroUrl:mediaUrl(record.sizes?.hero?.url, baseUrl) || url,
+    alt:plainText(record.alt,300), caption:plainText(record.caption,1000), credit:plainText(record.credit,300),
+    width:dimension(record.width), height:dimension(record.height),
+    cardWidth:record.sizes?.card?.url ? dimension(record.sizes.card.width) : dimension(record.width),
+    cardHeight:record.sizes?.card?.url ? dimension(record.sizes.card.height) : dimension(record.height),
+    heroWidth:record.sizes?.hero?.url ? dimension(record.sizes.hero.width) : dimension(record.width),
+    heroHeight:record.sizes?.hero?.url ? dimension(record.sizes.hero.height) : dimension(record.height),
+  };
+}
+function legacyUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && ['churchtimesnigeria.net','www.churchtimesnigeria.net'].includes(url.hostname) && !url.username && !url.password ? url.href : '';
+  } catch { return ''; }
+}
 export function normalizePublishedArticle(record, {baseUrl} = {}) {
   if (!record || record.status !== 'published') return null;
   const slug = plainText(record.slug, 160);
@@ -49,7 +80,8 @@ export function normalizePublishedArticle(record, {baseUrl} = {}) {
     category: plainText(typeof record.category === 'object' ? record.category?.title : record.category, 100),
     bylineName: plainText(record.bylineName,200),
     featuredImage: normalizePublicMedia(record.featuredImage,baseUrl),
-    corrections: Array.isArray(record.corrections) ? record.corrections.slice(0,100).filter(c=>c && typeof c.note==='string' && c.note.trim()).map(c=>({note:plainText(c.note,4000),correctedAt:publicationDate(c.correctedAt)})) : [],
+    legacyUrl:legacyUrl(record.legacyUrl),
+    corrections: Array.isArray(record.corrections) ? record.corrections.slice(0,100).filter(c=>c && typeof c.note==='string' && c.note.trim()).map(c=>({note:plainText(c.note,2000),correctedAt:publicationDate(c.correctedAt)})) : [],
     // Do not interpret arbitrary rich-text or HTML as safe markup.
     content: record.content ?? null,
   };

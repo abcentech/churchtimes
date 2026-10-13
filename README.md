@@ -34,7 +34,24 @@ npm run test:unit
 npm run test:newsroom -- --workers=2
 ```
 
-The newsroom suite uses API fixtures; live Payload integration awaits the backend contract.
+The newsroom suite uses API fixtures. `npm run test:cms` additionally exercises real
+Payload REST handlers and PostgreSQL; its external Turnstile transport is stubbed.
+
+## Public submissions and contact forms
+
+The public site includes `#submit` and a contact form on `#contact`. All public
+submissions require editorial review and are never automatically published.
+Online sending requires a public Turnstile site key and anonymous API
+endpoints; otherwise the site offers email contact.
+
+See [public forms configuration and the CMS v1.2 backend contract](docs/public-forms.md).
+Use `.env.example` as a guide for public build-time values; never include secret keys.
+
+```bash
+npm run test:forms -- --workers=2
+```
+
+The forms tests mock both Turnstile and API responses. They do not send to the real newsroom.
 
 ## Public submissions and contact forms
 

@@ -1,6 +1,6 @@
 # Public frontend mappings to the merged CMS
 
-Based on integration commit `75cc671` and the actual Payload submission endpoint,
+Based on integration commit `ba1d653` (including merged #8/#9/#10) and the actual Payload submission endpoint,
 article/category/media collections, and Lexical seed helper under `apps/cms`.
 Changes are confined to public frontend adapters, rendering, tests and docs.
 No backend file, authentication, approval workflow, initial migration, live event
@@ -37,8 +37,8 @@ request also respects the endpoint's 64KiB byte limit.
 `201 { ok: true, reference, message }` confirms receipt; display the returned
 reference only. The public page promises review, never publication. `ok: true`
 without a reference, `ok: false`, malformed/empty receipt JSON and network/timeouts
-do not become success. Legacy explicit `accepted`/`pending` acknowledgements
-remain supported for separately configured external form services.
+do not become success. Legacy `accepted`/`pending` acknowledgements are rejected,
+and a valid receipt must use HTTP 201.
 
 Field errors are arrays (`errors: [{ field, message }]`), with known aliases
 mapped back to inputs using safe local messages. No private server diagnostics
@@ -53,7 +53,8 @@ and timeouts remain distinct.
 An unconfigured contact form stays disabled with its email alternative. Do not
 route contact enquiries into story submissions or invent a CMS endpoint.
 `VITE_PUBLIC_CONTACT_URL` still explicitly opts into a separate service using
-subject/message/consent and the existing contact limits. Turnstile/site keys are
+subject/message, with the same explicit 201 receipt requirement. `VITE_TURNSTILE_ACTION` defaults to `submit-story` and must match the backend.
+Turnstile/site keys are
 public configuration; no server secret enters the frontend.
 
 ## Published articles
@@ -65,8 +66,8 @@ render. Public view models map `category.title`, `bylineName`, `publishedAt`,
 from private `author` user records or render review notes.
 
 Media relationships resolve their relative URL against the CMS origin, not the
-Vite site. JPEG/PNG/WebP metadata with valid dimensions produces responsive
-thumbnail/card/hero candidates, intrinsic dimensions, alt text, caption and credit.
+Vite site. Same-origin `/api/media/file/` JPEG/PNG/WebP metadata with valid dimensions produces responsive
+card/hero candidates, intrinsic dimensions, alt text, caption and credit.
 Unpopulated IDs, malformed media and unsafe URLs produce no broken markup. Failed
 images collapse without removing article text or corrections.
 
@@ -96,12 +97,9 @@ claim a deployed PostgreSQL or real Cloudflare integration.
 
 Browser regressions verify actual CMS-shaped receipts/errors, public bylines,
 media/credits, corrections, malformed responses, permissions, narrow layouts,
-keyboard and axe behaviour. Completed checks: 30 unit/contract tests, 56 public
-browser tests, 42 newsroom tests, 34 forms tests and 22 advertising tests passed.
-Another 56 public tests passed on the compiled `/churchtimes/` export. Build,
-export verification and whitespace checks passed. The local forms suite used
-an external port-only configuration (5185 instead of occupied 5175); CI uses its
-normal configuration. No tests were disabled or skipped. Live
-CORS, real Turnstile verification and commercial contact-service integration are
-separate runtime prerequisites. Cross-origin Retry-After is available only if
-the CMS exposes that response header; otherwise the existing safe cooldown applies.
+keyboard and axe behaviour. The merged `npm run test:cms` suite additionally
+starts a disposable local PostgreSQL database and exercises real Payload REST
+handlers. Its Turnstile widget and Siteverify transport are test doubles; it
+makes no claim about deployed Cloudflare verification. Backend sources and
+workflows remain identical to the integrated base. Contact service configuration
+and live external verification remain runtime prerequisites.

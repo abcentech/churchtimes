@@ -1,7 +1,7 @@
 name: Website checks
 on:
   push:
-    branches: [main]
+    branches: [main, feat/newsroom-mvp]
   pull_request:
 permissions:
   contents: read

@@ -87,3 +87,22 @@ test('CMS timeout, malformed JSON and permission errors stay distinguishable',as
   await assert.rejects(fetchPublishedPage({baseUrl:'https://cms.example.test',fetchImpl:async()=>({ok:false,status:403})}),e=>e.type==='http'&&e.status===403);
   await assert.rejects(fetchPublishedPage({baseUrl:'https://cms.example.test',timeoutMs:5,fetchImpl:(_url,{signal})=>new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>reject(new Error('aborted'))))}),e=>e.type==='timeout');
 });
+
+test('maps public byline, corrections, legacy URL and CMS-relative media without staff data',()=>{
+  const value=normalizePublishedArticle({...report,bylineName:'A public byline',author:{email:'private@example.test'},reviewNotes:'private',legacyUrl:'https://churchtimesnigeria.net/original/',corrections:[{note:'A correction.',correctedAt:'2026-10-13T10:00:00Z'}],featuredImage:{url:'/api/media/file/photo.jpg',alt:'Photograph',mimeType:'image/jpeg',width:640,height:480,sizes:{card:{url:'/api/media/file/photo-card.jpg'}}}},{baseUrl:'https://cms.example.test'});
+  assert.equal(value.bylineName,'A public byline');assert.equal(value.featuredImage.url,'https://cms.example.test/api/media/file/photo.jpg');
+  assert.equal(value.featuredImage.cardUrl,'https://cms.example.test/api/media/file/photo-card.jpg');assert.equal(value.corrections[0].note,'A correction.');
+  assert.equal(value.legacyUrl,'https://churchtimesnigeria.net/original/');assert.equal('author' in value,false);assert.equal('reviewNotes' in value,false);
+});
+test('rejects unsafe media URLs, unsupported MIME types and unrelated legacy destinations',()=>{
+  for(const featuredImage of [{url:'javascript:alert(1)'},{url:'https://foreign.test/api/media/file/photo.jpg'},{url:'/admin/private'},{url:'/api/media/file/photo.svg',mimeType:'image/svg+xml'}]){
+    assert.equal(normalizePublishedArticle({...report,featuredImage},{baseUrl:'https://cms.example.test'}).featuredImage,null);
+  }
+  assert.equal(normalizePublishedArticle({...report,legacyUrl:'https://foreign.test/'}).legacyUrl,'');
+});
+test('renders populated Lexical media safely and never resolves private/unpopulated upload IDs',()=>{
+  const make=value=>({root:{type:'root',children:[{type:'upload',relationTo:'media',value}]}});
+  const html=renderArticleContent(make({url:'/api/media/file/photo.jpg',mimeType:'image/jpeg',alt:'<script>unsafe</script>',caption:'<img onerror=alert(1)>',width:640,height:480}),{baseUrl:'https://cms.example.test'});
+  assert.match(html,/src="https:\/\/cms.example.test\/api\/media\/file\/photo.jpg"/);assert.match(html,/&lt;script&gt;/);assert.doesNotMatch(html,/<script>|<img onerror/);
+  assert.equal(renderArticleContent(make(123),{baseUrl:'https://cms.example.test'}),'');
+});
