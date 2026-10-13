@@ -1,0 +1,46 @@
+{
+  "name": "churchtimes-cms",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Church Times Nigeria newsroom CMS (Payload 3 + PostgreSQL)",
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "cross-env NODE_OPTIONS=--no-deprecation next build",
+    "start": "cross-env NODE_OPTIONS=--no-deprecation next start",
+    "generate:types": "payload generate:types",
+    "generate:importmap": "payload generate:importmap",
+    "migrate": "payload migrate",
+    "migrate:create": "payload migrate:create",
+    "seed": "payload run src/seed/index.ts",
+    "db:local": "node scripts/local-db.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@payloadcms/db-postgres": "3.90.2",
+    "@payloadcms/next": "3.90.2",
+    "@payloadcms/richtext-lexical": "3.90.2",
+    "@payloadcms/ui": "3.90.2",
+    "cross-env": "10.1.0",
+    "graphql": "16.14.2",
+    "next": "16.3.8",
+    "payload": "3.90.2",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "sharp": "0.35.5"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "embedded-postgres": "17.10.0-beta.17",
+    "sass": "1.105.1",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "vitest": "5.0.4"
+  }
+}
