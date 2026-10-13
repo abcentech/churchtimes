@@ -67,5 +67,23 @@ test('navigation cancellation aborts the public request without changing its con
   const controller = new AbortController();
   const result = fetchPublishedPage({baseUrl:'https://cms.example.test',signal:controller.signal,fetchImpl:(_url,{signal})=>new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>reject(new Error('navigation aborted'))))});
   controller.abort();
-  await assert.rejects(result,/navigation aborted/);
+  await assert.rejects(result,error=>error.type==='cancelled');
+});
+
+test('actual public fields map byline, media and correction history without private author data',()=>{
+  const normalized=normalizePublishedArticle({...report,bylineName:'Public byline',author:{name:'Private user'},category:{id:1,title:'News'},featuredImage:{id:2,url:'/api/media/file/photo.webp',mimeType:'image/webp',width:800,height:450,alt:'Community meeting',credit:'Publication'},corrections:[{note:'Corrected location.',correctedAt:'2026-10-13T09:00:00Z'}]},{baseUrl:'https://cms.example.test'});
+  assert.equal(normalized.bylineName,'Public byline');assert.equal(normalized.author,undefined);
+  assert.equal(normalized.featuredImage.url,'https://cms.example.test/api/media/file/photo.webp');
+  assert.equal(normalized.category,'News');assert.equal(normalized.corrections[0].note,'Corrected location.');
+});
+test('safe Lexical media and formatting render; unsafe uploads and links remain excluded',()=>{
+  const media={url:'/api/media/file/photo.webp',mimeType:'image/webp',width:800,height:450,alt:'Community photo',caption:'<script>caption</script>'};
+  const html=renderArticleContent({root:{type:'root',children:[{type:'upload',relationTo:'media',value:media},{type:'paragraph',children:[{type:'text',text:'Formatted',format:8|16}]}]}},{baseUrl:'https://cms.example.test'});
+  assert.match(html,/https:\/\/cms.example.test\/api\/media\/file\/photo.webp/);assert.match(html,/&lt;script&gt;caption/);assert.match(html,/<code><u>Formatted<\/u><\/code>/);
+  for(const url of ['javascript:alert(1)','data:image/svg+xml,evil','//evil.test/image','https://user:pass@evil.test/image'])assert.equal(renderArticleContent({root:{type:'root',children:[{type:'upload',relationTo:'media',value:{...media,url}}]}},{baseUrl:'https://cms.example.test'}),'');
+});
+test('CMS timeout, malformed JSON and permission errors stay distinguishable',async()=>{
+  await assert.rejects(fetchPublishedPage({baseUrl:'https://cms.example.test',fetchImpl:async()=>({ok:true,json:async()=>{throw new SyntaxError('HTML response');}})}),e=>e.type==='response');
+  await assert.rejects(fetchPublishedPage({baseUrl:'https://cms.example.test',fetchImpl:async()=>({ok:false,status:403})}),e=>e.type==='http'&&e.status===403);
+  await assert.rejects(fetchPublishedPage({baseUrl:'https://cms.example.test',timeoutMs:5,fetchImpl:(_url,{signal})=>new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>reject(new Error('aborted'))))}),e=>e.type==='timeout');
 });

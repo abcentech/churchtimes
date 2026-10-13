@@ -1,8 +1,9 @@
+import { cmsImage, cmsFigure, bindCMSImages } from './lib/cms-media.js';
 import { selectHomepage, uniqueHomeReports } from './lib/homepage.js';
 import { mountAdvertisingPlacements } from './lib/advertising.js';
 import advertising from './data/advertising.json';
 import { publicFormMarkup, bindPublicForm } from './forms/public-form.js';
-import { fetchPublishedPage, fetchPublishedArticle } from './lib/published-articles.js';
+import { fetchPublishedPage, fetchPublishedArticle, cmsErrorMessage } from './lib/published-articles.js';
 import { renderArticleContent } from './lib/article-content.js';
 import '@fontsource-variable/newsreader/wght.css';
 import '@fontsource-variable/newsreader/wght-italic.css';
@@ -142,7 +143,7 @@ function reportDate(article) {
   return article.publishedAt ? `<time datetime="${escape(article.publishedAt)}">${date({dateGMT:article.publishedAt},true)}</time>` : '';
 }
 function reportCard(article) {
-  return `<article class="story-card newsroom-card" data-story-slug="${escape(article.slug)}"><div class="newsroom-card-meta"><span class="eyebrow clay">${escape(article.category || 'Newsroom')}</span>${reportDate(article)}</div><h2><a href="${reportHref(article)}">${escape(article.title)}</a></h2><p>${escape(article.excerpt)}</p><a class="text-link" href="${reportHref(article)}" aria-label="Read article: ${escape(article.title)}">Read article ${icon('arrow',18)}</a></article>`;
+  return `<article class="story-card newsroom-card" data-story-slug="${escape(article.slug)}">${article.featuredImage?`<a class="newsroom-card-image" href="${reportHref(article)}" tabindex="-1" aria-hidden="true">${cmsImage(article.featuredImage,{card:true,fallbackAlt:article.title})}</a>`:''}<div class="newsroom-card-meta"><span class="eyebrow clay">${escape(article.category || 'Newsroom')}</span>${reportDate(article)}${article.bylineName?`<span class="newsroom-byline">By ${escape(article.bylineName)}</span>`:''}</div><h2><a href="${reportHref(article)}">${escape(article.title)}</a></h2><p>${escape(article.excerpt)}</p><a class="text-link" href="${reportHref(article)}" aria-label="Read article: ${escape(article.title)}">Read article ${icon('arrow',18)}</a></article>`;
 }
 function feedState(target, title, description, retry) {
   const tag = target.id === 'cms-report' ? 'h1' : 'h2';
@@ -156,6 +157,7 @@ function renderHomeReports() {
   const articles = uniqueHomeReports(homeReports, homeSelection());
   target.hidden = !articles.length;
   target.innerHTML = articles.length ? `${heading('JUST PUBLISHED','From the newsroom.',`<a class="text-link" href="#latest">All newsroom reports ${icon('arrow',17)}</a>`)}<div class="story-grid">${articles.map(reportCard).join('')}</div>` : '';
+  bindCMSImages(target);
 }
 async function loadHomeReports() {
   const target = document.querySelector('#newsroom-home');
@@ -196,17 +198,18 @@ async function latestPage() {
       }
       const fresh = articles.filter(article => { if (seen.has(article.slug)) return false; seen.add(article.slug); return true; });
       grid.insertAdjacentHTML('beforeend',fresh.map(reportCard).join(''));
+      bindCMSImages(grid);
       target.querySelector('#feed-announcement').textContent = `${fresh.length} ${fresh.length===1?'report':'reports'} loaded. ${seen.size} ${seen.size===1?'report':'reports'} shown.`;
       const more = target.querySelector('#newsroom-more');
       more.innerHTML = nextPage ? '<button class="outline-button" id="more-reports">More reports '+icon('down',17)+'</button>' : '<p class="muted small" role="status">You’re up to date with the newsroom.</p>';
       more.querySelector('button')?.addEventListener('click',() => load(nextPage));
-    } catch {
+    } catch(error) {
       if (!target.isConnected) return;
       if (grid) {
         const more = target.querySelector('#newsroom-more');
-        more.innerHTML = '<p role="status">More reports could not be loaded. Your stories are still here.</p><button class="outline-button">Try again</button>';
+        more.innerHTML = `<p role="status">More reports could not be loaded. Your stories are still here. ${escape(cmsErrorMessage(error))}</p><button class="outline-button">Try again</button>`;
         more.querySelector('button').addEventListener('click',() => load(page));
-      } else feedState(target,'We couldn’t reach the newsroom.','Please try again, or keep reading the current edition.',() => load(page));
+      } else feedState(target,'We couldn’t reach the newsroom.',cmsErrorMessage(error)||'Please try again, or keep reading the current edition.',() => load(page));
     } finally { if (target.isConnected) { target.setAttribute('aria-busy','false'); if (restoreFocus) { const next = grid?.querySelectorAll('h2 a')[previousCount] || target.querySelector('button') || target.querySelector('h2'); if (next?.tagName === 'H2') next.tabIndex = -1; next?.focus({preventScroll:true}); } } }
   }
   await load();
@@ -231,17 +234,18 @@ async function reportPage(slug) {
         document.title = 'Article unavailable — Church Times Nigeria';
         return;
       }
-      const body = renderArticleContent(article.content);
-      target.innerHTML = `<div class="breadcrumbs"><a href="#home">Home</a><span>/</span><a href="#latest">Latest reports</a></div><article><header class="article-header"><span class="eyebrow clay">${escape(article.category || 'Newsroom')}</span><h1>${escape(article.title)}</h1><p class="article-deck">${escape(article.excerpt)}</p><div class="article-meta">${reportDate(article)}<button class="icon-button" id="share-report" aria-label="Copy article link">${icon('share',19)}</button></div></header><div class="newsroom-article-body article-body">${body || '<p>The full article text is not available yet. Please check back shortly.</p>'}</div>${adMarker('article-inline')}<div class="newsroom-article-end"><a class="text-link" href="#latest">More from the newsroom ${icon('arrow',17)}</a></div></article>`;
+      const body = renderArticleContent(article.content,{baseUrl:cmsUrl});
+      target.innerHTML = `<div class="breadcrumbs"><a href="#home">Home</a><span>/</span><a href="#latest">Latest reports</a></div><article><header class="article-header"><span class="eyebrow clay">${escape(article.category || 'Newsroom')}</span><h1>${escape(article.title)}</h1><p class="article-deck">${escape(article.excerpt)}</p><div class="article-meta"><div>${article.bylineName?`<strong class="newsroom-byline">By ${escape(article.bylineName)}</strong>`:''}${reportDate(article)}</div><button class="icon-button" id="share-report" aria-label="Copy article link">${icon('share',19)}</button></div></header>${cmsFigure(article.featuredImage,{eager:true,fallbackAlt:article.title})}<div class="newsroom-article-body article-body">${body || '<p>The full article text is not available yet. Please check back shortly.</p>'}</div>${article.corrections.length?`<section class="newsroom-corrections" aria-labelledby="corrections-title"><h2 id="corrections-title">Corrections & updates</h2><ul>${article.corrections.map(c=>`<li>${c.correctedAt?`<time datetime="${escape(c.correctedAt)}">${date({dateGMT:c.correctedAt},true)}</time>`:''}<p>${escape(c.note)}</p></li>`).join('')}</ul></section>`:''}${adMarker('article-inline')}<div class="newsroom-article-end"><a class="text-link" href="#latest">More from the newsroom ${icon('arrow',17)}</a></div></article>`;
       mountAdvertisingPlacements(target, advertising, { resolveAsset: asset });
+      bindCMSImages(target);
       document.title = `${article.title} — Church Times Nigeria`;
       document.querySelector('meta[name="description"]').content = article.excerpt;
       target.querySelector('#share-report').addEventListener('click',async() => {
         try { await navigator.clipboard.writeText(location.href); toast('Article link copied.'); }
         catch { openShareFallback(location.href); }
       });
-    } catch {
-      if (target.isConnected) feedState(target,'We couldn’t load this report.','Please try again. The current edition is still available.',load);
+    } catch(error) {
+      if (target.isConnected) feedState(target,'We couldn’t load this report.',cmsErrorMessage(error)||'Please try again. The current edition is still available.',load);
     } finally { if (target.isConnected) { target.setAttribute('aria-busy','false'); if (restoreFocus) { const next=target.querySelector('button, h1'); if(next?.tagName==='H1')next.tabIndex=-1; next?.focus({preventScroll:true}); } } }
   }
   await load();

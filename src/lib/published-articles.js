@@ -1,3 +1,4 @@
+import { normalizePublicMedia } from './cms-media.js';
 /**
  * Church Times published-content adapter.
  *
@@ -12,6 +13,17 @@
  */
 const MAX_ITEMS = 100;
 const DEFAULT_TIMEOUT_MS = 6000;
+export class CMSReadError extends Error {
+  constructor(type, message, status=0) { super(message); this.type=type; this.status=status; }
+}
+export function cmsErrorMessage(error) {
+  if(error?.type==='configuration')return 'The newsroom connection is not configured correctly. You can still read the current edition.';
+  if(error?.type==='timeout')return 'The newsroom took too long to respond. Please try again or read the current edition.';
+  if(error?.status===429)return 'The newsroom is receiving too many requests. Please wait before trying again.';
+  if([401,403].includes(error?.status))return 'Public reporting is unavailable from this newsroom connection. You can still read the current edition.';
+  if(error?.type==='response')return 'The newsroom returned an unreadable response. Please try again later or read the current edition.';
+  return '';
+}
 
 const plainText = (value, maxLength = 2000) =>
   typeof value === 'string' ? value.trim().slice(0, maxLength) : '';
@@ -23,7 +35,7 @@ const publicationDate = value => {
   return text && Number.isFinite(Date.parse(text)) ? new Date(text).toISOString() : '';
 };
 
-export function normalizePublishedArticle(record) {
+export function normalizePublishedArticle(record, {baseUrl} = {}) {
   if (!record || record.status !== 'published') return null;
   const slug = plainText(record.slug, 160);
   const title = plainText(record.title, 240);
@@ -35,6 +47,9 @@ export function normalizePublishedArticle(record) {
     excerpt: plainText(record.excerpt || record.summary, 600),
     publishedAt: publicationDate(record.publishedAt),
     category: plainText(typeof record.category === 'object' ? record.category?.title : record.category, 100),
+    bylineName: plainText(record.bylineName,200),
+    featuredImage: normalizePublicMedia(record.featuredImage,baseUrl),
+    corrections: Array.isArray(record.corrections) ? record.corrections.slice(0,100).filter(c=>c && typeof c.note==='string' && c.note.trim()).map(c=>({note:plainText(c.note,4000),correctedAt:publicationDate(c.correctedAt)})) : [],
     // Do not interpret arbitrary rich-text or HTML as safe markup.
     content: record.content ?? null,
   };
@@ -49,10 +64,11 @@ async function requestPublishedArticles({
   slug,
   signal,
 } = {}) {
-  if (!baseUrl) throw new Error('CMS base URL is required');
-  const origin = new URL(baseUrl, 'https://invalid.local');
-  if (!['https:', 'http:'].includes(origin.protocol) || origin.hostname === 'invalid.local') {
-    throw new Error('CMS base URL must be an absolute HTTP(S) URL');
+  if (!baseUrl) throw new CMSReadError('configuration','CMS base URL is required');
+  let origin;
+  try { origin = new URL(baseUrl); } catch { throw new CMSReadError('configuration','CMS base URL must be an absolute HTTP(S) URL'); }
+  if (!['https:', 'http:'].includes(origin.protocol) || origin.username || origin.password) {
+    throw new CMSReadError('configuration','CMS base URL must be an absolute HTTP(S) URL');
   }
   const safeLimit = Math.max(1, Math.min(MAX_ITEMS, Math.floor(Number(limit)) || 20));
   const url = new URL('/api/articles', origin);
@@ -67,7 +83,8 @@ async function requestPublishedArticles({
   const abort = () => controller.abort();
   if (signal?.aborted) abort();
   else signal?.addEventListener('abort', abort, { once: true });
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let timedOut=false;
+  const timer = setTimeout(() => { timedOut=true;controller.abort(); }, timeoutMs);
   try {
     const response = await fetchImpl(url.toString(), {
       method: 'GET',
@@ -75,13 +92,19 @@ async function requestPublishedArticles({
       signal: controller.signal,
       credentials: 'omit',
     });
-    if (!response.ok) throw new Error(`CMS request failed (${response.status})`);
-    const payload = await response.json();
-    if (!Array.isArray(payload?.docs)) throw new Error('Unexpected CMS response');
-    const articles = payload.docs.map(normalizePublishedArticle).filter(Boolean);
+    if (!response.ok) throw new CMSReadError('http',`CMS request failed (${response.status})`,response.status);
+    let payload;
+    try {payload=await response.json();} catch { if(controller.signal.aborted)throw new Error('aborted');throw new CMSReadError('response','Unexpected CMS response'); }
+    if (!Array.isArray(payload?.docs)) throw new CMSReadError('response','Unexpected CMS response');
+    const articles = payload.docs.map(record=>normalizePublishedArticle(record,{baseUrl})).filter(Boolean);
     const nextPage = payload.hasNextPage === true && Number.isSafeInteger(payload.nextPage)
       && payload.nextPage > Number(url.searchParams.get('page')) ? payload.nextPage : null;
     return { articles, nextPage };
+  } catch(error) {
+    if(error instanceof CMSReadError)throw error;
+    if(signal?.aborted)throw new CMSReadError('cancelled','CMS request aborted on navigation');
+    if(timedOut)throw new CMSReadError('timeout','CMS request aborted after timeout');
+    throw new CMSReadError('network','CMS network request failed');
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener('abort', abort);

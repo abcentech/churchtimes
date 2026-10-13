@@ -49,8 +49,9 @@ test('mocked success sends one anonymous request, clears text and promises revie
   await page.route('**/api/public/submissions',async route=>{
     calls++;const body=route.request().postDataJSON();
     expect(body.turnstileToken).toBe('test-token-0');expect(body.body).toContain('key facts');
+    expect(body.categorySuggestion).toBe('News');expect(body.category).toBeUndefined();expect(body.website).toBe('');
     expect(body.status).toBeUndefined();expect(route.request().headers().authorization).toBeUndefined();
-    await pending;await route.fulfill({status:202,json:{accepted:true,reference:'MOCK-ONLY-123'}});
+    await pending;await route.fulfill({status:201,json:{ok:true,reference:'MOCK-ONLY-123',message:'Received. An editor will review your submission.'}});
   });
   await page.goto('/#submit');await fill(page);await complete(page);
   await submit(page).click();
@@ -208,3 +209,26 @@ for (const kind of ['story','contact']) {
     await expect(phone).toHaveValue('');
   });
 }
+
+test('real CMS success maps location/categorySuggestion and uses only the returned reference',async({page})=>{
+ await widget(page);let calls=0;
+ await page.route('**/api/public/submissions',route=>{
+  calls++;const data=route.request().postDataJSON();expect(data.categorySuggestion).toBe('News');expect(data.location).toBe('Lagos');expect(data.website).toBe('');expect(data.category).toBeUndefined();expect(data.consent).toBeUndefined();
+  return route.fulfill({status:201,json:{ok:true,reference:'SUB-ABCDEFGH',message:'Received. An editor will review your submission.'}});
+ });
+ await page.goto('/#submit');await fill(page);await page.getByLabel('Location (optional)').fill('Lagos');await complete(page);await submit(page).click();
+ await expect(page.locator('#form-result')).toContainText('SUB-ABCDEFGH');await expect(page.locator('#form-result')).toContainText('It has not been published.');expect(calls).toBe(1);
+});
+test('CMS error arrays focus mapped fields and duplicate replies preserve text without false receipts',async({page})=>{
+ await widget(page);let calls=0;
+ await page.route('**/api/public/submissions',route=>{calls++;return calls===1?route.fulfill({status:400,json:{ok:false,errors:[{field:'body',message:'PRIVATE SERVER MESSAGE'}]}}):route.fulfill({status:409,json:{ok:false,errors:[{message:'We already received this submission.'}]}});});
+ await page.goto('/#submit');await fill(page);await complete(page);await submit(page).click();
+ await expect(page.locator('#public-message')).toHaveAttribute('aria-invalid','true');await expect(page.locator('#form-errors')).not.toContainText('PRIVATE SERVER MESSAGE');
+ await complete(page);await submit(page).click();
+ await expect(page.locator('#form-errors')).toContainText('already received');await expect(page.locator('#public-message')).toHaveValue('The key facts and source links for the newsroom.');await expect(page.locator('#form-result')).toBeHidden();expect(calls).toBe(2);
+});
+test('CMS minimum story length prevents invalid sending before verification is consumed',async({page})=>{
+ await widget(page);let calls=0;await page.route('**/api/public/submissions',route=>{calls++;return route.fulfill({json:{ok:true,reference:'SHOULD-NOT-SEND'}});});
+ await page.goto('/#submit');await fill(page);await page.getByLabel('Your story or tip').fill('Too short.');await complete(page);await submit(page).click();
+ await expect(page.locator('#error-message')).toContainText('at least 30 characters');expect(calls).toBe(0);
+});

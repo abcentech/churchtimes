@@ -1,5 +1,6 @@
-// Render a deliberately small subset of Payload Lexical content. Unknown nodes,
-// uploads and embedded HTML are omitted until the backend contract defines them.
+import { normalizePublicMedia, cmsFigure } from './cms-media.js';
+// Render supported Payload Lexical text and populated public media safely.
+// Unknown nodes, unpopulated relationships and embedded HTML are omitted.
 const escape = text => String(text).replace(/[&<>"']/g, char => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
 })[char]);
@@ -12,7 +13,7 @@ function safeLink(value) {
   } catch { return null; }
 }
 
-export function renderArticleContent(content) {
+export function renderArticleContent(content, {baseUrl} = {}) {
   if (typeof content === 'string') {
     return content.trim().split(/\n\s*\n/).filter(Boolean).map(text => `<p>${escape(text)}</p>`).join('');
   }
@@ -23,8 +24,14 @@ export function renderArticleContent(content) {
       let text = escape(node.text);
       if (node.format & 1) text = `<strong>${text}</strong>`;
       if (node.format & 2) text = `<em>${text}</em>`;
+      if (node.format & 4) text = `<s>${text}</s>`;
+      if (node.format & 8) text = `<u>${text}</u>`;
+      if (node.format & 16) text = `<code>${text}</code>`;
+      if (node.format & 32) text = `<sub>${text}</sub>`;
+      if (node.format & 64) text = `<sup>${text}</sup>`;
       return text;
     }
+    if (node.type === 'upload' && node.relationTo === 'media') return cmsFigure(normalizePublicMedia(node.value,baseUrl));
     if (node.type === 'linebreak') return '<br>';
     const supported = ['root', 'paragraph', 'heading', 'quote', 'list', 'listitem', 'link', 'autolink'];
     if (!supported.includes(node.type)) return '';
