@@ -103,3 +103,15 @@ handlers. Its Turnstile widget and Siteverify transport are test doubles; it
 makes no claim about deployed Cloudflare verification. Backend sources and
 workflows remain identical to the integrated base. Contact service configuration
 and live external verification remain runtime prerequisites.
+
+Validation on the updated integration: 33 unit/contract, 56 public, 42 newsroom,
+34 form and 22 advertising checks passed, plus 6 real Payload REST/PostgreSQL
+browser checks. Build, compiled export consistency and whitespace checks passed.
+Ports 5185 and 5187 were used through temporary external configurations because
+5175/5177 were occupied; committed test configurations and backend code were
+unchanged. The Siteverify transport remains stubbed in these tests.
+
+CMS-shaped public article screenshots (synthetic image/article fixture):
+[desktop](cms-field-mappings/desktop.png) and
+[Android-sized Pixel 7](cms-field-mappings/android.png). Existing homepage
+screenshots and advertising contract remain in the #5 documentation.
