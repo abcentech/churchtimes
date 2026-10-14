@@ -4,7 +4,7 @@ import {mkdtemp,readFile,writeFile,rm} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {normalizePublicMedia,normalizePublishedArticle} from '../src/lib/published-articles.js';
-import {cmsImage,cmsFigure,cmsPreload} from '../src/lib/cms-media.js';
+import {cmsImage,cmsFigure,cmsPreload,cmsSources} from '../src/lib/cms-media.js';
 import {renderArticleContent} from '../src/lib/article-content.js';
 import {socialMetadata} from '../src/lib/public-metadata.js';
 import {articleSchema} from '../src/lib/public-routes.js';
@@ -101,4 +101,17 @@ test('public text compression negotiates gzip and preserves HEAD semantics',asyn
  const compressed=await get(path,{headers:{'Accept-Encoding':'gzip;q=0.5'}});assert.equal(compressed.headers.get('content-encoding'),'gzip');assert.equal(await compressed.text(),text);
  const head=await get(path,{method:'HEAD',headers:{'Accept-Encoding':'gzip'}});assert.equal(await head.text(),'');assert.equal(head.headers.get('content-length'),compressed.headers.get('content-length'));
  const refused=await get(path,{headers:{'Accept-Encoding':'gzip;q=0'}});assert.equal(refused.headers.get('content-encoding'),null);
+});
+
+test('responsive candidates keep one aspect ratio when Payload crops differ from the original',()=>{
+ const media=normalizePublicMedia({...rawMedia,width:2000,height:2000,sizes:{
+  thumbnail:{url:'/api/media/file/thumb.jpg',width:320,height:240},
+  card:{url:'/api/media/file/card.jpg',width:640,height:480},
+  feature:{url:'/api/media/file/feature.jpg',width:1200,height:900},
+ }},origin);
+ const source=cmsSources(media);assert.equal(source.width,1200);assert.equal(source.height,900);
+ assert.deepEqual(source.variants.map(v=>v.width),[320,640,1200]);
+ assert.doesNotMatch(cmsImage(media),/original.jpg/);
+ const originalOnly=normalizePublicMedia({...rawMedia,sizes:{}},origin);
+ assert.equal(cmsSources(originalOnly).url,origin+'/api/media/file/original.jpg');
 });

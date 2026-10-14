@@ -62,7 +62,9 @@ cards, canonical URL and a lead image. Indexable home HTML now honors its settin
 
 Payload media sizes are collected generically (including thumbnail/card/feature),
 checked individually against the existing same-origin `/api/media/file/` policy,
-validated for dimensions and deduplicated/sorted by width. The hero/social choice
+validated for dimensions and deduplicated/sorted by width. Each rendered srcset
+keeps one aspect ratio, so cropped variants cannot swap to a different original
+ratio after loading. The hero/social choice
 is the smallest size at least 800px wide, with the largest available/original as
 fallback. Cards use a 420px target. Every rendered source is checked again.
 Cards, hero and Lexical body figures share srcset/sizes and intrinsic dimensions;
@@ -88,7 +90,7 @@ larger, and select/textarea focus outlines are explicit.
 
 See [mobile Lighthouse results and screenshots](evidence/public-seo-media/README.md).
 
-- `npm run test:unit`: 52 tests, including pagination bounds, XML escaping,
+- `npm run test:unit`: 53 tests, including pagination bounds, XML escaping,
   published filtering, cache/failure/noindex policy, metadata, image safety and
   responsive captions, and gzip/HEAD behavior.
 - `npm test -- --workers=2`: 60 public responsive/navigation/accessibility tests,

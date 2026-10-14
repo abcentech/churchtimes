@@ -11,7 +11,10 @@ export function cmsSources(media,{card=false}={}) {
     {url:media.heroUrl,width:media.heroWidth,height:media.heroHeight}].map(v=>({...v,url:mediaUrl(v.url,media.url)})).filter(valid)
     .sort((a,b)=>a.width-b.width).filter((v,i,all)=>all.findIndex(other=>other.width===v.width)===i);
   const preferred=variants.find(v=>v.width>=(card?420:800)) || variants.at(-1) || {url:mediaUrl(media.url)};
-  return {...preferred,variants,sizes:card?CMS_CARD_SIZES:CMS_HERO_SIZES};
+  // A crop and an original with different aspect ratios are not interchangeable
+  // resolution candidates: changing natural ratio after load would cause CLS.
+  const responsive=variants.filter(v=>Math.abs(v.width/v.height-preferred.width/preferred.height)<0.01);
+  return {...preferred,variants:responsive,sizes:card?CMS_CARD_SIZES:CMS_HERO_SIZES};
 }
 export function cmsImage(media, { eager = false, card = false, fallbackAlt = 'Article image' } = {}) {
   const source=cmsSources(media,{card});
