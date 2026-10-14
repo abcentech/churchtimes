@@ -8,10 +8,15 @@
  *      (article page, cold reload).
  *   I3 live coverage: a reporter attaches a photo to a live update, the editor approves it; the anonymous public feed
  *      API returns the photo as { url, alt, width, height, mimeType }.
- *   I4 public #live page showing the photo: KNOWN GAP (public-site follow-up), documented with test.fail.
+ *   I4 public #live page: the update text is shown and the photo is NOT rendered yet. This pins the public-site gap and
+ *      goes RED when the public team ships photos (then assert the photo instead).
+ *   I5 after publication the reporter cannot replace or re-describe a body image (direct PATCH /api/media/<id> -> 403)
+ *      and the public article still shows the original pictures.
  *
  * Synthetic data only; unique titles per run.
  */
+import fs from 'node:fs'
+
 import { expect, test, type Page } from '@playwright/test'
 
 import { Api, Evidence, getConfig, logLine, makePng, trackCmsCalls, uniq } from './support/helpers'
@@ -24,7 +29,7 @@ const cfg = getConfig()
 const api = new Api(cfg)
 const live = new LiveApi(cfg)
 
-type Story = { id: number; title: string; standfirst: string; slug: string; paragraphs: string[]; alts: string[]; mediaIds: number[]; bodyValue: string }
+type Story = { id: number; title: string; standfirst: string; slug: string; paragraphs: string[]; alts: string[]; mediaIds: number[]; bodyValue: string; widths: number[]; srcs?: string[] }
 const stories = new Map<string, Story>()
 type LiveState = { eventId: number; slug: string; title: string; body: string; alt: string; mediaId: number; updateId: number }
 const lives = new Map<string, LiveState>()
@@ -128,7 +133,7 @@ test.describe('Images in stories and live updates (REAL UI)', () => {
     expect((await api.articleByTitle(title)).status).toBe('in_review')
     await ev.shot(page, 'submitted for review', { final: true })
     await logoutUi(page)
-    stories.set(info.project.name, { id: articleId, title, standfirst, slug: slugify(title), paragraphs, alts, mediaIds: media.map((m) => m.id), bodyValue: expectedBody })
+    stories.set(info.project.name, { id: articleId, title, standfirst, slug: slugify(title), paragraphs, alts, mediaIds: media.map((m) => m.id), bodyValue: expectedBody, widths: pngs.map((p) => p.width) })
   })
 
   test('I2 section editor publishes; anonymous reader sees both images in the right order with alt text (article page + reload)', async ({ page, browser }, info) => {
@@ -175,6 +180,7 @@ test.describe('Images in stories and live updates (REAL UI)', () => {
         const srcs = await body.locator('figure.cms-figure img.cms-image').evaluateAll((els) => els.map((e) => e.getAttribute('src')))
         for (const src of srcs) expect(src, 'served by the CMS media route').toContain(`${new URL(cfg.cmsUrl).origin}/api/media/file/`)
         expect(new Set(srcs).size, 'two different pictures').toBe(2)
+        s.srcs = srcs as string[]
         if (phase === 'after the click-through and first reload') {
           await ev.shot(reader, 'anonymous public article page with both inline images in order', { final: true })
           expect((await reader.reload())?.status()).toBe(200)
@@ -284,10 +290,13 @@ test.describe('Images in stories and live updates (REAL UI)', () => {
     lives.set(info.project.name, { eventId, slug, title, body, alt, mediaId: media.id, updateId: rows[0].id })
   })
 
-  // KNOWN GAP (public-site follow-up): src/live/public-live-page.js does not render `image` yet. The data is public (I3);
-  // when the public page shows the photo this test starts passing and Playwright reports the unexpected pass: remove test.fail then.
-  test('I4 public #live page shows the photo of a live update (KNOWN GAP: public site does not render it yet)', async ({ browser }, info) => {
-    test.fail(true, 'KNOWN GAP: the public #live timeline does not render the update photo yet (public-site follow-up)')
+  // KNOWN GAP (public-site follow-up): src/live/public-live-page.js does not render `image` yet. The data is public (I3).
+  // The text check is a real assertion; the gap is pinned with toHaveCount(0) and goes red when photos ship.
+  test('I4 public #live page shows the update text; its photo is not rendered yet (KNOWN GAP pinned, goes red when the public site ships photos)', async ({ browser }, info) => {
+    info.annotations.push({
+      type: 'known-gap',
+      description: 'The public #live timeline does not render update photos yet (public-site follow-up). When it does, the last assertion fails on purpose: replace toHaveCount(0) with a check for the photo (alt = update photo alt).',
+    })
     const l = need(lives, info.project.name, 'I3')
     const ev = new Evidence(cfg, info, 'I4-live-public-photo')
     const ctx = await freshContext(browser, info)
@@ -297,7 +306,64 @@ test.describe('Images in stories and live updates (REAL UI)', () => {
     await expect(item).toBeVisible({ timeout: 30_000 })
     ev.note('the update text is on the public page; looking for its photo')
     await ev.shot(page, 'public #live page, update with a photo', { final: true })
-    await expect(item.locator('img')).toHaveAttribute('alt', l.alt, { timeout: 5_000 })
+    // The gap, pinned: no picture in the public timeline item today. Goes red when the public team renders update photos.
+    await expect(item.locator('img'), 'KNOWN GAP: public #live does not render update photos yet').toHaveCount(0)
     await ctx.close()
+  })
+
+  test('I5 published story: the reporter cannot replace or re-describe a body image (direct PATCH /api/media/<id> -> 403); the public article keeps the original pictures', async ({ browser }, info) => {
+    const s = need(stories, info.project.name, 'I1/I2')
+    if (!s.srcs) throw new Error('I2 did not record the public image sources')
+    const ev = new Evidence(cfg, info, 'I5-published-body-image-freeze')
+    const root = new URL(cfg.recorderUrl).origin
+    const token = await api.login('reporter')
+    const before = await Promise.all(s.mediaIds.map((id) => api.get('admin', `/api/media/${id}?depth=0`)))
+    const replacement = makePng(cfg.fixtureDir, `${cfg.runId}-${info.project.name}-replacement.png`, 321, 123)
+
+    for (const [i, id] of s.mediaIds.entries()) {
+      // new alt text (JSON)
+      const rePost = await live.send('reporter', 'PATCH', `/api/media/${id}`, { alt: `Reporter rewrote the alt text ${i}` })
+      expect(rePost.status, `reporter PATCH alt of body image ${id}`).toBe(403)
+      // new file (multipart, exactly what the media UI would send)
+      const form = new FormData()
+      form.append('_payload', JSON.stringify({ alt: before[i].json.alt }))
+      form.append('file', new Blob([fs.readFileSync(replacement.file)], { type: 'image/png' }), 'replacement.png')
+      const res = await fetch(`${root}/api/media/${id}`, { method: 'PATCH', headers: { authorization: `JWT ${token}` }, body: form })
+      expect(res.status, `reporter PATCH new file of body image ${id}`).toBe(403)
+      ev.note(`media ${id}: PATCH alt -> ${rePost.status}, PATCH file -> ${res.status}`)
+    }
+
+    // nothing changed in the CMS
+    for (const [i, id] of s.mediaIds.entries()) {
+      const after = await api.get('admin', `/api/media/${id}?depth=0`)
+      expect(after.json.alt).toBe(before[i].json.alt)
+      expect(after.json.filename).toBe(before[i].json.filename)
+      expect(after.json.width).toBe(before[i].json.width)
+    }
+
+    // ... and the original files are still served (a refused replacement must not delete or overwrite the file)
+    for (const [i, src] of s.srcs.entries()) {
+      const res = await fetch(`${root}${new URL(src).pathname}`)
+      const bytes = Buffer.from(await res.arrayBuffer())
+      expect(res.status, `original file ${src} is still served`).toBe(200)
+      expect(bytes.readUInt32BE(16), `original file ${src} still has its original width`).toBe(s.widths[i])
+    }
+
+    // the public article still shows the original pictures
+    const ctx = await freshContext(browser, info)
+    const reader = await ctx.newPage()
+    try {
+      await reader.goto(`${cfg.publicOrigin}/reports/${s.slug}/`)
+      const body = reader.locator('#cms-report .newsroom-article-body')
+      await expect(body.locator('figure.cms-figure')).toHaveCount(2)
+      await expectImagesLoaded(body.locator('figure.cms-figure img.cms-image'), 2, 'public body image after the refused edits')
+      expect(await body.locator('figure.cms-figure img.cms-image').evaluateAll((els) => els.map((e) => e.getAttribute('src')))).toEqual(s.srcs)
+      expect(await body.locator('figure.cms-figure img.cms-image').evaluateAll((els) => els.map((e) => e.getAttribute('alt')))).toEqual(s.alts)
+      // (No naturalWidth check here: with srcset + sizes the browser reports the density-corrected slot width, not the file width.
+      // The served bytes above already prove the original files are unchanged.)
+      await ev.shot(reader, 'public article still shows the original pictures', { final: true })
+    } finally {
+      await ctx.close()
+    }
   })
 })

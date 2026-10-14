@@ -17,6 +17,7 @@ import { escapeHtml, formatTimeAgo } from '../util.js';
 import { openMediaPicker, mediaImageProblem } from '../components/media-picker.js';
 import { cmsAssetUrl } from '../config.js';
 import { livePhotoHtml } from '../live-photo.js';
+import { isStaleConflict } from '../stale-guard.js';
 import { sortPublishedNewestFirst } from '../live-order.js';
 
 const POLL_MS = 20000;
@@ -268,8 +269,8 @@ async function refreshLiveStream(container, event, setError) {
             <strong>${escapeHtml(formatTimeAgo(u.occurredAt))}${u.authorName ? ` &middot; ${escapeHtml(u.authorName)}` : ''}</strong>
             ${canApprove ? `
             <span style="display:inline-flex; gap:0.35rem;">
-              <button type="button" class="btn btn-success btn-sm" data-testid="live-approve" data-approve-upd-id="${escapeHtml(u.id)}">Approve &amp; Push Live</button>
-              <button type="button" class="btn btn-outline btn-sm" data-testid="live-reject" data-reject-upd-id="${escapeHtml(u.id)}" style="color:#DC2626;">Reject</button>
+              <button type="button" class="btn btn-success btn-sm" data-testid="live-approve" data-approve-upd-id="${escapeHtml(u.id)}" data-updated-at="${escapeHtml(u.updatedAt || '')}">Approve &amp; Push Live</button>
+              <button type="button" class="btn btn-outline btn-sm" data-testid="live-reject" data-reject-upd-id="${escapeHtml(u.id)}" data-updated-at="${escapeHtml(u.updatedAt || '')}" style="color:#DC2626;">Reject</button>
             </span>` : '<span class="badge badge-pending">Awaiting editor</span>'}
           </div>
           <div style="white-space: pre-wrap;">${escapeHtml(u.body)}</div>
@@ -279,11 +280,15 @@ async function refreshLiveStream(container, event, setError) {
     const review = (attr, status, ok) => pendingEl.querySelectorAll(`[${attr}]`).forEach(btn => {
       btn.addEventListener('click', async () => {
         try {
-          await api.setLiveUpdateStatus(btn.getAttribute(attr), status);
+          // Approve what you saw: the version shown on this card (its updatedAt) is the one being approved / rejected.
+          await api.setLiveUpdateStatus(btn.getAttribute(attr), status, { expectedUpdatedAt: btn.getAttribute('data-updated-at') || undefined });
           showToast(ok, status === 'approved' ? 'success' : 'info');
           await refreshLiveStream(container, event, setError);
         } catch (err) {
-          setError(showApiError(err));
+          const message = showApiError(err);
+          // 409: the update changed after it was shown. Reload the timeline so the card shows the current text, keep the message.
+          if (isStaleConflict(err)) await refreshLiveStream(container, event, setError);
+          setError(message);
         }
       });
     });

@@ -132,15 +132,13 @@ Test files are in `tests/integration/security.test.ts` (S) and `tests/unit/*` (U
 9. **`legacyUrl` / `legacyId`** on articles are writable by anyone who can edit the article (cosmetic migration fields, no privilege impact).
 10. **No script CSP** for the admin (Payload requires inline scripts); the CSP header only sets `frame-ancestors`.
 11. Sessions list (`sessions` field) shows session ids to the account owner only; ids are not credentials.
-12. **Anonymous visitors can list and download every media file, including images of unpublished articles** (finding 10, not fixed in
-    code). Restricting anonymous `read` to media referenced by a published article is possible (a `usedInPublished` flag kept up to date by
-    article hooks; Payload also applies the collection `read` access to `/api/media/file/:filename`, verified in
-    `payload/dist/uploads/checkFileAccess.js`) but it would (a) break images in **preview links** (`/api/preview/articles?token=`), which
-    are opened by anonymous browsers on the public site, so draft and scheduled articles would show broken images; (b) hide images embedded in
-    the Lexical body, which cannot be queried reliably (they live inside jsonb and are not tracked); and (c) add write-time coupling between
-    two collections that has to stay correct across publish, unpublish, schedule, delete and restore. Risk is limited: media are images
-    uploaded to be published, `uploadedBy` is hidden, and URLs need the file name. Mitigation if pre-publication secrecy matters: have the
-    proxy answer `GET /api/media` (collection listing) only for requests with the `payload-token` cookie, and upload sensitive images late.
+12. **Media is private unless it is on the public site (v1.6, review finding M3, fixed).** `media.read` is: any staff role, or the media is
+    the featured / a body image of a **published** article, or the image of an **approved** update of a live/ended event. The rule is a Payload
+    access Where over three virtual join fields (`publishedAsFeatured`, `publishedInBody`, `liveUpdateImages`; no migration), so list, by-id
+    and `/api/media/file/<name>` (originals and size variants, `payload/dist/uploads/checkFileAccess.js` L10-57) share it, and relationship
+    population of published articles keeps working. **Remaining limitation:** images of draft / scheduled articles are not readable by
+    anonymous browsers, so a future **preview-link page** (`/api/preview/articles?token=`, no consumer exists yet) cannot show its images
+    without an extra mechanism (e.g. accept the preview token on the media file route). Files already downloaded or cached stay downloaded.
 13. **Media "in use" freeze covers `featuredImage` only.** A non-editor can still replace a media file they uploaded if it is used solely
     inside an article body (Lexical upload node). Editors are never restricted.
 14. **The admin UI shows `currentPassword` as a plain text input** (Payload has no password-type field for custom fields); it is cleared on
@@ -170,7 +168,7 @@ Each integration test was written to fail first against the previous code.
 | 7 | Corrections could be rewritten or erased | `workflow/corrections.ts` `reconcileCorrections`: prefix match on `id`/`note`/`correctedAt`, server-set `correctedAt`, 400 otherwise; admin/EIC may amend (`correction.amend` audit); needs content-edit rights | U `corrections.test.ts` (5 tests), R "7. corrections are append-only" (5 tests) |
 | 8 | Unchanged content flagged as a material edit | `lib/deepEqual.ts` (key-sorted canonical JSON) for title/excerpt/content/featuredImage/schedule comparisons | U `deepEqual.test.ts` (6 tests), R "8. canonical comparison of content" (2 tests) |
 | 9 | Contract said out-of-scope live update = 400/404 | Documentation only: code returns 403 (api-contracts §6.2); editors may create `approved` articles (§2) | n/a (existing `live.test.ts` / `articles.test.ts` matrices) |
-| 10 | Anonymous media listing | **Not fixed, documented** (limitation 12): breaks preview-link images and untracked body images, adds cross-collection coupling | n/a |
+| 10 | Anonymous media listing | Fixed in v1.6 (limitation 12): `Media.access.read` = staff OR media of a published article OR image of an approved live update (join-field Where, files and size variants included) | I `media-privacy.test.ts` |
 | 11 | Restoring a published article always failed | admin/EIC `restoreVersion` is detected through a `beforeOperation` hook (`operation === 'restoreVersion'`, server-side `req.context`), skips the corrections rule and is audited `article.restore`; everyone else keeps the rule (documented in api-contracts §2) | R "11. restoreVersion on a published article" (2 tests) |
 | 12a | Password / e-mail change without the current password | virtual `currentPassword`, verified with Payload-compatible pbkdf2 (`lib/passwordVerify.ts`); failures use Payload's lockout counter; admin changing someone else exempt | U `passwordVerify.test.ts` (3 tests), R "12a. password and e-mail changes" (4 tests); `security.test.ts` updated |
 | 12b | `convert` race created two articles | claim by `UPDATE ... WHERE status <> 'converted' RETURNING` inside one request transaction (`initTransaction`/`commitTransaction`/`killTransaction`), article creation joins it, rollback on failure (`convertSubmission.ts`, `lib/dbTransaction.ts`) | R "12b. converting a submission is atomic" (concurrent 201/409/409, rollback) |

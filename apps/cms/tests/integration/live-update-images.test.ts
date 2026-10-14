@@ -1,4 +1,5 @@
 import { sql } from '@payloadcms/db-postgres'
+import sharp from 'sharp'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { api, newRunId, setupFixtures, type Fixtures } from './helpers'
@@ -29,6 +30,18 @@ async function uploadMedia(token: string, label: string): Promise<MediaDoc> {
   const res = await api('POST', '/api/media', { token, body: form })
   expect(res.status).toBe(201)
   return res.json.doc as MediaDoc
+}
+
+/** What a reader and the database see of a media document: the served bytes plus the stored row. */
+async function snapshot(m: { id: number }) {
+  const row = (await f.payload.findByID({ collection: 'media', id: m.id, depth: 0, overrideAccess: true })) as unknown as Record<string, unknown>
+  // Current filename (a legitimate replacement changes it, so the url captured at upload time can be stale).
+  const file = await api('GET', `/api/media/file/${String(row.filename)}`)
+  return {
+    status: file.status,
+    bytes: file.text,
+    row: { filename: row.filename, filesize: row.filesize, width: row.width, height: row.height, alt: row.alt, mimeType: row.mimeType },
+  }
 }
 
 /** Direct SQL: the API itself never allows an empty alt or a non-image mime type, which is the point. */
@@ -178,6 +191,38 @@ describe('live update images', () => {
     expect((await poll(ev.slug, '?limit=0')).json.docs).toEqual([])
   })
 
+  it('serves the ~800 px card variant to readers (url, width, height, mimeType of the variant), not the original', async () => {
+    const ev = await createEvent('card')
+    const big = await sharp({ create: { width: 1600, height: 900, channels: 3, background: { r: 30, g: 90, b: 160 } } }).png().toBuffer()
+    const form = new FormData()
+    form.set('_payload', JSON.stringify({ alt: `${runId} big-photo` }))
+    form.set('file', new Blob([new Uint8Array(big)], { type: 'image/png' }), `${runId}-big-photo.png`)
+    const up = await api('POST', '/api/media', { token: f.tokens.eic, body: form })
+    expect(up.status).toBe(201)
+    const original = up.json.doc as { id: number; url: string }
+    const row = (await f.payload.findByID({ collection: 'media', id: original.id, depth: 0, overrideAccess: true })) as unknown as {
+      sizes: { card: { url: string; width: number; height: number; mimeType: string } }
+    }
+    expect(row.sizes.card.width).toBe(800)
+    expect(row.sizes.card.url).not.toBe(original.url)
+
+    expect((await postUpdate(f.tokens.eic, ev.id, { image: original.id, status: 'approved' })).status).toBe(201)
+    const feed = await poll(ev.slug)
+    expect(feed.json.docs[0].image).toEqual({
+      url: row.sizes.card.url,
+      alt: `${runId} big-photo`,
+      width: 800,
+      height: 450,
+      mimeType: 'image/png',
+    })
+    expect(Object.keys(feed.json.docs[0].image).sort()).toEqual(['alt', 'height', 'mimeType', 'url', 'width'])
+    expect(feed.json.docs[0].image.url).toMatch(/^\/api\/media\/file\/[A-Za-z0-9_.-]+$/)
+    // The variant is a real, smaller file; no other size leaks into the feed.
+    const file = await api('GET', feed.json.docs[0].image.url)
+    expect(file.status).toBe(200)
+    expect(feed.text).not.toMatch(/thumbnail|hero|"sizes"/)
+  })
+
   it('removes the image from the feed when the update is rejected after approval', async () => {
     const ev = await createEvent('reject')
     const m = await uploadMedia(f.tokens.eic, 'reject-photo')
@@ -234,14 +279,72 @@ describe('live update images', () => {
     expect(own.status).toBe(200)
 
     expect((await patch(f.tokens.eic, u.id, { status: 'approved' })).status).toBe(200)
+    const before = await snapshot(m)
+    expect(before.status).toBe(200)
     const blocked = await api('PATCH', `/api/media/${m.id}`, {
       token: f.tokens.reporter,
       body: { alt: `${runId} freeze v3` },
     })
     expect(blocked.status).toBe(403)
     expect(blocked.text).toMatch(/live update/)
+    // Replacing the file (multipart) is frozen the same way.
+    const form = new FormData()
+    form.set('_payload', JSON.stringify({}))
+    form.set('file', new Blob([new Uint8Array(PNG_1X1)], { type: 'image/png' }), `${runId}-replacement.png`)
+    const replaced = await api('PATCH', `/api/media/${m.id}`, { token: f.tokens.reporter, body: form })
+    expect(replaced.status).toBe(403)
+    expect(replaced.text).toMatch(/live update/)
+    // The refused replacement must not have touched the original file or the row.
+    expect(await snapshot(m)).toEqual(before)
     const editor = await api('PATCH', `/api/media/${m.id}`, { token: f.tokens.eic, body: { alt: `${runId} freeze v4` } })
     expect(editor.status).toBe(200)
     expect((await poll(ev.slug)).json.docs[0].image.alt).toBe(`${runId} freeze v4`)
+  })
+
+  it('re-stamps the publication sequence when an approved update changes image or body, so pollers get the edit', async () => {
+    const ev = await createEvent('restamp')
+    const m = await uploadMedia(f.tokens.eic, 'restamp-photo')
+    const first = (await postUpdate(f.tokens.eic, ev.id, { status: 'approved' })).json.doc
+    const second = (await postUpdate(f.tokens.eic, ev.id, { status: 'approved' })).json.doc
+
+    const initial = await poll(ev.slug)
+    expect(initial.json.nextSince).toBe(2)
+    const cursor = initial.json.nextSince as number
+    expect((await poll(ev.slug, `?since=${cursor}`)).json.docs).toEqual([])
+
+    // Attach an image to the first (already delivered) update.
+    expect((await patch(f.tokens.eic, first.id, { image: m.id })).status).toBe(200)
+    const afterImage = await poll(ev.slug, `?since=${cursor}`)
+    expect(afterImage.json.docs).toHaveLength(1)
+    expect(afterImage.json.docs[0]).toMatchObject({ id: first.id, sequence: 3, image: { url: m.url } })
+    expect(afterImage.json.nextSince).toBe(3)
+
+    // Editing the body does the same; a no-op PATCH and a status-less title-only change do not.
+    expect((await patch(f.tokens.eic, second.id, { body: `${runId} corrected text` })).status).toBe(200)
+    const afterBody = await poll(ev.slug, '?since=3')
+    expect(afterBody.json.docs.map((d: { id: number; body: string }) => [d.id, d.body])).toEqual([[second.id, `${runId} corrected text`]])
+    expect(afterBody.json.docs[0].sequence).toBe(4)
+    expect((await patch(f.tokens.eic, second.id, { body: `${runId} corrected text` })).status).toBe(200)
+    expect((await patch(f.tokens.eic, first.id, { image: m.id })).status).toBe(200)
+    expect((await poll(ev.slug, '?since=4')).json.docs).toEqual([])
+
+    // A full read shows each update once, in publication order, with the latest content.
+    const full = await poll(ev.slug)
+    expect(full.json.docs.map((d: { id: number; sequence: number }) => [d.id, d.sequence])).toEqual([
+      [first.id, 3],
+      [second.id, 4],
+    ])
+
+    // Removing the image is an edit too.
+    expect((await patch(f.tokens.eic, first.id, { image: null })).status).toBe(200)
+    const removed = await poll(ev.slug, '?since=4')
+    expect(removed.json.docs[0]).toMatchObject({ id: first.id, sequence: 5, image: null })
+
+    // Pending updates keep sequence handling untouched: editing before approval does not stamp anything.
+    const pending = (await postUpdate(f.tokens.reporter, ev.id)).json.doc
+    expect((await patch(f.tokens.reporter, pending.id, { body: `${runId} pending edit` })).status).toBe(200)
+    expect((await poll(ev.slug, '?since=5')).json.docs).toEqual([])
+    expect((await patch(f.tokens.eic, pending.id, { status: 'approved' })).status).toBe(200)
+    expect((await poll(ev.slug, '?since=5')).json.docs[0]).toMatchObject({ id: pending.id, sequence: 6 })
   })
 })

@@ -12,6 +12,8 @@ import { lexicalToMarkdown, markdownToLexical } from '../lexical.js';
 import { ApiError, toApiError } from './errors.js';
 import { createCountCache } from './count-cache.js';
 import { liveUpdatePayload } from '../live-photo.js';
+import { loadLiveTimeline } from '../live-timeline.js';
+import { liveStatusBody, transitionBody } from '../stale-guard.js';
 
 const ID_RE = /^\d+$/;
 
@@ -136,6 +138,7 @@ function normalizeUpdate(u) {
     status: u.status || 'pending',
     sequence: u.sequence ?? null,
     publishSequence: u.publishSequence ?? null,
+    updatedAt: u.updatedAt || null, // the version a reviewer saw: sent back as expectedUpdatedAt on approve / reject
     occurredAt: u.occurredAt || u.createdAt || null,
     authorName: author?.name || '',
     // Optional photo: the CMS sends the media id (depth 0) or the populated document (depth 1).
@@ -379,11 +382,13 @@ export class CmsAdapter {
     }
   }
 
-  /** Explicit workflow transition. Sends only `status` (+ editor `reviewNotes`). */
-  async transitionArticle(id, status, { reviewNotes } = {}) {
+  /**
+   * Explicit workflow transition. Sends only `status` (+ editor `reviewNotes`, + `expectedUpdatedAt`: the `updatedAt` of the
+   * version the reviewer saw; the CMS answers 409 if the story changed since).
+   */
+  async transitionArticle(id, status, { reviewNotes, expectedUpdatedAt } = {}) {
     if (!ARTICLE_STATUSES.includes(status)) throw new ApiError('Unknown status.', { status: 400 });
-    const body = { status };
-    if (reviewNotes !== undefined) body.reviewNotes = reviewNotes;
+    const body = transitionBody(status, { reviewNotes, expectedUpdatedAt });
     try {
       const data = await this.request(`/articles/${encodeURIComponent(safeId(id))}`, {
         method: 'PATCH', json: body, query: { depth: '1' }
@@ -489,15 +494,13 @@ export class CmsAdapter {
   }
 
   async getLiveUpdates(eventId) {
-    const data = await this.request('/live-updates', {
-      query: {
-        'where[event][equals]': safeId(eventId),
-        sort: '-sequence',
-        limit: '100',
-        depth: '1'
-      }
-    });
-    return { data: (data?.docs || []).map(normalizeUpdate) };
+    // Approved (by -publishSequence) and pending (by -sequence) are separate queries so an old update approved late
+    // cannot fall out of the newest-100 window of the Published Timeline. See live-timeline.js.
+    const docs = await loadLiveTimeline(
+      async query => (await this.request('/live-updates', { query }))?.docs || [],
+      safeId(eventId)
+    );
+    return { data: docs.map(normalizeUpdate) };
   }
 
   /**
@@ -515,10 +518,10 @@ export class CmsAdapter {
     return { data: normalizeUpdate(data.doc) };
   }
 
-  async setLiveUpdateStatus(id, status) {
+  async setLiveUpdateStatus(id, status, { expectedUpdatedAt } = {}) {
     if (!['approved', 'rejected', 'pending'].includes(status)) throw new ApiError('Unknown update status.', { status: 400 });
     const data = await this.request(`/live-updates/${encodeURIComponent(safeId(id))}`, {
-      method: 'PATCH', json: { status }, query: { depth: '1' }
+      method: 'PATCH', json: liveStatusBody(status, { expectedUpdatedAt }), query: { depth: '1' }
     });
     return { data: normalizeUpdate(data.doc) };
   }

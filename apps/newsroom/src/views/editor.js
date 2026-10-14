@@ -21,6 +21,7 @@ import { showApiError } from '../components/notify.js';
 import { openMediaPicker, mediaImageProblem } from '../components/media-picker.js';
 import { markdownToHtml, countWords, imageToken, insertBlockLine, listImages, removeImageLine, stripImageLabels } from '../lexical.js';
 import { ApiError } from '../api/errors.js';
+import { STALE_MESSAGE, isStaleConflict } from '../stale-guard.js';
 import { escapeHtml, slugify, statusBadge, formatDate } from '../util.js';
 import { parseScheduleInput, isoToLocalInput, formatScheduled, defaultScheduleValue } from '../schedule.js';
 
@@ -567,15 +568,31 @@ async function runTransition(container, status, { reviewNotes, success, savePend
       const saved = await performSave(container);
       if (!saved.ok) return;
     }
-    const res = await api.transitionArticle(st.currentStory.id, status, reviewNotes !== undefined ? { reviewNotes } : {});
+    // Approve what you saw: the version on screen (after any pending edit was saved above) is the one being acted on.
+    const res = await api.transitionArticle(st.currentStory.id, status, {
+      ...(reviewNotes !== undefined ? { reviewNotes } : {}),
+      expectedUpdatedAt: st.currentStory.updatedAt
+    });
     st.currentStory = res.data;
     st.baseline = snapshot(st.currentStory);
     setInlineError(container, '');
     updateStatusDisplay(container);
     showToast(success, 'success');
   } catch (err) {
+    if (isStaleConflict(err)) {
+      await reloadAfterConflict(container, st.currentStory.id, err.message || STALE_MESSAGE);
+      return;
+    }
     setInlineError(container, showApiError(err));
   }
+}
+
+/** The story changed on the server after it was opened (409): reload it so the editor reviews the current version. */
+async function reloadAfterConflict(container, storyId, message) {
+  await renderEditor(container, storyId);
+  if (!container.isConnected || !container.querySelector('#story-headline-input')) return;
+  setInlineError(container, message);
+  showToast(message, 'info');
 }
 
 function bindWorkflowActions(container) {
@@ -771,6 +788,14 @@ function renderBodyImages(container) {
   const images = listImages(bodyInput.value);
   box.style.display = images.length ? 'flex' : 'none';
   box.innerHTML = images.map((img, i) => {
+    if (img.missing) {
+      return `
+      <div class="body-image-item body-image-item-missing" data-testid="editor-body-image-missing" role="alert">
+        <span class="body-image-thumb body-image-thumb-missing" aria-hidden="true"></span>
+        <span class="body-image-label"><strong>Missing image</strong><br>This picture no longer exists in the media library. The CMS will not save the story until you remove it.</span>
+        ${bodyInput.readOnly ? '' : `<button type="button" class="btn btn-outline btn-sm" data-remove-image="${i}" data-testid="editor-remove-body-image" aria-label="Remove the missing image from the story">Remove</button>`}
+      </div>`;
+    }
     const media = st.mediaCache.get(img.id);
     const src = media && (media.thumbUrl || media.url);
     const alt = (media && media.alt) || img.alt;

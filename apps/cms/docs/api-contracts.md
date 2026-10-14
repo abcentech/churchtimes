@@ -1,4 +1,4 @@
-# Church Times CMS — API contracts (v1.4)
+# Church Times CMS — API contracts (v1.6)
 
 Status: implemented on `agent/payload-core`. v1.1 added Turnstile, duplicate detection, staff auth/session
 contract and security hardening; v1.2 closes the verified security-review findings: media ownership, version
@@ -28,7 +28,8 @@ Only `admin` can change `role` or `sections` (field-level access, enforced serve
 escalate their own privileges.
 
 Anonymous visitors have no account. They can only: read published articles, read categories, read
-non-draft live events and their approved updates, read media, and create submissions through §4.1.
+non-draft live events and their approved updates, read media that is on the public site (§3 Media), and create
+submissions through §4.1.
 
 ## 2. Article workflow
 
@@ -104,7 +105,13 @@ Rules:
 }
 ```
 
-Staff-only fields (never returned to anonymous readers): `author`, `reviewNotes`, `scheduledFor`.
+Staff-only fields (never returned to anonymous readers): `author`, `reviewNotes`, `scheduledFor`, `bodyMedia`.
+`bodyMedia` (v1.4) is derived by the server from the `upload` nodes of `content` (distinct media ids), never client-writable
+(ignored on input), and exists so the media freeze (§6.3) can tell which media is shown in a body.
+**Body images (v1.4):** every `upload` node in `content` must have `relationTo: "media"`, an integer `value` id in
+1..2147483647 (or a populated media object carrying one) and reference media that exists, is JPEG/PNG/WebP and has non-empty
+`alt`; otherwise `400` with a message naming the problem ("An image in the article body …"). Applies to create and to every
+update that sends `content`.
 
 ### Category (`/api/categories`) — `{ id, title, slug, description? }`
 Seeded: News, Features, Opinion, Columnists, Interviews, Business, Education, Health, Publisher's Note.
@@ -113,11 +120,23 @@ Seeded: News, Features, Opinion, Columnists, Interviews, Business, Education, He
 Accepted uploads: `image/jpeg`, `image/png`, `image/webp`. Max 10 MB. SVG and HTML are rejected.
 Upload is staff-only, as `multipart/form-data` (§6.3). Staff-only, server-set field: `uploadedBy` (user id of the
 uploader; `null` for media uploaded before v1.2). Not client-writable and never returned to anonymous readers.
-Editing is restricted, see §6.3. Anonymous readers can list and fetch **all** media (known limitation,
-`docs/security.md` §4).
+Editing is restricted, see §6.3.
+**Read access (v1.6).** Any staff role reads all media. Everyone else (anonymous, or an account without a staff role) reads a media
+document, its file and every size variant only while it is shown on the public site: it is the `featuredImage` or a body
+image (`bodyMedia`) of an article whose status is `published` (scheduled and archived are **not** public), or the `image` of an
+`approved` live update of a `live` or `ended` event. Otherwise `GET /api/media` omits it, `GET /api/media/:id` answers `404` and
+`GET /api/media/file/<name>` (variants included) answers `403`. Unpublishing an article or
+un-approving an update makes its media private again immediately. Depth-populated media in a published article
+(`featuredImage`, upload nodes in `content`) is unchanged for anonymous readers; media that is not public is returned as a bare id.
+The public site needs no change; see §6.3.
 
 ### LiveEvent (`/api/live-events`) — `{ id, title, slug, summary?, status: 'draft'|'live'|'ended', category, startedAt?, endedAt? }`
-Anonymous readers see only `live` and `ended` events.
+Anonymous readers see only `live` and `ended` events. `startedAt` is server-stamped: it is set (to "now") whenever an event
+is created or saved with a status other than `draft` and has no `startedAt`, so an event created directly as `ended` (or moved
+`draft`/`live` -> `ended`) never has an empty `startedAt`. That matters for `sort=-startedAt`: Postgres sorts NULL first in a
+descending order, which would put such events ahead of live ones. `endedAt` is stamped the same way whenever the status is
+`ended` and it is empty. Supplied values are kept. Migration `20261014_221500_live_events_started_at_backfill` fills existing
+rows (`startedAt = createdAt`, `endedAt = updatedAt` for ended rows without one).
 
 ### LiveUpdate (`/api/live-updates`) — `{ id, event, body, image?, status: 'pending'|'approved'|'rejected', sequence, occurredAt, approvedAt? }`
 `body` is plain text (≤ 5 000 chars). `image` is an optional upload relationship to `media` (numeric id on write; a populated
@@ -148,7 +167,8 @@ the submission lands as `status: "new"` in a staff-only inbox and only an editor
 Request headers: `Content-Type: application/json` (anything else → 415). If `Origin` is sent it must be in
 `PUBLIC_SUBMISSION_ORIGINS` (→ 403). Send the request with `credentials: 'omit'`. Every response to an allowlisted
 origin carries `Access-Control-Allow-Origin` (exact echo) and `Access-Control-Expose-Headers: Retry-After` (v1.3), so a
-cross-origin script can read `Retry-After` on a 429. A 403 for an origin that is not allowlisted has no CORS grant
+cross-origin script can read `Retry-After` on a 429 (every 429 the CMS answers carries `Retry-After` and exposes it, see "429 and
+`Retry-After`" in §7). A 403 for an origin that is not allowlisted has no CORS grant
 (the browser reports a network error). If `TURNSTILE_EXPECTED_ACTION` is set (comma list, e.g. `submit-story`; it must match the public build's `VITE_TURNSTILE_ACTION`)
 the widget's `action` must be one of the entries, otherwise 403.
 
@@ -253,8 +273,12 @@ Polling endpoint for live coverage (recommended interval: 15–30 s).
   `featuredImage.url` (absolute `${CMS_PUBLIC_URL}/api/media/file/<name>` in production, root-relative in a local setup without
   `CMS_PUBLIC_URL`, see §6.3; resolve it against the CMS origin as `src/lib/cms-media.js` does). `alt` is always non-empty; `mimeType` is `image/jpeg`, `image/png` or `image/webp`; `width`/`height` are
   positive integers (or `null` if unknown). No other media field (filename, caption, credit, sizes, uploader) is returned.
-  Only approved updates are in the feed, so the image of a pending or rejected update is never exposed here. Rendering
-  guidance: `apps/cms/docs/live-update-images-contract.md`.
+  **Size served (v1.5):** `url`, `width`, `height` and `mimeType` describe the ~800 px wide `card` variant of the upload (see
+  `imageSizes` in `Media.ts`), not the original (which can be up to 10 MB). When the media has no `card` variant (Payload does not
+  enlarge an image that is already narrower than 800 px, and media that predates the size has none) or the variant is not a usable
+  media URL / image type, the original upload is used instead. `alt` always comes from the media document.
+  Only approved updates are in the feed, and (v1.6) the media collection is private for anything that is not on the public site
+  (§3 Media), so the file of a pending or rejected photo cannot be fetched either, even by someone who knows its URL. Rendering guidance: `apps/cms/docs/live-update-images-contract.md`.
 - Approved updates only, ordered by **publication order** ascending, `sequence > since` (default 0), `limit` ≤ 100
   (default 50). The `sequence` returned here is the update's `publishSequence` (§3), **not** its creation
   sequence, and `nextSince` is the `sequence` of the last returned update. This makes the feed safe for updates that
@@ -262,6 +286,14 @@ Polling endpoint for live coverage (recommended interval: 15–30 s).
   poller. Clients should de-duplicate and update by `id`: an update that is rejected after approval disappears from
   the feed (already-delivered copies must be removed by the client, e.g. on a full reload), and an update that is
   approved again later is delivered again with a new, higher `sequence`.
+- **Edits of an approved update (v1.4).** When the `body` or `image` of an update that *stays* `approved` is changed, the server
+  assigns it a new, higher `publishSequence`, exactly as an approval does. A poller with `since=<old cursor>` therefore receives
+  the corrected update again: **same `id`, higher `sequence`, new content** (including `image: null` when the photo was removed).
+  Clients must treat `id` as the key and **replace** the item they hold (and re-position it by the new `sequence`); ignoring a
+  known `id` hides the edit until a full reload. A PATCH that changes neither field (or only other fields) does not re-stamp.
+  Not covered: deleting a media document that an approved update uses (`ON DELETE SET NULL`) fires no hook, so the feed
+  drops the image on the next full read but pollers with a newer cursor are not re-sent the update, and no
+  `live-update.image` audit entry is written; only the media delete itself is audited (`delete`, collection `media`).
 - `404` if the event does not exist or is `draft`. `400` if `since`/`limit` are not non-negative integers.
 - `Cache-Control: public, max-age=10`.
 
@@ -320,7 +352,8 @@ Never returns `hash`/`salt`.
   for every attempt (even with the right password) while the account is locked, for 10 minutes or until an admin
   unlocks it. (This message does confirm the account exists; it only appears after 5 failures.)
 - `400` `ValidationError` (same shape as below, `path: "password"`/`"email"`, "This field is required.") if email or password is missing.
-- `429 { "errors": [{ "message": "Too many attempts. Try again in N minute(s)." }] }` — per-IP limit.
+- `429 { "errors": [{ "message": "Too many attempts. Try again in N minute(s)." }] }` — per-IP limit, with `Retry-After: <seconds>` and
+  `Access-Control-Expose-Headers: Retry-After` (v1.5; Payload adds `Access-Control-Allow-Origin` for `CMS_CORS_ORIGINS`).
 
 `GET /api/users/me` — `200 { "user": {…} | null, "collection": "users", "token"?, "exp"?, "message": "Account" }`.
 An unauthenticated, expired or revoked token yields **`200` with `user: null`** (Payload convention), not 401;
@@ -386,6 +419,15 @@ Send either the cookie (browser, same rules as §5) or `Authorization: JWT <toke
   `title`, `slug`, `excerpt`, `content`, `category`, `featuredImage`, `bylineName`, `status`, `scheduledFor`, `corrections`.
   Editor-only: `author`, `reviewNotes` (ignored when sent by anyone else). Server-owned and **always ignored**:
   `publishedAt`, `id`, `createdAt`, `updatedAt`. A forbidden change returns 403 (not permitted) or 400 (invalid transition).
+- **Approve what you saw (v1.6).** `PATCH /api/articles/:id` and `PATCH /api/live-updates/:id` (§6.2) accept an optional
+  `expectedUpdatedAt` (ISO-8601 string: the `updatedAt` of the version the user reviewed). If it is present and the stored
+  `updatedAt` is a different instant, the request is refused with **`409`**
+  `{ "errors": [{ "message": "This item changed after you opened it. Reload and review it again." }] }` and nothing is written
+  (no status change, no `reviewNotes`, no audit entry). The comparison is made inside the update's own transaction on the
+  row-locked document, so two editors acting on the same version cannot both succeed (the second gets `409`). The field is
+  never stored and never returned. Absent or `null` means no check (existing API clients are unchanged); a value that is not an
+  ISO date string is `400`. Send it with every approve / publish / request-changes (and reject) action. Not supported on bulk
+  updates (`400`). Collection-level access denials (`403`/`404`) come first because access is evaluated before the hooks; the version check runs before the workflow/role checks.
 - `DELETE /api/articles/:id` — **editor-in-chief and admin only** (everyone else 403/404). Prefer `status: "archived"`
   to retire an article; delete is for mistakes.
 
@@ -402,15 +444,16 @@ Send either the cookie (browser, same rules as §5) or `Authorization: JWT <toke
      `"status": "approved"` to publish immediately; otherwise it is `pending`.
    - Optional photo: `"image": <media id>` (upload the file first with §6.3 and use the returned `id`). The media must exist and
      be readable by the caller, be a JPEG/PNG/WebP image and have non-empty `alt`; otherwise `400` (messages: *The attached image
-     does not exist or is not available to you.* / *The attached file must be a JPEG, PNG or WebP image.* / *The attached image
+     does not exist or is not available to you.* / *The attached image must be a JPEG, PNG or WebP image.* / *The attached image
      needs alt text. Add a description to the image first.*). The same rules apply on `PATCH` and again when an update is
      approved. `image` follows the same edit rules as `body`: reporters only while their own update is `pending`; editors in
      scope any time; trusted publishers their own updates. `"image": null` removes it. Every change of `image` on an existing
      update is audited (`live-update.image`). The media of an approved update cannot be edited or replaced by non-editors
-     (`403`).
+     (`403`, both for metadata `PATCH` and for a multipart file replacement). Changing `body` or `image` of an approved update
+     re-stamps `publishSequence` (§4.3).
 3. Editor review queue: `GET /api/live-updates?where[event][equals]=<id>&where[status][equals]=pending&sort=sequence`
    (editors read every update; reporters/trusted-publishers see their own plus approved ones).
-4. Approve or reject: `PATCH /api/live-updates/:id { "status": "approved" | "rejected" | "pending" }` — editors in scope
+4. Approve or reject: `PATCH /api/live-updates/:id { "status": "approved" | "rejected" | "pending", "expectedUpdatedAt"?: ISO }` (v1.6: `409` when the update changed since that version, §6.1) — editors in scope
    (admin, editor-in-chief, section-editor for the event's category); a trusted-publisher may approve **their own** updates in their
    sections; a reporter can only edit their own `pending` updates and can never approve. Approval stamps `approvedBy`/`approvedAt`.
 5. Public timeline: poll `GET /api/live-events/:slug/updates?since=<nextSince>` (§4.3) — do not list `live-updates` directly.
@@ -432,7 +475,19 @@ new `file` to replace the file):
   `scheduled` (`403`: metadata edits and file replacement there are public-facing changes; ask an editor).
 - Media without `uploadedBy` (uploaded before v1.2) can only be edited by editors. `uploadedBy` cannot be changed.
 - Every update is audited (`media.update`); a file replacement is audited separately (`media.replace-file`).
-- The "in use" check covers `featuredImage` only, not images embedded inside the Lexical body.
+- The "in use" freeze (v1.4) covers: the `featuredImage` **and the body images** (`Articles.bodyMedia`, §2) of an article whose
+  status is `published` or `scheduled`, and the `image` of an `approved` live update. It applies to metadata edits and to
+  multipart file replacement alike (`403`); editors are exempt. It is evaluated at edit time, so removing the image from the
+  body (an editor edit) lifts it.
+- **Read access (v1.6).** `GET /api/media`, `GET /api/media/:id` and `GET /api/media/file/<name>` (originals and the
+  `thumbnail`/`card`/`hero` variants) answer: any staff role, everything; everyone else, only media that is the featured or a body
+  image of a **published** article, or the image of an **approved** update of a `live`/`ended` event (§3 Media). Draft,
+  in-review, approved-but-unpublished, scheduled and archived articles, pending/rejected updates and unreferenced uploads are
+  private (`404` on the document, `403` on the file, the same answer whether or not the file exists). The rule is evaluated per
+  request in SQL, so there is no cache of "public" state to invalidate; `/api/media/file/*` responses for public media are
+  unchanged. **Caching:** do not put a long-lived shared cache in front of `/api/media/file/*` without revalidation: a file
+  stops being public when its article is unpublished. A media file that was public stays reachable by anyone who has already
+  downloaded it, obviously. Note the freeze above still includes `scheduled` articles (their media is frozen but private).
 
 ## 7. Error shape
 
@@ -446,6 +501,14 @@ a declared `Content-Length` above **1 MB** is `413` (above **11 MB** for `/api/m
 These responses are `{ "ok": false, "errors": [{ "message": … }] }`. Normal browser `fetch` calls send
 `Content-Length`; the reverse proxy enforces a 12 MB cap in front of this (`docs/operations.md` §4.4).
 
+**429 and `Retry-After` (v1.5).** The CMS answers 429 in exactly three places, and each sends `Retry-After: <whole seconds, >= 1>` plus
+`Access-Control-Expose-Headers: Retry-After` (the header is not CORS-safelisted, so without the expose header a cross-origin
+script reads `null`): `POST /api/public/submissions` per IP and per e-mail (§4.1; `lib/rateLimit.ts` supplies the seconds),
+and the per-IP `login` / `forgot-password` / `reset-password` limits (`lib/authRateLimit.ts`, merged into Payload's error response via
+`req.responseHeaders`; the `Access-Control-Allow-Origin` grant comes from `CMS_CORS_ORIGINS` as for every Payload route).
+Not rate limited, so no 429: the anonymous live feed `GET /api/live-events/:slug/updates` (cheap, read-only, answered with
+`Cache-Control: public, max-age=10` so a CDN absorbs polling) and all other reads. A locked staff account is a `401`, not a `429`.
+
 ## 8. Environment variables
 
 See `apps/cms/.env.example` (annotated) and `docs/operations.md` §4. Secrets (`PAYLOAD_SECRET`, `PREVIEW_SECRET`,
@@ -457,13 +520,39 @@ limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/op
 
 ## 9. Changelog
 
+### v1.6
+Security follow-ups (review findings M3 and L2). Additive for correct clients; **media read access is a behaviour change**.
+- **Media privacy (M3).** `media.read` = any staff role, OR the media is the `featuredImage` / a `bodyMedia` image of a `published` article,
+  OR the image of an `approved` update of a `live`/`ended` event. Everything else (drafts, in review, approved-unpublished, **scheduled**,
+  archived, pending/rejected updates, unreferenced uploads) is `404` on `GET /api/media[/:id]` / omitted from the list and `403` on
+  `GET /api/media/file/<name>` including size variants, for anonymous callers. Implemented as an access Where over three virtual
+  `join` fields on `media` (`publishedAsFeatured`, `publishedInBody`, `liveUpdateImages`; never returned, no migration, uses existing
+  indexes). Published article responses still populate their media for anonymous readers. See §3 Media and §6.3.
+- **Approve what you saw (L2).** Optional `expectedUpdatedAt` on `PATCH /api/articles/:id` and `PATCH /api/live-updates/:id`:
+  `409` *This item changed after you opened it. Reload and review it again.* when the stored `updatedAt` differs; never stored (§6.1, §6.2).
+- Server-side attachment checks (`assertAttachableImage`) read the media with the caller's access only for authenticated callers; trusted
+  server calls (seed, scheduler) read it as the system.
+
+### v1.5
+Follow-ups, additive, no breaking changes.
+- Live-update photos in the public feed are the ~800 px `card` variant (url, width, height, mimeType of the variant), falling back to the
+  original when there is none (§4.3).
+- `live-events.startedAt` / `endedAt` are server-stamped for every non-draft status (§3); migration
+  `20261014_221500_live_events_started_at_backfill` (data only, no schema change).
+- Every 429 now carries `Retry-After` and `Access-Control-Expose-Headers: Retry-After`: also the per-IP login / forgot-password /
+  reset-password limits (they used to send neither). See "429 and `Retry-After`" in §7.
+
 ### v1.4
 Optional photo on live updates. Additive, no breaking changes.
 - `live-updates.image` (upload → `media`); validation, edit rules and audit in §6.2. Public feed docs gain `image` (§4.3).
 - Existing feed consumers that ignore unknown keys are unaffected; consumers that assert the exact key set must add `image`.
 - Media of an approved live update is frozen for non-editors, like media of a published article (§6.3).
 - Migration `20261014_203617_live_update_image` (`live_updates.image_id` + FK to `media` with `ON DELETE SET NULL`, index).
-- `image` is accepted as a relationship filter name (numeric ids only), see §4.2.
+- `image` and `bodyMedia` are accepted as relationship filter names (numeric ids only), see §4.2.
+- **Review fixes (same version):** body images are validated and frozen after publication (§2, §6.3, new server-owned
+  `articles.bodyMedia`, migration `20261014_211527_article_body_media`, which also backfills it from existing bodies); an edit
+  of the body or image of an approved live update re-stamps `publishSequence` so pollers receive it (§4.3; **clients must
+  replace by `id`**); media read access and media-delete behaviour are documented as limitations (§4.3, §6.3).
 
 ### v1.3
 Frontend contract verification (`tests/integration/frontend-workflows.test.ts`, matrix in `docs/frontend-integration.md`). No

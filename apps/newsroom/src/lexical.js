@@ -26,9 +26,28 @@ export function isSafeUrl(url) {
 // Image token: `![alt](media:<id>)` alone on a line
 // ---------------------------------------------------------------------------------------------------------
 
-const IMAGE_LINE_RE = /^!\[((?:\\.|[^\]\\\n])*)\]\(media:(\d{1,15})\)$/;
-const MEDIA_ID_RE = /^\d{1,15}$/;
+// Ids are the CMS's integer primary keys: 1..2147483647, no leading zeros. Anything else is NOT an image line.
+const IMAGE_LINE_RE = /^!\[((?:\\.|[^\]\\\n])*)\]\(media:([1-9]\d{0,9})\)$/;
+const MEDIA_ID_RE = /^[1-9]\d{0,9}$/;
+export const MAX_MEDIA_ID = 2147483647;
 export const UPLOAD_NODE_VERSION = 3;
+
+/**
+ * Line shown for an upload node whose media no longer exists (`value: null`). It converts back to an upload node
+ * with `value: null`, which the CMS refuses to save: the writer has to remove the line.
+ */
+export const MISSING_IMAGE_TOKEN = '![missing image](media:missing)';
+
+const validMediaId = s => MEDIA_ID_RE.test(s) && Number(s) <= MAX_MEDIA_ID;
+
+/** @returns {{ id: string, alt: string, missing: boolean } | null} what an own-line image token says, or null */
+function matchImageLine(line) {
+  const t = String(line).trim();
+  if (t === MISSING_IMAGE_TOKEN) return { id: '', alt: 'missing image', missing: true };
+  const m = IMAGE_LINE_RE.exec(t);
+  if (!m || Number(m[2]) > MAX_MEDIA_ID) return null;
+  return { id: String(Number(m[2])), alt: m[1].replace(/\\(.)/g, '$1'), missing: false };
+}
 
 /** One-line, bracket-safe label for the token (the CMS media record stays the source of truth for alt text). */
 function tokenAlt(alt) {
@@ -38,16 +57,19 @@ function tokenAlt(alt) {
 /** @returns {string} the markdown line for a media id, or '' when the id is not a positive integer. */
 export function imageToken(id, alt = '') {
   const s = String(id ?? '');
-  if (!MEDIA_ID_RE.test(s) || Number(s) < 1) return '';
-  return `![${tokenAlt(alt)}](media:${Number(s)})`;
+  if (!validMediaId(s)) return '';
+  return `![${tokenAlt(alt)}](media:${s})`;
 }
 
-/** Every image token line in a markdown body, in order: [{ id: '5', alt: 'label' }]. */
+/**
+ * Every image token line in a markdown body, in order: [{ id: '5', alt: 'label', missing: false }].
+ * A "missing image" line has `missing: true` and an empty id.
+ */
 export function listImages(markdown) {
   const out = [];
   for (const raw of String(markdown || '').replace(/\r\n?/g, '\n').split('\n')) {
-    const m = IMAGE_LINE_RE.exec(raw.trim());
-    if (m) out.push({ id: String(Number(m[2])), alt: m[1].replace(/\\(.)/g, '$1') });
+    const m = matchImageLine(raw);
+    if (m) out.push(m);
   }
   return out;
 }
@@ -58,8 +80,9 @@ export function listImages(markdown) {
  */
 export function stripImageLabels(markdown) {
   return String(markdown || '').split('\n').map(line => {
-    const m = IMAGE_LINE_RE.exec(line.trim());
-    return m ? `![](media:${Number(m[2])})` : line;
+    const m = matchImageLine(line);
+    if (!m) return line;
+    return m.missing ? MISSING_IMAGE_TOKEN : `![](media:${m.id})`;
   }).join('\n');
 }
 
@@ -68,7 +91,7 @@ export function removeImageLine(markdown, index) {
   const lines = String(markdown || '').replace(/\r\n?/g, '\n').split('\n');
   let seen = -1;
   for (let i = 0; i < lines.length; i++) {
-    if (!IMAGE_LINE_RE.test(lines[i].trim())) continue;
+    if (!matchImageLine(lines[i])) continue;
     if (++seen !== index) continue;
     lines.splice(i, 1);
     if (lines[i] === '' && (i === 0 || lines[i - 1] === '')) lines.splice(i, 1);
@@ -179,9 +202,9 @@ export function parseMarkdown(markdown) {
     if (!line.trim()) { flushAll(); continue; }
 
     let m;
-    if ((m = IMAGE_LINE_RE.exec(line.trim()))) {
+    if ((m = matchImageLine(line))) {
       flushAll();
-      blocks.push({ type: 'image', id: Number(m[2]), alt: m[1].replace(/\\(.)/g, '$1') });
+      blocks.push({ type: 'image', id: m.missing ? null : Number(m.id), alt: m.alt, missing: m.missing });
     } else if ((m = RE_H.exec(line))) {
       flushAll();
       blocks.push({ type: m[1].length >= 3 ? 'h3' : 'h2', inline: parseInline(m[2]) });
@@ -409,6 +432,10 @@ function blockToMarkdown(node, state, { onlyBlock = false } = {}) {
         state.lossy = true;
         return '';
       }
+      if (info.missing) {
+        state.missingImages += 1;
+        return MISSING_IMAGE_TOKEN;
+      }
       state.images.push({ id: info.id, alt: info.alt, media: info.media });
       return imageToken(info.id, info.alt);
     }
@@ -427,24 +454,26 @@ function uploadInfo(node) {
   if (node.fields !== undefined && node.fields !== null
     && !(typeof node.fields === 'object' && !Array.isArray(node.fields) && Object.keys(node.fields).length === 0)) return null;
   const v = node.value;
-  const populated = v && typeof v === 'object' ? v : null;
+  // The media was deleted: the node points at nothing. Keep the body editable; the writer sees a "missing image" line.
+  if (v === null || v === undefined) return { missing: true };
+  const populated = typeof v === 'object' ? v : null;
   const rawId = populated ? populated.id : v;
   if (typeof rawId !== 'number' && typeof rawId !== 'string') return null;
   const id = String(rawId);
-  if (!MEDIA_ID_RE.test(id) || Number(id) < 1) return null;
-  return { id: String(Number(id)), alt: populated && typeof populated.alt === 'string' ? populated.alt : '', media: populated };
+  if (!validMediaId(id)) return null;
+  return { id, alt: populated && typeof populated.alt === 'string' ? populated.alt : '', media: populated };
 }
 
 /**
  * @param {unknown} content Lexical document ({ root }) as returned by the CMS
- * @returns {{ markdown: string, lossy: boolean, images: { id: string, alt: string, media: object|null }[] }}
+ * @returns {{ markdown: string, lossy: boolean, images: { id: string, alt: string, media: object|null }[], missingImages: number }}
  *   `images`: the body's upload nodes in order (`media` is the populated document when the CMS sent one)
  */
 export function lexicalToMarkdown(content) {
-  const state = { lossy: false, images: [] };
-  if (typeof content === 'string') return { markdown: content, lossy: false, images: [] };
+  const state = { lossy: false, images: [], missingImages: 0 };
+  if (typeof content === 'string') return { markdown: content, lossy: false, images: [], missingImages: 0 };
   let children = content?.root?.children;
-  if (!Array.isArray(children)) return { markdown: '', lossy: false, images: [] };
+  if (!Array.isArray(children)) return { markdown: '', lossy: false, images: [], missingImages: 0 };
   // Payload's own editor usually leaves a blank paragraph at the end; trailing blank paragraphs carry no content, so drop them
   // instead of making the whole body read-only. Blank paragraphs between content still count as lossy.
   const isBlankParagraph = n => n?.type === 'paragraph' && !(n.children || []).some(c => c?.type !== 'text' || String(c.text || '').trim());
@@ -456,7 +485,7 @@ export function lexicalToMarkdown(content) {
     const md = blockToMarkdown(child, state, { onlyBlock: children.length === 1 });
     if (md !== '' || child.type !== 'paragraph') blocks.push(md);
   }
-  return { markdown: blocks.filter(b => b !== '').join('\n\n'), lossy: state.lossy, images: state.images };
+  return { markdown: blocks.filter(b => b !== '').join('\n\n'), lossy: state.lossy, images: state.images, missingImages: state.missingImages };
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -486,6 +515,9 @@ export function markdownToHtml(markdown, { media } = {}) {
   return parseMarkdown(markdown).map(b => {
     switch (b.type) {
       case 'image': {
+        if (b.missing) {
+          return '<figure class="preview-inline-figure preview-inline-missing" data-testid="preview-inline-image-missing"><figcaption>Missing image: this picture no longer exists in the media library. Remove this line before saving.</figcaption></figure>';
+        }
         const m = media ? media(String(b.id)) : null;
         const src = m && (m.url || m.thumbUrl);
         const label = (m && m.alt) || b.alt || '';
@@ -505,7 +537,7 @@ export function markdownToHtml(markdown, { media } = {}) {
 
 export function countWords(markdown) {
   const plain = String(markdown || '')
-    .replace(/^[ \t]*!\[(?:\\.|[^\]\\\n])*\]\(media:\d{1,15}\)[ \t]*$/gm, ' ')
+    .replace(/^[ \t]*!\[(?:\\.|[^\]\\\n])*\]\(media:(?:[1-9]\d{0,9}|missing)\)[ \t]*$/gm, ' ')
     .replace(/[*#>\[\]()\\]/g, ' ').trim();
   return plain ? plain.split(/\s+/).length : 0;
 }

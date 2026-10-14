@@ -204,6 +204,7 @@ const stubMedia = (id, over = {}) => ({
   id, alt: `Alt for ${id}`, caption: '', credit: '', filename: `pic-${id}.png`, mimeType: 'image/png', width: 800, height: 600,
   url: `/api/media/file/pic-${id}.png`, sizes: { card: { url: `/api/media/file/pic-${id}-card.png` } }, ...over
 });
+const STALE_CMS_MESSAGE = 'This item changed after you opened it. Reload and review it again.';
 const lexDoc = (...children) => ({ root: { type: 'root', children, direction: 'ltr', format: '', indent: 0, version: 1 } });
 
 function stubArticle(id, over = {}) {
@@ -223,13 +224,13 @@ function stubArticle(id, over = {}) {
  */
 async function stubCms(page, {
   articles = [], logout = { status: 200, body: { message: 'You have been logged out successfully.' } }, tips = {},
-  media = [], events = [], updates = [], updateError = null
+  media = [], events = [], updates = [], updateError = null, patchError = null
 } = {}) {
   const docs = new Map(articles.map(a => [String(a.id), a]));
   const liveUpdates = [...updates];
   const gates = new Map();
   let patchGate = null;
-  const log = { patches: [], gets: [], logouts: 0, updatePosts: [] };
+  const log = { patches: [], gets: [], logouts: 0, updatePosts: [], updatePatches: [] };
   const json = (route, status, body) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
 
   await page.route('**/api/**', async route => {
@@ -288,15 +289,34 @@ async function stubCms(page, {
       if (method === 'PATCH' && doc) {
         const body = req.postDataJSON();
         log.patches.push({ id, body });
+        if (body.expectedUpdatedAt !== undefined && body.expectedUpdatedAt !== doc.updatedAt) {
+          return json(route, 409, { errors: [{ message: STALE_CMS_MESSAGE }] });
+        }
         if (patchGate) await patchGate.promise;
+        const refusal = patchError ? patchError(body) : null;
+        if (refusal) return json(route, 400, { errors: [{ message: refusal }] });
         const next = { ...doc, updatedAt: new Date().toISOString() };
         if (body.title !== undefined) next.title = body.title;
         if (body.excerpt !== undefined) next.excerpt = body.excerpt;
         if (body.status !== undefined) next.status = body.status;
+        if (body.reviewNotes !== undefined) next.reviewNotes = body.reviewNotes;
         if (body.content !== undefined) next.content = body.content;
         docs.set(id, next);
         return json(route, 200, { doc: next, message: 'Updated successfully.' });
       }
+    }
+    if ((m = p.match(/^\/live-updates\/(\d+)$/)) && method === 'PATCH') {
+      const doc = liveUpdates.find(u => String(u.id) === m[1]);
+      if (!doc) return json(route, 404, { errors: [{ message: 'Not Found' }] });
+      const body = req.postDataJSON();
+      log.updatePatches.push({ id: m[1], body });
+      if (body.expectedUpdatedAt !== undefined && body.expectedUpdatedAt !== doc.updatedAt) {
+        return json(route, 409, { errors: [{ message: STALE_CMS_MESSAGE }] });
+      }
+      if (body.status !== undefined) doc.status = body.status;
+      if (body.status === 'approved') doc.publishSequence = liveUpdates.length + 1;
+      doc.updatedAt = new Date().toISOString();
+      return json(route, 200, { doc, message: 'Updated successfully.' });
     }
     return json(route, 404, { errors: [{ message: `stub: unhandled ${method} ${p}` }] });
   });
@@ -304,6 +324,9 @@ async function stubCms(page, {
   const gate = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
   return {
     log,
+    /** Someone else changes the story / update on the server (new updatedAt) after the newsroom loaded it. */
+    touchArticle(id, over = {}) { docs.set(String(id), { ...docs.get(String(id)), ...over, updatedAt: '2026-10-14T21:00:00.000Z' }); },
+    touchUpdate(id, over = {}) { Object.assign(liveUpdates.find(u => String(u.id) === String(id)), over, { updatedAt: '2026-10-14T21:00:00.000Z' }); },
     holdGet(id) { gates.set(String(id), gate()); },
     releaseGet(id) { gates.get(String(id))?.resolve(); gates.delete(String(id)); },
     holdPatches() { patchGate = gate(); },
@@ -511,6 +534,64 @@ test.describe('Production build against a stubbed CMS', () => {
     await expect(page.getByTestId('editor-insert-image')).toBeDisabled();
   });
 
+  test('a deleted image (upload node with no media) keeps the body editable as a removable "missing image" line; the CMS refusal is shown', async ({ page }) => {
+    const article = stubArticle(1, {
+      content: lexDoc(lexPara(lexText('Before.')), lexUpload(null), lexPara(lexText('After.')), lexUpload(12))
+    });
+    const refuseMissing = body => {
+      const kids = body.content?.root?.children ?? [];
+      return kids.some(n => n.type === 'upload' && n.value === null) ? 'The image in the story body no longer exists. Remove it or choose another.' : null;
+    };
+    const cms = await stubCms(page, { articles: [article], media: [stubMedia(12)], patchError: refuseMissing });
+    await page.goto(`${STUB_BASE}#editor?id=1`);
+    await expect(page.getByTestId('editor-title')).toHaveValue('Stub story 1');
+    await expect(page.getByTestId('editor-lossy-note')).toHaveCount(0);
+    await expect(page.getByTestId('editor-body')).toHaveJSProperty('readOnly', false);
+    await expect(page.getByTestId('editor-body')).toHaveValue('Before.\n\n![missing image](media:missing)\n\nAfter.\n\n![](media:12)');
+    await expect(page.getByTestId('editor-body-image-missing')).toBeVisible();
+    await expect(page.getByTestId('editor-body-image-missing')).toContainText('no longer exists');
+    await expect(page.locator('#preview-body-content').getByTestId('preview-inline-image-missing')).toBeVisible();
+
+    // an unrelated edit does not send the body at all
+    await page.getByTestId('editor-title').fill('Only the headline changed');
+    await page.getByTestId('editor-save-draft').click();
+    await expect(page.locator('.toast').filter({ hasText: 'Draft saved successfully' })).toHaveCount(1);
+    expect(cms.log.patches.map(p => Object.keys(p.body))).toEqual([['title']]);
+
+    // editing text while the missing line is still there: the CMS refuses and its message is shown
+    await page.getByTestId('editor-body').fill('Before, edited.\n\n![missing image](media:missing)\n\nAfter.\n\n![](media:12)');
+    await page.getByTestId('editor-save-draft').click();
+    await expect(page.getByTestId('editor-error')).toContainText('no longer exists');
+    expect(cms.log.patches).toHaveLength(2);
+
+    // removing the line fixes it: the saved body has no upload node with a null value
+    await page.getByTestId('editor-body-image-missing').getByTestId('editor-remove-body-image').click();
+    await expect(page.getByTestId('editor-body-image-missing')).toHaveCount(0);
+    await expect(page.getByTestId('editor-body')).toHaveValue('Before, edited.\n\nAfter.\n\n![](media:12)');
+    await page.getByTestId('editor-save-draft').click();
+    await expect(page.locator('.toast').filter({ hasText: 'Draft saved successfully' })).toHaveCount(2);
+    const kids = cms.log.patches[2].body.content.root.children;
+    expect(kids.map(n => n.type)).toEqual(['paragraph', 'paragraph', 'upload']);
+    expect(kids[2].value).toBe(12);
+    await expect(page.getByTestId('editor-error')).toBeHidden();
+  });
+
+  test('a save refused because of an image (400) shows the CMS message and keeps the text', async ({ page }) => {
+    const cms = await stubCms(page, {
+      articles: [stubArticle(1)], media: [stubMedia(21)],
+      patchError: body => (body.content ? 'Image 21 has no alt text, so it cannot be used in an article.' : null)
+    });
+    await page.goto(`${STUB_BASE}#editor?id=1`);
+    await page.getByTestId('editor-body').evaluate(el => { el.focus(); el.setSelectionRange(el.value.length, el.value.length); });
+    await page.getByTestId('editor-insert-image').click();
+    await page.locator('[data-testid="media-card"][data-media-id="21"]').click();
+    await page.getByTestId('editor-save-draft').click();
+    await expect(page.getByTestId('editor-error')).toContainText('has no alt text');
+    await expect(page.locator('.toast').filter({ hasText: 'has no alt text' })).toHaveCount(1);
+    await expect(page.getByTestId('editor-body')).toHaveValue(/!\[Alt for 21\]\(media:21\)/);
+    expect(cms.log.patches).toHaveLength(1);
+  });
+
   const liveEvent = { id: 5, slug: 'synod', title: 'Synod live', summary: '', status: 'live', category: { id: 1, title: 'News' } };
   const liveUpdate = (id, over) => ({
     id, event: 5, body: `Update ${id}`, status: 'approved', sequence: id, publishSequence: id,
@@ -584,6 +665,76 @@ test.describe('Production build against a stubbed CMS', () => {
     await expect(page.getByTestId('live-update-photo-draft')).toBeVisible();
     await expect(page.getByTestId('live-update-body')).toHaveValue('Will be refused');
     expect(cms.log.updatePosts).toHaveLength(1);
+  });
+
+  test('approve what you saw: review-queue actions send the shown updatedAt; on 409 the item reloads and the message shows', async ({ page }) => {
+    const cms = await stubCms(page, {
+      articles: [stubArticle(1, { status: 'in_review' }), stubArticle(2, { status: 'in_review' })]
+    });
+    // a matching version succeeds
+    await page.goto(`${STUB_BASE}#review`);
+    await page.locator('[data-testid="review-card"][data-story-id="1"]').getByTestId('review-inspect').click();
+    await page.getByTestId('inspect-approve').click();
+    await expect(page.locator('.toast').filter({ hasText: 'Story approved' })).toHaveCount(1);
+    expect(cms.log.patches.at(-1)).toEqual({ id: '1', body: { status: 'approved', expectedUpdatedAt: '2026-01-01T00:00:00.000Z' } });
+
+    // story 2 is edited by somebody else after the queue loaded: approving the old version is refused
+    await page.goto(`${STUB_BASE}#review`);
+    await page.locator('[data-testid="review-card"][data-story-id="2"]').getByTestId('review-inspect').click();
+    await expect(page.getByTestId('inspect-modal')).toBeVisible();
+    cms.touchArticle(2, { title: 'Stub story 2, rewritten' });
+    await page.getByTestId('inspect-approve').click();
+    expect(cms.log.patches.at(-1)).toEqual({ id: '2', body: { status: 'approved', expectedUpdatedAt: '2026-01-01T00:00:00.000Z' } });
+    // the item is reloaded: the modal reopens on the new version and shows the message
+    await expect(page.getByTestId('inspect-error')).toHaveText(STALE_CMS_MESSAGE);
+    await expect(page.getByTestId('inspect-modal')).toContainText('Stub story 2, rewritten');
+    // acting again uses the reloaded version and succeeds
+    await page.getByTestId('inspect-approve').click();
+    expect(cms.log.patches.at(-1)).toEqual({ id: '2', body: { status: 'approved', expectedUpdatedAt: '2026-10-14T21:00:00.000Z' } });
+    await expect(page.locator('.toast').filter({ hasText: 'Story approved' })).toHaveCount(2);
+  });
+
+  test('approve what you saw: the editor sends the loaded version; a stale publish reloads the story and shows the message', async ({ page }) => {
+    const cms = await stubCms(page, { articles: [stubArticle(1, { status: 'approved' })] });
+    await page.goto(`${STUB_BASE}#editor?id=1`);
+    await expect(page.getByTestId('editor-title')).toHaveValue('Stub story 1');
+    cms.touchArticle(1, { title: 'Stub story 1, corrected by the author' });
+    await page.getByTestId('editor-publish').click();
+    await page.getByTestId('publish-ok').click();
+    expect(cms.log.patches.at(-1)).toEqual({ id: '1', body: { status: 'published', expectedUpdatedAt: '2026-01-01T00:00:00.000Z' } });
+    await expect(page.getByTestId('editor-error')).toHaveText(STALE_CMS_MESSAGE);
+    await expect(page.getByTestId('editor-title')).toHaveValue('Stub story 1, corrected by the author');
+    await expect(page.getByTestId('editor-status')).toHaveAttribute('data-status', 'approved');
+
+    await page.getByTestId('editor-publish').click();
+    await page.getByTestId('publish-ok').click();
+    expect(cms.log.patches.at(-1)).toEqual({ id: '1', body: { status: 'published', expectedUpdatedAt: '2026-10-14T21:00:00.000Z' } });
+    await expect(page.getByTestId('editor-status')).toHaveAttribute('data-status', 'published');
+  });
+
+  test('approve what you saw: the live view sends the card version; a stale approve reloads the card and shows the message', async ({ page }) => {
+    const cms = await stubCms(page, {
+      events: [liveEvent],
+      updates: [
+        liveUpdate(811, { status: 'pending', publishSequence: null, updatedAt: '2026-10-14T10:00:00.000Z' }),
+        liveUpdate(812, { status: 'pending', publishSequence: null, updatedAt: '2026-10-14T10:00:00.000Z' })
+      ]
+    });
+    await page.goto(`${STUB_BASE}#live`);
+    const card = id => page.locator(`[data-testid="live-pending-card"][data-update-id="${id}"]`);
+    await expect(card(811)).toBeVisible();
+    await card(811).getByTestId('live-approve').click();
+    await expect(card(811)).toHaveCount(0);
+    expect(cms.log.updatePatches).toEqual([{ id: '811', body: { status: 'approved', expectedUpdatedAt: '2026-10-14T10:00:00.000Z' } }]);
+
+    // update 812 is corrected after the console loaded it: the stale approve is refused and the card shows the new text
+    cms.touchUpdate(812, { body: 'Corrected wording' });
+    await card(812).getByTestId('live-approve').click();
+    await expect(page.getByTestId('live-error')).toHaveText(STALE_CMS_MESSAGE);
+    await expect(card(812)).toContainText('Corrected wording');
+    await card(812).getByTestId('live-reject').click();
+    expect(cms.log.updatePatches.at(-1)).toEqual({ id: '812', body: { status: 'rejected', expectedUpdatedAt: '2026-10-14T21:00:00.000Z' } });
+    await expect(card(812)).toHaveCount(0);
   });
 
   test('a story converted from a reader tip warns while the byline is set, and the warning follows the byline field', async ({ page }) => {

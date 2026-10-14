@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   markdownToLexical, lexicalToMarkdown, markdownToHtml, countWords,
-  imageToken, listImages, insertBlockLine, removeImageLine, stripImageLabels
+  imageToken, listImages, insertBlockLine, removeImageLine, stripImageLabels, MISSING_IMAGE_TOKEN, MAX_MEDIA_ID
 } from '../src/lexical.js';
 
 // Node shapes as Payload's Lexical editor stores them.
@@ -26,7 +26,7 @@ test('token <-> upload node: relationTo media, numeric value, version 3, fields 
   assert.equal(n.fields, null);
   assert.equal(n.format, '');
   assert.match(n.id, /^[0-9a-f]{24}$/);
-  assert.deepEqual(lexicalToMarkdown(lex), { markdown: '![](media:42)', lossy: false, images: [{ id: '42', alt: '', media: null }] });
+  assert.deepEqual(lexicalToMarkdown(lex), { markdown: '![](media:42)', lossy: false, images: [{ id: '42', alt: '', media: null }], missingImages: 0 });
 });
 
 test('images between paragraphs keep their position and order', () => {
@@ -81,7 +81,7 @@ test('populated upload value (depth > 0): alt becomes the label, media is expose
   const out = markdownToLexical(r.markdown).root.children[0];
   assert.strictEqual(out.value, 15); // an id, never the populated document
   assert.equal(typeof out.value, 'number');
-  assert.deepEqual(listImages(r.markdown), [{ id: '15', alt: 'Bishop [greets] crowd' }]);
+  assert.deepEqual(listImages(r.markdown), [{ id: '15', alt: 'Bishop [greets] crowd', missing: false }]);
 });
 
 test('lossless round trip of existing CMS upload nodes (mixed id / populated, between paragraphs)', () => {
@@ -126,7 +126,9 @@ test('uploads the token cannot carry stay lossy (read-only body, nothing rewritt
   assert.equal(lossy(U(1, { pending: { formID: 'x', src: 'blob:' } })), true);
   assert.equal(lossy(U('abc123')), true); // not a numeric id
   assert.equal(lossy(U(0)), true);
-  assert.equal(lossy(U(null)), true);
+  assert.equal(lossy(U(2147483648)), true); // beyond the CMS's integer ids
+  assert.equal(lossy(U('007')), true);
+  assert.equal(lossy(U(true)), true);
   assert.equal(lossy(U({ alt: 'no id' })), true);
   assert.equal(lossy(U(-4)), true);
   assert.equal(lossy(U(1.5)), true);
@@ -177,9 +179,10 @@ test('imageToken: label is single-line and bracket safe; invalid ids give no tok
 });
 
 test('listImages reads every token line in order', () => {
-  const md = 'a\n\n![One](media:1)\n\nb ![no](media:2)\n\n![Two \\] x](media:3)\r\n![](media:04)';
+  const md = 'a\n\n![One](media:1)\n\nb ![no](media:2)\n\n![Two \\] x](media:3)\r\n![](media:4)\n![gone](media:04)\n![](media:missing)\n![missing image](media:missing)';
   assert.deepEqual(listImages(md), [
-    { id: '1', alt: 'One' }, { id: '3', alt: 'Two ] x' }, { id: '4', alt: '' }
+    { id: '1', alt: 'One', missing: false }, { id: '3', alt: 'Two ] x', missing: false }, { id: '4', alt: '', missing: false },
+    { id: '', alt: 'missing image', missing: true }
   ]);
   assert.deepEqual(listImages(''), []);
   assert.deepEqual(listImages(undefined), []);
@@ -235,7 +238,65 @@ test('preview HTML: known media renders a figure with escaped src/alt; unknown i
 });
 
 test('stripImageLabels empties labels only on image token lines', () => {
-  const md = 'a ![keep](media:1) b\n\n![Some label](media:007)\n\n![](media:2)\r\n![x\\]y](media:3)';
-  assert.equal(stripImageLabels(md), 'a ![keep](media:1) b\n\n![](media:7)\n\n![](media:2)\n![](media:3)');
+  const md = 'a ![keep](media:1) b\n\n![Some label](media:7)\n\n![](media:2)\r\n![x\\]y](media:3)\n![gone](media:missing)\n![zero](media:0)';
+  assert.equal(stripImageLabels(md), 'a ![keep](media:1) b\n\n![](media:7)\n\n![](media:2)\n![](media:3)\n![gone](media:missing)\n![zero](media:0)');
   assert.equal(stripImageLabels(undefined), '');
+});
+
+test('only ids 1..2147483647 without leading zeros are images; everything else stays plain text', () => {
+  assert.equal(MAX_MEDIA_ID, 2147483647);
+  const types = md => markdownToLexical(md).root.children.map(n => n.type);
+  assert.deepEqual(types('![x](media:1)'), ['upload']);
+  assert.deepEqual(types('![x](media:2147483647)'), ['upload']);
+  assert.strictEqual(markdownToLexical('![x](media:2147483647)').root.children[0].value, 2147483647);
+  for (const bad of ['0', '00', '01', '007', '2147483648', '9999999999', '10000000000', '-1', '1.5', '1e3', '']) {
+    assert.deepEqual(types(`![x](media:${bad})`), ['paragraph'], bad);
+    assert.deepEqual(listImages(`![x](media:${bad})`), [], bad);
+  }
+  for (const ok of [1, 2147483647, '2147483647']) assert.notEqual(imageToken(ok, 'x'), '');
+  for (const bad of [0, '0', '01', 2147483648, '2147483648', 9999999999]) assert.equal(imageToken(bad, 'x'), '', String(bad));
+  assert.equal(countWords('a\n\n![alt](media:2147483647)\n\nb'), 2);
+  assert.ok(countWords('a\n\n![alt words here](media:0)\n\nb') > 2); // not an image line: counted as text
+});
+
+test('an upload node whose media was deleted (value null) is editable: it shows as a removable "missing image" line', () => {
+  for (const value of [null, undefined]) {
+    const r = lexicalToMarkdown(doc(P(T('before')), U(value), P(T('after'))));
+    assert.equal(r.lossy, false, 'the body stays editable');
+    assert.equal(r.missingImages, 1);
+    assert.deepEqual(r.images, []);
+    assert.equal(r.markdown, `before\n\n${MISSING_IMAGE_TOKEN}\n\nafter`);
+  }
+  // it converts back to an upload node pointing at nothing (the CMS refuses to save that), so keeping it is never silent
+  const back = markdownToLexical(`before\n\n${MISSING_IMAGE_TOKEN}\n\nafter`);
+  assert.deepEqual(back.root.children.map(n => n.type), ['paragraph', 'upload', 'paragraph']);
+  assert.strictEqual(back.root.children[1].value, null);
+  assert.equal(back.root.children[1].relationTo, 'media');
+  // round trip is stable
+  assert.equal(lexicalToMarkdown(back).markdown, `before\n\n${MISSING_IMAGE_TOKEN}\n\nafter`);
+  // removing the line gives a clean body with no upload node
+  const listed = listImages(`before\n\n${MISSING_IMAGE_TOKEN}\n\nafter`);
+  assert.deepEqual(listed, [{ id: '', alt: 'missing image', missing: true }]);
+  const cleaned = removeImageLine(`before\n\n${MISSING_IMAGE_TOKEN}\n\nafter`, 0);
+  assert.equal(cleaned, 'before\n\nafter');
+  assert.deepEqual(markdownToLexical(cleaned).root.children.map(n => n.type), ['paragraph', 'paragraph']);
+  // two missing + a real one: counted and ordered
+  const mixed = lexicalToMarkdown(doc(U(null), U(8), U(null)));
+  assert.equal(mixed.missingImages, 2);
+  assert.deepEqual(listImages(mixed.markdown).map(i => i.missing), [true, false, true]);
+  // the missing token is untouched by label stripping, ignored by the word count and rendered as a warning
+  assert.equal(stripImageLabels(MISSING_IMAGE_TOKEN), MISSING_IMAGE_TOKEN);
+  assert.equal(countWords(`a\n\n${MISSING_IMAGE_TOKEN}\n\nb`), 2);
+  const html = markdownToHtml(MISSING_IMAGE_TOKEN);
+  assert.match(html, /data-testid="preview-inline-image-missing"/);
+  assert.match(html, /Remove this line before saving/);
+  assert.ok(!html.includes('<img'));
+  // a missing token with other text, or inside a sentence, is just text
+  assert.deepEqual(markdownToLexical(`see ${MISSING_IMAGE_TOKEN}`).root.children.map(n => n.type), ['paragraph']);
+});
+
+test('other broken uploads (populated without an id, wrong collection) are still read-only', () => {
+  assert.equal(lexicalToMarkdown(doc(U({ alt: 'x' }))).lossy, true);
+  assert.equal(lexicalToMarkdown(doc(U(null, { relationTo: 'documents' }))).lossy, true);
+  assert.equal(lexicalToMarkdown(doc(U(null, { fields: { a: 1 } }))).lossy, true);
 });

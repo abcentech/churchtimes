@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { setRetryAfterHeaders } from '../../src/lib/authRateLimit'
 import { createRateLimiter, getClientIp, hashIp } from '../../src/lib/rateLimit'
 
 describe('createRateLimiter', () => {
@@ -115,5 +116,23 @@ describe('getClientIp / hashIp', () => {
     vi.stubEnv('NODE_ENV', 'production')
     process.env.IP_HASH_SALT = 'short'
     expect(() => hashIp('1.2.3.4')).toThrow()
+  })
+})
+
+describe('setRetryAfterHeaders', () => {
+  it('sets Retry-After and exposes it cross-origin, keeping headers already on the request', () => {
+    const req: { responseHeaders?: Headers } = {}
+    setRetryAfterHeaders(req, 12.2)
+    expect(req.responseHeaders?.get('retry-after')).toBe('13')
+    expect(req.responseHeaders?.get('access-control-expose-headers')).toBe('Retry-After')
+
+    const existing = new Headers({ 'Set-Cookie': 'a=b', 'Access-Control-Expose-Headers': 'X-Foo' })
+    const req2 = { responseHeaders: existing }
+    setRetryAfterHeaders(req2, 0)
+    expect(req2.responseHeaders.get('set-cookie')).toBe('a=b')
+    expect(req2.responseHeaders.get('retry-after')).toBe('1')
+    expect(req2.responseHeaders.get('access-control-expose-headers')).toBe('X-Foo, Retry-After')
+    setRetryAfterHeaders(req2, 5)
+    expect(req2.responseHeaders.get('access-control-expose-headers')).toBe('X-Foo, Retry-After')
   })
 })

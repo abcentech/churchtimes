@@ -22,11 +22,18 @@ function isMediaFileUrl(value: unknown): value is string {
   }
 }
 
+/** Name of the Media imageSizes entry (~800 px wide) served to readers instead of the original upload. */
+export const FEED_IMAGE_SIZE = 'card'
+
 /**
  * Whitelist projection of a populated media doc: exactly these five fields, nothing else (no filename,
  * uploader, sizes, caption or credit). Anything that is not a usable image with alt text becomes null.
- * `url` is Payload's own media URL (root-relative `/api/media/file/<name>`, or absolute when CMS_PUBLIC_URL is set): the same value, in the same
- * form, that articles' `featuredImage.url` carries.
+ * `url` is Payload's own media URL (root-relative `/api/media/file/<name>`, or absolute when CMS_PUBLIC_URL is set).
+ *
+ * Readers get the ~800 px `card` variant (url, width, height and mimeType of that variant) so a phone does not
+ * download an original of up to 10 MB. When the variant does not exist (Payload does not enlarge images that are
+ * already smaller than the size, and rows that predate the size) or is not a usable media URL / image type, the
+ * original upload is used. `alt` always comes from the media document itself.
  */
 export function publicImage(media: unknown): PublicImage | null {
   if (!media || typeof media !== 'object') return null
@@ -34,6 +41,12 @@ export function publicImage(media: unknown): PublicImage | null {
   if (!isMediaFileUrl(m.url)) return null
   if (typeof m.mimeType !== 'string' || !IMAGE_MIME.includes(m.mimeType)) return null
   if (typeof m.alt !== 'string' || m.alt.trim() === '') return null
+  const sizes = m.sizes && typeof m.sizes === 'object' ? (m.sizes as Record<string, unknown>) : null
+  const variant = sizes?.[FEED_IMAGE_SIZE]
+  const v = variant && typeof variant === 'object' ? (variant as Record<string, unknown>) : null
+  if (v && isMediaFileUrl(v.url) && typeof v.mimeType === 'string' && IMAGE_MIME.includes(v.mimeType)) {
+    return { url: v.url, alt: m.alt, width: dimension(v.width), height: dimension(v.height), mimeType: v.mimeType }
+  }
   return { url: m.url, alt: m.alt, width: dimension(m.width), height: dimension(m.height), mimeType: m.mimeType }
 }
 
@@ -91,7 +104,17 @@ export const liveEventUpdatesEndpoint: Endpoint = {
             pagination: false,
             overrideAccess: true,
             select: { publishSequence: true, body: true, occurredAt: true, approvedAt: true, image: true },
-            populate: { media: { url: true, filename: true, alt: true, width: true, height: true, mimeType: true } },
+            populate: {
+              media: {
+                url: true,
+                filename: true,
+                alt: true,
+                width: true,
+                height: true,
+                mimeType: true,
+                sizes: { [FEED_IMAGE_SIZE]: true },
+              },
+            },
           })
 
     // The wire field stays named `sequence` (contract stability); its value is the publication sequence.

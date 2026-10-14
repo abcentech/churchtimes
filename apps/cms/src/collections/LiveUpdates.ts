@@ -19,6 +19,8 @@ import {
 import { writeAuditLog } from '../lib/audit'
 import { clampLimit } from '../lib/clampLimit'
 import { advisoryTransactionLock } from '../lib/dbTransaction'
+import { assertExpectedUpdatedAt, captureExpectedUpdatedAt } from '../lib/expectedUpdatedAt'
+import { assertAttachableImage } from '../lib/mediaChecks'
 import { cleanText } from '../lib/sanitize'
 
 const asUser = (u: unknown) => u as UserLike | null | undefined
@@ -46,26 +48,6 @@ const update: Access = ({ req }) => {
   if (user.role === 'trusted-publisher') return { author: { equals: user.id } } as Where
   // reporter: own, still pending
   return { and: [{ author: { equals: user.id } }, { status: { equals: 'pending' } }] } as Where
-}
-
-/**
- * The image of a live update is public content once the update is approved, so whatever is attached must be a
- * real, readable image with alt text. Checked on create, when the image changes, and again when an update is
- * approved (so a pending update can never publish an image that has since lost its alt text).
- * `req.user` is passed with `overrideAccess: false` so the media must be readable by the caller.
- */
-const ALLOWED_IMAGE_MIME = ['image/jpeg', 'image/png', 'image/webp']
-async function assertAttachableImage(req: PayloadRequest, imageId: number | string): Promise<void> {
-  const media = (await req.payload
-    .findByID({ collection: 'media', id: imageId, depth: 0, overrideAccess: false, user: req.user, req })
-    .catch(() => null)) as { mimeType?: string | null; alt?: string | null } | null
-  if (!media) throw new APIError('The attached image does not exist or is not available to you.', 400)
-  if (!media.mimeType || !ALLOWED_IMAGE_MIME.includes(media.mimeType)) {
-    throw new APIError('The attached file must be a JPEG, PNG or WebP image.', 400)
-  }
-  if (typeof media.alt !== 'string' || media.alt.trim() === '') {
-    throw new APIError('The attached image needs alt text. Add a description to the image first.', 400)
-  }
 }
 
 const staffRead: FieldAccess = ({ req }) => isStaff(asUser(req.user))
@@ -138,8 +120,9 @@ export const LiveUpdates: CollectionConfig = {
     { fields: ['event', 'publishSequence'], unique: true },
   ],
   hooks: {
-    beforeOperation: [clampLimit],
+    beforeOperation: [clampLimit, captureExpectedUpdatedAt],
     beforeChange: [
+      assertExpectedUpdatedAt('live_updates'),
       async ({ data, originalDoc, operation, req }) => {
         const user = asUser(req.user)
         // idOf() is undefined for an absent or null image (nothing to attach, nothing to check).
@@ -234,6 +217,14 @@ export const LiveUpdates: CollectionConfig = {
         delete data.author
         delete data.publishSequence
         await stampPublishSequence(req, eventId, data, originalDoc, 'update')
+        // An edit of the public content (body or image) of an update that stays approved gets a fresh
+        // publication sequence, so pollers whose cursor already passed it receive the corrected item.
+        if (from === 'approved' && to === 'approved') {
+          const bodyChanged = data.body !== undefined && data.body !== originalDoc?.body
+          const imageChanged =
+            data.image !== undefined && String(idOf(data.image) ?? '') !== String(idOf(originalDoc?.image) ?? '')
+          if (bodyChanged || imageChanged) data.publishSequence = await nextCounter(req, eventId, 'publishSequence')
+        }
         return data
       },
     ],
