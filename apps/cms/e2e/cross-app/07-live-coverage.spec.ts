@@ -6,7 +6,7 @@
  *   L3 section editor (UI): approves two pending updates in a different order than they were written, rejects one.
  *   L4 anonymous reader: public polling feed shows published updates in PUBLICATION order, no drafts / pending / rejected / staff fields.
  *   L5 section editor (UI) ends coverage; the feed stays readable; a reporter can no longer post (API-driven check).
- *   L6 public site discovers the live event and displays its published update at #live.
+ *   L6 public site shows the live event (#live/<slug>) with its published update, and an ended event's rejected update never shows.
  *
  * Steps are real UI unless the test name says "API-driven". Synthetic data only; unique titles per run.
  */
@@ -22,7 +22,7 @@ const api = new LiveApi(cfg)
 
 type State = { id: number; slug: string; title: string; ids: Record<string, number>; bodies: Record<string, string> }
 const states = new Map<string, State>()
-const gap = new Map<string, { title: string; body: string }>()
+const gap = new Map<string, { title: string; body: string; slug: string }>()
 const st = (project: string): State => {
   const s = states.get(project)
   if (!s) throw new Error('earlier live-coverage step did not run (serial journey)')
@@ -352,21 +352,36 @@ test.describe('Live coverage: editor + reporter in the newsroom, anonymous reade
     expect(feed.status).toBe(200)
     expect(feed.json.docs.map((d: any) => d.body)).toEqual([body])
     await ctx.close()
-    gap.set(info.project.name, { title, body })
+    gap.set(info.project.name, { title, body, slug: made.json.doc.slug })
   })
 
-  // Public-site regression: the readable CMS feed must also reach readers through #live.
+  // Public-site regression: the readable CMS feed must also reach readers on the public #live/<slug> page (added by PR #26).
   test('L6b public site shows live coverage to readers', async ({ browser }, info) => {
     const g = gap.get(info.project.name)
     if (!g) throw new Error('L6a did not run')
+    const s = st(info.project.name)
     const ev = new Evidence(cfg, info, 'L6b-live-public-page')
+    // two back-to-back feed reads (each up to 6 s) plus rendering: never below 15 s
+    const wait = isRemote ? 30_000 : 20_000
     const ctx = await freshContext(browser, info)
+
+    // L6a's event: exactly one published update, shown on the event's own page (not just the discovery list)
     const page = await ctx.newPage()
-    await page.goto(`${cfg.publicOrigin}/#live`)
-    ev.note('looking for the live event and its update on the public site at /#live')
-    await ev.shot(page, 'public site #live route')
-    await expect(page.locator('body')).toContainText(g.title, { timeout: 8_000 })
-    await expect(page.locator('body')).toContainText(g.body, { timeout: 8_000 })
+    await page.goto(`${cfg.publicOrigin}/#live/${g.slug}`)
+    ev.note(`public page /#live/${g.slug}`)
+    await expect(page.locator('#live-event')).toBeVisible({ timeout: wait })
+    await expect(page.locator('#live-event-title')).toHaveText(g.title, { timeout: wait })
+    await expect(page.locator('#live-timeline .live-update-body')).toHaveText([g.body], { timeout: wait })
+    await ev.shot(page, 'public site #live/<slug> route: event title and its published update')
+
+    // L1's event (ended in L5): all five published updates in publication order; the rejected update must never appear
+    const ended = await ctx.newPage()
+    await ended.goto(`${cfg.publicOrigin}/#live/${s.slug}`)
+    await expect(ended.locator('#live-event-title')).toHaveText(s.title, { timeout: wait })
+    await expect(ended.locator('#live-event-status')).toHaveText('Coverage ended', { timeout: wait })
+    await expect(ended.locator('#live-timeline .live-update-body')).toHaveText([s.bodies.A, s.bodies.B, s.bodies.C, s.bodies.R2, s.bodies.R1], { timeout: wait })
+    await expect(ended.locator('#live-timeline'), 'rejected update is never shown to readers').not.toContainText(s.bodies.R3)
+    await ev.shot(ended, 'ended event page: published updates in publication order, rejected update hidden')
     await ctx.close()
   })
 })
