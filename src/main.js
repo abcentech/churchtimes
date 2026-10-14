@@ -63,8 +63,6 @@ function wordmark(className='') { return `<a class="wordmark ${className}" href=
 let disposePublicForm;
 function shell(content, route='home') {
   clearArticleMetadata();
-  feedController?.abort();
-  feedController=undefined;
   disposePublicForm?.();
   disposePublicForm=undefined;
   routeController.abort();
@@ -145,7 +143,6 @@ function bindCommon(){bindSaves();document.querySelector('#select-share-url').ad
 
 const cmsUrl = import.meta.env.VITE_PUBLIC_CMS_URL;
 const publicRoutes = createPublicRoutes({siteUrl:import.meta.env.VITE_PUBLIC_SITE_URL,origin:location.origin});
-let feedController;
 const reportHref = article => cmsUrl ? publicRoutes.path('report',article.slug) : `#report/${article.slug}`;
 function navigatePublic(route,value='') {
   history.pushState(null,'',publicRoutes.path(route,value)); render();
@@ -207,8 +204,7 @@ async function latestPage({ sectionSlug, query } = {}) {
     feedState(target,'The newsroom is taking shape.','Read our current edition while the new newsroom feed is being prepared.');
     return;
   }
-  feedController = new AbortController();
-  const signal = feedController.signal;
+  const signal = routeController.signal;
   const seen = new Set();
   let grid, categoryIds;
   async function load(page=1) {
@@ -262,8 +258,7 @@ async function reportPage(slug) {
     feedState(target,'The newsroom is taking shape.','Read our current edition while the new newsroom feed is being prepared.');
     return;
   }
-  feedController=new AbortController();
-  const signal=feedController.signal;
+  const signal=routeController.signal;
   async function load() {
     target.setAttribute('aria-busy','true');
     const restoreFocus = target.contains(document.activeElement);
@@ -301,6 +296,13 @@ document.addEventListener('click',event=>{
   if(!cmsUrl||event.defaultPrevented||event.button!==0||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey)return;
   const link=event.target.closest?.('a[href]');
   if(!link||link.target||link.hasAttribute('download'))return;
+  const rawHref=link.getAttribute('href');
+  // The HTML base is for assets; keep fragment navigation on the current document.
+  if(rawHref.startsWith('#')){
+    event.preventDefault();
+    if(rawHref==='#main'){document.querySelector('#main')?.focus({preventScroll:true});return;}
+    location.hash=rawHref;return;
+  }
   const url=new URL(link.href,location.href);
   if(url.origin!==location.origin||url.hash)return;
   const parsed=publicRoutes.parse(url);

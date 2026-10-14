@@ -1,6 +1,6 @@
 # Public staging acceptance — issue #15
 
-This frontend change targets `feat/newsroom-mvp`, starting at `ba1d653`. It does
+This frontend change targets `feat/newsroom-mvp`, rebased onto integration commit `416fadc`. It does
 not alter CMS contracts, newsroom/archive applications, production WordPress,
 DNS or infrastructure. No merge or deployment is included. Interface notes for
 Claude/Gemini are recorded in issue #15; review against the merged
@@ -92,9 +92,10 @@ npm --cache /tmp/churchtimes-npm-cache ci --prefix apps/cms --no-audit --no-fund
 # When system Chromium is unavailable:
 npx playwright install --with-deps chromium
 npm run test:unit
-npm test -- --workers=2
+npm test -- tests/site.spec.js tests/public-forms-fallback.spec.js tests/newsroom-fallback.spec.js tests/mobile-quality.spec.js tests/homepage-refinement.spec.js --workers=2
 npm run test:forms
 npm run test:newsroom
+npm run test:advertising
 npm run test:cms
 PUBLIC_CMS_TEST_BUILD=true npm run test:cms
 npm run export:pages
@@ -142,3 +143,23 @@ The CI public CMS workflow runs both development and compiled acceptance modes.
 
 See the PR for exact executed commands and counts; prior issue #7 results are
 historical, not results for this change.
+
+## Executed validation (14 October 2026)
+
+On the rebased branch, with Node 24.19.0 and system Chromium:
+
+| Command | Outcome |
+| --- | --- |
+| `npm run test:unit` | 37 passed |
+| Public site command listed above | 56 passed |
+| `npm run test:forms` | 36 passed |
+| `npm run test:newsroom` | 42 passed |
+| `npm run test:advertising` | 22 passed |
+| `npm run test:cms` | 12 passed, real REST/proxy/PostgreSQL |
+| `PUBLIC_CMS_TEST_BUILD=true npm run test:cms` | 12 passed, compiled frontend and real REST/proxy/PostgreSQL |
+| `npm run export:pages` + `npm run check:pages` | Build succeeded; committed export matches |
+
+All counted cases executed; none skipped. A deliberately invalid Playwright
+argument additionally verified runner exit status 1 after database cleanup.
+External widget/Siteverify transports remain stubbed as described above. Staff
+newsroom/cross-app deployment and physical Android checks were not run for this PR.

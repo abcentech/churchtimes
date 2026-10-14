@@ -82,6 +82,9 @@ test('real category and search filters, clean URLs, reload and canonical lifecyc
   await expect(page.locator('link[rel="canonical"]')).toHaveAttribute('href','http://127.0.0.1:5177/reports/'+f.publishedSlug+'/');
   const schema=await page.locator('script[type="application/ld+json"]').textContent();
   expect(JSON.parse(schema).mainEntityOfPage).toBe('http://127.0.0.1:5177/reports/'+f.publishedSlug+'/');
+  await page.locator('.skip-link').focus();await page.keyboard.press('Enter');
+  await expect(page.locator('#main')).toBeFocused();
+  await expect(page).toHaveURL(new RegExp('/reports/'+f.publishedSlug+'/$'));
   await page.reload();await expect(page.locator('h1')).toHaveText(f.publishedTitle);
   await page.locator('.home-link').click();await expect(page.locator('link[rel="canonical"]')).toHaveCount(0);
   await page.goBack();await expect(page.locator('h1')).toHaveText(f.publishedTitle);

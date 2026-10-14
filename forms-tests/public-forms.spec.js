@@ -209,7 +209,7 @@ for (const kind of ['story','contact']) {
   });
 }
 
-test('real CMS success maps location/categorySuggestion and uses only the returned reference',async({page})=>{
+test('mocked CMS-contract success maps location/categorySuggestion and uses only the returned reference',async({page})=>{
  await widget(page);let calls=0;
  await page.route('**/api/public/submissions',route=>{
   calls++;const data=route.request().postDataJSON();expect(data.categorySuggestion).toBe('News');expect(data.location).toBe('Lagos');expect(data.website).toBe('');expect(data.category).toBeUndefined();expect(data.consent).toBeUndefined();

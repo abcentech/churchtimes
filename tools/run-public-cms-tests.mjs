@@ -46,5 +46,6 @@ try {
   result=await exitCode(browser);
 } catch(error){console.error(error.message);result=1;}
 finally{await stop(browser);await stop(server);log.end();if(pg)await pg.stop();}
-// Embedded Postgres cleanup can change process.exitCode; preserve the browser result.
-process.exitCode=result;
+// embedded-postgres registers a beforeExit hook that forces code 0. After all
+// cleanup has completed, exit explicitly with the actual browser result.
+process.exit(result);
