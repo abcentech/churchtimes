@@ -193,7 +193,31 @@ export function checkSiteKey(key) {
 export function checkSecretKey(key) {
   if (key.length < 16 || /\s/.test(key)) return 'the secret key has an unexpected shape (at least 16 characters, no spaces).'
   if (isDummySecret(key)) return 'that is one of Cloudflare\'s dummy TEST secrets. This staging uses a REAL widget.'
+  // Nothing is echoed at the hidden prompt, so pasting twice is easy (seen on the first real run).
+  if (key.length % 2 === 0 && key.slice(0, key.length / 2) === key.slice(key.length / 2)) return 'it looks pasted twice (the same text repeated). Paste it once.'
   return ''
+}
+
+/**
+ * Asks Cloudflare whether the secret itself is valid, with a dummy token: a valid secret answers `invalid-input-response`,
+ * a wrong one `invalid-input-secret`. Returns '' when the secret is accepted. Never logs the secret.
+ */
+export async function verifyTurnstileSecret(secret, { fetchImpl = fetch } = {}) {
+  try {
+    const res = await fetchImpl('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ secret, response: 'staging-funnel-secret-check' }).toString(),
+      signal: AbortSignal.timeout(15_000),
+    })
+    const body = await res.json().catch(() => ({}))
+    const codes = Array.isArray(body?.['error-codes']) ? body['error-codes'] : []
+    if (codes.includes('invalid-input-secret') || codes.includes('missing-input-secret')) return 'Cloudflare does not recognise this secret key (copy it again from the widget, once).'
+    if (res.status !== 200) return `Cloudflare answered HTTP ${res.status} (${codes.join(', ') || 'no error code'}).`
+    return ''
+  } catch (e) {
+    return `could not reach Cloudflare to check the secret (${e instanceof Error ? e.message : String(e)}).`
+  }
 }
 
 const ask = (question, { hidden = false } = {}) =>
@@ -256,8 +280,8 @@ export async function loadOrPromptTurnstile(p, { rotate = false } = {}) {
       else siteKey = k
     }
     for (let attempt = 0; attempt < 3 && !secretKey; attempt++) {
-      const k = await askHidden('Turnstile SECRET key (typing is hidden): ')
-      const problem = checkSecretKey(k)
+      const k = await askHidden('Turnstile SECRET key (typing is hidden; paste it ONCE, then press Enter): ')
+      const problem = checkSecretKey(k) || (await verifyTurnstileSecret(k))
       if (problem) console.log(`  not accepted: ${problem}`)
       else secretKey = k
     }
@@ -265,8 +289,9 @@ export async function loadOrPromptTurnstile(p, { rotate = false } = {}) {
     writeJson(p.turnstile, { siteKey, secretKey, savedAt: new Date().toISOString() })
     log(`Turnstile keys stored in ${p.turnstile}`)
   }
-  const problem = checkSiteKey(siteKey) || checkSecretKey(secretKey)
+  const problem = checkSiteKey(siteKey) || checkSecretKey(secretKey) || (await verifyTurnstileSecret(secretKey))
   if (problem) throw new Error(`Stored/provided Turnstile key rejected: ${problem} (re-run with --rotate-turnstile).`)
+  log('Turnstile secret accepted by Cloudflare')
   return { siteKey, secretKey }
 }
 

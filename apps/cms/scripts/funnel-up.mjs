@@ -10,6 +10,7 @@
 //   --no-funnel            start and test the three services on 127.0.0.1 only; no tailscale calls, no https verification
 //   --test-keys            LOCAL TEST ONLY: Cloudflare's always-pass site key + a placeholder secret, nothing stored; never funnels
 //   --rotate-turnstile     ask for the Turnstile keys again
+//   --rotate-passwords     new passwords for all synthetic staff accounts (same e-mails); the seed resets them in the DB
 //   --rebuild              force the CMS production build (otherwise reused when newer than apps/cms/src)
 //   --overwrite-serve      CLEAR everything `tailscale serve` holds on ports 443/8443/10000 (all paths, TCP forwards, Funnel flags)
 //                          and take them over. Funnel publishes a whole host:port, so nothing else may stay on those ports.
@@ -66,7 +67,7 @@ import {
 } from './funnel-lib.mjs'
 
 const args = parseArgs(process.argv.slice(2), {
-  flags: ['dry-run', 'no-funnel', 'test-keys', 'rotate-turnstile', 'rebuild', 'overwrite-serve'],
+  flags: ['dry-run', 'no-funnel', 'test-keys', 'rotate-turnstile', 'rotate-passwords', 'rebuild', 'overwrite-serve'],
   options: ['host'],
 })
 const dryRun = !!args['dry-run']
@@ -370,6 +371,12 @@ if (!validSeedUsers(seedUsers)) {
   seedUsers = { generatedAt: new Date().toISOString(), users: {} }
   for (const role of ROLES) seedUsers.users[role] = { email: `staging-${role}-${hex(4)}@staging.invalid`, password: `Stg-${hex(12)}`, role }
   writeJson(p.seedUsers, seedUsers)
+} else if (args['rotate-passwords']) {
+  // Same accounts, new passwords: the seed (which runs on every up) resets them in the database before anything is published.
+  for (const role of ROLES) seedUsers.users[role].password = `Stg-${hex(12)}`
+  seedUsers.passwordsRotatedAt = new Date().toISOString()
+  writeJson(p.seedUsers, seedUsers)
+  log('new passwords generated for every synthetic staff account (old ones stop working once the seed has run)')
 }
 const credsRemote = {
   categoryTitle: cfg.categoryTitle,
@@ -558,6 +565,14 @@ try {
     [!distMatches(p.distNewsroom, /LOCAL MOCK MODE|Development mock backend/), 'mock-mode strings found in the newsroom build'],
   ]
   for (const [ok, msg] of checks) if (!ok) throw new Error(`post-build check failed: ${msg}`)
+  // The production build requests its static images under site/ (the GitHub Pages layout from tools/prepare-pages.mjs), while
+  // this server serves the plain vite output: mirror the static folders under site/ so legacy story photos load.
+  const siteDir = path.join(p.distPublic, 'site')
+  ensureDir(siteDir)
+  for (const entry of fs.readdirSync(p.distPublic)) {
+    if (entry === 'site' || entry === 'index.html') continue
+    fs.cpSync(path.join(p.distPublic, entry), path.join(siteDir, entry), { recursive: true })
+  }
   fs.writeFileSync(path.join(p.distPublic, 'robots.txt'), 'User-agent: *\nDisallow: /\n')
   writeJson(p.buildInfo, { builtAt: new Date().toISOString(), host, turnstileAction: cfg.turnstileAction })
   log('post-build checks passed (CMS URL, site key and action compiled in; ads off; no mock newsroom)')
