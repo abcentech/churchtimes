@@ -78,6 +78,23 @@ Docker alternative: the repository includes `apps/cms/Dockerfile` and a compose 
 A production compose setup is not defined yet. If you use Docker in production, run migrations as a separate
 step before starting the new container (`docker compose --profile app run --rm cms npm run migrate`).
 
+### 3.1 Docker smoke in CI
+
+`.github/workflows/cms-docker.yml` builds `apps/cms/Dockerfile` on every pull request that touches `apps/cms/**` (and on pushes to
+`feat/newsroom-mvp`), because Docker is not installed on the development machines. It uses no repository secrets: the PostgreSQL password,
+`PAYLOAD_SECRET`, `PREVIEW_SECRET` and `IP_HASH_SALT` are random per run. It then:
+
+1. builds the image (Buildx, GitHub Actions cache) and checks that the image sets a non-root `USER`, that no secret-bearing variable, build
+   placeholder or per-run secret is in the image environment, history or filesystem, and that no `.env` file shipped;
+2. starts `postgres:16` and applies migrations **with the image** (`npm run migrate`), as the release procedure above requires;
+3. starts the CMS container in `NODE_ENV=production` (the production checks in `src/lib/securityConfig.ts` all run; the only relaxation is
+   `CMS_ALLOW_INSECURE_LOCAL_STAGING=true`, which is honoured only for loopback origins) and waits for the image `HEALTHCHECK` to report healthy;
+4. smoke-tests `GET /api/users/me` (200, anonymous, `user` null), `GET /admin` (200 or a redirect to a page that loads) and `GET /api/articles` (200),
+   the HSTS header (production build only), `id -u` of the container process (not 0), that `/app/media` is writable, and that no run secret was logged;
+5. prints the container logs if anything failed, and always removes the containers and network.
+
+The compose file is not used in CI. If the job fails, read the "Container logs (on failure)" step first: a start-up validation error lists every problem.
+
 ## 4. Environment variables
 
 Copy from `apps/cms/.env.example`. Keep the real file at `apps/cms/.env` on the server, owned by the deploy user,
