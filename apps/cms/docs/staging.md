@@ -394,8 +394,8 @@ every step in `docs/evidence/cross-app-steps/`. Screenshots contain synthetic da
    (The Dashboard table is wider than the screen but scroll-contained.)
 4. Minor: the "Log out" button text was dark on the dark header. **Fixed on the integration branch** (`.session-chip .btn-outline` in `apps/newsroom/styles/newsroom.css`).
 
-Limits: Turnstile action/hostname enforcement is not exercised (Cloudflare's test secret returns no `action`, so a non-empty `TURNSTILE_EXPECTED_ACTION` would fail closed; the
-CMS unit tests cover it with a stubbed transport). Scheduled publishing, live coverage UI, correction notes and Firefox/Safari are not covered. Chromium only.
+Limits: Turnstile action/hostname enforcement is not exercised in the browser lane (Cloudflare's test secret returns no `action`, so a non-empty `TURNSTILE_EXPECTED_ACTION` would fail closed).
+Endpoint-level enforcement (wrong/missing hostname or action, nothing stored) is covered by `tests/integration/turnstile-policy.test.ts` with a stubbed transport. Scheduled publishing, live coverage UI, correction notes and Firefox/Safari are not covered. Chromium only.
 
 ### Teardown message `next start exited with code 1` (e2e/browser stack)
 

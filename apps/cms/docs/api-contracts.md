@@ -148,7 +148,7 @@ Request headers: `Content-Type: application/json` (anything else → 415). If `O
 `PUBLIC_SUBMISSION_ORIGINS` (→ 403). Send the request with `credentials: 'omit'`. Every response to an allowlisted
 origin carries `Access-Control-Allow-Origin` (exact echo) and `Access-Control-Expose-Headers: Retry-After` (v1.3), so a
 cross-origin script can read `Retry-After` on a 429. A 403 for an origin that is not allowlisted has no CORS grant
-(the browser reports a network error). If `TURNSTILE_EXPECTED_ACTION` is set (comma list, e.g. `submit-story,public_story`)
+(the browser reports a network error). If `TURNSTILE_EXPECTED_ACTION` is set (comma list, e.g. `submit-story`; it must match the public build's `VITE_TURNSTILE_ACTION`)
 the widget's `action` must be one of the entries, otherwise 403.
 
 ```json

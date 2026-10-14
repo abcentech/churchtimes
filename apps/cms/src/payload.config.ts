@@ -46,10 +46,11 @@ const corsOrigins = csv(process.env.CMS_CORS_ORIGINS).map(normaliseOrigin)
 const csrfOrigins = csv(process.env.CMS_CSRF_ORIGINS).map(normaliseOrigin)
 
 if (isProd && !isBuildPhase) {
-  const { problems } = validateProductionEnv(process.env)
+  const { problems, warnings } = validateProductionEnv(process.env)
   if (problems.length > 0) {
     throw new Error(`Insecure or incomplete production configuration: ${problems.join(' | ')}`)
   }
+  for (const warning of warnings) console.warn(`[security] ${warning}`)
 } else if (!isTest && !isProd) {
   // Outside production: wildcards and malformed origins are still rejected; http://localhost is fine.
   const problems = [

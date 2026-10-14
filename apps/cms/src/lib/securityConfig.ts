@@ -123,7 +123,10 @@ const UNSAFE_IP_HEADERS = new Set([
 ])
 
 export type ProductionEnvCheck = {
+  /** Startup fails when non-empty. */
   problems: string[]
+  /** Logged at startup; never fails the start. */
+  warnings: string[]
 }
 
 /**
@@ -132,6 +135,7 @@ export type ProductionEnvCheck = {
  */
 export function validateProductionEnv(env: NodeJS.ProcessEnv): ProductionEnvCheck {
   const problems: string[] = []
+  const warnings: string[] = []
 
   const secret = env.PAYLOAD_SECRET ?? ''
   if (secret.length < 32) problems.push('PAYLOAD_SECRET must be set and at least 32 characters long.')
@@ -150,6 +154,24 @@ export function validateProductionEnv(env: NodeJS.ProcessEnv): ProductionEnvChec
   if (!turnstile) problems.push('TURNSTILE_SECRET_KEY is required in production (Cloudflare Turnstile secret key).')
   else if (isTurnstileDummySecret(turnstile) && !staging.enabled) {
     problems.push('TURNSTILE_SECRET_KEY is one of Cloudflare\'s dummy test secrets; use the real secret in production.')
+  }
+
+  // Optional widget pinning. Not a startup failure (the secret alone is valid), but without these two settings a
+  // token minted for another hostname or widget action is accepted. Disposable staging uses Cloudflare's dummy keys,
+  // which always report fixed hostnames, so the advice does not apply there.
+  if (!staging.enabled) {
+    if (!(env.TURNSTILE_ALLOWED_HOSTNAMES ?? '').trim()) {
+      warnings.push(
+        'TURNSTILE_ALLOWED_HOSTNAMES is not set: Turnstile tokens issued for any hostname are accepted. Set it to the public ' +
+          'hostname(s) of the widget (comma list, for example www.churchtimesnigeria.net).',
+      )
+    }
+    if (!(env.TURNSTILE_EXPECTED_ACTION ?? '').trim()) {
+      warnings.push(
+        'TURNSTILE_EXPECTED_ACTION is not set: Turnstile tokens with any widget action are accepted. Set it to the action the ' +
+          'public site sends (VITE_TURNSTILE_ACTION in its build, default submit-story).',
+      )
+    }
   }
 
   const publicUrl = env.CMS_PUBLIC_URL?.trim() ?? ''
@@ -191,5 +213,5 @@ export function validateProductionEnv(env: NodeJS.ProcessEnv): ProductionEnvChec
     problems.push('EMAIL_FROM_ADDRESS is required when SMTP_HOST is set.')
   }
 
-  return { problems }
+  return { problems, warnings }
 }
