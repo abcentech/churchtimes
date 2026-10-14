@@ -162,6 +162,8 @@ test.describe('A. reporter -> review -> editor approve + publish -> anonymous pu
     const ctx = await freshContext(browser, info)
     const page = await ctx.newPage()
     const ev = new Evidence(cfg, info, 'A3-anonymous-public')
+    // Only this test's own traffic: the proxy log is cumulative (earlier specs and projects log public-origin requests from logged-in staff contexts).
+    const logStart = (await serverLog(cfg)).length
     try {
       const { cardImage } = await expectPublishedOnPublicSite(page, cfg, { title: s.title, standfirst: s.standfirst, bodyText: s.body.split('\n')[0], imageAlt: s.alt, slug: s.slug })
       expect(cardImage).toBe(true)
@@ -174,7 +176,7 @@ test.describe('A. reporter -> review -> editor approve + publish -> anonymous pu
       // The seeded secret draft never shows up either
       expect(JSON.stringify((await api.get(null, '/api/articles?limit=100&depth=0')).json)).not.toContain('E2E Secret Draft Zed')
       // The public site sent no session cookie to the CMS
-      const log = (await serverLog(cfg)).filter((r) => r.origin === cfg.publicOrigin)
+      const log = (await serverLog(cfg)).slice(logStart).filter((r) => r.origin === cfg.publicOrigin)
       expect(log.length).toBeGreaterThan(0)
       expect(log.every((r) => r.cookieNames.length === 0), 'public site requests carry no cookie').toBe(true)
       logLine(cfg, `[A3][${info.project.name}] ${log.length} public-origin requests reached the CMS, none with a cookie`)

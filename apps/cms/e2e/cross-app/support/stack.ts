@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url'
 import EmbeddedPostgres from 'embedded-postgres'
 
 import { startRecorder, type Recorder } from '../../browser/support/recorder'
+import { webkitHttpCookieCompat } from './cookie-compat'
 import { startPublicHost, startStaticServer, type StaticServer } from './static-server'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -235,7 +236,7 @@ export async function startStack(): Promise<XappConfig> {
   })
 
   try {
-    recorder = await startRecorder(PORTS.cms, PORTS.cmsInternal)
+    recorder = await startRecorder(PORTS.cms, PORTS.cmsInternal, webkitHttpCookieCompat)
     await waitHttp(`http://127.0.0.1:${PORTS.cms}/api/users/me`, 240_000, 'CMS')
     await waitHttp(`http://127.0.0.1:${PORTS.cms}/api/categories?limit=1`, 240_000, 'CMS categories')
   } catch (e) {

@@ -9,6 +9,7 @@ import { expect, test } from '@playwright/test'
 import { Api, Evidence, getConfig, trackCmsCalls } from './support/helpers'
 import { gotoView, loginUi, logoutUi, press, requireNewsroom, slugify } from './support/newsroom'
 import { expectNotOnPublicSite } from './support/public'
+import { serverLog } from './support/recorder-log'
 import { tipFile } from './support/tip'
 
 const cfg = getConfig()
@@ -64,7 +65,24 @@ test.describe('B. reader tip -> newsroom review queue -> convert to draft (REAL 
     expect(anon.status).toBe(404)
     const pub = await api.get(null, `/api/articles?where[title][equals]=${encodeURIComponent(tip.title)}`)
     expect(pub.json.docs).toHaveLength(0)
+    // The staff session is live in this page. Whatever the public site sends to the CMS from here on must carry no cookie.
+    const logStart = (await serverLog(cfg)).length
     await expectNotOnPublicSite(page, cfg, slugify(tip.title), tip.title)
+    const fromPublic = (await serverLog(cfg)).slice(logStart).filter((r) => r.origin === cfg.publicOrigin)
+    const withCookie = fromPublic.filter((r) => r.cookieNames.length > 0)
+    expect(fromPublic.length, 'public site reached the CMS from the signed-in page').toBeGreaterThan(0)
+    ev.note(`public site -> CMS while staff signed in: ${fromPublic.length} requests, ${withCookie.length} with a cookie${withCookie.length ? ` (${withCookie.map((r) => `${r.method} ${r.path} sec-fetch-site=${r.secFetchSite}`).join('; ')})` : ''}`)
+    if (info.project.name.startsWith('webkit')) {
+      // ENGINE LIMITATION, not a product bug: Playwright's Windows WebKit attaches the cookie jar to cross-origin fetch even with credentials 'omit'
+      // (independent probe with a bare page and server: omit, same-origin and include all carried the cookie; Chromium and Firefox send it only for include).
+      // The public site's JSON fetches (src/lib/published-articles.js, credentials: 'omit') are exactly the offenders recorded here, so only
+      // these read-only API paths are tolerated on WebKit: anything else (media, writes, auth) carrying the cookie still fails.
+      info.annotations.push({ type: 'webkit-windows-omit-cookie', description: `${withCookie.length} omit-fetch(es) carried the cookie: ${withCookie.map((r) => r.path.split('?')[0]).join(', ')}` })
+      const unexpected = withCookie.filter((r) => !(r.method === 'GET' && /^\/api\/(articles|categories)(\?|$)/.test(r.path)))
+      expect(unexpected, 'only the public site omit-fetches (read-only articles/categories) may carry the cookie on Windows WebKit').toEqual([])
+    } else {
+      expect(withCookie, 'public site requests carry no staff cookie even while a staff session exists').toEqual([])
+    }
     await ev.shot(page, 'public site: converted tip is not published (article unavailable)')
   })
 
