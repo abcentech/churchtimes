@@ -29,6 +29,8 @@ RUN PAYLOAD_SECRET=build-only-placeholder-not-a-secret-000000000000 npm run buil
 # ---- runtime: minimal app, non-root ---------------------------------------------
 FROM node:24-bookworm-slim AS runtime
 ENV NODE_ENV=production \
+    NODE_OPTIONS=--no-deprecation \
+    NEXT_TELEMETRY_DISABLED=1 \
     HOSTNAME=0.0.0.0 \
     PORT=3000
 WORKDIR /app
@@ -44,4 +46,12 @@ COPY --from=build --chown=node:node /app/package.json /app/next.config.mjs /app/
 
 USER node
 EXPOSE 3000
-CMD ["npm", "run", "start"]
+
+# Liveness: anonymous GET /api/users/me answers 200 once Payload is initialised and the database is
+# reachable. The first request also initialises Payload, hence the generous start period and timeout.
+HEALTHCHECK --interval=15s --timeout=15s --start-period=40s --retries=5 \
+  CMD ["node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/users/me').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+
+# Same as `npm run start` (its cross-env only sets NODE_OPTIONS, which is an ENV above), but without the
+# npm wrapper process, so SIGTERM from `docker stop` reaches Next directly.
+CMD ["node", "node_modules/next/dist/bin/next", "start"]

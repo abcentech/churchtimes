@@ -21,6 +21,7 @@ import { openMediaPicker } from '../components/media-picker.js';
 import { markdownToHtml, countWords } from '../lexical.js';
 import { ApiError } from '../api/errors.js';
 import { escapeHtml, slugify, statusBadge, formatDate } from '../util.js';
+import { parseScheduleInput, isoToLocalInput, formatScheduled, defaultScheduleValue } from '../schedule.js';
 
 const states = new WeakMap();
 const stateOf = container => states.get(container);
@@ -136,6 +137,7 @@ export async function renderEditor(container, storyId = null) {
     </div>
 
     <div id="editor-error" data-testid="editor-error" role="alert" class="validation-summary-alert" style="display:none; margin-bottom: 1rem;"></div>
+    <div id="schedule-panel" class="ethics-notice-box" data-testid="editor-schedule-panel" style="display:none; margin-bottom: 1rem;"></div>
     ${!editable ? `<div class="ethics-notice-box" data-testid="editor-readonly-note" style="margin-bottom:1rem;"><p style="margin:0;">You can read this story but not edit it in its current status.</p></div>` : ''}
     ${story.lossy ? `<div class="ethics-notice-box" data-testid="editor-lossy-note" style="margin-bottom:1rem;"><p style="margin:0;">This story contains elements the newsroom editor cannot represent (for example embedded images, nested lists, underline, alignment or links that open in a new tab). The body is read-only here so nothing is lost; edit the body in the CMS admin.</p></div>` : ''}
 
@@ -602,6 +604,72 @@ function bindWorkflowActions(container) {
   });
 }
 
+/**
+ * Scheduling control: shown only to roles that may schedule (api.can('story.schedule')) for a saved story. The time is
+ * sent to the CMS as is; the CMS decides whether it is acceptable and its message is shown in the inline alert.
+ */
+function updateSchedulePanel(container) {
+  const st = stateOf(container);
+  const panel = container.querySelector('#schedule-panel');
+  if (!st || !panel) return;
+  const story = st.currentStory;
+  const show = Boolean(story.id) && api.can('story.schedule', ctxFor(story));
+  if (!show) {
+    panel.style.display = 'none';
+    panel.innerHTML = '';
+    return;
+  }
+  // Keep what the editor typed across re-renders (a failed save or a server error must not wipe the field).
+  const typed = panel.querySelector('#schedule-at-input')?.value;
+  const scheduled = story.status === 'scheduled' && story.scheduledFor;
+  const value = typed || (scheduled ? isoToLocalInput(story.scheduledFor) : defaultScheduleValue());
+  panel.style.display = 'block';
+  panel.innerHTML = `
+    <h4 style="margin-top:0;">Schedule publication</h4>
+    ${scheduled ? `<p style="margin:0 0 0.5rem;" data-testid="editor-scheduled-for" data-iso="${escapeHtml(story.scheduledFor)}">Scheduled to publish automatically on <strong>${escapeHtml(formatScheduled(story.scheduledFor))}</strong>.</p>` : ''}
+    <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+      <label for="schedule-at-input" class="form-label" style="margin:0;">Publish at (your local time)</label>
+      <input type="datetime-local" step="1" id="schedule-at-input" data-testid="editor-schedule-at" class="form-input" style="width:auto;" value="${escapeHtml(value)}" />
+      <button type="button" class="btn btn-primary btn-sm" id="btn-schedule-story" data-testid="editor-schedule">${scheduled ? 'Reschedule' : 'Schedule'}</button>
+    </div>`;
+  panel.querySelector('#btn-schedule-story').addEventListener('click', () => runSchedule(container));
+}
+
+async function runSchedule(container) {
+  const st = stateOf(container);
+  const input = container.querySelector('#schedule-at-input');
+  const parsed = parseScheduleInput(input?.value);
+  if (!parsed.ok) {
+    setInlineError(container, parsed.message);
+    return;
+  }
+  if (st.scheduling) return; // a double click must not send a second PATCH
+  st.scheduling = true;
+  const btn = container.querySelector('#btn-schedule-story');
+  if (btn) btn.disabled = true;
+  clearTimeout(st.autosaveTimer);
+  st.autosavePending = false;
+  try {
+    const saved = await performSave(container);
+    if (!saved.ok) return;
+    const res = await api.scheduleArticle(st.currentStory.id, parsed.iso);
+    st.currentStory = res.data;
+    st.baseline = snapshot(st.currentStory);
+    setInlineError(container, '');
+    const panel = container.querySelector('#schedule-panel');
+    const field = panel?.querySelector('#schedule-at-input');
+    if (field) field.value = ''; // show the saved value, not the typed one
+    updateStatusDisplay(container);
+    showToast(`Story scheduled for ${formatScheduled(st.currentStory.scheduledFor)}.`, 'success');
+  } catch (err) {
+    setInlineError(container, showApiError(err));
+  } finally {
+    st.scheduling = false;
+    const current = container.querySelector('#btn-schedule-story');
+    if (current) current.disabled = false;
+  }
+}
+
 function updateStatusDisplay(container) {
   const st = stateOf(container);
   const badge = container.querySelector('#story-status-badge-container');
@@ -622,6 +690,7 @@ function updateStatusDisplay(container) {
     wrap.innerHTML = renderWorkflowButtons(st.currentStory);
     bindWorkflowActions(container);
   }
+  updateSchedulePanel(container);
 }
 
 // ---------------------------------------------------------------------------------------------------

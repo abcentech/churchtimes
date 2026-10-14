@@ -23,9 +23,12 @@ export type Recorded = {
 
 export type Recorder = { close: () => Promise<void> }
 
+/** Optional hook (cross-app lane): may rewrite the response headers that go back to the browser. */
+export type ResponseHeaderHook = (requestHeaders: http.IncomingHttpHeaders, responseHeaders: http.IncomingHttpHeaders) => http.IncomingHttpHeaders
+
 const COOKIE_NAME = /^\s*([^=;\s]+)=/
 
-export function startRecorder(listenPort: number, upstreamPort: number): Promise<Recorder> {
+export function startRecorder(listenPort: number, upstreamPort: number, rewriteResponseHeaders?: ResponseHeaderHook): Promise<Recorder> {
   const log: Recorded[] = []
   const sockets = new Set<Socket>()
   const server = http.createServer((req, res) => {
@@ -63,7 +66,7 @@ export function startRecorder(listenPort: number, upstreamPort: number): Promise
         }
         entry.acao = h('access-control-allow-origin')
         entry.acac = h('access-control-allow-credentials')
-        res.writeHead(ur.statusCode ?? 502, ur.headers)
+        res.writeHead(ur.statusCode ?? 502, rewriteResponseHeaders ? rewriteResponseHeaders(req.headers, ur.headers) : ur.headers)
         ur.pipe(res)
       },
     )

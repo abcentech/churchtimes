@@ -78,6 +78,23 @@ Docker alternative: the repository includes `apps/cms/Dockerfile` and a compose 
 A production compose setup is not defined yet. If you use Docker in production, run migrations as a separate
 step before starting the new container (`docker compose --profile app run --rm cms npm run migrate`).
 
+### 3.1 Docker smoke in CI
+
+`.github/workflows/cms-docker.yml` builds `apps/cms/Dockerfile` on every pull request that touches `apps/cms/**` (and on pushes to
+`feat/newsroom-mvp`), because Docker is not installed on the development machines. It uses no repository secrets: the PostgreSQL password,
+`PAYLOAD_SECRET`, `PREVIEW_SECRET` and `IP_HASH_SALT` are random per run. It then:
+
+1. builds the image (Buildx, GitHub Actions cache) and checks that the image sets a non-root `USER`, that no secret-bearing variable, build
+   placeholder or per-run secret is in the image environment, history or filesystem, and that no `.env` file shipped;
+2. starts `postgres:16` and applies migrations **with the image** (`npm run migrate`), as the release procedure above requires;
+3. starts the CMS container in `NODE_ENV=production` (the production checks in `src/lib/securityConfig.ts` all run; the only relaxation is
+   `CMS_ALLOW_INSECURE_LOCAL_STAGING=true`, which is honoured only for loopback origins) and waits for the image `HEALTHCHECK` to report healthy;
+4. smoke-tests `GET /api/users/me` (200, anonymous, `user` null), `GET /admin` (200 or a redirect to a page that loads) and `GET /api/articles` (200),
+   the HSTS header (production build only), `id -u` of the container process (not 0), that `/app/media` is writable, and that no run secret was logged;
+5. prints the container logs if anything failed, and always removes the containers and network.
+
+The compose file is not used in CI. If the job fails, read the "Container logs (on failure)" step first: a start-up validation error lists every problem.
+
 ## 4. Environment variables
 
 Copy from `apps/cms/.env.example`. Keep the real file at `apps/cms/.env` on the server, owned by the deploy user,
@@ -93,8 +110,8 @@ message listing every problem (missing secrets, http or wildcard origins, dummy 
 | `PREVIEW_SECRET` | yes | 64 hex chars | HMAC secret for preview tokens, at least 32 characters, must differ from `PAYLOAD_SECRET`. |
 | `IP_HASH_SALT` | yes | 32 hex chars | Salt for hashing client IPs on submissions, at least 16 characters. |
 | `TURNSTILE_SECRET_KEY` | **yes (production)** | `0x4AAAA…` (secret) | Cloudflare Turnstile secret key. Startup fails in production without it, or with a Cloudflare dummy test secret. Dev fallback: always-pass test secret + warning. |
-| `TURNSTILE_ALLOWED_HOSTNAMES` | recommended | `www.churchtimesnigeria.net` | Comma list. Siteverify's `hostname` must match (case-insensitive). Do not set it with dummy/test keys (they return a fixed hostname). |
-| `TURNSTILE_EXPECTED_ACTION` | no | `submit-story,public_story` | Comma list. If set, the widget's `action` must be exactly one of the entries (case-sensitive); a token without an action is rejected. |
+| `TURNSTILE_ALLOWED_HOSTNAMES` | recommended (startup warning when unset) | `www.churchtimesnigeria.net` | Comma list. Siteverify's `hostname` must match (case-insensitive), otherwise 403. Do not set it with dummy/test keys (they return a fixed hostname). |
+| `TURNSTILE_EXPECTED_ACTION` | recommended (startup warning when unset) | `submit-story` | Comma list. If set, the widget's `action` must be exactly one of the entries (case-sensitive); a token without an action is rejected (403). Must include the value the public site sends as `VITE_TURNSTILE_ACTION` (default `submit-story`). |
 | `CMS_PUBLIC_URL` | **yes (production)** | `https://cms.example.org` | Public origin of the CMS: https, no trailing slash. Used as Payload `serverURL` (also added to the CSRF allowlist), reset links, absolute media URLs. |
 | `CMS_CORS_ORIGINS` | yes | `https://www.example.org,https://newsroom.example.org` | Browser origins allowed to call the API (CORS). Explicit origins only. |
 | `CMS_CSRF_ORIGINS` | yes | `https://newsroom.example.org` | Extra origins allowed to make cookie-authenticated requests (the CMS origin is always included). |
@@ -126,9 +143,10 @@ Frontends need only the **public** Turnstile site key (`TURNSTILE_SITE_KEY` in t
    - **Site key** (public): put it in the public website's build configuration and pass it to the widget
      (`data-sitekey`). Safe to expose.
    - **Secret key**: put it **only** in the CMS server's `.env` as `TURNSTILE_SECRET_KEY`. Never in git, frontend code or chat.
-4. Optionally set an `action` on the widget and list it in `TURNSTILE_EXPECTED_ACTION` (comma list, e.g.
-   `submit-story,public_story`; the public site's story form sends `public_story`), and set
-   `TURNSTILE_ALLOWED_HOSTNAMES` to the same hostnames as step 2.
+4. Pin the widget action and hostnames (recommended; the server logs a warning at startup while either is unset). The public
+   site sends the action from its build variable `VITE_TURNSTILE_ACTION` on both forms when it is set; only if it is
+   unset do the forms fall back to `submit-story` (story) and `submit-contact` (contact), so set `TURNSTILE_EXPECTED_ACTION` to that exact value (for example `submit-story`),
+   and set `TURNSTILE_ALLOWED_HOSTNAMES` to the same hostnames as step 2.
 5. The frontend sends the token in the JSON body as `turnstileToken`. Tokens are single use and expire after 5 minutes;
    after any error call `turnstile.reset()` and let the visitor retry.
 6. Verify after deploying:
@@ -397,7 +415,9 @@ Confirm each item before go-live and again after any change to the server:
 - [ ] `npm run migrate` has applied `review_fixes` (adds `media.uploaded_by_id`, `live_updates.publish_sequence`, back-fills it for approved updates).
 - [ ] `NODE_ENV=production` and the service starts (startup validation passes: https `CMS_PUBLIC_URL`, no `*`/http origins).
 - [ ] `TURNSTILE_SECRET_KEY` is the real secret from the Cloudflare dashboard (not a dummy key); the widget's hostnames match the public site;
-      `TURNSTILE_ALLOWED_HOSTNAMES` (and optionally `TURNSTILE_EXPECTED_ACTION`) are set. The secret exists only in the server `.env`.
+      `TURNSTILE_ALLOWED_HOSTNAMES` is set to the widget's public hostname(s), and `TURNSTILE_EXPECTED_ACTION` to the public build's
+      `VITE_TURNSTILE_ACTION` (default `submit-story`). The server cannot see the public build, so confirm the two values match by hand;
+      the startup log must show no `[security] TURNSTILE_*` warning. The secret exists only in the server `.env`.
 - [ ] The public site embeds only the Turnstile **site** key and sends `turnstileToken` with every submission.
 - [ ] `PAYLOAD_SECRET`, `PREVIEW_SECRET`, `IP_HASH_SALT` are each unique 32+ char random values; `.env` is mode 600.
 - [ ] `CMS_CORS_ORIGINS`, `CMS_CSRF_ORIGINS`, `PUBLIC_SUBMISSION_ORIGINS` contain only the real https origins.

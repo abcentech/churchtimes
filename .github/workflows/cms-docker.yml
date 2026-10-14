@@ -1,0 +1,237 @@
+name: CMS Docker smoke
+
+# Builds apps/cms/Dockerfile, migrates a throwaway PostgreSQL 16 with the image, boots the CMS container
+# in NODE_ENV=production and smoke-tests it. Docker is not installed on the development machines, so this
+# workflow is the only place the image is ever built and run. No repository secrets are used: every secret
+# below is generated per run and exists only on this runner.
+
+on:
+  pull_request:
+    paths:
+      - 'apps/cms/**'
+      - '.github/workflows/cms-docker.yml'
+  push:
+    branches:
+      - feat/newsroom-mvp
+    paths:
+      - 'apps/cms/**'
+      - '.github/workflows/cms-docker.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cms-docker-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: churchtimes-cms:ci
+  NETWORK: ctcms-ci
+  PG_CONTAINER: ctcms-ci-postgres
+  CMS_CONTAINER: ctcms-ci-cms
+  CMS_PORT: '3000'
+
+jobs:
+  docker-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate CI-only secrets and env file
+        # Random per run, prefixed so they are obviously not real. Masked in logs. Never hardcode secrets here.
+        run: |
+          set -euo pipefail
+          PG_PASSWORD="ci-only-$(openssl rand -hex 16)"
+          PAYLOAD_SECRET="ci-only-$(openssl rand -hex 32)"
+          PREVIEW_SECRET="ci-only-$(openssl rand -hex 32)"
+          IP_HASH_SALT="ci-only-$(openssl rand -hex 16)"
+          for v in "$PG_PASSWORD" "$PAYLOAD_SECRET" "$PREVIEW_SECRET" "$IP_HASH_SALT"; do echo "::add-mask::$v"; done
+          {
+            echo "PG_PASSWORD=$PG_PASSWORD"
+            echo "PAYLOAD_SECRET=$PAYLOAD_SECRET"
+            echo "PREVIEW_SECRET=$PREVIEW_SECRET"
+            echo "IP_HASH_SALT=$IP_HASH_SALT"
+          } >> "$GITHUB_ENV"
+
+          # Runtime env for the container. It satisfies validateProductionEnv() (src/lib/securityConfig.ts):
+          # CMS_ALLOW_INSECURE_LOCAL_STAGING=true is the documented flag that accepts http loopback origins and
+          # Cloudflare's public always-pass TEST secret (not a secret) in NODE_ENV=production; every other
+          # production check (secret lengths, TRUST_PROXY, no wildcards) still applies.
+          umask 077
+          cat > "$RUNNER_TEMP/cms.env" <<EOF
+          DATABASE_URL=postgres://churchtimes:${PG_PASSWORD}@${PG_CONTAINER}:5432/churchtimes_ci
+          PAYLOAD_SECRET=${PAYLOAD_SECRET}
+          PREVIEW_SECRET=${PREVIEW_SECRET}
+          IP_HASH_SALT=${IP_HASH_SALT}
+          TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
+          CMS_ALLOW_INSECURE_LOCAL_STAGING=true
+          CMS_PUBLIC_URL=http://localhost:${CMS_PORT}
+          CMS_CORS_ORIGINS=http://localhost:5174,http://localhost:5173
+          CMS_CSRF_ORIGINS=http://localhost:${CMS_PORT},http://localhost:5174
+          PUBLIC_SUBMISSION_ORIGINS=http://localhost:5173
+          TRUST_PROXY=true
+          TRUST_PROXY_HOPS=1
+          SCHEDULER_ENABLED=true
+          PAYLOAD_DB_PUSH=false
+          EOF
+          echo "ENV_FILE=$RUNNER_TEMP/cms.env" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/cms
+          file: apps/cms/Dockerfile
+          load: true
+          push: false
+          tags: ${{ env.IMAGE }}
+          cache-from: type=gha,scope=cms-docker
+          cache-to: type=gha,scope=cms-docker,mode=max,ignore-error=true
+
+      - name: Image hygiene (non-root user, no secrets baked in)
+        run: |
+          set -euo pipefail
+          user="$(docker image inspect --format '{{.Config.User}}' "$IMAGE")"
+          echo "image USER: ${user:-<unset>}"
+          [ -n "$user" ] && [ "$user" != "root" ] && [ "$user" != "0" ] || { echo "::error::image does not set a non-root USER"; exit 1; }
+
+          docker image inspect --format '{{json .Config.Env}}' "$IMAGE" > "$RUNNER_TEMP/image-env.txt"
+          docker history --no-trunc --format '{{.CreatedBy}}' "$IMAGE" > "$RUNNER_TEMP/image-history.txt"
+          echo "--- image ENV (names only) ---"
+          tr ',' '\n' < "$RUNNER_TEMP/image-env.txt" | sed -E 's/^\[?"//; s/=.*//' | sort
+          # No secret-bearing variable and neither the build placeholder nor this run's secrets in metadata.
+          if grep -E 'PAYLOAD_SECRET|PREVIEW_SECRET|IP_HASH_SALT|TURNSTILE_SECRET|DATABASE_URL|build-only-placeholder' \
+               "$RUNNER_TEMP/image-env.txt" "$RUNNER_TEMP/image-history.txt"; then
+            echo "::error::secret-looking value found in image config or history"; exit 1
+          fi
+          for s in "$PAYLOAD_SECRET" "$PREVIEW_SECRET" "$IP_HASH_SALT" "$PG_PASSWORD"; do
+            if grep -qF -- "$s" "$RUNNER_TEMP/image-env.txt" "$RUNNER_TEMP/image-history.txt"; then
+              echo "::error::a generated CI secret is present in image metadata"; exit 1
+            fi
+          done
+
+          # The build placeholder must not have leaked into any file the runtime stage ships.
+          rc=0
+          docker run --rm --entrypoint grep "$IMAGE" -rIl 'build-only-placeholder' \
+            /app/.next /app/src /app/package.json /app/next.config.mjs /app/tsconfig.json || rc=$?
+          if [ "$rc" -eq 0 ]; then echo "::error::build placeholder secret found inside the image filesystem"; exit 1; fi
+          [ "$rc" -eq 1 ] || { echo "::error::grep over the image failed (exit $rc)"; exit 1; }
+
+          # No .env files shipped.
+          envfiles="$(docker run --rm --entrypoint find "$IMAGE" /app -maxdepth 1 -name '.env*')"
+          [ -z "$envfiles" ] || { echo "::error::env file(s) in image: $envfiles"; exit 1; }
+          echo "image hygiene OK"
+
+      - name: Start PostgreSQL 16
+        run: |
+          set -euo pipefail
+          docker network create "$NETWORK"
+          docker run -d --name "$PG_CONTAINER" --network "$NETWORK" \
+            -e POSTGRES_USER=churchtimes -e POSTGRES_PASSWORD="$PG_PASSWORD" -e POSTGRES_DB=churchtimes_ci \
+            postgres:16
+          for i in $(seq 1 30); do
+            if docker exec "$PG_CONTAINER" pg_isready -U churchtimes -d churchtimes_ci -h 127.0.0.1 >/dev/null 2>&1; then
+              echo "postgres ready after ${i} attempt(s)"; exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::postgres did not become ready"; exit 1
+
+      - name: Run migrations with the image
+        # The container does not migrate on start (see the Dockerfile header); releases run this step first.
+        run: |
+          set -euo pipefail
+          docker run --rm --network "$NETWORK" --env-file "$ENV_FILE" "$IMAGE" npm run migrate
+          echo "tables after migrate:"
+          docker exec "$PG_CONTAINER" psql -U churchtimes -d churchtimes_ci -Atc \
+            "select count(*) from information_schema.tables where table_schema='public'"
+          docker exec "$PG_CONTAINER" psql -U churchtimes -d churchtimes_ci -Atc \
+            "select count(*) from information_schema.tables where table_schema='public' and table_name='articles'" | grep -qx 1
+
+      - name: Start CMS container
+        run: |
+          set -euo pipefail
+          docker run -d --name "$CMS_CONTAINER" --network "$NETWORK" --init \
+            --env-file "$ENV_FILE" -p "127.0.0.1:${CMS_PORT}:3000" "$IMAGE"
+
+      - name: Wait for the CMS to answer
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 60); do
+            if [ "$(docker inspect -f '{{.State.Running}}' "$CMS_CONTAINER")" != "true" ]; then
+              echo "::error::CMS container exited before becoming ready"; exit 1
+            fi
+            if curl -fsS --max-time 20 -o /dev/null "http://127.0.0.1:${CMS_PORT}/api/users/me"; then
+              echo "CMS answered after ${i} attempt(s)"; break
+            fi
+            [ "$i" -lt 60 ] || { echo "::error::CMS did not answer within the time limit"; exit 1; }
+            sleep 5
+          done
+          # The image HEALTHCHECK must agree (it polls every 15 s).
+          for i in $(seq 1 30); do
+            status="$(docker inspect -f '{{.State.Health.Status}}' "$CMS_CONTAINER")"
+            echo "health: $status"
+            [ "$status" = "healthy" ] && exit 0
+            sleep 5
+          done
+          echo "::error::container never reported healthy"; exit 1
+
+      - name: Smoke test the running container
+        run: |
+          set -euo pipefail
+          base="http://127.0.0.1:${CMS_PORT}"
+
+          # 1. Anonymous session: 200 with user null.
+          code="$(curl -sS --max-time 30 -o "$RUNNER_TEMP/me.json" -D "$RUNNER_TEMP/me.headers" -w '%{http_code}' "$base/api/users/me")"
+          echo "GET /api/users/me -> $code: $(cat "$RUNNER_TEMP/me.json")"
+          [ "$code" = "200" ]
+          jq -e '.user == null' "$RUNNER_TEMP/me.json" >/dev/null
+
+          # 2. Admin UI: 200 or a redirect (empty DB redirects to create-first-user / login); the redirect target must load.
+          code="$(curl -sS --max-time 60 -o /dev/null -w '%{http_code}' "$base/admin")"
+          echo "GET /admin -> $code"
+          case "$code" in 200|301|302|303|307|308) ;; *) echo "::error::unexpected /admin status $code"; exit 1 ;; esac
+          final="$(curl -sS --max-time 60 -L -o /dev/null -w '%{http_code}' "$base/admin")"
+          echo "GET /admin (following redirects) -> $final"
+          [ "$final" = "200" ]
+
+          # 3. Public collection read, anonymous.
+          code="$(curl -sS --max-time 30 -o "$RUNNER_TEMP/articles.json" -w '%{http_code}' "$base/api/articles")"
+          echo "GET /api/articles -> $code"
+          [ "$code" = "200" ]
+          jq -e '.docs | type == "array"' "$RUNNER_TEMP/articles.json" >/dev/null
+
+          # 4. Really running the production build (HSTS and NODE_ENV are production-only).
+          grep -qi '^strict-transport-security:' "$RUNNER_TEMP/me.headers" || { echo "::error::no HSTS header, not a production build?"; exit 1; }
+          [ "$(docker exec "$CMS_CONTAINER" printenv NODE_ENV)" = "production" ]
+
+          # 5. Non-root at runtime, and the media directory is writable by that user.
+          uid="$(docker exec "$CMS_CONTAINER" id -u)"
+          echo "container uid: $uid ($(docker exec "$CMS_CONTAINER" id -un))"
+          [ "$uid" != "0" ]
+          docker exec "$CMS_CONTAINER" sh -c 'touch /app/media/.write-test && rm /app/media/.write-test'
+
+          # 6. Secrets are only in the container's runtime env, never in the image (checked above). Fail
+          #    if the CMS logged any of this run's secrets.
+          docker logs "$CMS_CONTAINER" > "$RUNNER_TEMP/cms.log" 2>&1
+          for s in "$PAYLOAD_SECRET" "$PREVIEW_SECRET" "$IP_HASH_SALT" "$PG_PASSWORD"; do
+            if grep -qF -- "$s" "$RUNNER_TEMP/cms.log"; then echo "::error::a CI secret appears in the container log"; exit 1; fi
+          done
+          echo "smoke OK"
+
+      - name: Container logs (on failure)
+        if: failure()
+        run: |
+          echo "=== docker ps -a ==="; docker ps -a || true
+          echo "=== CMS container state ==="; docker inspect -f '{{json .State}}' "$CMS_CONTAINER" 2>/dev/null || true
+          echo "=== CMS container logs ==="; docker logs "$CMS_CONTAINER" 2>&1 | tail -n 300 || true
+          echo "=== PostgreSQL container logs ==="; docker logs "$PG_CONTAINER" 2>&1 | tail -n 100 || true
+
+      - name: Clean up
+        if: always()
+        run: |
+          docker rm -f "$CMS_CONTAINER" "$PG_CONTAINER" >/dev/null 2>&1 || true
+          docker network rm "$NETWORK" >/dev/null 2>&1 || true
+          rm -f "$RUNNER_TEMP/cms.env" "$RUNNER_TEMP"/image-env.txt "$RUNNER_TEMP"/image-history.txt "$RUNNER_TEMP"/cms.log "$RUNNER_TEMP"/me.* "$RUNNER_TEMP"/articles.json

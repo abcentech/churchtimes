@@ -172,3 +172,51 @@ describe('CMS_ALLOW_INSECURE_LOCAL_STAGING (disposable local staging only)', () 
     expect(validateProductionEnv(env).problems.join()).toMatch(/requires CMS_PUBLIC_URL/)
   })
 })
+
+describe('Turnstile pinning warnings (production: logged, never a startup failure)', () => {
+  it('warns about unset TURNSTILE_ALLOWED_HOSTNAMES and TURNSTILE_EXPECTED_ACTION without failing startup', () => {
+    const result = validateProductionEnv(good)
+    expect(result.problems).toEqual([])
+    expect(result.warnings).toHaveLength(2)
+    expect(result.warnings.join()).toMatch(/TURNSTILE_ALLOWED_HOSTNAMES is not set/)
+    expect(result.warnings.join()).toMatch(/TURNSTILE_EXPECTED_ACTION is not set/)
+  })
+
+  it('no warnings when both are set to real values', () => {
+    const env = { ...good, TURNSTILE_ALLOWED_HOSTNAMES: 'www.example.org', TURNSTILE_EXPECTED_ACTION: 'submit-story' }
+    expect(validateProductionEnv(env)).toEqual({ problems: [], warnings: [] })
+  })
+
+  it('treats blank values as unset', () => {
+    const env = { ...good, TURNSTILE_ALLOWED_HOSTNAMES: '  ', TURNSTILE_EXPECTED_ACTION: '' }
+    expect(validateProductionEnv(env).warnings).toHaveLength(2)
+  })
+
+  it('warns only for the setting that is missing', () => {
+    const onlyAction = validateProductionEnv({ ...good, TURNSTILE_EXPECTED_ACTION: 'submit-story' }).warnings
+    expect(onlyAction).toHaveLength(1)
+    expect(onlyAction[0]).toMatch(/TURNSTILE_ALLOWED_HOSTNAMES/)
+    const onlyHost = validateProductionEnv({ ...good, TURNSTILE_ALLOWED_HOSTNAMES: 'www.example.org' }).warnings
+    expect(onlyHost).toHaveLength(1)
+    expect(onlyHost[0]).toMatch(/TURNSTILE_EXPECTED_ACTION/)
+  })
+
+  it('keeps hard failures and warnings separate', () => {
+    const result = validateProductionEnv({ ...good, TRUST_PROXY: 'false' })
+    expect(result.problems.join()).toMatch(/TRUST_PROXY/)
+    expect(result.warnings).toHaveLength(2)
+  })
+
+  it('does not warn for disposable local staging (Cloudflare dummy keys report fixed hostnames)', () => {
+    const staging = {
+      ...good,
+      CMS_ALLOW_INSECURE_LOCAL_STAGING: 'true',
+      TURNSTILE_SECRET_KEY: '1x0000000000000000000000000000000AA',
+      CMS_PUBLIC_URL: 'http://cms.churchtimes.localhost:3100',
+      CMS_CORS_ORIGINS: 'http://www.churchtimes.localhost:5173',
+      CMS_CSRF_ORIGINS: 'http://newsroom.churchtimes.localhost:5174',
+      PUBLIC_SUBMISSION_ORIGINS: 'http://www.churchtimes.localhost:5173',
+    } as NodeJS.ProcessEnv
+    expect(validateProductionEnv(staging)).toEqual({ problems: [], warnings: [] })
+  })
+})

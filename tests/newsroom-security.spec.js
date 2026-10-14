@@ -261,6 +261,7 @@ async function stubCms(page, { articles = [], logout = { status: 200, body: { me
         const next = { ...doc, updatedAt: new Date().toISOString() };
         if (body.title !== undefined) next.title = body.title;
         if (body.excerpt !== undefined) next.excerpt = body.excerpt;
+        if (body.status !== undefined) next.status = body.status;
         docs.set(id, next);
         return json(route, 200, { doc: next, message: 'Updated successfully.' });
       }
@@ -345,6 +346,34 @@ test.describe('Production build against a stubbed CMS', () => {
     await page.getByTestId('editor-save-draft').click();
     await expect(page.locator('.toast').filter({ hasText: 'No changes to save' })).toHaveCount(2);
     expect(cms.log.patches).toEqual([]);
+  });
+
+  test('dashboard counts: one set of count requests per visit, reused across route changes, and fresh after the user submits a story', async ({ page }) => {
+    const countRequests = [];
+    page.on('request', req => {
+      const u = new URL(req.url());
+      if (u.pathname.endsWith('/api/articles') && u.searchParams.get('limit') === '1' && u.searchParams.has('where[status][equals]')) {
+        countRequests.push(u.searchParams.get('where[status][equals]'));
+      }
+    });
+    await stubCms(page, { articles: [stubArticle(1)] });
+    await page.goto(`${STUB_BASE}#dashboard`);
+    await expect(page.getByTestId('metric-value-draft')).toHaveText('1');
+    await page.waitForTimeout(300); // the nav badge refresh runs right after the dashboard renders
+    expect(countRequests).toHaveLength(7);
+
+    // route changes inside the cache window reuse the counts (no new count requests)
+    await page.evaluate(() => { window.location.hash = '#editor?id=1'; });
+    await expect(page.getByTestId('editor-title')).toHaveValue('Stub story 1');
+    await page.getByTestId('editor-submit-review').click();
+    await expect(page.locator('.toast').filter({ hasText: 'submitted for editorial review' })).toHaveCount(1);
+    expect(countRequests).toHaveLength(7);
+
+    // the user's own status change invalidates the cache: the dashboard shows the new totals at once
+    await page.evaluate(() => { window.location.hash = '#dashboard'; });
+    await expect(page.getByTestId('metric-value-in_review')).toHaveText('1');
+    await expect(page.getByTestId('metric-value-draft')).toHaveText('0');
+    expect(countRequests).toHaveLength(14);
   });
 
   test('a body with elements the editor cannot represent is read-only and is never rewritten (PATCH has no content)', async ({ page }) => {

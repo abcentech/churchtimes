@@ -3,6 +3,7 @@
  * Only ever loaded via dynamic import() behind `if (MOCK)`; absent from production bundles.
  */
 import { formatRoleName, escapeHtml } from '../util.js';
+import './mock-ui.css';
 
 export function installMockUi({ adapter, onSwitch }) {
   const controls = document.querySelector('.masthead-controls');
