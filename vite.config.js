@@ -12,7 +12,7 @@ export default defineConfig(({ mode }) => {
     transformIndexHtml: {
       order: 'pre',
       handler: (entry, ctx) => {
-        if (ctx?.path?.includes('newsroom')) return entry;
+        if (/^\/(?:apps\/)?newsroom(?:\/|$)/.test(ctx?.path || '')) return entry;
         const html = readFileSync(new URL('./src/index.template.html', import.meta.url), 'utf8');
         // Relative build assets must resolve from the site root on fresh deep URLs.
         return basePath ? html.replace('<head>', `<head>\n    <base href="${basePath}">`) : html;

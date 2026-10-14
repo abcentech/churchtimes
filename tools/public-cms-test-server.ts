@@ -37,7 +37,7 @@ const media = await f.payload.create({collection:'media',overrideAccess:true,
   file:{data:bytes,name:runId+'-fixture.png',mimetype:'image/png',size:bytes.length},
 })
 const published = await f.seedArticle({status:'published',publishedAt:new Date().toISOString(),
-  title:runId+' synthetic community report',excerpt:'Synthetic education and community fixture.',category:f.catA.id,bylineName:'CMS integration byline',featuredImage:media.id,content:lexical('Published text from real Payload and PostgreSQL.'),
+  slug:runId+'-newsroom-report',title:runId+' synthetic community report',excerpt:'Synthetic education and community fixture.',category:f.catA.id,bylineName:'CMS integration byline',featuredImage:media.id,content:lexical('Published text from real Payload and PostgreSQL.'),
   corrections:[{note:'A verified fixture correction.',correctedAt:new Date().toISOString()}],legacyUrl:'https://churchtimesnigeria.net/synthetic-fixture/',
 })
 const other = await f.seedArticle({status:'published',category:f.catB.id,title:runId+' separate category report',publishedAt:new Date().toISOString()})
