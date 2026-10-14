@@ -28,7 +28,7 @@ export const HOSTS = {
   cms: `http://cms.churchtimes.localhost:${PORTS.cms}`,
   newsroom: `http://newsroom.churchtimes.localhost:${PORTS.newsroom}`,
   public: `http://www.churchtimes.localhost:${PORTS.public}`,
-  /** Public site built exactly as docs/staging.md says (VITE_PUBLIC_CMS_URL only), to evidence a known gap. */
+  /** Public site built exactly as docs/staging.md says (VITE_PUBLIC_CMS_URL only), as a regression without an endpoint override. */
   publicGap: `http://www.churchtimes.localhost:${PORTS.publicGap}`,
 } as const
 
@@ -238,10 +238,7 @@ export async function startStack(): Promise<XappConfig> {
     {
       ...buildEnv,
       VITE_PUBLIC_CMS_URL: HOSTS.cms,
-      // GAP WORKAROUND: src/lib/public-submissions.js refuses http:// endpoints whose host is not literally localhost/127.0.0.1,
-      // so VITE_PUBLIC_CMS_URL=http://cms.churchtimes.localhost:... leaves the form disabled. The form posts to the same CMS via
-      // http://localhost:${PORTS.cms} instead (same server; the CMS accepts the www origin). Evidenced by public-gap.spec.ts.
-      VITE_PUBLIC_SUBMISSIONS_URL: `http://localhost:${PORTS.cms}/api/public/submissions`,
+      VITE_PUBLIC_SUBMISSIONS_URL: '', // Derive the endpoint from the documented CMS origin.
       VITE_TURNSTILE_SITE_KEY: TURNSTILE_TEST_SITE_KEY,
       VITE_TURNSTILE_ACTION: TURNSTILE_ACTION,
     },
@@ -251,7 +248,7 @@ export async function startStack(): Promise<XappConfig> {
   )
   preparePagesLayout(publicDir)
 
-  log('building the public site a second time exactly as docs/staging.md section 9 says (known-gap evidence)')
+  log('building the public site a second time exactly as docs/staging.md section 9 says (no-override regression)')
   const publicGapDir = path.join(tmpDir, 'public-gap')
   runNode(
     [viteBin, 'build', '--outDir', publicGapDir, '--emptyOutDir', '--logLevel', 'warn'],

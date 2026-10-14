@@ -109,10 +109,12 @@ Sitemap generation, full server-rendered section/search pages, redirecting histo
 WordPress URLs, CDN caching, reverse-proxy TLS/CSP policy and production indexing
 approval remain deployment/SEO follow-ups, not claims made by these tests.
 
-Claude's merged PR #21 `05-public-gap.spec.ts` marks the old localhost gap as an expected
-failure. Its owner must remove that `test.fail` when integrating this fix; otherwise
-a now-successful test will intentionally turn the integration lane red. This change
-does not edit `apps/cms` to adjust another owner's tests.
+The inherited public UI regression `05-public-gap.spec.ts` now asserts success
+without `test.fail`; the cross-app fixture builds the public site without the old
+localhost submission override. These two test-only changes under `apps/cms/e2e`
+exercise Codex's public behavior. No Payload/backend implementation or staff UI
+was changed. The full external-Cloudflare cross-app lane remains separately
+reproducible through `npm run test:e2e:cross-app` and is not counted in our results.
 
 ## Reproduce validation
 
