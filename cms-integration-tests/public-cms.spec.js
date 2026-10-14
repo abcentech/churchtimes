@@ -63,3 +63,77 @@ test('real rejected/spent Turnstile response cannot show success and preserves t
   await send(page).click();await expect(page.locator('#form-errors')).toContainText('Verification was not accepted');
   await expect(page.locator('#form-result')).toBeHidden();await expect(page.locator('#public-message')).toHaveValue(/must be rejected/);
 });
+
+test('real CMS category selection resolves a numeric relationship and search includes public bylines',async({page,request})=>{
+ const fixture=await (await request.get(cms+'/__test/fixtures')).json();
+ const response=await request.get(cms+'/api/articles?depth=1&where[slug][equals]='+fixture.publishedSlug);
+ const article=(await response.json()).docs[0];expect(article.category.id).toBeTruthy();
+ const requests=[];page.on('request',r=>{if(r.url().includes('/api/articles?'))requests.push(new URL(r.url()));});
+ await page.goto('/#latest');await expect(page.locator('#cms-category')).toBeVisible();
+ await page.locator('#cms-category').selectOption(article.category.slug);
+ await expect(page.locator('#cms-latest')).toContainText(article.title);
+ expect(requests.some(u=>u.searchParams.get('where[category][equals]')===String(article.category.id))).toBe(true);
+ await page.goto('/#search/'+encodeURIComponent(article.bylineName));
+ await expect(page.locator('#cms-search')).toContainText(article.title);
+ expect(requests.some(u=>u.searchParams.get('where[or][2][bylineName][like]')===article.bylineName)).toBe(true);
+ await page.goto('/#search/does-not-exist-'+fixture.runId);
+ await expect(page.locator('#cms-search')).toContainText('No matching published reports.');
+});
+
+test('clean direct article URLs reload, preserve navigation and expose canonical metadata',async({page,request},testInfo)=>{
+ const fixture=await (await request.get(cms+'/__test/fixtures')).json();
+ await page.goto('/reports/'+fixture.publishedSlug+'/');
+ await expect(page.locator('.article-header')).toContainText('CMS integration byline');
+ await expect(page.locator('link[rel="canonical"]')).toHaveAttribute('href','https://staging-public.example.test/reports/'+fixture.publishedSlug+'/');
+ await expect(page.locator('meta[property="og:type"]')).toHaveAttribute('content','article');
+ if(process.env.CAPTURE_PUBLIC_STAGING==='1')await page.screenshot({path:`docs/public-staging/real-article-${testInfo.project.name}.png`,fullPage:true});
+ await page.reload();await expect(page.locator('.article-header')).toContainText('CMS integration byline');
+ await page.locator('.breadcrumbs').getByRole('link',{name:'Latest reports'}).click();await expect(page).toHaveURL(/\/#latest$/);
+ await expect(page.locator('link[rel="canonical"]')).toHaveCount(0);
+ await page.locator('#cms-latest h2 a').first().click();await expect(page).toHaveURL(/\/reports\/[^/]+\/$/);
+});
+
+test('compiled public host serves article body and metadata without JavaScript and proper unpublished HTTP status',async({browser,request},testInfo)=>{
+ const fixture=await (await request.get(cms+'/__test/fixtures')).json();
+ const ssr=process.env.PUBLIC_SSR_TEST_URL || 'http://127.0.0.1:5373';
+ const context=await browser.newContext({...testInfo.project.use,javaScriptEnabled:false});const page=await context.newPage();
+ try {
+  const response=await page.goto(ssr+'/reports/'+fixture.publishedSlug+'/');expect(response.status()).toBe(200);
+  await expect(page.locator('h1')).toHaveCount(1);await expect(page.locator('main')).toContainText('Published text from real Payload and PostgreSQL.');
+  await expect(page.locator('link[rel="canonical"]')).toHaveAttribute('href','https://staging-public.example.test/reports/'+fixture.publishedSlug+'/');
+  await expect(page.locator('meta[property="og:type"]')).toHaveAttribute('content','article');
+  expect(JSON.parse(await page.locator('#article-schema').textContent())['@type']).toBe('NewsArticle');
+  if(process.env.CAPTURE_PUBLIC_STAGING==='1')await page.screenshot({path:`docs/public-staging/ssr-no-js-${testInfo.project.name}.png`,fullPage:true});
+  const missing=await page.goto(ssr+'/reports/'+fixture.draftSlug+'/');expect(missing.status()).toBe(404);await expect(page.locator('h1')).toHaveText('Article unavailable.');
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ }finally{await context.close();}
+});
+
+test('real CMS rejects missing token and disallowed Origin without a fabricated receipt',async({page,request},testInfo)=>{
+ const fixture=await (await request.get(cms+'/__test/fixtures')).json();
+ await widget(page);await page.goto('/#submit');await fill(page,{email:fixture.runId+'-missing-'+testInfo.project.name+'@test.invalid',title:fixture.runId+'-missing-token',body:'This synthetic story exercises genuine server rejection and safe field errors.'});
+ await page.getByRole('button',{name:'Complete test verification',exact:true}).click();
+ await page.route('**/api/public/submissions',route=>{const data=route.request().postDataJSON();data.turnstileToken='';return route.continue({postData:JSON.stringify(data)});});
+ await send(page).click();await expect(page.locator('#form-errors')).toContainText('Verification was not accepted');await expect(page.locator('#form-result')).toBeHidden();
+ await page.unroute('**/api/public/submissions');
+ // The compiled host is intentionally omitted from the submission origin allowlist.
+ // The real REST layer exposes its 403: the UI must show a safe failure.
+ const ssr=process.env.PUBLIC_SSR_TEST_URL || 'http://127.0.0.1:5373';
+ const denied=await request.post(cms+'/api/public/submissions',{headers:{Origin:ssr},data:{}});expect(denied.status()).toBe(403);
+ await page.goto(ssr+'/#submit');await fill(page,{email:fixture.runId+'-origin-'+testInfo.project.name+'@test.invalid',title:fixture.runId+'-origin-denial',body:'This synthetic story exercises genuine origin rejection and safe errors.'});
+ await page.getByRole('button',{name:'Complete test verification',exact:true}).click();await send(page).click();
+ await expect(page.locator('#form-errors')).toContainText('cannot accept submissions');await expect(page.locator('#form-result')).toBeHidden();await expect(page.locator('#public-message')).toHaveValue(/synthetic story/);
+
+});
+
+
+test('reserved localhost CMS URL enables real anonymous submissions without an endpoint override',async({page,request},testInfo)=>{
+ const fixture=await (await request.get(cms+'/__test/fixtures')).json();
+ await widget(page);await page.goto((process.env.PUBLIC_ALIAS_TEST_URL || 'http://127.0.0.1:5179')+'/#submit');
+ await expect(send(page)).toBeEnabled();
+ await fill(page,{email:fixture.runId+'-alias-'+testInfo.project.name+'@test.invalid',title:fixture.runId+'-alias-story',body:'This synthetic submission verifies the reserved localhost CMS origin without an override.'});
+ await page.getByRole('button',{name:'Complete test verification',exact:true}).click();
+ const response=page.waitForResponse(r=>r.url().includes('cms.churchtimes.localhost') && r.request().method()==='POST');await send(page).click();expect((await response).status()).toBe(201);
+ await expect(page.getByRole('heading',{name:'Your story is awaiting review.'})).toBeVisible();
+ if(process.env.CAPTURE_PUBLIC_STAGING==='1')await page.screenshot({path:`docs/public-staging/localhost-receipt-${testInfo.project.name}.png`,fullPage:true});
+});

@@ -14,7 +14,8 @@
     "check:pages": "node tools/check-pages-export.mjs",
     "test:forms": "playwright test --config playwright.forms.config.js",
     "test:advertising": "playwright test --config playwright.advertising.config.js",
-    "test:cms": "node tools/run-public-cms-tests.mjs"
+    "test:cms": "node tools/run-public-cms-tests.mjs",
+    "serve:public": "node tools/serve-public.mjs"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",

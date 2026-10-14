@@ -20,10 +20,12 @@ CMS origin. No cookies, authentication headers, privileged endpoints or draft
 preview tokens are sent by the adapter.
 
 `#latest` lists reports, newest first, with pagination and retry controls.
-`#report/<slug>` opens a published report and supports direct links and sharing.
+`/reports/<slug>/` opens a published report and supports direct links and sharing.
+Legacy `#report/<slug>` links normalize to that path. See [staging and SSR setup](public-staging-issue15.md) for initial HTML and HTTP status requirements.
 The homepage adds up to three published reports when configured; an unavailable
-CMS leaves the current edition intact. CMS stories are not yet included in the
-static edition's search or reading list.
+CMS leaves the current edition intact. CMS search results now appear in a separate published-results section; public
+category browsing resolves CMS numeric IDs. The browser-local reading list still
+contains the selected static edition only.
 
 ## Verified CMS contract v1.2
 

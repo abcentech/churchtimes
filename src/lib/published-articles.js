@@ -1,3 +1,4 @@
+import { publicOrigin } from './public-url.js';
 /**
  * Church Times published-content adapter.
  *
@@ -95,21 +96,31 @@ async function requestPublishedArticles({
   page = 1,
   slug,
   signal,
+  categoryId,
+  query,
+  collection = 'articles',
+  categorySlug,
 } = {}) {
   if (!baseUrl) throw new CMSReadError('configuration','CMS base URL is required');
   let origin;
   try { origin = new URL(baseUrl); } catch { throw new CMSReadError('configuration','CMS base URL must be an absolute HTTP(S) URL'); }
-  if (!['https:', 'http:'].includes(origin.protocol) || origin.username || origin.password) {
+  if (!publicOrigin(baseUrl)) {
     throw new CMSReadError('configuration','CMS base URL must be an absolute HTTP(S) URL');
   }
   const safeLimit = Math.max(1, Math.min(MAX_ITEMS, Math.floor(Number(limit)) || 20));
-  const url = new URL('/api/articles', origin);
-  url.searchParams.set('where[status][equals]', 'published');
+  const url = new URL(`/api/${collection}`, origin);
+  if(collection==='articles') url.searchParams.set('where[status][equals]', 'published');
   url.searchParams.set('limit', String(safeLimit));
   url.searchParams.set('depth', '1');
-  url.searchParams.set('sort', '-publishedAt');
+  url.searchParams.set('sort', collection==='articles' ? '-publishedAt' : 'title');
   url.searchParams.set('page', String(Math.max(1, Math.floor(Number(page)) || 1)));
-  if (slug) url.searchParams.set('where[slug][equals]', slug);
+  if (slug || categorySlug) url.searchParams.set('where[slug][equals]', slug || categorySlug);
+  if (categoryId !== undefined) {
+    if (!/^\d{1,15}$/.test(String(categoryId))) throw new CMSReadError('configuration','Category filters require numeric IDs');
+    url.searchParams.set('where[category][equals]',String(categoryId));
+  }
+  const term=typeof query==='string' ? query.trim().slice(0,120) : '';
+  if(term) ['title','excerpt','bylineName'].forEach((field,i)=>url.searchParams.set(`where[or][${i}][${field}][like]`,term));
 
   const controller = new AbortController();
   const abort = () => controller.abort();
@@ -128,7 +139,7 @@ async function requestPublishedArticles({
     let payload;
     try {payload=await response.json();} catch { if(controller.signal.aborted)throw new Error('aborted');throw new CMSReadError('response','Unexpected CMS response'); }
     if (!Array.isArray(payload?.docs)) throw new CMSReadError('response','Unexpected CMS response');
-    const articles = payload.docs.map(record=>normalizePublishedArticle(record,{baseUrl})).filter(Boolean);
+    const articles = collection==='categories' ? payload.docs.map(normalizeCategory).filter(Boolean) : payload.docs.map(record=>normalizePublishedArticle(record,{baseUrl})).filter(Boolean);
     const nextPage = payload.hasNextPage === true && Number.isSafeInteger(payload.nextPage)
       && payload.nextPage > Number(url.searchParams.get('page')) ? payload.nextPage : null;
     return { articles, nextPage };
@@ -155,4 +166,17 @@ export async function fetchPublishedArticle({ slug, ...options } = {}) {
   if (!validSlug(slug)) return null;
   const { articles } = await requestPublishedArticles({ ...options, slug, limit: 1 });
   return articles.find(article => article.slug === slug) || null;
+}
+
+function normalizeCategory(record) {
+  if (!record || !/^\d{1,15}$/.test(String(record.id)) || !validSlug(record.slug) || !plainText(record.title)) return null;
+  return {id:String(record.id),slug:record.slug,title:plainText(record.title,100),description:plainText(record.description,600)};
+}
+export async function fetchPublicCategories(options={}) {
+  return requestPublishedArticles({...options,collection:'categories',limit:100});
+}
+export async function fetchPublicCategory({slug,...options}={}) {
+  if(!validSlug(slug)) return null;
+  const {articles}=await requestPublishedArticles({...options,collection:'categories',categorySlug:slug,limit:1});
+  return articles.find(category=>category.slug===slug) || null;
 }
