@@ -1,14 +1,14 @@
 import type { Page } from '@playwright/test'
 
 import type { Role, XappConfig } from './helpers'
-import { Api } from './helpers'
+import { Api, apiBase } from './helpers'
 
 /** Node-side JSON client for live coverage state (authoritative server truth, JWT header, so no cookie/CSRF involved). */
 export class LiveApi extends Api {
   private root: string
   constructor(cfg: XappConfig) {
     super(cfg)
-    this.root = new URL(cfg.recorderUrl).origin
+    this.root = apiBase(cfg)
   }
 
   async send(role: Role | null, method: 'POST' | 'PATCH', urlPath: string, body: unknown): Promise<{ status: number; json: any }> {

@@ -14,6 +14,7 @@ import { expect, test, type Page } from '@playwright/test'
 
 import { Evidence, getConfig, logLine, trackCmsCalls, uniq } from './support/helpers'
 import { anonymousGet, LiveApi } from './support/live'
+import { appCookies, isRemote } from './support/remote'
 import { expectLiveMode, freshContext, gotoView, loginUi, logoutUi, requireNewsroom } from './support/newsroom'
 
 const cfg = getConfig()
@@ -30,7 +31,8 @@ const st = (project: string): State => {
 
 const PUBLIC_UPDATE_KEYS = ['approvedAt', 'body', 'id', 'occurredAt', 'sequence']
 const PUBLIC_EVENT_KEYS = ['id', 'slug', 'status', 'title']
-const STAFF_ONLY = ['author', 'approvedBy', 'e2e-section-editor', 'e2e-reporter', 'churchtimes.invalid', 'publishSequence', 'reviewNotes']
+// remote: the real staff e-mail addresses of the credentials file must not leak either
+const STAFF_ONLY = ['author', 'approvedBy', 'e2e-section-editor', 'e2e-reporter', 'churchtimes.invalid', 'publishSequence', 'reviewNotes', ...(isRemote ? Object.values(cfg.credentials).map((c) => c.email) : [])]
 
 async function openLive(page: Page, eventId: number, note?: (t: string) => void) {
   await gotoView(page, 'live', note)
@@ -245,7 +247,7 @@ test.describe('Live coverage: editor + reporter in the newsroom, anonymous reade
     const ctx = await freshContext(browser, info)
     const page = await ctx.newPage()
     await page.goto(`${cfg.publicOrigin}/`)
-    expect(await ctx.cookies(), 'the reader has no cookies at all').toHaveLength(0)
+    expect(appCookies(await ctx.cookies()), 'the reader has no cookies at all').toHaveLength(0)
 
     const feed = await anonymousGet(page, cfg.cmsUrl, `/api/live-events/${s.slug}/updates`)
     expect(feed.status).toBe(200)

@@ -4,11 +4,12 @@ import path from 'node:path'
 import type { FullResult, Reporter, TestCase, TestResult } from '@playwright/test/reporter'
 
 import { evidenceLogName } from './helpers'
+import { isRemote } from './remote'
 
 /** Appends a PASS/FAIL line per test (and the failure message) to docs/evidence/cross-app-<date>.txt. */
 export default class EvidenceReporter implements Reporter {
   private lines: string[] = []
-  private dir = path.resolve(process.cwd(), 'docs', 'evidence')
+  private dir = path.resolve(process.cwd(), 'docs', 'evidence', ...(isRemote ? ['remote'] : []))
 
   onTestEnd(test: TestCase, result: TestResult): void {
     const project = test.parent.project()?.name ?? '?'
@@ -23,6 +24,10 @@ export default class EvidenceReporter implements Reporter {
 
   onEnd(result: FullResult): void {
     if (process.env.XAPP_KEEP_EVIDENCE === '0') return
+    if (isRemote) {
+      if (!this.lines.length) return // setup failed or --list: nothing ran, nothing to record
+      fs.mkdirSync(this.dir, { recursive: true })
+    }
     const file = path.join(this.dir, evidenceLogName())
     const counts = this.lines.filter((l) => /^(PASS|FAIL|SKIP)/.test(l)).reduce<Record<string, number>>((m, l) => ({ ...m, [l.slice(0, 4)]: (m[l.slice(0, 4)] ?? 0) + 1 }), {})
     fs.appendFileSync(

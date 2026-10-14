@@ -9,7 +9,8 @@ import { expect, test } from '@playwright/test'
 import { Api, Evidence, getConfig, logLine, makePng, trackCmsCalls, uniq } from './support/helpers'
 import { expectLiveMode, freshContext, gotoView, loginUi, logoutUi, press, requireNewsroom, slugify } from './support/newsroom'
 import { expectPublishedOnPublicSite } from './support/public'
-import { serverLog } from './support/recorder-log'
+import { isRemote } from './support/remote'
+import { startCmsRequestLog } from './support/recorder-log'
 
 const cfg = getConfig()
 const api = new Api(cfg)
@@ -39,7 +40,9 @@ test.describe('A. reporter -> review -> editor approve + publish -> anonymous pu
     await ev.shot(page, 'logged out newsroom shows only the sign-in form')
     await loginUi(page, cfg, 'reporter')
     await expectLiveMode(page)
-    await expect(page.getByTestId('session-user-name')).toHaveText('E2E reporter')
+    // local: the seeded display name; remote: the optional "name" of the credentials file (any non-empty name otherwise)
+    const reporterName = isRemote ? cfg.credentials.reporter.name : 'E2E reporter'
+    await expect(page.getByTestId('session-user-name')).toHaveText(reporterName ?? /[^\s]/)
     await ev.shot(page, 'reporter signed in (server-verified session, LIVE CMS banner)')
 
     // --- write the story
@@ -163,7 +166,8 @@ test.describe('A. reporter -> review -> editor approve + publish -> anonymous pu
     const page = await ctx.newPage()
     const ev = new Evidence(cfg, info, 'A3-anonymous-public')
     // Only this test's own traffic: the proxy log is cumulative (earlier specs and projects log public-origin requests from logged-in staff contexts).
-    const logStart = (await serverLog(cfg)).length
+    // Remote: the request headers Playwright sees on this page (no recording proxy in front of the deployed CMS).
+    const cmsLog = await startCmsRequestLog(page, cfg)
     try {
       const { cardImage } = await expectPublishedOnPublicSite(page, cfg, { title: s.title, standfirst: s.standfirst, bodyText: s.body.split('\n')[0], imageAlt: s.alt, slug: s.slug })
       expect(cardImage).toBe(true)
@@ -176,7 +180,7 @@ test.describe('A. reporter -> review -> editor approve + publish -> anonymous pu
       // The seeded secret draft never shows up either
       expect(JSON.stringify((await api.get(null, '/api/articles?limit=100&depth=0')).json)).not.toContain('E2E Secret Draft Zed')
       // The public site sent no session cookie to the CMS
-      const log = (await serverLog(cfg)).slice(logStart).filter((r) => r.origin === cfg.publicOrigin)
+      const log = (await cmsLog.finish()).filter((r) => r.origin === cfg.publicOrigin)
       expect(log.length).toBeGreaterThan(0)
       expect(log.every((r) => r.cookieNames.length === 0), 'public site requests carry no cookie').toBe(true)
       logLine(cfg, `[A3][${info.project.name}] ${log.length} public-origin requests reached the CMS, none with a cookie`)

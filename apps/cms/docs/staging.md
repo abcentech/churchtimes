@@ -381,6 +381,64 @@ Uploaded test images land in `apps/cms/media` with a per-run prefix and are remo
 Evidence: `docs/evidence/cross-app-2026-10-13.txt` (per-step log, server-side checks, results), headline screenshots `docs/evidence/cross-app-<scenario>-<project>.png`,
 every step in `docs/evidence/cross-app-steps/`. Screenshots contain synthetic data only (the login screenshot is taken before any password is typed).
 
+### Remote mode: the same journeys against a deployed https staging
+
+`XAPP_REMOTE=1` (via `npm run test:e2e:remote`) boots nothing and drives Chromium against the deployed public site, newsroom and CMS with real DNS, real Let's Encrypt
+certificates (never disabled) and the real Turnstile keys. It only creates synthetic content; local mode is unchanged.
+
+```bash
+cd apps/cms
+export XAPP_PUBLIC_URL=https://staging.churchtimesnigeria.net            # the three URLs are required (these are examples), https only
+export XAPP_NEWSROOM_URL=https://newsroom.staging.churchtimesnigeria.net
+export XAPP_CMS_URL=https://cms.staging.churchtimesnigeria.net
+export XAPP_REMOTE_CREDENTIALS=$HOME/secrets/xapp-remote-credentials.json   # outside the repo (or named xapp-remote-credentials*.json, gitignored)
+npm run test:e2e:remote                  # headless; add `-- --headed` (or XAPP_HEADED=1) so a human can click a Turnstile challenge
+npm run test:e2e:remote -- --plan        # no browser, no network: lists every test as RUN or SKIP (with the reason)
+npx tsx e2e/cross-app/remote-cleanup.ts E2E-20261014-1530   # sweep a run that crashed before its teardown (same prefix rules)
+```
+
+Credentials file (placeholders only; never printed, logged or committed; ids and roles are resolved by logging in, and the run stops if a role does not match):
+
+```json
+{
+  "categoryTitle": "News",
+  "credentials": {
+    "admin":           { "email": "<admin email>",          "password": "<password>" },
+    "reporter":        { "email": "<reporter email>",       "password": "<password>", "name": "<display name, optional>" },
+    "section-editor":  { "email": "<section editor email>", "password": "<password>" },
+    "editor-in-chief": { "email": "<optional>",             "password": "<password>" }
+  }
+}
+```
+
+Other env: `XAPP_REMOTE_SCHEDULER_SECONDS` (default 60) is the deployed scheduler tick (`SCHEDULER_INTERVAL_SECONDS` there): spec 08 schedules 75 s ahead and waits up to lead + tick + 120 s;
+`XAPP_REMOTE_CATEGORY` (default `News`) is the category the stories use; `XAPP_RUN_PREFIX` overrides the run prefix; `XAPP_KEEP_EVIDENCE=0` writes no evidence.
+Evidence goes to `docs/evidence/remote/` and failure artifacts to `test-results/cross-app-remote/`, both gitignored.
+
+Preconditions on staging: the scheduler is enabled; at least one article is published; the public site is served by the real public host (clean `/reports/<slug>/` URLs, real 404s);
+the CMS rate limits allow one run from one IP (about 80 logins and 6 public submissions in the window: `AUTH_LOGIN_RATE_LIMIT` >= 200 and `SUBMISSION_RATE_LIMIT` >= 10 while testing);
+this machine's clock is within a few seconds of the server (scheduling); Cloudflare does not block Node `fetch` calls to the CMS API.
+Turnstile is never bypassed: if the widget does not auto-pass headless, the tip tests fail with "Turnstile challenge did not auto-pass; run headed or use the phone checklist".
+Two tests revoke the sessions of the `reporter` account and one makes a wrong-password attempt, so do not use a person's account.
+
+Data hygiene: every record carries the run prefix `E2E-<yyyymmdd>-<hhmm>` (UTC; media filenames too). The teardown (admin account) deletes live updates and events, tips, articles (archives them if delete is refused)
+and media whose title or filename contains that prefix (checked again client-side before each write) and nothing else. Audit-log rows are immutable and remain. The cleanup report is appended to the evidence log.
+
+| Spec | Remote behaviour | Why / how it differs from local |
+| --- | --- | --- |
+| 01 reader tip, duplicate, validation | runs | needs a Turnstile that auto-passes (or `--headed`) |
+| 01 HARNESS tamper (blank token in flight) | runs | `page.route` works over https; the CMS rejects an empty token before Cloudflare is asked, so real keys do not matter |
+| 02 reporter to public article | runs, alternative for the cookie check | no recording proxy: A3 inspects the `Cookie` / `Origin` headers Playwright sees (`request.allHeaders()`); the display name comes from the optional `name` |
+| 03 tip review | runs, alternative for the cookie check | same header inspection instead of the proxy log |
+| 04 unauthorized / revoked / bad upload | runs | revoke-sessions, lookups and seeding use the `admin` account of the credentials file |
+| 05 public gap | runs against the deployed public site | there is no second doc-config build remotely; it asserts the story form is enabled on the real deployed build |
+| 06 mobile layout | runs | unchanged |
+| 07 live coverage | runs | unchanged, except Cloudflare's own cookies (`__cf*`, `cf_*`) are ignored in "the reader has no cookies" and the staff e-mail addresses join the leak list; L6b stays an expected failure |
+| 08 scheduled publishing | runs, longer waits | scheduled 75 s ahead; allowed publish delay is the tick plus 15 s; 10 s clock-skew allowance |
+| 09 corrections | runs | unchanged |
+
+No test is skipped remotely: every local-only power has a remote equivalent or a precondition above.
+
 ### Frontend gaps found (owners: public-site lane and newsroom lane)
 
 1. **Fixed by #22 (public site, issue #15).** Was: **the story form is disabled for `VITE_PUBLIC_CMS_URL=http://cms.churchtimes.localhost:<port>`** (the value in section 9 A). `src/lib/public-submissions.js`

@@ -11,6 +11,7 @@
 import { expect, test } from '@playwright/test'
 
 import { Api, Evidence, getConfig, logLine, trackCmsCalls, uniq } from './support/helpers'
+import { isRemote, remoteSchedulerSeconds } from './support/remote'
 import { expectLiveMode, freshContext, loginUi, logoutUi, press, requireNewsroom, slugify } from './support/newsroom'
 import { expectNotOnPublicSite, expectPublishedOnPublicSite } from './support/public'
 import { apiRequest, localInputValue, patchFromPage } from './support/schedule'
@@ -19,7 +20,9 @@ const cfg = getConfig()
 const api = new Api(cfg)
 
 /** How far ahead the story is scheduled. Long enough that the "not yet public" checks finish before the scheduler fires. */
-const LEAD_MS = 50_000
+const LEAD_MS = isRemote ? 75_000 : 50_000 // remote: slower network round trips for the absence checks
+/** REMOTE: the deployed CMS scheduler ticks every SCHEDULER_INTERVAL_SECONDS (XAPP_REMOTE_SCHEDULER_SECONDS here, default 60), not every 2 s. */
+const TICK_MS = isRemote ? remoteSchedulerSeconds() * 1000 : 0
 
 type State = { id: number; title: string; standfirst: string; body: string; slug: string; scheduledForMs?: number }
 const states = new Map<string, State>()
@@ -168,6 +171,8 @@ test.describe('E. scheduled publishing: reporter blocked -> editor schedules (UI
     const ctx = await freshContext(browser, info)
     const page = await ctx.newPage()
     const ev = new Evidence(cfg, info, 'S3-scheduler-publishes')
+    // remote: lead time + up to one scheduler tick + the checks must fit (local keeps the config default timeout)
+    if (isRemote) test.setTimeout(LEAD_MS + TICK_MS + 240_000)
     try {
       // --- before the time
       const slugQ = `/api/articles?where[slug][equals]=${s.slug}&depth=0`
@@ -181,14 +186,14 @@ test.describe('E. scheduled publishing: reporter blocked -> editor schedules (UI
 
       // --- the scheduler (2 s tick) publishes it
       await expect
-        .poll(async () => (await api.articleByTitle(s.title))?.status, { timeout: 120_000, intervals: [1000], message: 'scheduler publishes the story' })
+        .poll(async () => (await api.articleByTitle(s.title))?.status, { timeout: isRemote ? LEAD_MS + TICK_MS + 120_000 : 120_000, intervals: [isRemote ? 3000 : 1000], message: 'scheduler publishes the story' })
         .toBe('published')
       const seenAt = Date.now()
       const pub = await api.articleByTitle(s.title)
       const publishedAtMs = new Date(pub.publishedAt).getTime()
       expect(publishedAtMs, 'publishedAt is not before scheduledFor').toBeGreaterThanOrEqual(s.scheduledForMs)
-      expect(publishedAtMs - s.scheduledForMs, 'published within a few scheduler ticks of the scheduled time').toBeLessThan(15_000)
-      expect(publishedAtMs, 'publishedAt is not in the future').toBeLessThanOrEqual(seenAt + 1000)
+      expect(publishedAtMs - s.scheduledForMs, 'published within a few scheduler ticks of the scheduled time').toBeLessThan(TICK_MS + 15_000)
+      expect(publishedAtMs, 'publishedAt is not in the future').toBeLessThanOrEqual(seenAt + (isRemote ? 10_000 : 1000)) // remote: allow for clock skew between this machine and the server
       ev.note(`published by the scheduler ${publishedAtMs - s.scheduledForMs} ms after scheduledFor (publishedAt ${pub.publishedAt})`)
 
       // audit trail: the transition was made by the system actor

@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test'
 
-import type { Api, Role, XappConfig } from './helpers'
+import { apiBase, type Api, type Role, type XappConfig } from './helpers'
 
 /** Value for <input type="datetime-local" step="1"> in the browser's (= this machine's) local time. */
 export function localInputValue(d: Date): string {
@@ -17,7 +17,7 @@ export async function apiRequest(
   urlPath: string,
   body?: unknown,
 ): Promise<{ status: number; json: any }> {
-  const base = new URL(cfg.recorderUrl).origin
+  const base = apiBase(cfg)
   const res = await fetch(`${base}${urlPath}`, {
     method,
     headers: { authorization: `JWT ${await api.login(role)}`, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
