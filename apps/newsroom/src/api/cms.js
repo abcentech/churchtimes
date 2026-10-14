@@ -129,6 +129,7 @@ function normalizeUpdate(u) {
     body: u.body || '',
     status: u.status || 'pending',
     sequence: u.sequence ?? null,
+    publishSequence: u.publishSequence ?? null,
     occurredAt: u.occurredAt || u.createdAt || null,
     authorName: author?.name || ''
   };

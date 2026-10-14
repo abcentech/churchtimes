@@ -14,6 +14,7 @@ import { showToast } from '../components/toast.js';
 import { openModal } from '../components/modal.js';
 import { showApiError } from '../components/notify.js';
 import { escapeHtml, formatTimeAgo } from '../util.js';
+import { sortPublishedNewestFirst } from '../live-order.js';
 
 const POLL_MS = 20000;
 let pollingTimer = null;
@@ -214,7 +215,7 @@ async function refreshLiveStream(container, event, setError) {
   if (!container.isConnected) return false;
   setError('');
 
-  const approved = updates.filter(u => u.status === 'approved');
+  const approved = sortPublishedNewestFirst(updates.filter(u => u.status === 'approved'));
   const pending = updates.filter(u => u.status === 'pending');
   const canApprove = api.can('live.approve', { categoryId: event.categoryId });
 
