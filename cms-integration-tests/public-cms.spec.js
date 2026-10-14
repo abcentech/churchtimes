@@ -63,3 +63,86 @@ test('real rejected/spent Turnstile response cannot show success and preserves t
   await send(page).click();await expect(page.locator('#form-errors')).toContainText('Verification was not accepted');
   await expect(page.locator('#form-result')).toBeHidden();await expect(page.locator('#public-message')).toHaveValue(/must be rejected/);
 });
+
+test('real category and search filters, clean URLs, reload and canonical lifecycle',async({page,request})=>{
+  const f=await (await request.get(cms+'/__test/fixtures')).json();
+  // The real Next proxy rejects the old slug-as-relationship-ID filter.
+  expect((await request.get(cms+'/api/articles?where[category][equals]='+f.categorySlug)).status()).toBe(400);
+  const categoryResponse=page.waitForResponse(r=>r.url().includes('/api/articles?')&&new URL(r.url()).searchParams.has('where[category][equals]'));
+  await page.goto('/sections/'+f.categorySlug+'/');
+  const filtered=await categoryResponse;expect(filtered.status()).toBe(200);
+  expect(new URL(filtered.url()).searchParams.get('where[category][equals]')).toBe(String(f.categoryId));
+  await expect(page.locator('.newsroom-card h2').filter({hasText:f.publishedTitle})).toHaveCount(1);
+  await expect(page.locator(`a[href="/reports/${f.otherSlug}/"]`)).toHaveCount(0);
+  await page.goto('/search/?q='+encodeURIComponent(f.publishedTitle));
+  await expect(page.locator('.newsroom-card')).toHaveCount(1);
+  await page.locator('.newsroom-card h2 a').click();
+  await expect(page).toHaveURL(new RegExp('/reports/'+f.publishedSlug+'/$'));
+  await expect(page.locator('h1')).toHaveText(f.publishedTitle);
+  await expect(page.locator('link[rel="canonical"]')).toHaveAttribute('href','http://127.0.0.1:5177/reports/'+f.publishedSlug+'/');
+  const schema=await page.locator('script[type="application/ld+json"]').textContent();
+  expect(JSON.parse(schema).mainEntityOfPage).toBe('http://127.0.0.1:5177/reports/'+f.publishedSlug+'/');
+  await page.locator('.skip-link').focus();await page.keyboard.press('Enter');
+  await expect(page.locator('#main')).toBeFocused();
+  await expect(page).toHaveURL(new RegExp('/reports/'+f.publishedSlug+'/$'));
+  await page.reload();await expect(page.locator('h1')).toHaveText(f.publishedTitle);
+  await page.locator('.home-link').click();await expect(page.locator('link[rel="canonical"]')).toHaveCount(0);
+  await page.goBack();await expect(page.locator('h1')).toHaveText(f.publishedTitle);
+  await page.goto('/reports/'+f.draftSlug+'/');
+  await expect(page.getByRole('heading',{name:'Article unavailable.'})).toBeVisible();
+  await expect(page.locator('link[rel="canonical"],script[type="application/ld+json"]')).toHaveCount(0);
+  await page.goto('/search/?q=synthetic-no-match-987654');
+  await expect(page.getByRole('heading',{name:'No matching published reports.'})).toBeVisible();
+  await page.goto('/sections/unconfigured-category/');
+  await expect(page.getByRole('heading',{name:'Section unavailable.'})).toBeVisible();
+});
+
+test('real sanitized validation and rate-limit responses retain text, enforce cooldown and fresh token',async({page,request},testInfo)=>{
+  const f=await (await request.get(cms+'/__test/fixtures')).json();
+  const data={email:`${f.runId}-limits-${testInfo.project.name}@test.invalid`,title:'<b></b>',body:'Synthetic validation and rate limit fixture; it contains no live personal data.'};
+  await widget(page);await page.goto('/#submit');await fill(page,data);
+  await page.getByRole('button',{name:'Complete test verification',exact:true}).click();
+  let response=page.waitForResponse(r=>r.url()===cms+'/api/public/submissions'&&r.request().method()==='POST');
+  await send(page).click();expect((await response).status()).toBe(400);
+  await expect(page.locator('#form-errors')).toContainText('Please check this field');
+  await expect(page.locator('#form-result')).toBeHidden();
+  await expect(page.locator('#public-message')).toHaveValue(data.body);
+  try {
+    await request.post(cms+'/__test/controls',{data:{rateLimit:true}});
+    await page.getByLabel('Headline or story subject').fill(f.runId+'-rate-first-'+testInfo.project.name);
+    await page.getByRole('button',{name:'Complete test verification',exact:true}).click();
+    response=page.waitForResponse(r=>r.url()===cms+'/api/public/submissions'&&r.request().method()==='POST');
+    await send(page).click();expect((await response).status()).toBe(201);
+    await expect(page.locator('#form-result')).toBeVisible();
+    await page.reload();
+    await fill(page,{...data,email:`${f.runId}-second-${testInfo.project.name}@test.invalid`,title:f.runId+'-rate-second-'+testInfo.project.name});
+    await page.getByRole('button',{name:'Complete test verification',exact:true}).click();
+    response=page.waitForResponse(r=>r.url()===cms+'/api/public/submissions'&&r.request().method()==='POST');
+    await send(page).click();const limited=await response;expect(limited.status()).toBe(429);
+    expect(Number(limited.headers()['retry-after'])).toBeGreaterThan(0);
+    await expect(page.locator('#form-errors')).toContainText('Too many submissions');
+    await expect(page.locator('#form-result')).toBeHidden();
+    await expect(page.locator('#send-submission')).toBeDisabled();await expect(page.locator('#public-message')).toHaveValue(data.body);
+    await expect(page.locator('#send-submission')).toBeEnabled({timeout:6000});
+    await send(page).click();await expect(page.locator('#form-result')).toBeHidden();
+    await page.getByRole('button',{name:'Complete test verification',exact:true}).click();
+    await send(page).click();await expect(page.locator('#form-result')).toBeVisible();
+  } finally {await request.post(cms+'/__test/controls',{data:{}});}
+});
+
+test('lost response after genuine persistence does not confirm or retry',async({page,request},testInfo)=>{
+  const f=await (await request.get(cms+'/__test/fixtures')).json();
+  const data={email:`${f.runId}-lost-${testInfo.project.name}@test.invalid`,title:f.runId+'-lost-'+testInfo.project.name,body:'Synthetic network-loss fixture saved by real Payload before its response is dropped.'};
+  try {
+    await request.post(cms+'/__test/controls',{data:{dropResponse:true}});
+    await widget(page);await page.goto('/#submit');await fill(page,data);
+    await page.getByRole('button',{name:'Complete test verification',exact:true}).click();
+    let posts=0;page.on('request',r=>{if(r.url()===cms+'/api/public/submissions'&&r.method()==='POST')posts++;});
+    await send(page).click();await expect(page.locator('#form-errors')).toContainText('could not confirm whether your submission was received');
+    await expect(page.locator('#form-result')).toBeHidden();await expect(page.locator('#public-message')).toHaveValue(data.body);
+    const state=await (await request.get(cms+'/__test/fixtures')).json();
+    const saved=await request.get(cms+'/__test/submission?reference='+state.lastDroppedReference);
+    expect(saved.status()).toBe(200);expect((await saved.json()).status).toBe('new');
+    await send(page).click();expect(posts).toBe(1);await expect(page.locator('#form-result')).toBeHidden();
+  } finally {await request.post(cms+'/__test/controls',{data:{}});}
+});

@@ -11,7 +11,7 @@ import { randomBytes } from 'node:crypto';
 const root=fileURLToPath(new URL('../',import.meta.url));
 const cmsRequire=createRequire(new URL('../apps/cms/package.json',import.meta.url));
 const freePort=()=>new Promise((resolve,reject)=>{const server=createServer();server.once('error',reject);server.listen(0,'127.0.0.1',()=>{const port=server.address().port;server.close(()=>resolve(port));});});
-let pg;let server;let browser;
+let pg;let server;let browser;let result=1;
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const exitCode=child=>new Promise(resolve=>child.once('exit',code=>resolve(code ?? 1)));
 async function stop(child){if(!child||child.exitCode!==null)return;child.kill('SIGTERM');await Promise.race([exitCode(child),wait(15000)]);if(child.exitCode===null)child.kill('SIGKILL');}
@@ -43,6 +43,9 @@ try {
   if(!ready)throw new Error('REST host did not become ready; inspect '+join(data,'rest-host.log'));
   console.log('Testing real Payload REST and PostgreSQL; Turnstile script/Siteverify transport are STUBBED.');
   browser=spawn(process.execPath,['node_modules/@playwright/test/cli.js','test','--config','playwright.cms.config.js',...process.argv.slice(2)],{cwd:root,env:{...process.env,PUBLIC_CMS_TEST_URL:url},stdio:'inherit'});
-  process.exitCode=await exitCode(browser);
-} catch(error){console.error(error.message);process.exitCode=1;}
+  result=await exitCode(browser);
+} catch(error){console.error(error.message);result=1;}
 finally{await stop(browser);await stop(server);log.end();if(pg)await pg.stop();}
+// embedded-postgres registers a beforeExit hook that forces code 0. After all
+// cleanup has completed, exit explicitly with the actual browser result.
+process.exit(result);

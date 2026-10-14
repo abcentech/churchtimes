@@ -1,5 +1,8 @@
 # Public newsroom integration
 
+> Current staging behavior and validation supersede the historical notes below:
+> see [issue #15 public staging guide](public-staging.md).
+
 The public website remains Vite. The current static edition, source attribution,
 search and browser-local reading list remain available independently of the CMS.
 No production WordPress, DNS or `main` deployment changes are part of this work.

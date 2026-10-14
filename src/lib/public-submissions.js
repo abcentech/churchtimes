@@ -97,8 +97,10 @@ export async function sendPublicSubmission({ endpoint, values, token, kind = 'st
       throw new SubmissionError('validation', { fields });
     }
     if (!response.ok) throw new SubmissionError('server');
-    if (response.status !== 201 || result?.ok !== true || typeof result.reference !== 'string' || !result.reference.trim()) throw new SubmissionError('unconfirmed');
-    return { reference: typeof result.reference === 'string' ? result.reference.slice(0, 100) : '' };
+    if (controller.signal.aborted) throw new SubmissionError(signal?.aborted ? 'cancelled' : timedOut ? 'timeout' : 'network');
+    if (response.status !== 201 || result?.ok !== true || typeof result.reference !== 'string' || !result.reference.trim()
+      || result.reference.length > 100 || typeof result.message !== 'string' || !result.message.trim() || result.message.length > 1000) throw new SubmissionError('unconfirmed');
+    return { reference: result.reference.trim(), message: result.message.trim() };
   } catch (error) {
     if (error instanceof SubmissionError) throw error;
     throw new SubmissionError(signal?.aborted ? 'cancelled' : timedOut ? 'timeout' : 'network');

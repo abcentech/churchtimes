@@ -1,5 +1,8 @@
 # Public CMS integration — Issue #7
 
+> Current staging behavior and validation supersede the historical notes below:
+> see [issue #15 public staging guide](public-staging.md).
+
 Branch `agent/codex-public-cms` starts from integration commit `75cc671` after
 PRs #1 and #6 were squash-merged. It follows the merged backend's
 [API v1.2 contract](../apps/cms/docs/api-contracts.md) and

@@ -106,3 +106,17 @@ test('renders populated Lexical media safely and never resolves private/unpopula
   assert.match(html,/src="https:\/\/cms.example.test\/api\/media\/file\/photo.jpg"/);assert.match(html,/&lt;script&gt;/);assert.doesNotMatch(html,/<script>|<img onerror/);
   assert.equal(renderArticleContent(make(123),{baseUrl:'https://cms.example.test'}),'');
 });
+
+test('category pagination resolves numeric IDs and search filters always require published records',async()=>{
+  const {fetchPublicCategories}=await import('../src/lib/published-articles.js');
+  const categories=await fetchPublicCategories({baseUrl:'https://cms.example.test',fetchImpl:async url=>({ok:true,json:async()=>new URL(url).searchParams.get('page')==='1'?{docs:[{id:7,slug:'news',title:'News'},{id:'8',slug:'bad',title:'Invalid ID'}],hasNextPage:true,nextPage:2}:{docs:[{id:7,slug:'news',title:'News'},{id:9,slug:'features',title:'Features'}]}})});
+  assert.deepEqual(categories.map(c=>c.id),[7,9]);
+  await fetchPublishedPage({baseUrl:'https://cms.example.test',categoryIds:categories.map(c=>c.id),query:'education',fetchImpl:async url=>{
+    const q=new URL(url).searchParams;assert.equal(q.get('where[category][in]'),'7,9');assert.equal(q.get('where[status][equals]'),'published');
+    for(const [index,field] of ['title','excerpt','bylineName'].entries())assert.equal(q.get(`where[or][${index}][${field}][like]`),'education');
+    return {ok:true,json:async()=>({docs:[]})};
+  }});
+  await assert.rejects(fetchPublishedPage({baseUrl:'https://cms.example.test',categoryIds:['news'],fetchImpl:()=>assert.fail('must resolve IDs before calling CMS')}),/numeric IDs/);
+  for(const baseUrl of ['http://remote.test','https://user:password@cms.test','https://cms.test/admin'])await assert.rejects(fetchPublishedPage({baseUrl}));
+  assert.equal(normalizePublishedArticle({...report,slug:'a'.repeat(161)}),null);
+});

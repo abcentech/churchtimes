@@ -108,7 +108,7 @@ test('reading list and newsroom navigation are reachable on mobile',async({page,
     await page.getByRole('button',{name:'Open sections menu'}).click();
     await page.locator('#menu-dialog').getByRole('link',{name:'Your reading list'}).click();
     await expect(page.locator('h1')).toHaveText('Worth returning to.');
-  } else await expect(page.locator('.desktop-nav a[href="#latest"]')).toHaveAttribute('aria-current','page');
+  } else await expect(page.locator('.desktop-nav a[href="/reports/"]')).toHaveAttribute('aria-current','page');
   await expect(page.locator('.reading-link')).toBeVisible();
   await noOverflow(page);
 });

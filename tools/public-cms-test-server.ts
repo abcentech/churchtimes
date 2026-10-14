@@ -4,7 +4,6 @@
  */
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
-import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
 if (process.env.NODE_ENV !== 'test') throw new Error('This harness requires NODE_ENV=test.')
@@ -15,6 +14,9 @@ const cmsRequire = createRequire(new URL('../apps/cms/package.json', import.meta
 const loadCms = (name: string) => import(pathToFileURL(cmsRequire.resolve(name)).href)
 const config = (await import('../apps/cms/src/payload.config')).default
 const routes = await loadCms('@payloadcms/next/routes')
+const { NextRequest } = await loadCms('next/server')
+const { proxy } = await import('../apps/cms/src/proxy')
+const { resetPublicSubmissionLimiters } = await import('../apps/cms/src/endpoints/publicSubmissions')
 const { api, setupFixtures, newRunId, lexical } = await import('../apps/cms/tests/integration/helpers')
 const { setTurnstileFetchForTests } = await import('../apps/cms/src/lib/turnstile')
 const runId = newRunId()
@@ -27,17 +29,20 @@ setTurnstileFetchForTests(async (_url: string, options: RequestInit) => {
     ? { success:true, hostname:'127.0.0.1', action:'submit-story' }
     : { success:false, 'error-codes':['timeout-or-duplicate'] })
 })
-const edition = JSON.parse(readFileSync(new URL('../src/data/stories.json', import.meta.url), 'utf8'))
-const first = edition.stories[0]
-const bytes = readFileSync(new URL('../public/'+first.image, import.meta.url))
+// Generated PNG; no live editorial data or photographs are used.
+const { default: sharp } = await loadCms('sharp')
+const bytes = await sharp({create:{width:320,height:180,channels:3,background:'#172b2e'}}).png().toBuffer()
 const media = await f.payload.create({collection:'media',overrideAccess:true,
   data:{alt:runId+' published photograph',caption:'CMS integration caption',credit:'CMS integration credit'},
-  file:{data:bytes,name:runId+'-fixture.jpg',mimetype:'image/jpeg',size:bytes.length},
+  file:{data:bytes,name:runId+'-fixture.png',mimetype:'image/png',size:bytes.length},
 })
 const published = await f.seedArticle({status:'published',publishedAt:new Date().toISOString(),
-  bylineName:'CMS integration byline',featuredImage:media.id,content:lexical('Published text from real Payload and PostgreSQL.'),
-  corrections:[{note:'A verified fixture correction.',correctedAt:new Date().toISOString()}],legacyUrl:first.source,
+  slug:runId+'-newsroom-report',title:runId+' synthetic community report',excerpt:'Synthetic education and community fixture.',category:f.catA.id,bylineName:'CMS integration byline',featuredImage:media.id,content:lexical('Published text from real Payload and PostgreSQL.'),
+  corrections:[{note:'A verified fixture correction.',correctedAt:new Date().toISOString()}],legacyUrl:'https://churchtimesnigeria.net/synthetic-fixture/',
 })
+const other = await f.seedArticle({status:'published',category:f.catB.id,title:runId+' separate category report',publishedAt:new Date().toISOString()})
+let dropNextResponse = false
+let lastDroppedReference = ''
 const reporterDraft = await f.createArticle(f.tokens.reporter,{status:'draft'})
 const handlers: Record<string, any> = {
   GET:routes.REST_GET(config),POST:routes.REST_POST(config),PATCH:routes.REST_PATCH(config),
@@ -55,7 +60,16 @@ async function submission(reference: string) {
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url || '/', 'http://127.0.0.1:'+port)
-    if (url.pathname === '/__test/fixtures') return reply(res,{runId,publishedSlug:published.slug,draftSlug:reporterDraft.json.doc.slug,siteverifyCalls})
+    if (url.pathname === '/__test/fixtures') return reply(res,{runId,publishedSlug:published.slug,draftSlug:reporterDraft.json.doc.slug,otherSlug:other.slug,categorySlug:f.catA.slug,categoryId:f.catA.id,publishedTitle:published.title,siteverifyCalls,lastDroppedReference})
+    if (url.pathname === '/__test/controls' && req.method === 'POST') {
+      const chunks=[];for await(const chunk of req) chunks.push(chunk)
+      const body=JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      process.env.SUBMISSION_RATE_LIMIT=body.rateLimit ? '1' : '100'
+      process.env.SUBMISSION_RATE_WINDOW_SECONDS='4'
+      resetPublicSubmissionLimiters()
+      dropNextResponse=body.dropResponse===true
+      return reply(res,{ok:true})
+    }
     if (url.pathname === '/__test/submission') {
       const doc = await submission(url.searchParams.get('reference') || '')
       if (!doc) return reply(res,{},404)
@@ -82,12 +96,19 @@ const server = createServer(async (req, res) => {
     if (!handler) return reply(res,{},405)
     const chunks=[];for await(const chunk of req) chunks.push(chunk)
     const body=Buffer.concat(chunks)
-    const request=new Request(url,{method:req.method,headers:req.headers as HeadersInit,
+    const request=new NextRequest(url,{method:req.method,headers:req.headers as HeadersInit,
       ...(body.length?{body}:{}),
     })
-    const response=await handler(request,{params:Promise.resolve({slug:url.pathname.replace(/^\/api\//,'').split('/').map(decodeURIComponent)})})
+    const guard=proxy(request)
+    const response=guard.headers.get('x-middleware-next')==='1' ? await handler(request,{params:Promise.resolve({slug:url.pathname.replace(/^\/api\//,'').split('/').map(decodeURIComponent)})}) : guard
+    const responseBytes=Buffer.from(await response.arrayBuffer())
+    if (dropNextResponse && url.pathname==='/api/public/submissions' && response.status===201) {
+      dropNextResponse=false
+      lastDroppedReference=JSON.parse(responseBytes.toString()).reference
+      return res.destroy()
+    }
     res.writeHead(response.status,Object.fromEntries(response.headers))
-    res.end(Buffer.from(await response.arrayBuffer()))
+    res.end(responseBytes)
   } catch(error) {
     console.error('CMS test request failed:',error instanceof Error?error.message:'unknown error')
     reply(res,{error:'Test request failed'},500)
