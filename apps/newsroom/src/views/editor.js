@@ -643,6 +643,10 @@ async function runSchedule(container) {
     setInlineError(container, parsed.message);
     return;
   }
+  if (st.scheduling) return; // a double click must not send a second PATCH
+  st.scheduling = true;
+  const btn = container.querySelector('#btn-schedule-story');
+  if (btn) btn.disabled = true;
   clearTimeout(st.autosaveTimer);
   st.autosavePending = false;
   try {
@@ -659,6 +663,10 @@ async function runSchedule(container) {
     showToast(`Story scheduled for ${formatScheduled(st.currentStory.scheduledFor)}.`, 'success');
   } catch (err) {
     setInlineError(container, showApiError(err));
+  } finally {
+    st.scheduling = false;
+    const current = container.querySelector('#btn-schedule-story');
+    if (current) current.disabled = false;
   }
 }
 

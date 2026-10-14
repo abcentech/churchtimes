@@ -75,8 +75,9 @@ test.describe('C. unauthorized and failed actions in the newsroom (REAL UI)', ()
 
     const revoke = await adminJson('POST', `/api/users/${cfg.credentials.reporter.id}/revoke-sessions`)
     expect(revoke.status).toBe(200)
-    // next protected action in the UI
-    await gotoView(page, 'review', note)
+    // next protected action in the UI. Not gotoView(): its #review URL check races the session check's redirect to sign-in.
+    await press(page, page.locator('a[data-view-nav="review"]:visible').first(), note)
+    await expect(page.getByTestId('login-view')).toBeVisible()
     const stillSignedIn = await page.getByTestId('session-user').count()
     ev.note(`after revoke + navigation to Review: signed-in chrome still shown=${stillSignedIn > 0}; review tabs rendered=${await page.getByTestId('review-tab-articles_review').count()}`)
     await expect(page.getByTestId('login-view')).toBeVisible()
