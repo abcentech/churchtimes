@@ -39,6 +39,18 @@ const published = await f.seedArticle({status:'published',publishedAt:new Date()
   corrections:[{note:'A verified fixture correction.',correctedAt:new Date().toISOString()}],legacyUrl:first.source,
 })
 const reporterDraft = await f.createArticle(f.tokens.reporter,{status:'draft'})
+// Synthetic live fixtures use the real collection hooks and public REST feed.
+const live = await f.payload.create({collection:'live-events',overrideAccess:true,data:{title:runId+' Public live coverage',slug:runId+'-public-live',summary:'Public coverage from our synthetic staging newsroom.',status:'live',category:f.catA.id}})
+const draftLive = await f.payload.create({collection:'live-events',overrideAccess:true,data:{title:runId+' PRIVATE draft event',slug:runId+'-draft-live',status:'draft',category:f.catA.id}})
+const endedLive = await f.payload.create({collection:'live-events',overrideAccess:true,data:{title:runId+' Ended coverage',slug:runId+'-ended-live',status:'ended',startedAt:'2026-10-13T08:00:00Z',category:f.catA.id}})
+const liveUpdate=async(event:number,body:string,status='approved',occurredAt=new Date().toISOString())=>f.payload.create({collection:'live-updates',overrideAccess:true,data:{event,body:runId+' '+body,status,occurredAt,...(status==='approved'?{approvedAt:new Date().toISOString()}:{} )}})
+const delayed = await liveUpdate(live.id,'Delayed approval with an earlier occurrence','pending','2026-10-12T08:00:00Z')
+await liveUpdate(live.id,'First published update')
+await liveUpdate(live.id,'Second published update')
+await liveUpdate(live.id,'PRIVATE rejected update','rejected')
+const pending = await liveUpdate(live.id,'PRIVATE pending update','pending')
+await liveUpdate(draftLive.id,'PRIVATE draft-event update')
+await liveUpdate(endedLive.id,'Ended event published update')
 const handlers: Record<string, any> = {
   GET:routes.REST_GET(config),POST:routes.REST_POST(config),PATCH:routes.REST_PATCH(config),
   DELETE:routes.REST_DELETE(config),OPTIONS:routes.REST_OPTIONS(config),
@@ -55,7 +67,14 @@ async function submission(reference: string) {
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url || '/', 'http://127.0.0.1:'+port)
-    if (url.pathname === '/__test/fixtures') return reply(res,{runId,publishedSlug:published.slug,draftSlug:reporterDraft.json.doc.slug,siteverifyCalls})
+    if (url.pathname === '/__test/fixtures') return reply(res,{runId,publishedSlug:published.slug,draftSlug:reporterDraft.json.doc.slug,siteverifyCalls,liveSlug:live.slug,liveTitle:live.title,draftLiveSlug:draftLive.slug,endedLiveSlug:endedLive.slug})
+    if(url.pathname==='/__test/live-stage' && req.method==='POST') {
+      if(url.searchParams.get('stage')==='start'){await f.payload.update({collection:'live-events',id:live.id,overrideAccess:true,data:{status:'live'}});await f.payload.update({collection:'live-updates',id:delayed.id,overrideAccess:true,data:{status:'pending',publishSequence:null,approvedAt:null}})}
+      else if(url.searchParams.get('stage')==='approve'){const result=await api('PATCH',`/api/live-updates/${delayed.id}`,{token:f.tokens.eic,body:{status:'approved'}});if(result.status!==200)return reply(res,{status:result.status},500)}
+      else if(url.searchParams.get('stage')==='end') await f.payload.update({collection:'live-events',id:live.id,overrideAccess:true,data:{status:'ended'}})
+      else return reply(res,{},400)
+      return reply(res,{ok:true})
+    }
     if (url.pathname === '/__test/submission') {
       const doc = await submission(url.searchParams.get('reference') || '')
       if (!doc) return reply(res,{},404)
