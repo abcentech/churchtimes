@@ -177,9 +177,18 @@ async function renderCurrentTabContent(container) {
     btn.addEventListener('click', () => store.setCurrentView('editor', { storyId: btn.getAttribute('data-id') }));
   });
   area.querySelectorAll('[data-action="inspect-story"]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const article = articles.find(a => a.id === btn.getAttribute('data-id'));
-      if (article) inspectStoryModal(article, container);
+    btn.addEventListener('click', async () => {
+      const id = btn.getAttribute('data-id');
+      if (!articles.some(a => a.id === id)) return;
+      // Approve what you saw: open the CURRENT version, never the list's copy (it can be stale right after an earlier action).
+      btn.disabled = true;
+      try {
+        inspectStoryModal((await api.getArticle(id)).data, container);
+      } catch (err) {
+        showApiError(err);
+      } finally {
+        btn.disabled = false;
+      }
     });
   });
 }
