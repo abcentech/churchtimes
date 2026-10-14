@@ -62,7 +62,7 @@ test('handles rate limiting, challenge rejection, safe field errors and service 
 test('timeouts and navigation cancellation are distinguishable and never auto-retry',async()=>{
   let calls=0;
   const fetchImpl=(_url,{signal})=>{calls++;return new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>reject(new Error('aborted'))));};
-  await assert.rejects(sendPublicSubmission({endpoint:'https://cms.example.test/api',values,token:'opaque',timeoutMs:5,fetchImpl}),e=>e.type==='network');
+  await assert.rejects(sendPublicSubmission({endpoint:'https://cms.example.test/api',values,token:'opaque',timeoutMs:5,fetchImpl}),e=>e.type==='timeout');
   assert.equal(calls,1);
   const controller=new AbortController();
   const pending=sendPublicSubmission({endpoint:'https://cms.example.test/api',values,token:'opaque',signal:controller.signal,fetchImpl});

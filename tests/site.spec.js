@@ -8,7 +8,8 @@ const falobi=edition.stories.find(s=>s.id===29276);
 test('home uses current headlines and locally served original photographs', async ({page})=>{
   await page.goto('./');
   await expect(page.locator('h1')).toHaveText(lead.title);
-  await expect(page.locator('.rail-story').first()).toContainText(falobi.title);
+  await expect(page.locator('.rail-story').first()).toContainText(edition.stories.find(s=>s.id===29264).title);
+  await expect(page.locator('.homepage-perspectives')).toContainText(falobi.title);
   await expect(page.locator('#latest-grid .story-card')).toHaveCount(6);
   const hero=page.locator('.lead-photo img');
   await expect(hero).toHaveJSProperty('complete',true);

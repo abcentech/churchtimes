@@ -1,6 +1,6 @@
-import { normalizePublicMedia } from './published-articles.js';
-// Render supported Payload Lexical nodes. Raw HTML, unknown blocks and
-// unpopulated uploads are omitted; only safe published-document media is shown.
+import { normalizePublicMedia, cmsFigure } from './cms-media.js';
+// Render supported Payload Lexical text and populated public media safely.
+// Unknown nodes, unpopulated relationships and embedded HTML are omitted.
 const escape = text => String(text).replace(/[&<>"']/g, char => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
 })[char]);
@@ -13,7 +13,7 @@ function safeLink(value) {
   } catch { return null; }
 }
 
-export function renderArticleContent(content, { baseUrl } = {}) {
+export function renderArticleContent(content, {baseUrl} = {}) {
   if (typeof content === 'string') {
     return content.trim().split(/\n\s*\n/).filter(Boolean).map(text => `<p>${escape(text)}</p>`).join('');
   }
@@ -24,15 +24,15 @@ export function renderArticleContent(content, { baseUrl } = {}) {
       let text = escape(node.text);
       if (node.format & 1) text = `<strong>${text}</strong>`;
       if (node.format & 2) text = `<em>${text}</em>`;
+      if (node.format & 4) text = `<s>${text}</s>`;
+      if (node.format & 8) text = `<u>${text}</u>`;
+      if (node.format & 16) text = `<code>${text}</code>`;
+      if (node.format & 32) text = `<sub>${text}</sub>`;
+      if (node.format & 64) text = `<sup>${text}</sup>`;
       return text;
     }
+    if (node.type === 'upload' && node.relationTo === 'media') return cmsFigure(normalizePublicMedia(node.value,baseUrl));
     if (node.type === 'linebreak') return '<br>';
-    if (node.type === 'upload' && node.relationTo === 'media') {
-      const image = normalizePublicMedia(node.value, baseUrl);
-      if (!image) return '';
-      const dimensions = image.width && image.height ? `width="${image.width}" height="${image.height}"` : '';
-      return `<figure><img src="${escape(image.url)}" alt="${escape(image.alt)}" ${dimensions} loading="lazy" decoding="async">${image.caption || image.credit ? `<figcaption>${escape(image.caption)}${image.credit ? ` · Photo: ${escape(image.credit)}` : ''}</figcaption>` : ''}</figure>`;
-    }
     const supported = ['root', 'paragraph', 'heading', 'quote', 'list', 'listitem', 'link', 'autolink'];
     if (!supported.includes(node.type)) return '';
     const children = Array.isArray(node.children) ? node.children.map(child => render(child, depth + 1)).join('') : '';

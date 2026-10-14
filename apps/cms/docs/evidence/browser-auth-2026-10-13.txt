@@ -1,0 +1,50 @@
+# Browser cookie-auth E2E (issue #16 part 3) - 2026-10-13T19:28Z
+# Chromium 145 (Playwright 1.58.2), real Payload 3.90.2 production build (next start) + embedded PostgreSQL 17, Windows 11, Node v24.19.0
+# CMS http://cms.churchtimes.localhost:3200 behind a recording proxy; harnesses newsroom/www.churchtimes.localhost:5174/5173, evil.othersite.localhost:5175
+# Command: npx playwright test -c playwright.config.ts   (list reporter, ANSI stripped; no secrets)
+
+[e2e-stack] starting embedded PostgreSQL on 55433
+[e2e-stack] .next build is newer than src/: reusing it
+[e2e-stack] applying migrations
+[e2e-stack] seeding synthetic users and articles
+[e2e-stack] starting next start on 3201 behind the recording proxy on 3200
+
+Running 16 tests using 1 worker
+
+[evidence] cookie payload-token: domain=cms.churchtimes.localhost path=/ httpOnly=true secure=true sameSite=Lax lifetime=28800s (CMS NODE_ENV=production)
+  ok  1 [desktop-chrome] › e2e\browser\auth.spec.ts:79:3 › 1. same-site subdomains: newsroom -> cms with credentials:include › login sets an HttpOnly / SameSite=Lax / host-only cookie; /me works; JS cannot read it; logout clears it (958ms)
+[evidence] reporter PATCH status=published -> HTTP 403: "Reporters cannot set status \"published\"."
+[evidence] editor PATCH status=approved -> HTTP 200
+  ok  2 [desktop-chrome] › e2e\browser\auth.spec.ts:136:3 › 1. same-site subdomains: newsroom -> cms with credentials:include › reporter cannot publish (403 surfaced to the browser); editor approves (200) (1.6s)
+[evidence] expired + unknown-session tokens signed with the CMS key were rejected
+  ok  3 [desktop-chrome] › e2e\browser\auth.spec.ts:181:3 › 2. invalid, expired and revoked sessions › tampered, forged, alg=none, expired and unknown-session tokens are anonymous (820ms)
+[evidence] after revoke-sessions the reporter cookie is still stored but /me -> user null
+  ok  4 [desktop-chrome] › e2e\browser\auth.spec.ts:235:3 › 2. invalid, expired and revoked sessions › admin revoke-sessions signs the user out immediately; reporter cannot revoke (1.4s)
+[evidence] server saw: newsroom GET cookie=true ACAO=http://newsroom.churchtimes.localhost:5174; evil GET cookie=false ACAO=null; evil POST preflight -> HTTP 200, ACAO=null, real POST never sent
+  ok  5 [desktop-chrome] › e2e\browser\auth.spec.ts:273:3 › 3. cross-site: CORS, SameSite=Lax and CSRF › evil.othersite.localhost: fetch(credentials:include) is blocked by CORS and sends no cookie; control origin works (788ms)
+[evidence] form POST /api/articles: newsroom(listed) cookie=true -> 201 created=true; evil.othersite cookie=false -> 403 created=false; sibling.churchtimes(unlisted, same-site) cookie=true -> 403 created=false
+  ok  6 [desktop-chrome] › e2e\browser\auth.spec.ts:336:3 › 3. cross-site: CORS, SameSite=Lax and CSRF › cross-site / unlisted-origin form POSTs do not act with the session (CSRF); allowlisted origin control does (1.2s)
+[evidence] admin Articles list rendered at 1280x800; screenshot browser-admin-articles-desktop-chrome.png
+  ok  7 [desktop-chrome] › e2e\browser\auth.spec.ts:400:3 › 4. Payload admin UI › editor signs in at /admin and sees the Articles list (3.6s)
+[evidence] public harness: published visible (3 listed), draft/in_review absent, direct draft fetch -> HTTP 404
+  ok  8 [desktop-chrome] › e2e\browser\auth.spec.ts:432:3 › 5. public site (www.churchtimes.localhost): anonymous reads › published articles are readable with credentials:omit; drafts never appear (732ms)
+[evidence] cookie payload-token: domain=cms.churchtimes.localhost path=/ httpOnly=true secure=true sameSite=Lax lifetime=28800s (CMS NODE_ENV=production)
+  ok  9 [android-pixel7] › e2e\browser\auth.spec.ts:79:3 › 1. same-site subdomains: newsroom -> cms with credentials:include › login sets an HttpOnly / SameSite=Lax / host-only cookie; /me works; JS cannot read it; logout clears it (798ms)
+[evidence] reporter PATCH status=published -> HTTP 403: "Reporters cannot set status \"published\"."
+[evidence] editor PATCH status=approved -> HTTP 200
+  ok 10 [android-pixel7] › e2e\browser\auth.spec.ts:136:3 › 1. same-site subdomains: newsroom -> cms with credentials:include › reporter cannot publish (403 surfaced to the browser); editor approves (200) (1.4s)
+[evidence] expired + unknown-session tokens signed with the CMS key were rejected
+  ok 11 [android-pixel7] › e2e\browser\auth.spec.ts:181:3 › 2. invalid, expired and revoked sessions › tampered, forged, alg=none, expired and unknown-session tokens are anonymous (748ms)
+[evidence] after revoke-sessions the reporter cookie is still stored but /me -> user null
+  ok 12 [android-pixel7] › e2e\browser\auth.spec.ts:235:3 › 2. invalid, expired and revoked sessions › admin revoke-sessions signs the user out immediately; reporter cannot revoke (1.4s)
+[evidence] server saw: newsroom GET cookie=true ACAO=http://newsroom.churchtimes.localhost:5174; evil GET cookie=false ACAO=null; evil POST preflight -> HTTP 200, ACAO=null, real POST never sent
+  ok 13 [android-pixel7] › e2e\browser\auth.spec.ts:273:3 › 3. cross-site: CORS, SameSite=Lax and CSRF › evil.othersite.localhost: fetch(credentials:include) is blocked by CORS and sends no cookie; control origin works (879ms)
+[evidence] form POST /api/articles: newsroom(listed) cookie=true -> 201 created=true; evil.othersite cookie=false -> 403 created=false; sibling.churchtimes(unlisted, same-site) cookie=true -> 403 created=false
+  ok 14 [android-pixel7] › e2e\browser\auth.spec.ts:336:3 › 3. cross-site: CORS, SameSite=Lax and CSRF › cross-site / unlisted-origin form POSTs do not act with the session (CSRF); allowlisted origin control does (1.2s)
+[evidence] admin Articles list rendered at 412x839; screenshot browser-admin-articles-android-pixel7.png
+  ok 15 [android-pixel7] › e2e\browser\auth.spec.ts:400:3 › 4. Payload admin UI › editor signs in at /admin and sees the Articles list (2.3s)
+[evidence] public harness: published visible (4 listed), draft/in_review absent, direct draft fetch -> HTTP 404
+  ok 16 [android-pixel7] › e2e\browser\auth.spec.ts:432:3 › 5. public site (www.churchtimes.localhost): anonymous reads › published articles are readable with credentials:omit; drafts never appear (761ms)
+[e2e-stack] next start exited with code 1
+
+  16 passed (1.0m)

@@ -106,3 +106,69 @@ describe('validateProductionEnv', () => {
     ).toEqual([])
   })
 })
+
+describe('CMS_ALLOW_INSECURE_LOCAL_STAGING (disposable local staging only)', () => {
+  const staging = {
+    ...good,
+    CMS_ALLOW_INSECURE_LOCAL_STAGING: 'true',
+    TURNSTILE_SECRET_KEY: '1x0000000000000000000000000000000AA',
+    CMS_PUBLIC_URL: 'http://cms.churchtimes.localhost:3100',
+    CMS_CORS_ORIGINS: 'http://www.churchtimes.localhost:5173,http://localhost:5174,http://127.0.0.1:5174',
+    CMS_CSRF_ORIGINS: 'http://newsroom.churchtimes.localhost:5174',
+    PUBLIC_SUBMISSION_ORIGINS: 'http://www.churchtimes.localhost:5173',
+  } as NodeJS.ProcessEnv
+
+  it('is ignored unless explicitly "true": http origins and dummy secrets stay rejected', () => {
+    for (const value of [undefined, '', 'false', 'TRUE', '1']) {
+      const env = { ...staging, CMS_ALLOW_INSECURE_LOCAL_STAGING: value } as NodeJS.ProcessEnv
+      const problems = validateProductionEnv(env).problems.join()
+      expect(problems, String(value)).toMatch(/https/)
+      expect(problems, String(value)).toMatch(/dummy/)
+    }
+  })
+
+  it('accepts http .localhost / localhost / 127.0.0.1 origins and the Cloudflare test secret when every origin is loopback', () => {
+    expect(validateProductionEnv(staging).problems).toEqual([])
+  })
+
+  it('still enforces every other production rule (secrets, TRUST_PROXY, wildcards, origin shape)', () => {
+    expect(validateProductionEnv({ ...staging, TRUST_PROXY: 'false' }).problems.join()).toMatch(/TRUST_PROXY/)
+    expect(validateProductionEnv({ ...staging, PAYLOAD_SECRET: 'short' }).problems.join()).toMatch(/PAYLOAD_SECRET/)
+    expect(validateProductionEnv({ ...staging, CMS_CORS_ORIGINS: '*' }).problems.join()).toMatch(/wildcard/)
+    expect(validateProductionEnv({ ...staging, CMS_CORS_ORIGINS: 'http://localhost:5174/' }).problems.join()).toMatch(
+      /bare origin/,
+    )
+    expect(validateProductionEnv({ ...staging, TURNSTILE_SECRET_KEY: '' }).problems.join()).toMatch(/required/)
+  })
+
+  it('fails startup (is never silently honoured) when any configured origin is not loopback', () => {
+    for (const key of ['CMS_PUBLIC_URL', 'CMS_CORS_ORIGINS', 'CMS_CSRF_ORIGINS', 'PUBLIC_SUBMISSION_ORIGINS']) {
+      const env = { ...staging, [key]: 'https://www.example.org' } as NodeJS.ProcessEnv
+      expect(validateProductionEnv(env).problems.join(), key).toMatch(/not a loopback origin/)
+    }
+    // Look-alikes of loopback hostnames do not count.
+    // So do wildcard binds, other 127/8 addresses, IPv4-mapped IPv6, trailing dots, userinfo and non-canonical spellings
+    // (fail closed: parseOrigin rejects anything that is not exactly a canonical origin).
+    for (const host of [
+      'http://evil-localhost:5173',
+      'http://localhost.evil.org',
+      'http://127.0.0.1.evil.org',
+      'http://0.0.0.0:5173',
+      'http://127.0.0.2:5173',
+      'http://[::ffff:127.0.0.1]:5173',
+      'http://[::]:5173',
+      'http://localhost.:5173',
+      'http://LOCALHOST:5173',
+      'http://user@localhost:5173',
+      'http://evil.org@localhost:5173',
+    ]) {
+      const env = { ...staging, CMS_CORS_ORIGINS: host } as NodeJS.ProcessEnv
+      expect(validateProductionEnv(env).problems.join(), host).toMatch(/not a loopback origin/)
+    }
+  })
+
+  it('requires CMS_PUBLIC_URL', () => {
+    const env = { ...staging, CMS_PUBLIC_URL: '' } as NodeJS.ProcessEnv
+    expect(validateProductionEnv(env).problems.join()).toMatch(/requires CMS_PUBLIC_URL/)
+  })
+})
