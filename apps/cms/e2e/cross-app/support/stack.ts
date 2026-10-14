@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url'
 import EmbeddedPostgres from 'embedded-postgres'
 
 import { startRecorder, type Recorder } from '../../browser/support/recorder'
-import { startStaticServer, type StaticServer } from './static-server'
+import { startPublicHost, startStaticServer, type StaticServer } from './static-server'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 export const cmsRoot = path.resolve(here, '../../..')
@@ -28,7 +28,7 @@ export const HOSTS = {
   cms: `http://cms.churchtimes.localhost:${PORTS.cms}`,
   newsroom: `http://newsroom.churchtimes.localhost:${PORTS.newsroom}`,
   public: `http://www.churchtimes.localhost:${PORTS.public}`,
-  /** Public site built exactly as docs/staging.md says (VITE_PUBLIC_CMS_URL only), to evidence a known gap. */
+  /** Public site built exactly as docs/staging.md says (VITE_PUBLIC_CMS_URL only), as a regression without an endpoint override. */
   publicGap: `http://www.churchtimes.localhost:${PORTS.publicGap}`,
 } as const
 
@@ -238,10 +238,7 @@ export async function startStack(): Promise<XappConfig> {
     {
       ...buildEnv,
       VITE_PUBLIC_CMS_URL: HOSTS.cms,
-      // GAP WORKAROUND: src/lib/public-submissions.js refuses http:// endpoints whose host is not literally localhost/127.0.0.1,
-      // so VITE_PUBLIC_CMS_URL=http://cms.churchtimes.localhost:... leaves the form disabled. The form posts to the same CMS via
-      // http://localhost:${PORTS.cms} instead (same server; the CMS accepts the www origin). Evidenced by public-gap.spec.ts.
-      VITE_PUBLIC_SUBMISSIONS_URL: `http://localhost:${PORTS.cms}/api/public/submissions`,
+      VITE_PUBLIC_SUBMISSIONS_URL: '', // Derive the endpoint from the documented CMS origin.
       VITE_TURNSTILE_SITE_KEY: TURNSTILE_TEST_SITE_KEY,
       VITE_TURNSTILE_ACTION: TURNSTILE_ACTION,
     },
@@ -251,7 +248,7 @@ export async function startStack(): Promise<XappConfig> {
   )
   preparePagesLayout(publicDir)
 
-  log('building the public site a second time exactly as docs/staging.md section 9 says (known-gap evidence)')
+  log('building the public site a second time exactly as docs/staging.md section 9 says (no-override regression)')
   const publicGapDir = path.join(tmpDir, 'public-gap')
   runNode(
     [viteBin, 'build', '--outDir', publicGapDir, '--emptyOutDir', '--logLevel', 'warn'],
@@ -279,7 +276,12 @@ export async function startStack(): Promise<XappConfig> {
     log('NEWSROOM BUILD FAILED (newsroom specs will fail):', newsroomBuildError.split('\n').slice(0, 6).join(' | '))
   }
 
-  statics = [await startStaticServer(publicDir, PORTS.public), await startStaticServer(publicGapDir, PORTS.publicGap)]
+  // The public site runs on its real host (tools/serve-public.mjs). Its server-side CMS reads use the loopback name, because
+  // Node does not resolve *.localhost subdomains the way Chromium's --host-resolver-rules does here.
+  statics = [
+    await startPublicHost(repoRoot, publicDir, PORTS.public, `http://localhost:${PORTS.cms}`),
+    await startStaticServer(publicGapDir, PORTS.publicGap),
+  ]
   if (!newsroomBuildError) statics.push(await startStaticServer(newsroomDir, PORTS.newsroom))
 
   const fixtureDir = path.join(tmpDir, 'fixtures')

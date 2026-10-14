@@ -20,7 +20,11 @@ export async function expectPublishedOnPublicSite(page: Page, cfg: XappConfig, e
   }
 
   await card.locator('h2 a').click()
-  await expect(page).toHaveURL(new RegExp(`#report/${e.slug}$`))
+  await expect(page).toHaveURL(new RegExp(`/reports/${e.slug}/$`))
+  // cold reload: the public host answers the clean URL itself (200, server-rendered title) before the SPA takes over
+  const cold = await page.reload()
+  expect(cold?.status(), 'clean article URL is served by the public host').toBe(200)
+  expect(await cold?.text(), 'initial HTML is server-rendered').toContain(`<h1>${e.title}</h1>`)
   const article = page.locator('#cms-report')
   await expect(article.locator('h1')).toHaveText(e.title)
   await expect(article.locator('.article-deck')).toHaveText(e.standfirst)
@@ -44,7 +48,12 @@ export async function expectNotOnPublicSite(page: Page, cfg: XappConfig, slug: s
   await expect(page.locator('#cms-latest .newsroom-card').first()).toBeVisible({ timeout: 30_000 })
   await expect(page.locator(`#cms-latest .newsroom-card[data-story-slug="${slug}"]`)).toHaveCount(0)
   await expect(page.locator('#cms-latest')).not.toContainText(title)
+  const direct = await page.goto(`${cfg.publicOrigin}/reports/${slug}/`)
+  expect(direct?.status(), 'unpublished article URL is a real 404').toBe(404)
+  await expect(page.locator('body')).toContainText('Article unavailable', { timeout: 30_000 })
+  expect(await page.content()).not.toContain(title)
+  // legacy #report/<slug> links normalise to the clean path and stay unavailable
   await page.goto(`${cfg.publicOrigin}/#report/${slug}`)
-  await page.reload()
-  await expect(page.locator('#cms-report')).toContainText('Article unavailable', { timeout: 30_000 })
+  await expect(page).toHaveURL(new RegExp(`/reports/${slug}/$`))
+  await expect(page.locator('body')).toContainText('Article unavailable', { timeout: 30_000 })
 }

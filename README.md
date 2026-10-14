@@ -122,3 +122,5 @@ npm run test:advertising -- --workers=2
 
 The advertising suite uses labelled test creatives and a mocked fallback provider;
 it does not serve paid campaigns or contact Google.
+
+Public staging, clean article URLs, CMS category/search integration and the optional SSR host: [issue #15 setup](docs/public-staging-issue15.md).

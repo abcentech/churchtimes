@@ -1,3 +1,4 @@
+import { isLoopbackHostname } from './public-url.js';
 // Public-only transport. Payload contract v1.2 is documented in
 // docs/public-forms.md. No authentication or secret verification belongs here.
 export const STORY_CATEGORIES = ['News', 'Features', 'Interviews', 'Business', 'Health & education', 'Opinion', 'Other'];
@@ -34,7 +35,7 @@ export function submissionEndpoint({ kind = 'story', cmsUrl, storyUrl, contactUr
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return '';
     // HTTPS is required outside loopback development; never post personal data
     // over an unencrypted connection to a remote host.
-    if (url.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) return '';
+    if (url.protocol === 'http:' && !isLoopbackHostname(url.hostname)) return '';
     return url.href;
   } catch { return ''; }
 }

@@ -19,7 +19,8 @@
     "test:forms": "playwright test --config playwright.forms.config.js",
     "test:advertising": "playwright test --config playwright.advertising.config.js",
     "test:cms": "node tools/run-public-cms-tests.mjs",
-    "test:newsroom-unit": "node --test apps/newsroom/test/*.test.js"
+    "test:newsroom-unit": "node --test apps/newsroom/test/*.test.js",
+    "serve:public": "node tools/serve-public.mjs"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
