@@ -158,24 +158,6 @@ html, body {
   letter-spacing: 0.05em;
   background: rgba(0,0,0,0.08);
 }
-.mode-banner-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-.mode-banner-btn {
-  background: none;
-  border: 1px solid currentColor;
-  padding: 0.2rem 0.6rem;
-  border-radius: var(--radius-sm);
-  font-size: 0.75rem;
-  font-weight: 600;
-  cursor: pointer;
-  color: inherit;
-}
-.mode-banner-btn:hover {
-  background: rgba(0,0,0,0.05);
-}
 
 /* Newsroom Header / Masthead */
 .masthead {
@@ -234,34 +216,6 @@ html, body {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-}
-.role-picker {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  background-color: rgba(255, 255, 255, 0.1);
-  padding: 0.35rem 0.65rem;
-  border-radius: var(--radius-md);
-  font-size: 0.8125rem;
-}
-.role-picker label {
-  color: var(--color-sage);
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-.role-select {
-  background: transparent;
-  color: var(--color-parchment);
-  border: none;
-  font-weight: 600;
-  font-size: 0.8125rem;
-  cursor: pointer;
-  outline: none;
-}
-.role-select option {
-  background-color: var(--color-forest);
-  color: var(--color-parchment);
 }
 .theme-btn {
   background: transparent;
@@ -1454,9 +1408,6 @@ html, body {
   .session-meta {
     display: none;
   }
-  .role-picker label {
-    display: none;
-  }
   .session-chip {
     padding: 0.15rem 0.35rem;
     gap: 0.25rem;
@@ -1464,10 +1415,6 @@ html, body {
   .session-avatar {
     width: 26px;
     height: 26px;
-    font-size: 0.6875rem;
-  }
-  .role-select {
-    max-width: 105px;
     font-size: 0.6875rem;
   }
   .brand-title {
@@ -1530,25 +1477,6 @@ body[data-auth="out"] .session-chip:empty {
   width: 100%;
   max-width: 26rem;
   padding: 1.75rem;
-}
-.mock-login-helper {
-  margin-bottom: 1rem;
-  padding: 0.75rem;
-  border: 1px dashed var(--color-rule);
-  border-radius: var(--radius-sm);
-  background: var(--color-parchment-light);
-}
-.mock-login-title {
-  font-size: 0.75rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  color: var(--color-muted);
-  margin-bottom: 0.35rem;
-}
-.mock-login-buttons {
-  display: flex;
-  gap: 0.35rem;
-  flex-wrap: wrap;
 }
 .preview-body h2 {
   font-family: var(--font-serif);

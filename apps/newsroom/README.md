@@ -42,7 +42,7 @@ npm run dev:newsroom:mock     # vite apps/newsroom --mode mock  (loads .env.mock
 ```
 
 `MOCK = import.meta.env.DEV && VITE_NEWSROOM_MOCK === '1'`. The mock backend (`src/api/mock.js`, `mock-data.js`,
-`mock-ui.js`: localStorage data, role switcher, dev accounts on the login screen) is loaded with dynamic `import()` behind
+`mock-ui.js` and its styles in `mock-ui.css`: localStorage data, role switcher, dev accounts on the login screen) is loaded with dynamic `import()` behind
 that constant, so it is removed from production bundles even if the variable is set. `newsroom-security.spec.js`
 builds the app and asserts the bundle contains no demo password, mock data, role switcher or settings dialog.
 

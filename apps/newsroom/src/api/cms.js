@@ -10,6 +10,7 @@ import { CMS_URL, CMS_HOST_LABEL, cmsAssetUrl } from '../config.js';
 import { can } from '../permissions.js';
 import { lexicalToMarkdown, markdownToLexical } from '../lexical.js';
 import { ApiError, toApiError } from './errors.js';
+import { createCountCache } from './count-cache.js';
 
 const ID_RE = /^\d+$/;
 
@@ -141,6 +142,7 @@ export class CmsAdapter {
     this.currentUser = null;
     this.listeners = new Set();
     this.categoriesPromise = null;
+    this.articleCounts = createCountCache();
   }
 
   // ---- plumbing -----------------------------------------------------------------------------------------
@@ -197,6 +199,7 @@ export class CmsAdapter {
     if (!this.currentUser) return;
     this.currentUser = null;
     this.categoriesPromise = null;
+    this.articleCounts.invalidate();
     this.emit('unauthorized', null);
   }
 
@@ -237,6 +240,7 @@ export class CmsAdapter {
     const user = normalizeUser(data?.user);
     if (!user) throw new ApiError('Sign-in did not return a user.', { status: 500 });
     this.currentUser = user;
+    this.articleCounts.invalidate();
     this.emit('session', user);
     return user;
   }
@@ -267,6 +271,7 @@ export class CmsAdapter {
   clearLocalState() {
     this.currentUser = null;
     this.categoriesPromise = null;
+    this.articleCounts.invalidate();
     try {
       for (const key of Object.keys(localStorage)) {
         if (key.startsWith('ctn_') && key !== 'ctn_theme') localStorage.removeItem(key);
@@ -304,7 +309,13 @@ export class CmsAdapter {
     return { data: (data?.docs || []).map(normalizeArticle), totalDocs: data?.totalDocs ?? 0 };
   }
 
+  /** Server totals per status. Concurrent and near-future calls share one load; article writes below invalidate it. */
   async getArticleCounts() {
+    const counts = await this.articleCounts.get(() => this.loadArticleCounts());
+    return { ...counts };
+  }
+
+  async loadArticleCounts() {
     const entries = await Promise.all(ARTICLE_STATUSES.map(async s => {
       const data = await this.request('/articles', {
         query: { limit: '1', depth: '0', 'where[status][equals]': s }
@@ -338,18 +349,26 @@ export class CmsAdapter {
 
   async createArticle(fields) {
     const body = CmsAdapter.toCmsFields(fields);
-    const data = await this.request('/articles', { method: 'POST', json: body, query: { depth: '1' } });
-    return { data: normalizeArticle(data.doc) };
+    try {
+      const data = await this.request('/articles', { method: 'POST', json: body, query: { depth: '1' } });
+      return { data: normalizeArticle(data.doc) };
+    } finally {
+      this.articleCounts.invalidate();
+    }
   }
 
   /** PATCH only the supplied (changed) fields. */
   async updateArticle(id, changes) {
     const body = CmsAdapter.toCmsFields(changes);
     if (!Object.keys(body).length) return this.getArticle(id);
-    const data = await this.request(`/articles/${encodeURIComponent(safeId(id))}`, {
-      method: 'PATCH', json: body, query: { depth: '1' }
-    });
-    return { data: normalizeArticle(data.doc) };
+    try {
+      const data = await this.request(`/articles/${encodeURIComponent(safeId(id))}`, {
+        method: 'PATCH', json: body, query: { depth: '1' }
+      });
+      return { data: normalizeArticle(data.doc) };
+    } finally {
+      this.articleCounts.invalidate();
+    }
   }
 
   /** Explicit workflow transition. Sends only `status` (+ editor `reviewNotes`). */
@@ -357,15 +376,23 @@ export class CmsAdapter {
     if (!ARTICLE_STATUSES.includes(status)) throw new ApiError('Unknown status.', { status: 400 });
     const body = { status };
     if (reviewNotes !== undefined) body.reviewNotes = reviewNotes;
-    const data = await this.request(`/articles/${encodeURIComponent(safeId(id))}`, {
-      method: 'PATCH', json: body, query: { depth: '1' }
-    });
-    return { data: normalizeArticle(data.doc) };
+    try {
+      const data = await this.request(`/articles/${encodeURIComponent(safeId(id))}`, {
+        method: 'PATCH', json: body, query: { depth: '1' }
+      });
+      return { data: normalizeArticle(data.doc) };
+    } finally {
+      this.articleCounts.invalidate();
+    }
   }
 
   async deleteArticle(id) {
-    await this.request(`/articles/${encodeURIComponent(safeId(id))}`, { method: 'DELETE' });
-    return { ok: true };
+    try {
+      await this.request(`/articles/${encodeURIComponent(safeId(id))}`, { method: 'DELETE' });
+      return { ok: true };
+    } finally {
+      this.articleCounts.invalidate();
+    }
   }
 
   // ---- submissions (staff queue; the public tip form lives on the public site) ----------------------------
@@ -404,10 +431,15 @@ export class CmsAdapter {
 
   /** The ONLY way a tip becomes an article: POST /api/submissions/:id/convert. The CMS creates the draft. */
   async convertSubmission(id, categoryId) {
-    const data = await this.request(`/submissions/${encodeURIComponent(safeId(id))}/convert`, {
-      method: 'POST',
-      json: { category: Number(safeId(categoryId)) }
-    });
+    let data;
+    try {
+      data = await this.request(`/submissions/${encodeURIComponent(safeId(id))}/convert`, {
+        method: 'POST',
+        json: { category: Number(safeId(categoryId)) }
+      });
+    } finally {
+      this.articleCounts.invalidate(); // the conversion creates a draft article
+    }
     const article = data?.article;
     if (!article || article.id === undefined) throw new ApiError('The CMS did not return the new story.', { status: 500 });
     return { articleId: String(article.id), slug: article.slug || '' };
