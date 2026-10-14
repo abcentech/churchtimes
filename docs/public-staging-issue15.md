@@ -3,10 +3,11 @@
 The public site accepts a genuine anonymous CMS receipt, reads published articles,
 resolves category IDs, searches CMS title/excerpt/public byline, and serves clean
 `/reports/:slug/` article URLs. Failures preserve text or earlier results and do not
-substitute mock content. This branch extends PR #17 (`a6bdbd1`), which already includes
-integration `ba1d653` and the pending public mobile/homepage enhancements. Existing
-PR branches are untouched. PR #21 already incorporates #17; integrate this follow-up
-there or after #17 reaches `feat/newsroom-mvp`. No automatic merge or deployment.
+substitute mock content. This branch extends PR #17 (`a6bdbd1`) and has been updated through merged PR #21
+at `416fadc` on `feat/newsroom-mvp`. The previously pending public enhancements and
+Claude/Gemini integration are now inherited from that base. The resulting PR adds
+only the issue #15 public frontend, test, host and documentation changes. Existing
+PR branches remain untouched. No automatic merge or deployment.
 
 ## Public interface with Claude and Gemini
 
@@ -108,7 +109,7 @@ Sitemap generation, full server-rendered section/search pages, redirecting histo
 WordPress URLs, CDN caching, reverse-proxy TLS/CSP policy and production indexing
 approval remain deployment/SEO follow-ups, not claims made by these tests.
 
-Claude's PR #21 `05-public-gap.spec.ts` marks the old localhost gap as an expected
+Claude's merged PR #21 `05-public-gap.spec.ts` marks the old localhost gap as an expected
 failure. Its owner must remove that `test.fail` when integrating this fix; otherwise
 a now-successful test will intentionally turn the integration lane red. This change
 does not edit `apps/cms` to adjust another owner's tests.

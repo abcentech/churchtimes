@@ -7,7 +7,13 @@ export default defineConfig(({ command }) => ({
     name: 'churchtimes-source-entry',
     transformIndexHtml: {
       order: 'pre',
-      handler: () => readFileSync(new URL('./src/index.template.html', import.meta.url), 'utf8'),
+      handler: (html, ctx) => {
+        if (ctx?.path && ctx.path.includes('newsroom')) {
+          return html;
+        }
+        return readFileSync(new URL('./src/index.template.html', import.meta.url), 'utf8');
+      },
     },
   }],
 }));
+

@@ -1,0 +1,222 @@
+# API E2E evidence, 2026-10-13 (synthetic staging data only)
+# branch: agent/payload-e2e-staging  base commit: ba1d653 (+ uncommitted working tree)
+# node: v24.19.0   os: MINGW64_NT-10.0-26200 (Windows 11, Git Bash)   cwd: apps/cms
+# secrets: none are printed by these commands; this file was additionally scanned for the generated secrets/passwords before saving
+
+$ npm run staging:up
+
+> churchtimes-cms@0.1.0 staging:up
+> node scripts/staging-up.mjs
+
+[staging] starting embedded PostgreSQL on 127.0.0.1:55432
+[staging] applying migrations
+[staging] seeding synthetic fixtures
+[staging] building the CMS (next build, can take a few minutes)
+[staging] starting next start on http://127.0.0.1:3100
+
+[staging] READY
+  CMS (hostname for browsers) : http://cms.churchtimes.localhost:3100   (admin: http://cms.churchtimes.localhost:3100/admin)
+  CMS (loopback, for scripts) : http://127.0.0.1:3100
+  Allowed frontend origins    : http://newsroom.churchtimes.localhost:5174 (newsroom), http://www.churchtimes.localhost:5173 (public site)
+  PostgreSQL                  : 127.0.0.1:55432 (credentials in .staging\.env.staging)
+  Staff logins                : .staging\credentials.json (never printed)
+  State / logs                : .staging\state.json, .staging\server.log
+  Tear down                   : npm run staging:down
+exit=0
+
+$ npm run test:e2e:api
+
+> churchtimes-cms@0.1.0 test:e2e:api
+> vitest run -c vitest.e2e.config.ts
+
+
+ RUN  v5.0.4 C:/Users/HP/Documents/churchtimes/churchtimes-payload-core/apps/cms
+
+ ✓ |e2e-api| e2e/api/auth.test.ts > staff login / me / logout > login with email + password returns 200, a JWT, the user and a hardened payload-token cookie 1834ms
+ ✓ |e2e-api| e2e/api/auth.test.ts > staff login / me / logout > GET /api/users/me with the cookie returns the signed-in user 1094ms
+ ✓ |e2e-api| e2e/api/auth.test.ts > staff login / me / logout > GET /api/users/me with `Authorization: JWT <token>` (no cookie) returns the signed-in user 981ms
+ ✓ |e2e-api| e2e/api/auth.test.ts > staff login / me / logout > wrong credentials: 401 with the same message for an unknown e-mail (no enumeration) 38ms
+ ✓ |e2e-api| e2e/api/auth.test.ts > staff login / me / logout > logout returns 200, clears the cookie and ends the session: the old cookie AND the old JWT are then anonymous 1017ms
+ ✓ |e2e-api| e2e/api/auth.test.ts > staff login / me / logout > me after logout (fresh jar) returns 200 with user: null, not an error 854ms
+ ✓ |e2e-api| e2e/api/auth.test.ts > invalid, tampered and expired sessions > a garbage token is unauthenticated (me -> user null) and protected collections refuse it 26ms
+ ✓ |e2e-api| e2e/api/auth.test.ts > invalid, tampered and expired sessions > a token signed with the wrong key is rejected 1018ms
+ ✓ |e2e-api| e2e/api/auth.test.ts > invalid, tampered and expired sessions > an EXPIRED token (valid signature, exp in the past) is rejected 1306ms
+ ✓ |e2e-api| e2e/api/auth.test.ts > invalid, tampered and expired sessions > a valid cookie sent from a NON-allowlisted Origin is treated as anonymous (CSRF protection) 1310ms
+ ✓ |e2e-api| e2e/api/auth.test.ts > invalid, tampered and expired sessions > anonymous callers cannot read staff-only collections 134ms
+ ✓ |e2e-api| e2e/api/workflow.test.ts > role permissions on the article workflow > a reporter can create a draft (status forced to a non-published state, author = the reporter) 179ms
+ ✓ |e2e-api| e2e/api/workflow.test.ts > role permissions on the article workflow > a reporter CANNOT publish: PATCH status=published -> 403 and the article stays a draft 299ms
+ ✓ |e2e-api| e2e/api/workflow.test.ts > role permissions on the article workflow > a reporter CANNOT create an article directly as published -> 403 27ms
+ ✓ |e2e-api| e2e/api/workflow.test.ts > role permissions on the article workflow > a reporter CAN submit for review (draft -> in_review) but CANNOT approve their own work -> 403 263ms
+ ✓ |e2e-api| e2e/api/workflow.test.ts > role permissions on the article workflow > a reporter CANNOT delete articles 151ms
+ ✓ |e2e-api| e2e/api/workflow.test.ts > role permissions on the article workflow > an editor-in-chief approves (in_review -> approved) and then publishes; publishedAt is set by the server 327ms
+ ✓ |e2e-api| e2e/api/workflow.test.ts > role permissions on the article workflow > an editor can request changes and the reporter can then resubmit (changes_requested -> in_review) 234ms
+ ✓ |e2e-api| e2e/api/workflow.test.ts > role permissions on the article workflow > an invalid transition (draft -> archived) is rejected for an editor 116ms
+ ✓ |e2e-api| e2e/api/workflow.test.ts > role permissions on the article workflow > an editor must append a correction to change a published article, and unpublishing hides it again 318ms
+ ✓ |e2e-api| e2e/api/media.test.ts > media upload and delivery > a staff member can upload a PNG as multipart/form-data (file + _payload) -> 201 with absolute url and sizes 255ms
+ ✓ |e2e-api| e2e/api/media.test.ts > media upload and delivery > fetching the media URL returns 200, image/png and X-Content-Type-Options: nosniff 22ms
+ ✓ |e2e-api| e2e/api/media.test.ts > media upload and delivery > the file is also served to anonymous callers without cookies (public site <img src>) 27ms
+ ✓ |e2e-api| e2e/api/media.test.ts > media upload and delivery > an article with this featuredImage renders it at depth=1 for anonymous readers (url, alt, sizes) 133ms
+ ✓ |e2e-api| e2e/api/media.test.ts > media upload and delivery > anonymous callers cannot upload 21ms
+ ✓ |e2e-api| e2e/api/media.test.ts > media upload and delivery > SVG / HTML / mislabelled files are rejected (content is verified, not just the declared type) 59ms
+ ✓ |e2e-api| e2e/api/media.test.ts > media upload and delivery > an upload larger than the 11 MB media limit is 413 (proxy.ts) with CORS for the newsroom origin 85ms
+ ✓ |e2e-api| e2e/api/submissions.test.ts > anonymous submission > (needs network) real Siteverify with the Cloudflare test secret + dummy token -> 201 {ok, reference, message} 560ms
+ ✓ |e2e-api| e2e/api/submissions.test.ts > anonymous submission > (needs network) the submission is stored as `new`, with a hashed IP, and is NEVER visible publicly 532ms
+ ✓ |e2e-api| e2e/api/submissions.test.ts > anonymous submission > (needs network) resending identical content is a 409 duplicate 384ms
+ ✓ |e2e-api| e2e/api/submissions.test.ts > anonymous submission > a missing Turnstile token is 400 with field turnstileToken, and nothing is stored 52ms
+ ✓ |e2e-api| e2e/api/submissions.test.ts > anonymous submission > an empty/blank Turnstile token is also 400 20ms
+ ✓ |e2e-api| e2e/api/submissions.test.ts > anonymous submission > field validation errors are an array of {field, message} 20ms
+ ✓ |e2e-api| e2e/api/submissions.test.ts > anonymous submission > the honeypot field returns a normal-looking 201 but stores nothing 62ms
+ ✓ |e2e-api| e2e/api/submissions.test.ts > anonymous submission > a non-JSON Content-Type is 415 10ms
+ ✓ |e2e-api| e2e/api/submissions.test.ts > submission origin policy and CORS > an allowlisted origin gets an exact ACAO echo and exposes Retry-After 12ms
+ ✓ |e2e-api| e2e/api/submissions.test.ts > submission origin policy and CORS > a disallowed origin is 403 "Origin not allowed." with NO CORS grant 18ms
+ ✓ |e2e-api| e2e/api/submissions.test.ts > submission origin policy and CORS > OPTIONS preflight from an allowed origin is 204 with ACAO, POST method and Content-Type header 25ms
+ ✓ |e2e-api| e2e/api/submissions.test.ts > submission origin policy and CORS > OPTIONS preflight from a disallowed origin is 403 with no ACAO 8ms
+ ✓ |e2e-api| e2e/api/submissions.test.ts > rate limiting (staging SUBMISSION_RATE_LIMIT is low on purpose) > 429 + Retry-After + Access-Control-Expose-Headers after the per-IP limit; forged X-Forwarded-For prefixes do not escape the bucket 100ms
+ ✓ |e2e-api| e2e/api/submissions.test.ts > request body limits (enforced by endpoint and proxy.ts, with CORS so browsers can read the error) > a >64 KB submission is 413 and keeps the CORS grant 13ms
+ ✓ |e2e-api| e2e/api/submissions.test.ts > request body limits (enforced by endpoint and proxy.ts, with CORS so browsers can read the error) > a >1 MB JSON body anywhere on /api is 413 from proxy.ts, with CORS for an allowlisted origin 75ms
+ ✓ |e2e-api| e2e/api/public-visibility.test.ts > published-only visibility for anonymous readers > lists only published articles, newest first, with no staff-only fields 30ms
+ ✓ |e2e-api| e2e/api/public-visibility.test.ts > published-only visibility for anonymous readers > `?pagination=false` is ignored: the list stays paginated and capped at 100 50ms
+ ✓ |e2e-api| e2e/api/public-visibility.test.ts > published-only visibility for anonymous readers > `where[status][equals]=draft` (and other non-published statuses) returns nothing to anonymous readers 166ms
+ ✓ |e2e-api| e2e/api/public-visibility.test.ts > published-only visibility for anonymous readers > an unpublished article by id is 404 for anonymous callers but readable by an admin 88ms
+ ✓ |e2e-api| e2e/api/public-visibility.test.ts > published-only visibility for anonymous readers > a published article can be read by slug and by category id 57ms
+ ✓ |e2e-api| e2e/api/public-visibility.test.ts > published-only visibility for anonymous readers > categories are public 17ms
+ ✓ |e2e-api| e2e/api/public-visibility.test.ts > published-only visibility for anonymous readers > live coverage: a draft event is hidden; only APPROVED updates of a live event are public 151ms
+ ✓ |e2e-api| e2e/api/public-visibility.test.ts > invalid filters are rejected by proxy.ts (only reachable on the real server) > where[category][equals]=news (a slug, not an id) -> 400 with a field error, not 500 18ms
+ ✓ |e2e-api| e2e/api/public-visibility.test.ts > invalid filters are rejected by proxy.ts (only reachable on the real server) > the 400 carries CORS headers for an allowlisted origin (so a browser can read it) and none for others 31ms
+ ✓ |e2e-api| e2e/api/public-visibility.test.ts > invalid filters are rejected by proxy.ts (only reachable on the real server) > other malformed relationship filters (operators in, not_in, etc. with non-numeric ids) are 400 too 32ms
+ ✓ |e2e-api| e2e/api/public-visibility.test.ts > invalid filters are rejected by proxy.ts (only reachable on the real server) > a numeric id filter still works 26ms
+ ✓ |e2e-api| e2e/api/cors.test.ts > CORS allowlist (CMS_CORS_ORIGINS) > an allowlisted origin is echoed exactly, with credentials allowed and Vary: Origin 112ms
+ ✓ |e2e-api| e2e/api/cors.test.ts > CORS allowlist (CMS_CORS_ORIGINS) > a disallowed origin gets NO Access-Control-Allow-Origin (and never a wildcard) 67ms
+ ✓ |e2e-api| e2e/api/cors.test.ts > CORS allowlist (CMS_CORS_ORIGINS) > OPTIONS preflight for login from the newsroom origin returns the grant for POST + Content-Type 21ms
+ ✓ |e2e-api| e2e/api/cors.test.ts > CORS allowlist (CMS_CORS_ORIGINS) > OPTIONS preflight from a disallowed origin returns no grant 12ms
+ ✓ |e2e-api| e2e/api/cors.test.ts > CORS allowlist (CMS_CORS_ORIGINS) > login from the newsroom origin carries the grant on the response and the cookie authenticates later calls from that origin 1013ms
+
+ Test Files  6 passed (6)
+      Tests  58 passed (58)
+   Start at  20:14:14
+   Duration  27.94s (tests 95%, import 4%)
+
+    Isolate  6 workers spawned · ~347ms startup each (spawn + environment, per file)
+             at least ~1.74s faster with isolate: false — reuses workers across files instead of one per file
+
+exit=0
+
+$ npm run staging:down
+
+> churchtimes-cms@0.1.0 staging:down
+> node scripts/staging-down.mjs
+
+[staging] stopped: server (pid 27644), postgres (pid 24696)
+[staging] deleted .staging/
+exit=0
+
+$ leftover check (listening sockets on 3100 / 55432, postgres processes, .staging dir)
+no listeners on 3100 / 55432
+no postgres processes
+.staging removed
+
+# ---- Re-run after the security-review fixes (scripts, seed guard, stricter e2e assertions), same day ----
+
+$ npm run staging:up
+
+> churchtimes-cms@0.1.0 staging:up
+> node scripts/staging-up.mjs
+
+[staging] starting embedded PostgreSQL on 127.0.0.1:55432
+[staging] applying migrations
+[staging] seeding synthetic fixtures
+[staging] building the CMS (next build, can take a few minutes)
+[staging] starting next start on http://127.0.0.1:3100
+
+[staging] READY
+  CMS (hostname for browsers) : http://cms.churchtimes.localhost:3100   (admin: http://cms.churchtimes.localhost:3100/admin)
+  CMS (loopback, for scripts) : http://127.0.0.1:3100
+  Allowed frontend origins    : http://newsroom.churchtimes.localhost:5174 (newsroom), http://www.churchtimes.localhost:5173 (public site)
+  PostgreSQL                  : 127.0.0.1:55432 (credentials in .staging\.env.staging)
+  Staff logins                : .staging\credentials.json (never printed)
+  State / logs                : .staging\state.json, .staging\server.log
+  Tear down                   : npm run staging:down
+
+$ npm run test:e2e:api
+
+> churchtimes-cms@0.1.0 test:e2e:api
+> vitest run -c vitest.e2e.config.ts
+
+
+ RUN  v5.0.4 C:/Users/HP/Documents/churchtimes/churchtimes-payload-core/apps/cms
+
+ ✓ |e2e-api| e2e/api/auth.test.ts > staff login / me / logout > login with email + password returns 200, a JWT, the user and a hardened payload-token cookie 1135ms
+ ✓ |e2e-api| e2e/api/auth.test.ts > staff login / me / logout > GET /api/users/me with the cookie returns the signed-in user 1033ms
+ ✓ |e2e-api| e2e/api/auth.test.ts > staff login / me / logout > GET /api/users/me with `Authorization: JWT <token>` (no cookie) returns the signed-in user 947ms
+ ✓ |e2e-api| e2e/api/auth.test.ts > staff login / me / logout > wrong credentials: 401 with the same message for an unknown e-mail (no enumeration) 58ms
+ ✓ |e2e-api| e2e/api/auth.test.ts > staff login / me / logout > logout returns 200, clears the cookie and ends the session: the old cookie AND the old JWT are then anonymous 1148ms
+ ✓ |e2e-api| e2e/api/auth.test.ts > staff login / me / logout > me after logout (fresh jar) returns 200 with user: null, not an error 979ms
+ ✓ |e2e-api| e2e/api/auth.test.ts > invalid, tampered and expired sessions > a garbage token is unauthenticated (me -> user null) and protected collections refuse it 35ms
+ ✓ |e2e-api| e2e/api/auth.test.ts > invalid, tampered and expired sessions > a token signed with the wrong key is rejected 982ms
+ ✓ |e2e-api| e2e/api/auth.test.ts > invalid, tampered and expired sessions > an EXPIRED token (valid signature, exp in the past) is rejected 1069ms
+ ✓ |e2e-api| e2e/api/auth.test.ts > invalid, tampered and expired sessions > a valid cookie sent from a NON-allowlisted Origin is treated as anonymous (CSRF protection) 1250ms
+ ✓ |e2e-api| e2e/api/auth.test.ts > invalid, tampered and expired sessions > anonymous callers cannot read staff-only collections 146ms
+ ✓ |e2e-api| e2e/api/workflow.test.ts > role permissions on the article workflow > a reporter can create a draft (status forced to a non-published state, author = the reporter) 164ms
+ ✓ |e2e-api| e2e/api/workflow.test.ts > role permissions on the article workflow > a reporter CANNOT publish: PATCH status=published -> 403 and the article stays a draft 284ms
+ ✓ |e2e-api| e2e/api/workflow.test.ts > role permissions on the article workflow > a reporter CANNOT create an article directly as published -> 403 20ms
+ ✓ |e2e-api| e2e/api/workflow.test.ts > role permissions on the article workflow > a reporter CAN submit for review (draft -> in_review) but CANNOT approve their own work -> 403 220ms
+ ✓ |e2e-api| e2e/api/workflow.test.ts > role permissions on the article workflow > a reporter CANNOT delete articles 116ms
+ ✓ |e2e-api| e2e/api/workflow.test.ts > role permissions on the article workflow > an editor-in-chief approves (in_review -> approved) and then publishes; publishedAt is set by the server 266ms
+ ✓ |e2e-api| e2e/api/workflow.test.ts > role permissions on the article workflow > an editor can request changes and the reporter can then resubmit (changes_requested -> in_review) 199ms
+ ✓ |e2e-api| e2e/api/workflow.test.ts > role permissions on the article workflow > an invalid transition (draft -> archived) is rejected for an editor 114ms
+ ✓ |e2e-api| e2e/api/workflow.test.ts > role permissions on the article workflow > an editor must append a correction to change a published article, and unpublishing hides it again 284ms
+ ✓ |e2e-api| e2e/api/media.test.ts > media upload and delivery > a staff member can upload a PNG as multipart/form-data (file + _payload) -> 201 with absolute url and sizes 278ms
+ ✓ |e2e-api| e2e/api/media.test.ts > media upload and delivery > fetching the media URL returns 200, image/png and X-Content-Type-Options: nosniff 43ms
+ ✓ |e2e-api| e2e/api/media.test.ts > media upload and delivery > the file is also served to anonymous callers without cookies (public site <img src>) 32ms
+ ✓ |e2e-api| e2e/api/media.test.ts > media upload and delivery > an article with this featuredImage renders it at depth=1 for anonymous readers (url, alt, sizes) 152ms
+ ✓ |e2e-api| e2e/api/media.test.ts > media upload and delivery > anonymous callers cannot upload 23ms
+ ✓ |e2e-api| e2e/api/media.test.ts > media upload and delivery > SVG / HTML / mislabelled files are rejected (content is verified, not just the declared type) 71ms
+ ✓ |e2e-api| e2e/api/media.test.ts > media upload and delivery > an upload larger than the 11 MB media limit is 413 (proxy.ts) with CORS for the newsroom origin 109ms
+ ✓ |e2e-api| e2e/api/submissions.test.ts > anonymous submission > (needs network) real Siteverify with the Cloudflare test secret + dummy token -> 201 {ok, reference, message} 745ms
+ ✓ |e2e-api| e2e/api/submissions.test.ts > anonymous submission > (needs network) the submission is stored as `new`, with a hashed IP, and is NEVER visible publicly 396ms
+ ✓ |e2e-api| e2e/api/submissions.test.ts > anonymous submission > (needs network) resending identical content is a 409 duplicate 431ms
+ ✓ |e2e-api| e2e/api/submissions.test.ts > anonymous submission > a missing Turnstile token is 400 with field turnstileToken, and nothing is stored 30ms
+ ✓ |e2e-api| e2e/api/submissions.test.ts > anonymous submission > an empty/blank Turnstile token is also 400 21ms
+ ✓ |e2e-api| e2e/api/submissions.test.ts > anonymous submission > field validation errors are an array of {field, message} 27ms
+ ✓ |e2e-api| e2e/api/submissions.test.ts > anonymous submission > the honeypot field returns a normal-looking 201 but stores nothing 36ms
+ ✓ |e2e-api| e2e/api/submissions.test.ts > anonymous submission > a non-JSON Content-Type is 415 19ms
+ ✓ |e2e-api| e2e/api/submissions.test.ts > submission origin policy and CORS > an allowlisted origin gets an exact ACAO echo and exposes Retry-After 17ms
+ ✓ |e2e-api| e2e/api/submissions.test.ts > submission origin policy and CORS > a disallowed origin is 403 "Origin not allowed." with NO CORS grant 23ms
+ ✓ |e2e-api| e2e/api/submissions.test.ts > submission origin policy and CORS > OPTIONS preflight from an allowed origin is 204 with ACAO, POST method and Content-Type header 24ms
+ ✓ |e2e-api| e2e/api/submissions.test.ts > submission origin policy and CORS > OPTIONS preflight from a disallowed origin is 403 with no ACAO 15ms
+ ✓ |e2e-api| e2e/api/submissions.test.ts > rate limiting (staging SUBMISSION_RATE_LIMIT is low on purpose) > 429 + Retry-After + Access-Control-Expose-Headers after the per-IP limit; forged X-Forwarded-For prefixes do not escape the bucket 93ms
+ ✓ |e2e-api| e2e/api/submissions.test.ts > request body limits (enforced by endpoint and proxy.ts, with CORS so browsers can read the error) > a >64 KB submission is 413 and keeps the CORS grant 23ms
+ ✓ |e2e-api| e2e/api/submissions.test.ts > request body limits (enforced by endpoint and proxy.ts, with CORS so browsers can read the error) > a >1 MB JSON body anywhere on /api is 413 from proxy.ts, with CORS for an allowlisted origin 76ms
+ ✓ |e2e-api| e2e/api/public-visibility.test.ts > published-only visibility for anonymous readers > lists only published articles, newest first, with no staff-only fields 64ms
+ ✓ |e2e-api| e2e/api/public-visibility.test.ts > published-only visibility for anonymous readers > `?pagination=false` is ignored: the list stays paginated and capped at 100 66ms
+ ✓ |e2e-api| e2e/api/public-visibility.test.ts > published-only visibility for anonymous readers > `where[status][equals]=draft` (and other non-published statuses) returns nothing to anonymous readers 178ms
+ ✓ |e2e-api| e2e/api/public-visibility.test.ts > published-only visibility for anonymous readers > an unpublished article by id is 404 for anonymous callers but readable by an admin 96ms
+ ✓ |e2e-api| e2e/api/public-visibility.test.ts > published-only visibility for anonymous readers > a published article can be read by slug and by category id 63ms
+ ✓ |e2e-api| e2e/api/public-visibility.test.ts > published-only visibility for anonymous readers > categories are public 18ms
+ ✓ |e2e-api| e2e/api/public-visibility.test.ts > published-only visibility for anonymous readers > live coverage: a draft event is hidden; only APPROVED updates of a live event are public 197ms
+ ✓ |e2e-api| e2e/api/public-visibility.test.ts > invalid filters are rejected by proxy.ts (only reachable on the real server) > where[category][equals]=news (a slug, not an id) -> 400 with a field error, not 500 29ms
+ ✓ |e2e-api| e2e/api/public-visibility.test.ts > invalid filters are rejected by proxy.ts (only reachable on the real server) > the 400 carries CORS headers for an allowlisted origin (so a browser can read it) and none for others 30ms
+ ✓ |e2e-api| e2e/api/public-visibility.test.ts > invalid filters are rejected by proxy.ts (only reachable on the real server) > other malformed relationship filters (operators in, not_in, etc. with non-numeric ids) are 400 too 29ms
+ ✓ |e2e-api| e2e/api/public-visibility.test.ts > invalid filters are rejected by proxy.ts (only reachable on the real server) > a numeric id filter still works 35ms
+ ✓ |e2e-api| e2e/api/cors.test.ts > CORS allowlist (CMS_CORS_ORIGINS) > an allowlisted origin is echoed exactly, with credentials allowed and Vary: Origin 188ms
+ ✓ |e2e-api| e2e/api/cors.test.ts > CORS allowlist (CMS_CORS_ORIGINS) > a disallowed origin gets NO Access-Control-Allow-Origin (and never a wildcard) 81ms
+ ✓ |e2e-api| e2e/api/cors.test.ts > CORS allowlist (CMS_CORS_ORIGINS) > OPTIONS preflight for login from the newsroom origin returns the grant for POST + Content-Type 20ms
+ ✓ |e2e-api| e2e/api/cors.test.ts > CORS allowlist (CMS_CORS_ORIGINS) > OPTIONS preflight from a disallowed origin returns no grant 11ms
+ ✓ |e2e-api| e2e/api/cors.test.ts > CORS allowlist (CMS_CORS_ORIGINS) > login from the newsroom origin carries the grant on the response and the cookie authenticates later calls from that origin 936ms
+
+ Test Files  6 passed (6)
+      Tests  58 passed (58)
+   Start at  20:36:27
+   Duration  27.67s (tests 93%, import 5%, transform 1%)
+
+    Isolate  6 workers spawned · ~403ms startup each (spawn + environment, per file)
+             at least ~2.02s faster with isolate: false — reuses workers across files instead of one per file
+
+
+$ npm run staging:down
+
+> churchtimes-cms@0.1.0 staging:down
+> node scripts/staging-down.mjs
+
+[staging] stopped: server (pid 21544), postgres (pid 27380)
+[staging] deleted .staging/

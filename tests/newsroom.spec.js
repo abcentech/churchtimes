@@ -1,0 +1,141 @@
+import { test, expect } from '@playwright/test';
+
+/**
+ * Staff newsroom UI suite, MOCK MODE ONLY.
+ *
+ * These tests run against `vite apps/newsroom --mode mock` (see playwright.newsroom-app.config.js). The mock backend
+ * exists only in dev builds; production builds are covered in newsroom-security.spec.js (no mock code shipped) and
+ * live-CMS behaviour in the "live CMS" suite there.
+ */
+
+test.beforeEach(async ({ page }) => {
+  await page.goto('./');
+  await page.evaluate(() => localStorage.clear());
+  await page.goto('./#dashboard');
+  await expect(page.getByTestId('session-user')).toBeVisible();
+});
+
+test.describe('Newsroom UI (dev mock mode)', () => {
+  test('dashboard renders masthead, environment banner, kpis and story pipeline', async ({ page }) => {
+    await expect(page.locator('.brand-title')).toHaveText('CHURCH TIMES');
+    await expect(page.locator('.brand-workspace-tag')).toHaveText('Newsroom');
+
+    await expect(page.locator('#mode-banner-badge')).toHaveText('LOCAL MOCK MODE');
+    await expect(page.locator('.skip-link')).toHaveAttribute('href', '#main-content');
+
+    await expect(page.locator('#dash-metrics-container')).toBeVisible();
+    await expect(page.locator('.metric-card')).toHaveCount(6);
+    await expect(page.locator('#launch-write-story')).toBeVisible();
+    await expect(page.getByTestId('story-list').getByTestId('story-row').first()).toBeVisible();
+
+    // The public tip form is not part of the staff app
+    await expect(page.locator('[data-view-nav="submit"]')).toHaveCount(0);
+    await expect(page.locator('#sub-headline-input')).toHaveCount(0);
+  });
+
+  test('story editor saves a draft only after the backend answers, then submits for review', async ({ page }) => {
+    await page.getByTestId('dash-new-story').click();
+    await expect(page.getByTestId('editor-title')).toBeVisible();
+
+    const title = 'Diocesan Synod Opens in Lagos with Call for Youth Welfare';
+    await page.getByTestId('editor-title').fill(title);
+    await page.getByTestId('editor-standfirst').fill('Bishops and lay delegates deliberate on social investments.');
+    await page.getByTestId('editor-category').selectOption({ index: 1 });
+    await page.getByTestId('editor-body').fill('## Opening\n\nThe annual synod session commenced with **an opening service** and a [programme](https://example.org/programme).');
+
+    await expect(page.locator('#preview-headline')).toHaveText(title);
+    await expect(page.locator('#preview-body-content h2')).toHaveText('Opening');
+    await expect(page.locator('#preview-body-content strong')).toHaveText('an opening service');
+    await expect(page.getByTestId('editor-slug')).toHaveValue('diocesan-synod-opens-in-lagos-with-call-for-youth-welfare');
+    await expect(page.locator('#word-count-badge')).toContainText('words');
+
+    await page.getByTestId('editor-save-draft').click();
+    await expect(page.locator('.toast').last()).toContainText('Draft saved successfully');
+    await expect(page).toHaveURL(/#editor\?id=/);
+
+    await page.getByTestId('editor-submit-review').click();
+    await expect(page.locator('.toast').last()).toContainText('submitted for editorial review');
+    await expect(page.getByTestId('editor-status')).toHaveAttribute('data-status', 'in_review');
+  });
+
+  test('editor refuses to save without a headline and shows the message', async ({ page }) => {
+    await page.getByTestId('dash-new-story').click();
+    await page.getByTestId('editor-save-draft').click();
+    await expect(page.getByTestId('editor-error')).toContainText('Enter a headline');
+    await expect(page.locator('.toast').filter({ hasText: 'Draft saved' })).toHaveCount(0);
+  });
+
+  test('review queue lets an editor inspect and approve an in-review story', async ({ page }) => {
+    await page.locator('#user-role-select').selectOption({ label: 'Derin Adeogun (Section Editor)' });
+    await page.goto('./#review');
+    await expect(page.locator('.review-tabs')).toBeVisible();
+    await page.getByTestId('review-tab-articles_review').click();
+
+    const inspect = page.getByTestId('review-inspect').first();
+    await expect(inspect).toBeVisible();
+    await inspect.click();
+    await expect(page.locator('.modal-overlay')).toBeVisible();
+    await expect(page.locator('.checklist-box')).toBeVisible();
+    await page.getByTestId('inspect-approve').click();
+    await expect(page.locator('.toast').last()).toContainText('approved for publication');
+    await expect(page.locator('.modal-overlay')).toHaveCount(0);
+  });
+
+  test('reader tips are reviewed in the queue and converted through the convert action', async ({ page }) => {
+    await page.locator('#user-role-select').selectOption({ label: 'Derin Adeogun (Section Editor)' });
+    await page.goto('./#review');
+    await page.getByTestId('review-tab-submissions').click();
+    await expect(page.getByTestId('tip-list').getByTestId('tip-card').first()).toBeVisible();
+    // Never auto-published
+    await expect(page.getByTestId('tip-card').first()).toHaveAttribute('data-status', /new|under_review/);
+
+    await page.getByTestId('tip-convert').first().click();
+    await page.getByTestId('tip-convert-confirm').click();
+    await expect(page.locator('.toast').last()).toContainText('Tip converted into a new draft story');
+    await expect(page.getByTestId('editor-title')).toBeVisible();
+    await expect(page.getByTestId('editor-status')).toHaveAttribute('data-status', 'draft');
+  });
+
+  test('live coverage: editor creates an event, goes live and publishes an update', async ({ page }) => {
+    await page.locator('#user-role-select').selectOption({ label: 'Derin Adeogun (Section Editor)' });
+    await page.goto('./#live');
+    await expect(page.locator('.view-title')).toHaveText('Live Coverage & Real-Time Updates');
+    await expect(page.locator('#live-viewer-count')).toHaveCount(0); // no invented viewer numbers
+
+    await page.getByTestId('live-new-event').click();
+    await page.getByTestId('live-event-title').fill('Mock Synod Opening');
+    await page.getByTestId('live-event-create').click();
+    await page.getByTestId('live-go-live').click();
+    await expect(page.getByTestId('live-event-status')).toContainText('LIVE NOW');
+
+    await page.getByTestId('live-update-body').fill('Delegates assembled for the opening session.');
+    await page.getByTestId('live-update-post').click();
+    await expect(page.getByTestId('live-timeline')).toContainText('Delegates assembled for the opening session.');
+  });
+
+  test('media library lists assets, searches and opens details', async ({ page }) => {
+    await page.goto('./#media');
+    await expect(page.getByTestId('media-grid')).toBeVisible();
+    await expect(page.getByTestId('media-card')).toHaveCount(6);
+
+    await page.getByTestId('media-search').fill('Omololu');
+    await expect(page.getByTestId('media-card')).toHaveCount(1);
+
+    await page.getByTestId('media-card').first().click();
+    await expect(page.locator('.modal-overlay')).toContainText('Accessible Alt Text');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.modal-overlay')).toHaveCount(0);
+  });
+
+  test('keyboard shortcuts navigate between views; dev role switcher changes permissions', async ({ page }) => {
+    await page.keyboard.press('Alt+2');
+    await expect(page.getByTestId('editor-title')).toBeVisible();
+    await page.keyboard.press('Alt+3');
+    await expect(page.locator('.view-title')).toHaveText('Editorial Review Queue');
+    await page.keyboard.press('Alt+1');
+    await expect(page.locator('.view-title')).toHaveText('Editorial Newsroom Desk');
+
+    await page.locator('#user-role-select').selectOption({ label: 'Lanre Ogundipe (Editor-in-Chief)' });
+    await expect(page.getByTestId('session-user-role')).toHaveAttribute('data-role', 'editor-in-chief');
+  });
+});
