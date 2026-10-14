@@ -192,7 +192,8 @@ export async function startStack(): Promise<XappConfig> {
     SUBMISSION_RATE_LIMIT: '500',
     SUBMISSION_EMAIL_RATE_LIMIT: '500',
     SMTP_HOST: '',
-    SCHEDULER_ENABLED: 'false',
+    SCHEDULER_ENABLED: 'true', // spec 08 needs the real in-process scheduler (2 s tick); it only touches status=scheduled articles
+    SCHEDULER_INTERVAL_SECONDS: '2',
     PAYLOAD_DB_PUSH: 'false',
     NEXT_TELEMETRY_DISABLED: '1',
     NODE_OPTIONS: '--no-deprecation',

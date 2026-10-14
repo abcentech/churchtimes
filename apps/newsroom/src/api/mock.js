@@ -180,6 +180,19 @@ export class MockAdapter {
     this.persist();
     return { data: clone(a) };
   }
+  async scheduleArticle(id, scheduledForIso) {
+    const a = this.db.articles.find(x => x.id === id);
+    if (!a) throw new ApiError('Story not found.', { status: 404 });
+    if (!can(this.currentUser, 'story.schedule', this._ctx(a))) throw forbidden();
+    const when = new Date(scheduledForIso);
+    if (Number.isNaN(when.getTime())) throw new ApiError('scheduledFor is required to schedule an article.', { status: 400 });
+    if (when.getTime() <= Date.now()) throw new ApiError('scheduledFor must be in the future.', { status: 400 });
+    a.status = 'scheduled';
+    a.scheduledFor = when.toISOString();
+    a.updatedAt = new Date().toISOString();
+    this.persist();
+    return { data: clone(a) };
+  }
   async deleteArticle(id) {
     if (!can(this.currentUser, 'story.delete')) throw forbidden();
     this.db.articles = this.db.articles.filter(a => a.id !== id);

@@ -374,6 +374,7 @@ Uploaded test images land in `apps/cms/media` with a per-run prefix and are remo
 | `04-newsroom-unauthorized.spec.ts` | C | logged-out newsroom shows only sign-in on every route and loads no protected data; wrong password shows the server error; logout ends the server session; stale editor save forbidden by the CMS shows the CMS error (no success toast, nothing changed); non-image upload shows the CMS rejection; revoked session on a write is refused with nothing created; revoked session on read-only navigation returns to sign-in ("Your session has ended") and the server agrees `user: null`. |
 | `05-public-gap.spec.ts` | public regression (#15) | the public site built with only `VITE_PUBLIC_CMS_URL=http://cms.churchtimes.localhost:<port>` enables the story form (gap 1 below, fixed by #22). |
 | `06-newsroom-mobile-layout.spec.ts` | D | no newsroom view forces horizontal page scrolling at the project viewport (`KNOWN_OVERFLOW` lists any view that still does). |
+| `08-scheduled-publishing.spec.ts` | E (scheduling) | the stack runs the real scheduler (`SCHEDULER_ENABLED=true`, `SCHEDULER_INTERVAL_SECONDS=2`). Reporter (UI): no Schedule control and a direct `PATCH status=scheduled` is 403 (draft and in_review). Section editor (UI): approves, uses the new newsroom **Schedule** control (`apps/newsroom/src/views/editor.js`, `story.schedule` in `permissions.js`): empty time is rejected client-side, a past time is refused by the CMS (`scheduledFor must be in the future.`, message shown, status stays `approved`), a time ~50 s ahead gives `scheduled`. **API-driven** (test S2b, labelled): missing / past / garbage `scheduledFor` all 400 on a probe draft. Anonymous reader: before the time the story is absent (API, Latest, `/reports/<slug>/` real 404); the scheduler then publishes it (`publishedAt` between `scheduledFor` and +15 s, audit entry by actor `system`) and the card + server-rendered article page appear; `scheduledFor` is never exposed anonymously. |
 
 Evidence: `docs/evidence/cross-app-2026-10-13.txt` (per-step log, server-side checks, results), headline screenshots `docs/evidence/cross-app-<scenario>-<project>.png`,
 every step in `docs/evidence/cross-app-steps/`. Screenshots contain synthetic data only (the login screenshot is taken before any password is typed).
@@ -395,7 +396,7 @@ every step in `docs/evidence/cross-app-steps/`. Screenshots contain synthetic da
 4. Minor: the "Log out" button text was dark on the dark header. **Fixed on the integration branch** (`.session-chip .btn-outline` in `apps/newsroom/styles/newsroom.css`).
 
 Limits: Turnstile action/hostname enforcement is not exercised (Cloudflare's test secret returns no `action`, so a non-empty `TURNSTILE_EXPECTED_ACTION` would fail closed; the
-CMS unit tests cover it with a stubbed transport). Scheduled publishing, live coverage UI, correction notes and Firefox/Safari are not covered. Chromium only.
+CMS unit tests cover it with a stubbed transport). Live coverage UI, correction notes and Firefox/Safari are not covered (scheduled publishing is covered by spec 08; a scheduler tick missed while the server was down is not simulated, the CMS unit tests cover it). Chromium only.
 
 ### Teardown message `next start exited with code 1` (e2e/browser stack)
 

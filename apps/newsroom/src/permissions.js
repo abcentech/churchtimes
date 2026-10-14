@@ -68,6 +68,12 @@ export function can(user, action, ctx = {}) {
       if (!['draft', 'in_review', 'approved', 'scheduled', 'archived'].includes(status)) return false;
       if (editor) return true;
       return role === 'trusted-publisher' && isAuthor && inSections(user, categoryId) && status !== 'archived';
+    case 'story.schedule':
+      // Same rule as publishing (the CMS uses one rule for ->published and ->scheduled), minus archived stories.
+      // A scheduled story can be rescheduled by whoever may schedule it.
+      if (!['draft', 'in_review', 'approved', 'scheduled'].includes(status)) return false;
+      if (editor) return true;
+      return role === 'trusted-publisher' && isAuthor && inSections(user, categoryId);
     case 'story.archive':
       return editor && status === 'published';
     case 'story.delete':

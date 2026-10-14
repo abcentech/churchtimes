@@ -363,6 +363,19 @@ export class CmsAdapter {
     return { data: normalizeArticle(data.doc) };
   }
 
+  /**
+   * Schedule (or reschedule) a story: one PATCH with status 'scheduled' and the instant to publish.
+   * The CMS validates it (future time, who may schedule) and publishes it when the time arrives.
+   */
+  async scheduleArticle(id, scheduledForIso) {
+    const when = new Date(scheduledForIso);
+    if (Number.isNaN(when.getTime())) throw new ApiError('That is not a valid date and time.', { status: 400 });
+    const data = await this.request(`/articles/${encodeURIComponent(safeId(id))}`, {
+      method: 'PATCH', json: { status: 'scheduled', scheduledFor: when.toISOString() }, query: { depth: '1' }
+    });
+    return { data: normalizeArticle(data.doc) };
+  }
+
   async deleteArticle(id) {
     await this.request(`/articles/${encodeURIComponent(safeId(id))}`, { method: 'DELETE' });
     return { ok: true };
