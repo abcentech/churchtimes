@@ -11,7 +11,8 @@
  *   STAGING_CREDENTIALS_FILE       JSON written by staging-up.mjs: { users: { <key>: { email, password, role } } }
  *                                  Passwords are read from this file only; they are never logged.
  *
- * Idempotent: records are upserted by slug / email.
+ * Idempotent: records are upserted by slug / email. The password of an EXISTING synthetic user (exact email from the credentials
+ * file) is reset to the file's value so the file and the database cannot drift apart.
  *
  * Seeded:
  *   - the 9 site categories (taxonomy only)
@@ -55,6 +56,12 @@ const readCredentials = (): Creds => {
       throw new Error(`Credentials file is missing a valid "${key}" entry.`)
     }
   }
+  // The seed creates these accounts and resets their passwords, so it may only ever touch synthetic addresses.
+  for (const [key, u] of Object.entries(parsed.users ?? {})) {
+    if (!/^[a-z0-9._-]+@staging\.invalid$/i.test(u?.email ?? '')) {
+      throw new Error(`Credentials file entry "${key}" is not a synthetic @staging.invalid address; refusing to seed.`)
+    }
+  }
   return parsed
 }
 
@@ -96,7 +103,9 @@ async function main(): Promise<void> {
   if (!staging.enabled) throw new Error(`Refusing to seed synthetic staging data: ${staging.problems.join(' ')}`)
   let dbHost = ''
   try {
-    dbHost = new URL(process.env.DATABASE_URL ?? '').hostname
+    const dbUrl = new URL(process.env.DATABASE_URL ?? '')
+    // pg honours ?host= / ?hostaddr= over the URL's host, which would get around the loopback check.
+    if (!dbUrl.searchParams.has('host') && !dbUrl.searchParams.has('hostaddr')) dbHost = dbUrl.hostname
   } catch {
     // not a URL: refused below
   }
@@ -126,6 +135,16 @@ async function main(): Promise<void> {
         overrideAccess: true,
       })
       if (row.docs[0]) {
+        // Keep the credentials file and the database in step (staging:funnel regenerates the file if it was lost). Only these exact
+        // synthetic accounts (the emails listed in the credentials file) are touched.
+        await payload.update({
+          collection: 'users',
+          id: row.docs[0].id,
+          data: { password: u.password } as never,
+          depth: 0,
+          overrideAccess: true,
+          context: SEED,
+        })
         userId[key] = row.docs[0].id
         continue
       }

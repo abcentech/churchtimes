@@ -18,6 +18,8 @@ const pg = new EmbeddedPostgres({
   password: PG_PASSWORD,
   port: Number(PG_PORT),
   persistent: true,
+  // Never listen beyond loopback, whatever the host's postgres defaults or config say.
+  postgresFlags: ['-c', 'listen_addresses=127.0.0.1'],
   onLog: () => {},
   onError: (e) => console.error('[postgres]', e),
 })

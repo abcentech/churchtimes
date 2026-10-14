@@ -4,3 +4,25 @@ test-results/
 playwright-report/
 .env
 .env.local
+
+# deploy/staging: secrets, generated files, backups (see deploy/staging/.gitignore)
+deploy/staging/.env
+deploy/staging/.env.*
+!deploy/staging/.env.example
+!deploy/staging/.env.cms.example
+deploy/staging/build/
+deploy/staging/build.new/
+deploy/staging/build.old/
+deploy/staging/backups/
+deploy/staging/*credentials*
+deploy/staging/*.dump
+
+# Staging on the owner's PC via Tailscale Funnel (apps/cms/scripts/funnel-*.mjs): its state lives OUTSIDE the repo
+# (%LOCALAPPDATA%\churchtimes-staging-funnel); these are guards in case any of it is ever copied into the working tree.
+churchtimes-staging-funnel*/
+.churchtimes-staging-funnel*/
+secrets.json
+turnstile.json
+seed-users.json
+staff-logins.txt
+pg.ready

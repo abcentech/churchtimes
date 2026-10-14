@@ -5,12 +5,12 @@
 import { expect, test } from '@playwright/test'
 
 import { lexicalBody } from '../browser/support/env'
-import { Api, Evidence, getConfig, trackCmsCalls, uniq } from './support/helpers'
+import { Api, apiBase, Evidence, getConfig, trackCmsCalls, uniq } from './support/helpers'
 import { gotoView, loginUi, logoutUi, press, requireNewsroom } from './support/newsroom'
 
 const cfg = getConfig()
 const api = new Api(cfg)
-const base = new URL(cfg.recorderUrl).origin
+const base = apiBase(cfg)
 
 async function adminJson(method: string, urlPath: string, body?: unknown): Promise<{ status: number; json: any }> {
   const res = await fetch(`${base}${urlPath}`, {

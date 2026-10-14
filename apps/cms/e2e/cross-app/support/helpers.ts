@@ -3,21 +3,43 @@ import fs from 'node:fs'
 import path from 'node:path'
 import zlib from 'node:zlib'
 
-import type { Page, TestInfo } from '@playwright/test'
+import type { Locator, Page, TestInfo } from '@playwright/test'
 
+import { isHeaded, isRemote } from './remote'
 import type { XappConfig } from './stack'
 
 export type { XappConfig }
 
+const LIST_ONLY_CONFIG: XappConfig = {
+  cmsUrl: 'https://list-only.invalid',
+  newsroomOrigin: 'https://list-only.invalid',
+  publicOrigin: 'https://list-only.invalid',
+  publicGapOrigin: 'https://list-only.invalid',
+  credentials: {},
+  categoryId: 0,
+  categoryTitle: 'list-only',
+  recorderUrl: 'https://list-only.invalid/__e2e/log',
+  runId: 'list-only',
+  fixtureDir: '',
+  evidenceDir: '',
+}
+
 export function getConfig(): XappConfig {
   const raw = process.env.CT_XAPP_CONFIG
+  // `playwright test --list` loads every spec (they call getConfig() at module scope) without running globalSetup: give them an inert placeholder.
+  if (!raw && process.argv.includes('--list')) return LIST_ONLY_CONFIG
   if (!raw) throw new Error('CT_XAPP_CONFIG is not set: run through playwright.cross-app.config.ts (globalSetup boots the stack).')
   return JSON.parse(raw) as XappConfig
 }
 
 export type Role = 'admin' | 'reporter' | 'section-editor' | 'editor-in-chief'
 
-export const uniq = (label: string) => `${label} ${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`
+const randSuffix = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`
+/** Unique synthetic name. Remote mode puts the run prefix (E2E-yyyymmdd-hhmm) in front so teardown can find (and only touch) this run's records. */
+export const uniq = (label: string) => (isRemote ? `${getConfig().runId} ${label} ${randSuffix()}` : `${label} ${randSuffix()}`)
+
+/** Origin Node-side API calls go to: the deployed CMS in remote mode, the 127.0.0.1 proxy locally (Node does not resolve *.localhost on every OS). */
+export const apiBase = (cfg: XappConfig): string => cfg.apiBase ?? new URL(cfg.recorderUrl).origin
 
 // ---------------------------------------------------------------------------------------------------------
 // Evidence: step screenshots + a plain-text log. Synthetic data only; screenshots are taken before any password
@@ -25,7 +47,7 @@ export const uniq = (label: string) => `${label} ${Date.now().toString(36)}${Mat
 // ---------------------------------------------------------------------------------------------------------
 
 const evidenceOn = () => process.env.XAPP_KEEP_EVIDENCE !== '0'
-export const evidenceLogName = (): string => `cross-app-${new Date().toISOString().slice(0, 10)}.txt`
+export const evidenceLogName = (): string => `cross-app${isRemote ? '-remote' : ''}-${new Date().toISOString().slice(0, 10)}.txt`
 
 export function logLine(cfg: XappConfig, line: string): void {
   if (!evidenceOn()) return
@@ -103,7 +125,7 @@ export class Api {
   private tokens = new Map<string, string>()
   private base: string
   constructor(private cfg: XappConfig) {
-    this.base = new URL(cfg.recorderUrl).origin // 127.0.0.1 proxy: Node does not resolve *.localhost on every OS
+    this.base = apiBase(cfg)
   }
 
   async login(role: Role): Promise<string> {
@@ -218,5 +240,30 @@ export const sha1 = (s: string) => createHash('sha1').update(s).digest('hex').sl
 
 /** Wait until the real Cloudflare widget (test key) produced a token and the form reports it. */
 export async function waitForTurnstile(page: Page): Promise<void> {
-  await page.locator('#challenge-status').filter({ hasText: /Verification complete/i }).waitFor({ timeout: 45_000 })
+  const done = page.locator('#challenge-status').filter({ hasText: /Verification complete/i })
+  if (!isRemote) {
+    await done.waitFor({ timeout: 45_000 })
+    return
+  }
+  // REMOTE: the widget uses the REAL site key, so Cloudflare may show an interactive challenge that a headless browser cannot pass.
+  // We never try to bypass it. Headed runs (XAPP_HEADED=1) give a human time to click it.
+  const waitMs = isHeaded ? 240_000 : 45_000
+  try {
+    await done.waitFor({ timeout: waitMs })
+  } catch {
+    const status = ((await page.locator('#challenge-status').innerText().catch(() => '')) || '').replace(/\s+/g, ' ').trim()
+    throw new Error(
+      `Turnstile challenge did not auto-pass; run headed or use the phone checklist (waited ${waitMs / 1000} s, page status: "${status || 'unknown'}"). ` +
+        'Set XAPP_HEADED=1 and click the challenge when it appears; this lane never bypasses Turnstile.',
+    )
+  }
+}
+
+/** Fills a secret field. A failing Playwright call log quotes the value, so the message is scrubbed before it can reach a report (remote runs use real passwords). */
+export async function fillSecret(locator: Locator, secret: string): Promise<void> {
+  try {
+    await locator.fill(secret)
+  } catch (e) {
+    throw new Error(String((e as Error).message).split(secret).join('***'))
+  }
 }

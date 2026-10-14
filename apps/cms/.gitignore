@@ -11,3 +11,8 @@ next-env.d.ts
 *.log
 .staging*
 docs/evidence/cross-app-steps/
+
+# Remote cross-app lane (XAPP_REMOTE=1): evidence, failure artifacts and local credential files are never committed
+docs/evidence/remote/
+xapp-remote-credentials*.json
+*.remote-credentials.json

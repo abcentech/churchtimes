@@ -58,10 +58,14 @@ export type XappConfig = {
   newsroomOrigin: string
   publicOrigin: string
   publicGapOrigin: string
-  credentials: Record<string, { email: string; password: string; id: number }>
+  credentials: Record<string, { email: string; password: string; id: number; /** display name, remote mode only (optional) */ name?: string }>
   categoryId: number
   categoryTitle: string
   recorderUrl: string
+  /** REMOTE mode only (XAPP_REMOTE=1, support/remote.ts): origin for Node-side API calls (the deployed CMS). Local mode derives it from recorderUrl. */
+  apiBase?: string
+  /** REMOTE mode only: true when running against a deployed https staging (nothing booted, no recording proxy). */
+  remote?: boolean
   /** Set when `vite build apps/newsroom` failed: every newsroom journey must fail with this message. */
   newsroomBuildError?: string
   /** Prefix of every media filename the suite uploads (swept from apps/cms/media on teardown). */

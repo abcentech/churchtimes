@@ -1,0 +1,17 @@
+# OPTIONAL override: build the CMS image on this machine instead of pulling it from GHCR.
+# Needs a bigger machine (about 4 GB RAM for `next build`); NOT the default on the 2 GB staging VPS.
+#
+#   echo 'CMS_IMAGE=churchtimes-cms:local' >> .env
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml build cms
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml --profile tools run --rm -T migrate
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d
+services:
+  cms:
+    build:
+      context: ../../apps/cms
+      dockerfile: Dockerfile
+    pull_policy: build
+  migrate:
+    pull_policy: never
+  seed:
+    pull_policy: never

@@ -1,22 +1,41 @@
 import { withPayload } from '@payloadcms/next/withPayload'
 
-const isProd = process.env.NODE_ENV === 'production'
+const DEFAULT_HSTS_MAX_AGE = 15552000
+
+/**
+ * Value of Strict-Transport-Security max-age. CMS_HSTS_MAX_AGE (seconds, 0..31536000) overrides the 180-day default; the on-demand
+ * staging on the owner's PC sets 300 because browsers pin HSTS to the host name (all ports) for as long as it says.
+ * NOTE: headers are compiled into the build, so the variable must be set when `next build` runs.
+ */
+export function hstsMaxAge(env = process.env) {
+  const raw = env.CMS_HSTS_MAX_AGE?.trim()
+  if (!raw) return DEFAULT_HSTS_MAX_AGE
+  if (!/^[0-9]{1,8}$/.test(raw) || Number(raw) > 31536000) throw new Error('CMS_HSTS_MAX_AGE must be an integer between 0 and 31536000 (seconds).')
+  return Number(raw)
+}
 
 // Security headers for every response (admin UI and API). No strict script CSP: the Payload admin
 // relies on inline scripts/styles. `frame-ancestors 'none'` is the only CSP directive set, so the
 // admin cannot be framed (clickjacking) and nothing else is restricted.
-const securityHeaders = [
-  { key: 'X-Content-Type-Options', value: 'nosniff' },
-  { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
-  { key: 'X-Frame-Options', value: 'DENY' },
-  { key: 'Content-Security-Policy', value: "frame-ancestors 'none'" },
-  {
-    key: 'Permissions-Policy',
-    value: 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()',
-  },
-  // HSTS only in production. No includeSubDomains/preload: those are irreversible, site-wide decisions.
-  ...(isProd ? [{ key: 'Strict-Transport-Security', value: 'max-age=15552000' }] : []),
-]
+export function buildSecurityHeaders(env = process.env) {
+  const isProd = env.NODE_ENV === 'production'
+  return [
+    { key: 'X-Content-Type-Options', value: 'nosniff' },
+    { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+    { key: 'X-Frame-Options', value: 'DENY' },
+    { key: 'Content-Security-Policy', value: "frame-ancestors 'none'" },
+    {
+      key: 'Permissions-Policy',
+      value: 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()',
+    },
+    // HSTS only in production. No includeSubDomains/preload: those are irreversible, site-wide decisions.
+    ...(isProd ? [{ key: 'Strict-Transport-Security', value: `max-age=${hstsMaxAge(env)}` }] : []),
+    // Staging only (CMS_NOINDEX=true at build time): keep search engines away from every response, API included.
+    ...(env.CMS_NOINDEX === 'true' ? [{ key: 'X-Robots-Tag', value: 'noindex, nofollow' }] : []),
+  ]
+}
+
+const securityHeaders = buildSecurityHeaders()
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {

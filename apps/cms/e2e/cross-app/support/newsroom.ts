@@ -1,6 +1,6 @@
 import { expect, type Browser, type BrowserContext, type Locator, type Page, type TestInfo } from '@playwright/test'
 
-import type { Role, XappConfig } from './helpers'
+import { fillSecret, type Role, type XappConfig } from './helpers'
 
 /** A newsroom build failure must fail every newsroom journey with the build error, never silently skip. */
 export function requireNewsroom(cfg: XappConfig): void {
@@ -27,7 +27,7 @@ export async function loginUi(page: Page, cfg: XappConfig, role: Role): Promise<
   await openNewsroom(page, cfg)
   await expect(page.getByTestId('login-view')).toBeVisible()
   await page.getByTestId('login-email').fill(c.email)
-  await page.getByTestId('login-password').fill(c.password)
+  await fillSecret(page.getByTestId('login-password'), c.password)
   await page.getByTestId('login-submit').click()
   await expect(page.getByTestId('session-user-role')).toHaveAttribute('data-role', role)
 }

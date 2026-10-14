@@ -13,6 +13,7 @@ import type {
 import { anyone, editorInChiefOnly, idOf, isEditorRole, isStaff, staffOnly, type UserLike } from '../access/roles'
 import { writeAuditLog } from '../lib/audit'
 import { clampLimit } from '../lib/clampLimit'
+import { mediaStaticDir } from '../lib/mediaDir'
 
 const asUser = (u: unknown): UserLike | null => (u ? (u as UserLike) : null)
 
@@ -203,7 +204,7 @@ export const Media: CollectionConfig = {
     afterDelete: [auditDelete],
   },
   upload: {
-    staticDir: 'media',
+    staticDir: mediaStaticDir(),
     mimeTypes: [...ALLOWED_MIME],
     focalPoint: true,
     imageSizes: [

@@ -9,7 +9,7 @@ import { expect, test } from '@playwright/test'
 import { Api, Evidence, getConfig, trackCmsCalls } from './support/helpers'
 import { gotoView, loginUi, logoutUi, press, requireNewsroom, slugify } from './support/newsroom'
 import { expectNotOnPublicSite } from './support/public'
-import { serverLog } from './support/recorder-log'
+import { startCmsRequestLog } from './support/recorder-log'
 import { tipFile } from './support/tip'
 
 const cfg = getConfig()
@@ -66,9 +66,9 @@ test.describe('B. reader tip -> newsroom review queue -> convert to draft (REAL 
     const pub = await api.get(null, `/api/articles?where[title][equals]=${encodeURIComponent(tip.title)}`)
     expect(pub.json.docs).toHaveLength(0)
     // The staff session is live in this page. Whatever the public site sends to the CMS from here on must carry no cookie.
-    const logStart = (await serverLog(cfg)).length
+    const cmsLog = await startCmsRequestLog(page, cfg) // local: recording proxy log; remote: this page's request headers
     await expectNotOnPublicSite(page, cfg, slugify(tip.title), tip.title)
-    const fromPublic = (await serverLog(cfg)).slice(logStart).filter((r) => r.origin === cfg.publicOrigin)
+    const fromPublic = (await cmsLog.finish()).filter((r) => r.origin === cfg.publicOrigin)
     const withCookie = fromPublic.filter((r) => r.cookieNames.length > 0)
     expect(fromPublic.length, 'public site reached the CMS from the signed-in page').toBeGreaterThan(0)
     ev.note(`public site -> CMS while staff signed in: ${fromPublic.length} requests, ${withCookie.length} with a cookie${withCookie.length ? ` (${withCookie.map((r) => `${r.method} ${r.path} sec-fetch-site=${r.secFetchSite}`).join('; ')})` : ''}`)
