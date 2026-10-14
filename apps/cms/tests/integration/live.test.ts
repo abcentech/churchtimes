@@ -83,7 +83,7 @@ describe('live updates', () => {
     expect([u2.sequence, u4.sequence]).toEqual([2, 4])
     expect(all.json.nextSince).toBe(2)
     for (const d of all.json.docs) {
-      expect(Object.keys(d).sort()).toEqual(['approvedAt', 'body', 'id', 'occurredAt', 'sequence'])
+      expect(Object.keys(d).sort()).toEqual(['approvedAt', 'body', 'id', 'image', 'occurredAt', 'sequence'])
       expect(d.approvedAt).toBeTruthy()
     }
     expect(all.text).not.toContain(u1.body)

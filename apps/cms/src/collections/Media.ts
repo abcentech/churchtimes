@@ -92,7 +92,7 @@ type MediaContext = { seed?: boolean; mediaFileReplaced?: boolean }
  * - create: `uploadedBy` is set from the authenticated caller (the field is not client-writable;
  *   trusted server code without a user may supply it).
  * - update by a non-editor: the media must not be the featured image of a published or scheduled
- *   article (metadata edits there are public-facing edits, and replacing the file swaps a live
+ *   article, nor the image of an approved live update (metadata edits there are public-facing edits, and replacing the file swaps a live
  *   image). Editors are not restricted.
  *
  * VERIFIED against payload@3.90.2: a multipart PATCH carries the new file on `req.file`
@@ -129,6 +129,21 @@ const guardMediaChange: CollectionBeforeChangeHook = async ({ data, originalDoc,
         replacing
           ? 'This image is used by a published or scheduled article; ask an editor to replace the file.'
           : 'This image is used by a published or scheduled article; ask an editor to change its details.',
+        403,
+      )
+    }
+    // Same freeze for an image attached to an approved (public) live update.
+    const usedLive = await req.payload.count({
+      collection: 'live-updates',
+      where: { and: [{ image: { equals: originalDoc.id } }, { status: { equals: 'approved' } }] },
+      overrideAccess: true,
+      req,
+    })
+    if (usedLive.totalDocs > 0) {
+      throw new APIError(
+        replacing
+          ? 'This image is used by a published live update; ask an editor to replace the file.'
+          : 'This image is used by a published live update; ask an editor to change its details.',
         403,
       )
     }

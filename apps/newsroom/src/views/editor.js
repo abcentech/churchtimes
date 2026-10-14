@@ -3,6 +3,7 @@
  *
  * - Headline, standfirst (CMS `excerpt`), category (CMS category id), slug, featured image (media id), body.
  * - Body is edited as a markdown subset and stored as Lexical JSON (`content`); see ../lexical.js.
+ *   Images inside the body are a line of their own, `![alt](media:<id>)`, stored as Lexical upload nodes.
  * - Save sends ONLY changed, allowlisted fields. Status transitions are separate explicit PATCHes whose
  *   result comes from the server response; nothing is shown as done until the CMS answered 2xx.
  * - Autosave runs only for already-saved drafts / changes_requested stories; never for published stories
@@ -17,8 +18,8 @@ import { store } from '../store.js';
 import { showToast } from '../components/toast.js';
 import { askText, askConfirm } from '../components/modal.js';
 import { showApiError } from '../components/notify.js';
-import { openMediaPicker } from '../components/media-picker.js';
-import { markdownToHtml, countWords } from '../lexical.js';
+import { openMediaPicker, mediaImageProblem } from '../components/media-picker.js';
+import { markdownToHtml, countWords, imageToken, insertBlockLine, listImages, removeImageLine, stripImageLabels } from '../lexical.js';
 import { ApiError } from '../api/errors.js';
 import { escapeHtml, slugify, statusBadge, formatDate } from '../util.js';
 import { parseScheduleInput, isoToLocalInput, formatScheduled, defaultScheduleValue } from '../schedule.js';
@@ -39,7 +40,7 @@ function snapshot(story) {
     slug: (story.slug || '').trim(),
     standfirst: (story.standfirst || '').trim(),
     bylineName: (story.bylineName || '').trim(),
-    bodyMd: (story.bodyMd || '').trim(),
+    bodyMd: stripImageLabels((story.bodyMd || '').trim()),
     categoryId: story.categoryId ? String(story.categoryId) : '',
     featuredImageId: story.featuredImage?.id ? String(story.featuredImage.id) : ''
   };
@@ -100,6 +101,7 @@ export async function renderEditor(container, storyId = null) {
     currentStory: story,
     baseline: snapshot(story),
     slugTouched: Boolean(story.id),
+    mediaCache: new Map(Object.entries(story.bodyMedia || {})), // body image id -> media view-model (previews only)
     inflight: null,
     autosavePending: false,
     autosaveTimer: null,
@@ -139,7 +141,7 @@ export async function renderEditor(container, storyId = null) {
     <div id="editor-error" data-testid="editor-error" role="alert" class="validation-summary-alert" style="display:none; margin-bottom: 1rem;"></div>
     <div id="schedule-panel" class="ethics-notice-box" data-testid="editor-schedule-panel" style="display:none; margin-bottom: 1rem;"></div>
     ${!editable ? `<div class="ethics-notice-box" data-testid="editor-readonly-note" style="margin-bottom:1rem;"><p style="margin:0;">You can read this story but not edit it in its current status.</p></div>` : ''}
-    ${story.lossy ? `<div class="ethics-notice-box" data-testid="editor-lossy-note" style="margin-bottom:1rem;"><p style="margin:0;">This story contains elements the newsroom editor cannot represent (for example embedded images, nested lists, underline, alignment or links that open in a new tab). The body is read-only here so nothing is lost; edit the body in the CMS admin.</p></div>` : ''}
+    ${story.lossy ? `<div class="ethics-notice-box" data-testid="editor-lossy-note" style="margin-bottom:1rem;"><p style="margin:0;">This story contains elements the newsroom editor cannot represent (for example embedded video, nested lists, underline, alignment or links that open in a new tab). The body is read-only here so nothing is lost; edit the body in the CMS admin.</p></div>` : ''}
 
     <div id="review-notes-banner" class="ethics-notice-box" style="display:none; margin-bottom: 1rem;" data-testid="editor-review-notes">
       <h4 id="review-notes-title">Editorial Review Notes</h4>
@@ -201,7 +203,9 @@ export async function renderEditor(container, storyId = null) {
             <button type="button" class="format-btn" data-fmt="quote" title="Pullquote / Blockquote" ${bodyReadonly ? 'disabled' : ''}>Quote</button>
             <button type="button" class="format-btn" data-fmt="list" title="Bullet List" ${bodyReadonly ? 'disabled' : ''}>&bull; List</button>
             <button type="button" class="format-btn" data-fmt="link" title="Link" ${bodyReadonly ? 'disabled' : ''}>Link</button>
+            <button type="button" class="format-btn" data-fmt="image" id="btn-insert-image" data-testid="editor-insert-image" title="Insert an image from the media library (or upload one) at the cursor" ${bodyReadonly ? 'disabled' : ''}>Insert image</button>
           </div>
+          <div id="body-images" class="body-images" data-testid="editor-body-images" aria-label="Images in this story" style="display:none;"></div>
           <textarea id="story-body-input" data-testid="editor-body" class="story-body-textarea"
             placeholder="Write the full report here with independent sourcing and evidence..." aria-required="true" ${bodyReadonly}>${escapeHtml(story.bodyMd)}</textarea>
         </div>
@@ -223,6 +227,7 @@ export async function renderEditor(container, storyId = null) {
   updateStatusDisplay(container);
   updatePreview(container);
   updateWordCount(container);
+  renderBodyImages(container);
   bindEditorListeners(container);
   loadTipOrigin(container);
 }
@@ -269,7 +274,9 @@ function formValues(container) {
 function computeChanges(st, vals) {
   const changes = {};
   for (const key of Object.keys(vals)) {
-    if (vals[key] !== st.baseline[key]) changes[key] = vals[key];
+    // Image labels are display-only: a body that differs only in them is unchanged.
+    const current = key === 'bodyMd' ? stripImageLabels(vals[key]) : vals[key];
+    if (current !== st.baseline[key]) changes[key] = vals[key];
   }
   if (st.currentStory.lossy) delete changes.bodyMd; // never rewrite a body the editor cannot represent
   return changes;
@@ -342,6 +349,7 @@ async function doSave(container, { auto }) {
       st.currentStory = res.data;
     }
     st.baseline = snapshot(st.currentStory);
+    for (const [id, media] of Object.entries(st.currentStory.bodyMedia || {})) st.mediaCache.set(id, media);
     setInlineError(container, '');
     updateStatusDisplay(container);
     return { ok: true, changed: true };
@@ -376,10 +384,16 @@ function bindEditorListeners(container) {
   slugInput.addEventListener('input', () => { st.slugTouched = true; triggerAutosave(container); });
   standfirstInput.addEventListener('input', () => { triggerAutosave(container); updatePreview(container); });
   categorySelect.addEventListener('change', () => { triggerAutosave(container); updatePreview(container); });
-  bodyInput.addEventListener('input', () => { triggerAutosave(container); updatePreview(container); updateWordCount(container); });
+  bodyInput.addEventListener('input', () => {
+    triggerAutosave(container);
+    updatePreview(container);
+    updateWordCount(container);
+    renderBodyImages(container);
+  });
 
   container.querySelectorAll('.format-btn').forEach(btn => {
     btn.addEventListener('click', () => {
+      if (btn.getAttribute('data-fmt') === 'image') return insertImage(container);
       applyFormatting(bodyInput, btn.getAttribute('data-fmt'));
       triggerAutosave(container);
       updatePreview(container);
@@ -711,12 +725,71 @@ function updatePreview(container) {
   container.querySelector('#preview-byline').innerHTML =
     `By <strong>${escapeHtml(container.querySelector('#story-byline-input').value.trim() || st.currentStory.authorName || api.getCurrentUser()?.name || '')}</strong> &middot; <span>${escapeHtml(formatDate(st.currentStory.publishedAt || st.currentStory.updatedAt))}</span>`;
   container.querySelector('#preview-body-content').innerHTML =
-    body.trim() ? markdownToHtml(body) : '<p>Story body will render here as you type...</p>';
+    body.trim() ? markdownToHtml(body, { media: id => st.mediaCache.get(id) }) : '<p>Story body will render here as you type...</p>';
 
   const img = st.currentStory.featuredImage;
   container.querySelector('#preview-image-box').innerHTML = img && (img.url || img.thumbUrl) ? `
     <img src="${escapeHtml(img.url || img.thumbUrl)}" alt="${escapeHtml(img.alt)}" class="preview-hero-img">
     <div class="preview-img-caption">${escapeHtml(img.caption || '')}${img.credit ? ` &middot; Credit: ${escapeHtml(img.credit)}` : ''}</div>` : '';
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Images inside the body
+// ---------------------------------------------------------------------------------------------------
+
+function insertImage(container) {
+  const st = stateOf(container);
+  const bodyInput = container.querySelector('#story-body-input');
+  if (!st || !bodyInput || bodyInput.readOnly) return;
+  // The picker is a dialog: remember where the cursor was before focus leaves the textarea.
+  const start = bodyInput.selectionStart;
+  const end = bodyInput.selectionEnd;
+  openMediaPicker({
+    title: 'Insert Image into Story',
+    validate: mediaImageProblem,
+    onSelect: media => {
+      if (!container.isConnected || stateOf(container) !== st) return;
+      st.mediaCache.set(String(media.id), media);
+      const edited = insertBlockLine(bodyInput.value, start, end, imageToken(media.id, media.alt));
+      bodyInput.value = edited.value;
+      bodyInput.focus();
+      bodyInput.selectionStart = bodyInput.selectionEnd = edited.caret;
+      triggerAutosave(container);
+      updatePreview(container);
+      updateWordCount(container);
+      renderBodyImages(container);
+    }
+  });
+}
+
+/** Small list under the toolbar: which images the body contains (thumbnail, alt text, id), with a remove button. */
+function renderBodyImages(container) {
+  const st = stateOf(container);
+  const box = container.querySelector('#body-images');
+  const bodyInput = container.querySelector('#story-body-input');
+  if (!st || !box || !bodyInput) return;
+  const images = listImages(bodyInput.value);
+  box.style.display = images.length ? 'flex' : 'none';
+  box.innerHTML = images.map((img, i) => {
+    const media = st.mediaCache.get(img.id);
+    const src = media && (media.thumbUrl || media.url);
+    const alt = (media && media.alt) || img.alt;
+    return `
+      <div class="body-image-item" data-testid="editor-body-image" data-media-id="${escapeHtml(img.id)}">
+        ${src ? `<img src="${escapeHtml(src)}" alt="" class="body-image-thumb">` : '<span class="body-image-thumb body-image-thumb-missing" aria-hidden="true"></span>'}
+        <span class="body-image-label"><strong>Image #${escapeHtml(img.id)}</strong><br>${escapeHtml(alt || 'No alt text recorded')}</span>
+        ${bodyInput.readOnly ? '' : `<button type="button" class="btn btn-outline btn-sm" data-remove-image="${i}" data-testid="editor-remove-body-image" aria-label="Remove image ${escapeHtml(img.id)} from the story">Remove</button>`}
+      </div>`;
+  }).join('');
+  box.querySelectorAll('[data-remove-image]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      bodyInput.value = removeImageLine(bodyInput.value, Number(btn.getAttribute('data-remove-image')));
+      triggerAutosave(container);
+      updatePreview(container);
+      updateWordCount(container);
+      renderBodyImages(container);
+    });
+  });
 }
 
 function updateWordCount(container) {

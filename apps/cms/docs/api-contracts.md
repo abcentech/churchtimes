@@ -1,4 +1,4 @@
-# Church Times CMS — API contracts (v1.3)
+# Church Times CMS — API contracts (v1.4)
 
 Status: implemented on `agent/payload-core`. v1.1 added Turnstile, duplicate detection, staff auth/session
 contract and security hardening; v1.2 closes the verified security-review findings: media ownership, version
@@ -119,8 +119,9 @@ Editing is restricted, see §6.3. Anonymous readers can list and fetch **all** m
 ### LiveEvent (`/api/live-events`) — `{ id, title, slug, summary?, status: 'draft'|'live'|'ended', category, startedAt?, endedAt? }`
 Anonymous readers see only `live` and `ended` events.
 
-### LiveUpdate (`/api/live-updates`) — `{ id, event, body, status: 'pending'|'approved'|'rejected', sequence, occurredAt, approvedAt? }`
-`body` is plain text (≤ 5 000 chars). Anonymous readers see only `approved`. `sequence` is **creation order**,
+### LiveUpdate (`/api/live-updates`) — `{ id, event, body, image?, status: 'pending'|'approved'|'rejected', sequence, occurredAt, approvedAt? }`
+`body` is plain text (≤ 5 000 chars). `image` is an optional upload relationship to `media` (numeric id on write; a populated
+media doc when read with `depth ≥ 1`); see §6.2 for the rules. Public pages must use the feed (§4.3), not this field. Anonymous readers see only `approved`. `sequence` is **creation order**,
 assigned by the server (per event, strictly increasing) and not client-writable. A second server-owned counter,
 `publishSequence` (per event, nullable until the update is first approved), records **publication order**: it is
 assigned `max(publishSequence)+1` every time an update becomes `approved` (also when it is created as
@@ -237,12 +238,23 @@ Polling endpoint for live coverage (recommended interval: 15–30 s).
 {
   "event": { "id": 3, "slug": "synod-2026", "title": "Synod 2026", "status": "live" },
   "docs": [
-    { "id": 41, "sequence": 7, "body": "Delegates vote…", "occurredAt": "2026-10-13T10:15:00.000Z", "approvedAt": "2026-10-13T10:16:02.000Z" }
+    {
+      "id": 41, "sequence": 7, "body": "Delegates vote…", "occurredAt": "2026-10-13T10:15:00.000Z", "approvedAt": "2026-10-13T10:16:02.000Z",
+      "image": { "url": "https://cms.example.org/api/media/file/vote.jpg", "alt": "Delegates raising voting cards", "width": 1600, "height": 900, "mimeType": "image/jpeg" }
+    },
+    { "id": 42, "sequence": 8, "body": "Result announced.", "occurredAt": "2026-10-13T10:20:00.000Z", "approvedAt": "2026-10-13T10:20:30.000Z", "image": null }
   ],
-  "nextSince": 7
+  "nextSince": 8
 }
 ```
 
+- **`image`** (v1.4, additive): `null` when the update has no photo, otherwise exactly
+  `{ url, alt, width, height, mimeType }`. `url` is the media URL exactly as Payload returns it for an article's
+  `featuredImage.url` (absolute `${CMS_PUBLIC_URL}/api/media/file/<name>` in production, root-relative in a local setup without
+  `CMS_PUBLIC_URL`, see §6.3; resolve it against the CMS origin as `src/lib/cms-media.js` does). `alt` is always non-empty; `mimeType` is `image/jpeg`, `image/png` or `image/webp`; `width`/`height` are
+  positive integers (or `null` if unknown). No other media field (filename, caption, credit, sizes, uploader) is returned.
+  Only approved updates are in the feed, so the image of a pending or rejected update is never exposed here. Rendering
+  guidance: `apps/cms/docs/live-update-images-contract.md`.
 - Approved updates only, ordered by **publication order** ascending, `sequence > since` (default 0), `limit` ≤ 100
   (default 50). The `sequence` returned here is the update's `publishSequence` (§3), **not** its creation
   sequence, and `nextSince` is the `sequence` of the last returned update. This makes the feed safe for updates that
@@ -388,6 +400,14 @@ Send either the cookie (browser, same rules as §5) or `Authorization: JWT <toke
      editor in scope, is rejected with **`403`** (not `400`/`404`).
    - `admin`, `editor-in-chief`, `section-editor` of the event's category, and `trusted-publisher` of that category may send
      `"status": "approved"` to publish immediately; otherwise it is `pending`.
+   - Optional photo: `"image": <media id>` (upload the file first with §6.3 and use the returned `id`). The media must exist and
+     be readable by the caller, be a JPEG/PNG/WebP image and have non-empty `alt`; otherwise `400` (messages: *The attached image
+     does not exist or is not available to you.* / *The attached file must be a JPEG, PNG or WebP image.* / *The attached image
+     needs alt text. Add a description to the image first.*). The same rules apply on `PATCH` and again when an update is
+     approved. `image` follows the same edit rules as `body`: reporters only while their own update is `pending`; editors in
+     scope any time; trusted publishers their own updates. `"image": null` removes it. Every change of `image` on an existing
+     update is audited (`live-update.image`). The media of an approved update cannot be edited or replaced by non-editors
+     (`403`).
 3. Editor review queue: `GET /api/live-updates?where[event][equals]=<id>&where[status][equals]=pending&sort=sequence`
    (editors read every update; reporters/trusted-publishers see their own plus approved ones).
 4. Approve or reject: `PATCH /api/live-updates/:id { "status": "approved" | "rejected" | "pending" }` — editors in scope
@@ -436,6 +456,14 @@ proxy) and https-only `CMS_PUBLIC_URL`/CORS/CSRF settings (`docs/security.md`). 
 limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/operations.md` §4).
 
 ## 9. Changelog
+
+### v1.4
+Optional photo on live updates. Additive, no breaking changes.
+- `live-updates.image` (upload → `media`); validation, edit rules and audit in §6.2. Public feed docs gain `image` (§4.3).
+- Existing feed consumers that ignore unknown keys are unaffected; consumers that assert the exact key set must add `image`.
+- Media of an approved live update is frozen for non-editors, like media of a published article (§6.3).
+- Migration `20261014_203617_live_update_image` (`live_updates.image_id` + FK to `media` with `ON DELETE SET NULL`, index).
+- `image` is accepted as a relationship filter name (numeric ids only), see §4.2.
 
 ### v1.3
 Frontend contract verification (`tests/integration/frontend-workflows.test.ts`, matrix in `docs/frontend-integration.md`). No

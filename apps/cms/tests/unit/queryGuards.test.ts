@@ -10,6 +10,8 @@ describe('checkRelationFilters', () => {
     expect(check('where[category][in]=1,2,3').ok).toBe(true)
     expect(check('where[or][0][category][equals]=7&where[status][equals]=published').ok).toBe(true)
     expect(check('where[featuredImage][equals]=null').ok).toBe(true)
+    expect(check('where[image][equals]=5', '/api/live-updates').ok).toBe(true)
+    expect(check('where[image][equals]=hero.jpg', '/api/live-updates').ok).toBe(false)
     expect(check('where[version.category][equals]=2', '/api/articles/versions').ok).toBe(true)
     expect(check('where[event][equals]=12&where[status][equals]=pending', '/api/live-updates').ok).toBe(true)
   })

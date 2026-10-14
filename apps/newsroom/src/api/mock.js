@@ -261,10 +261,13 @@ export class MockAdapter {
     const list = this.db.updates.filter(u => u.eventId === eventId).sort((a, b) => b.sequence - a.sequence);
     return { data: clone(list) };
   }
-  async postLiveUpdate({ eventId, body }) {
+  async postLiveUpdate({ eventId, body, imageId = null }) {
     const isEditor = normRole(this.currentUser.role) !== 'reporter';
+    const image = imageId ? this.db.media.find(m => String(m.id) === String(imageId)) || null : null;
+    if (imageId && !image) throw new ApiError('The selected image does not exist.', { status: 400 });
+    if (image && !String(image.alt || '').trim()) throw new ApiError('The image needs alt text before it can be used.', { status: 400 });
     const u = {
-      id: `upd-${Date.now()}`, eventId, body, status: isEditor ? 'approved' : 'pending',
+      id: `upd-${Date.now()}`, eventId, body, image: image ? clone(image) : null, status: isEditor ? 'approved' : 'pending',
       sequence: this.db.updates.length + 1, occurredAt: new Date().toISOString(), authorName: this.currentUser.name
     };
     this.db.updates.unshift(u);
@@ -292,7 +295,7 @@ export class MockAdapter {
   async uploadMedia(file, { alt, caption, credit }) {
     if (!alt?.trim()) throw new ApiError('Alt text is required.', { status: 400 });
     const m = {
-      id: `med-${Date.now()}`, url: '/site/news-media/29276.jpg', thumbUrl: '/site/news-media/29276.jpg',
+      id: `${Date.now()}`, url: '/site/news-media/29276.jpg', thumbUrl: '/site/news-media/29276.jpg',
       alt, caption: caption || '', credit: credit || '', filename: file?.name || 'upload.jpg'
     };
     this.db.media.unshift(m);

@@ -388,7 +388,7 @@ function inspectStoryModal(article, container) {
             </div>
           </div>` : ''}
         <div class="preview-body" data-testid="inspect-body" style="max-height: 250px; overflow-y: auto; background: var(--color-parchment-light); padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--color-rule);">
-          ${markdownToHtml(article.bodyMd)}
+          ${markdownToHtml(article.bodyMd, { media: id => article.bodyMedia?.[id] })}
         </div>
 
         <div class="checklist-box">

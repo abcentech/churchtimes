@@ -322,6 +322,7 @@ export interface LiveUpdate {
   id: number;
   event: number | LiveEvent;
   body: string;
+  image?: (number | null) | Media;
   status: 'pending' | 'approved' | 'rejected';
   sequence?: number | null;
   publishSequence?: number | null;
@@ -624,6 +625,7 @@ export interface LiveEventsSelect<T extends boolean = true> {
 export interface LiveUpdatesSelect<T extends boolean = true> {
   event?: T;
   body?: T;
+  image?: T;
   status?: T;
   sequence?: T;
   publishSequence?: T;

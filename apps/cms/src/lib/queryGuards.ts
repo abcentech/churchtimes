@@ -14,6 +14,7 @@
 export const RELATION_FIELDS = [
   'category',
   'featuredImage',
+  'image',
   'author',
   'event',
   'article',

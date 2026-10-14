@@ -14,6 +14,9 @@ import { showToast } from '../components/toast.js';
 import { openModal } from '../components/modal.js';
 import { showApiError } from '../components/notify.js';
 import { escapeHtml, formatTimeAgo } from '../util.js';
+import { openMediaPicker, mediaImageProblem } from '../components/media-picker.js';
+import { cmsAssetUrl } from '../config.js';
+import { livePhotoHtml } from '../live-photo.js';
 import { sortPublishedNewestFirst } from '../live-order.js';
 
 const POLL_MS = 20000;
@@ -104,6 +107,7 @@ export async function renderLive(container) {
             <textarea id="upd-body-input" data-testid="live-update-body" class="form-textarea" rows="4" maxlength="5000"
               placeholder="Report specific facts, quotes, or proceedings..."></textarea>
           </div>
+          <div id="upd-photo-box" class="live-photo-draft" data-testid="live-update-photo-box"></div>
           <button type="submit" class="btn btn-primary" id="btn-post-update" data-testid="live-update-post" style="width: 100%;">
             ${api.can('live.approve', { categoryId: activeEvent.categoryId }) ? 'Publish Live Update' : 'Submit Update for Editorial Review'}
           </button>
@@ -154,6 +158,27 @@ export async function renderLive(container) {
   container.querySelector('#btn-event-go-live')?.addEventListener('click', setStatus('live'));
   container.querySelector('#btn-event-end')?.addEventListener('click', setStatus('ended'));
 
+  // One optional photo for the update being composed (chosen through the shared media picker).
+  let photo = null;
+  const photoBox = container.querySelector('#upd-photo-box');
+  const renderPhotoBox = () => {
+    if (!photoBox) return;
+    if (!photo) {
+      photoBox.innerHTML = '<button type="button" class="btn btn-outline btn-sm" id="btn-add-photo" data-testid="live-add-photo">Add photo</button>';
+      photoBox.querySelector('#btn-add-photo').addEventListener('click', () => openMediaPicker({
+        title: 'Add Photo to Live Update',
+        validate: mediaImageProblem,
+        onSelect: media => { photo = media; renderPhotoBox(); }
+      }));
+      return;
+    }
+    photoBox.innerHTML = `${livePhotoHtml(photo, cmsAssetUrl, { testid: 'live-update-photo-draft' }) || '<span class="body-image-thumb body-image-thumb-missing" aria-hidden="true"></span>'}
+      <span style="flex:1; min-width:0; overflow-wrap:anywhere;" data-testid="live-update-photo-alt">${escapeHtml(photo.alt)}</span>
+      <button type="button" class="btn btn-outline btn-sm" id="btn-remove-photo" data-testid="live-remove-photo" style="color:#DC2626;">Remove photo</button>`;
+    photoBox.querySelector('#btn-remove-photo').addEventListener('click', () => { photo = null; renderPhotoBox(); });
+  };
+  renderPhotoBox();
+
   container.querySelector('#live-update-form').addEventListener('submit', async e => {
     e.preventDefault();
     const bodyEl = container.querySelector('#upd-body-input');
@@ -165,9 +190,12 @@ export async function renderLive(container) {
       const res = await api.postLiveUpdate({
         eventId: activeEvent.id,
         body,
-        publishNow: api.can('live.approve', { categoryId: activeEvent.categoryId })
+        publishNow: api.can('live.approve', { categoryId: activeEvent.categoryId }),
+        imageId: photo ? photo.id : null
       });
       bodyEl.value = '';
+      photo = null;
+      renderPhotoBox();
       setError('');
       showToast(res.data.status === 'approved'
         ? 'Live update published to public timeline!'
@@ -227,6 +255,7 @@ async function refreshLiveStream(container, event, setError) {
           <span class="live-time-badge">${escapeHtml(new Date(upd.occurredAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }))}</span>
         </div>
         <p style="font-size: 0.9375rem; color: var(--color-ink); line-height: 1.5; white-space: pre-wrap;">${escapeHtml(upd.body)}</p>
+        ${livePhotoHtml(upd.image, cmsAssetUrl)}
         ${upd.authorName ? `<span style="font-size: 0.75rem; color: var(--color-muted);">By ${escapeHtml(upd.authorName)}</span>` : ''}
       </article>`).join('');
 
@@ -244,6 +273,7 @@ async function refreshLiveStream(container, event, setError) {
             </span>` : '<span class="badge badge-pending">Awaiting editor</span>'}
           </div>
           <div style="white-space: pre-wrap;">${escapeHtml(u.body)}</div>
+          ${livePhotoHtml(u.image, cmsAssetUrl)}
         </div>`).join('');
 
     const review = (attr, status, ok) => pendingEl.querySelectorAll(`[${attr}]`).forEach(btn => {

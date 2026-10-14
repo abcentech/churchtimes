@@ -48,6 +48,26 @@ const update: Access = ({ req }) => {
   return { and: [{ author: { equals: user.id } }, { status: { equals: 'pending' } }] } as Where
 }
 
+/**
+ * The image of a live update is public content once the update is approved, so whatever is attached must be a
+ * real, readable image with alt text. Checked on create, when the image changes, and again when an update is
+ * approved (so a pending update can never publish an image that has since lost its alt text).
+ * `req.user` is passed with `overrideAccess: false` so the media must be readable by the caller.
+ */
+const ALLOWED_IMAGE_MIME = ['image/jpeg', 'image/png', 'image/webp']
+async function assertAttachableImage(req: PayloadRequest, imageId: number | string): Promise<void> {
+  const media = (await req.payload
+    .findByID({ collection: 'media', id: imageId, depth: 0, overrideAccess: false, user: req.user, req })
+    .catch(() => null)) as { mimeType?: string | null; alt?: string | null } | null
+  if (!media) throw new APIError('The attached image does not exist or is not available to you.', 400)
+  if (!media.mimeType || !ALLOWED_IMAGE_MIME.includes(media.mimeType)) {
+    throw new APIError('The attached file must be a JPEG, PNG or WebP image.', 400)
+  }
+  if (typeof media.alt !== 'string' || media.alt.trim() === '') {
+    throw new APIError('The attached image needs alt text. Add a description to the image first.', 400)
+  }
+}
+
 const staffRead: FieldAccess = ({ req }) => isStaff(asUser(req.user))
 const serverOnly = { create: () => false, update: () => false }
 
@@ -122,6 +142,9 @@ export const LiveUpdates: CollectionConfig = {
     beforeChange: [
       async ({ data, originalDoc, operation, req }) => {
         const user = asUser(req.user)
+        // idOf() is undefined for an absent or null image (nothing to attach, nothing to check).
+        const nextImage = idOf(data.image)
+        if (nextImage !== undefined) await assertAttachableImage(req, nextImage)
         if (!user) {
           // Internal/system call (seed, scheduler): trusted, but counters must still be stamped.
           const sysEventId = operation === 'create' ? idOf(data.event) : idOf(originalDoc?.event)
@@ -194,6 +217,9 @@ export const LiveUpdates: CollectionConfig = {
             if (!(editorInScope || (tpInScope && own))) {
               throw new APIError('You are not allowed to approve updates.', 403)
             }
+            // Re-check an already attached image (alt text / type) before it becomes public.
+            const storedImage = data.image === undefined ? idOf(originalDoc?.image) : undefined
+            if (storedImage !== undefined) await assertAttachableImage(req, storedImage)
             data.approvedBy = user.id
             data.approvedAt = new Date().toISOString()
           } else if (!editorInScope) {
@@ -228,6 +254,25 @@ export const LiveUpdates: CollectionConfig = {
         }
         return doc
       },
+      async ({ doc, previousDoc, operation, req }) => {
+        // Changing the image of an update is a content edit like changing its body. Bodies are not audited
+        // field by field, but an image swap after approval changes what the public sees, so record it.
+        if (operation !== 'update') return doc
+        const before = idOf(previousDoc?.image) ?? null
+        const after = idOf(doc.image) ?? null
+        if (String(before) === String(after)) return doc
+        await writeAuditLog(req, {
+          action: 'live-update.image',
+          collection: 'live-updates',
+          docId: doc.id,
+          toStatus: doc.status,
+          summary: `Live update #${doc.sequence} (event ${idOf(doc.event)}) image ${
+            after === null ? 'removed' : before === null ? 'attached' : 'replaced'
+          }`,
+          details: { event: idOf(doc.event), previousImage: before, image: after },
+        })
+        return doc
+      },
     ],
   },
   fields: [
@@ -238,6 +283,14 @@ export const LiveUpdates: CollectionConfig = {
       required: true,
       maxLength: 5000,
       hooks: { beforeValidate: [({ value }) => cleanText(value, { multiline: true })] },
+    },
+    {
+      // Optional photo shown above the update text. Must be an image with alt text (assertAttachableImage).
+      name: 'image',
+      type: 'upload',
+      relationTo: 'media',
+      hasMany: false,
+      required: false,
     },
     {
       name: 'status',
