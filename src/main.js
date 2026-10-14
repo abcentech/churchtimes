@@ -11,6 +11,7 @@ import { fetchPublishedPage, fetchPublishedArticle, fetchPublicCategory, fetchPu
 import { renderArticleContent } from './lib/article-content.js';
 import './fonts.css';
 import './style.css';
+import './public-quality.css';
 import edition from './data/stories.json';
 import imageSizes from './data/image-sizes.json';
 
