@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
+import { extraBrowserProjects } from './e2e/cross-app/support/browsers'
+
 /**
  * REAL cross-app browser E2E (issue #16): the actual newsroom SPA (apps/newsroom, built with Vite) and the
  * actual public site (repository root, built with Vite) driven in Chromium against a real Payload CMS
@@ -19,6 +21,10 @@ import { defineConfig, devices } from '@playwright/test'
  */
 const hostRules = 'MAP *.churchtimes.localhost 127.0.0.1'
 const launchOptions = { args: [`--host-resolver-rules=${hostRules}`] }
+
+// Opt-in extra engines (XAPP_ALL_BROWSERS=1; needs `npx playwright install firefox webkit`). --host-resolver-rules is
+// Chromium-only; Firefox and Playwright's WebKit resolve *.localhost to loopback natively (probed), see support/browsers.ts.
+const extraProjects = process.env.XAPP_ALL_BROWSERS === '1' ? extraBrowserProjects(devices) : []
 
 export default defineConfig({
   testDir: './e2e/cross-app',
@@ -43,5 +49,6 @@ export default defineConfig({
   projects: [
     { name: 'desktop-chrome', use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 800 }, launchOptions } },
     { name: 'android-pixel7', use: { ...devices['Pixel 7'], launchOptions } },
+    ...extraProjects,
   ],
 })

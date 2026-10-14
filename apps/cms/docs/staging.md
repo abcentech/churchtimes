@@ -397,6 +397,14 @@ every step in `docs/evidence/cross-app-steps/`. Screenshots contain synthetic da
 Limits: Turnstile action/hostname enforcement is not exercised (Cloudflare's test secret returns no `action`, so a non-empty `TURNSTILE_EXPECTED_ACTION` would fail closed; the
 CMS unit tests cover it with a stubbed transport). Scheduled publishing, live coverage UI, correction notes and Firefox/Safari are not covered. Chromium only.
 
+### Optional engines: Firefox and WebKit (`XAPP_ALL_BROWSERS=1`)
+
+- Default stays Chromium-only. `XAPP_ALL_BROWSERS=1` adds projects `firefox-desktop` (Desktop Firefox 1280x800), `webkit-desktop` (Desktop Safari 1280x800) and `webkit-iphone` (iPhone 14); defined in `e2e/cross-app/support/browsers.ts`. Install engines once: `npx playwright install firefox webkit` (user cache, no npm install).
+- `--host-resolver-rules` is Chromium-only. Probed on Windows: Firefox and Playwright's WebKit resolve `*.localhost` to loopback natively, so no hosts-file or system change is used. Firefox additionally lists the exact stack hosts in `network.dns.localDomains`.
+- WebKit here is Playwright's WebKit build on Windows. It approximates Safari (same engine family) but is **not real Safari**: iOS-specific behaviour (keyboard, safe areas, ITP) is not covered.
+- WebKit needs two harness accommodations (neither is a product bug): (1) the CMS session cookie is `Secure` (production build) and WebKit refuses a `Secure` cookie received over plain http even for `*.localhost` (Chromium and Firefox exempt it), so the recording proxy strips `Secure` from `Set-Cookie` for WebKit user agents only (`support/cookie-compat.ts`; real staging is https); (2) Playwright's Windows WebKit attaches cookies to cross-origin `fetch` even with `credentials: 'omit'` (probed), so A3's "public site requests carry no cookie" check only covers its own fresh-context traffic (`logStart` in `02`), not the cumulative proxy log.
+- Example: `XAPP_ALL_BROWSERS=1 npx playwright test -c playwright.cross-app.config.ts --project=firefox-desktop --project=webkit-desktop --project=webkit-iphone`.
+
 ### Teardown message `next start exited with code 1` (e2e/browser stack)
 
 Not a crash. Windows `taskkill /T /F` (and any forced kill) gives the killed process exit code 1; a healthy idle `node` killed the same way also exits 1. Before the kill the server was
