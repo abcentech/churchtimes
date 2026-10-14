@@ -402,3 +402,8 @@ CMS unit tests cover it with a stubbed transport). Scheduled publishing, live co
 Not a crash. Windows `taskkill /T /F` (and any forced kill) gives the killed process exit code 1; a healthy idle `node` killed the same way also exits 1. Before the kill the server was
 still running with 0 error lines in its output (16/16 browser tests passed). `e2e/browser/support/stack.ts` and the new stack now log "next start stopped by teardown (code 1; non-zero
 after a forced kill is expected, not a crash)" for exits during teardown and `UNEXPECTED: next start exited on its own` plus the output tail for any earlier exit.
+
+### Docker smoke in CI (`.github/workflows/cms-docker.yml`)
+
+- The image is only ever built and run in CI (no Docker on the development machines): details in `docs/operations.md` section 3.1. It is a separate lane from this Playwright one.
+- Production-mode boot uses the same documented flag as this lane (`CMS_ALLOW_INSECURE_LOCAL_STAGING=true`, loopback http origins, Cloudflare's always-pass test secret).
