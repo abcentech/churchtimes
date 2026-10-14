@@ -18,7 +18,7 @@ export function mountLivePage(root,{baseUrl,slug,signal,pollMs=15000,eventsReade
  function schedule(delay=pollMs){clearTimeout(timer);if(alive()&&!paused&&!ended&&!document.hidden)timer=setTimeout(()=>loadUpdates(),delay);}
  function failure(error){
   errorBox.hidden=false;errorBox.textContent=error?.status===404?'Coverage unavailable. This event is not available to readers.':`Updates could not be loaded. ${cmsErrorMessage(error)||'Please try again. Previously published updates remain here.'}`;
-  if(error?.status===404){ended=true;hasMore=false;pause.hidden=true;more.hidden=true;announce.textContent='';root.querySelector('#live-event-status').textContent='Unavailable';root.querySelector('#live-event-title').textContent=root.querySelector('#live-event-title').textContent||'Coverage unavailable.';root.querySelector('#live-empty').hidden=true;clearTimeout(timer);root.querySelector('#live-timeline').replaceChildren();ids.clear();sequences.clear();}
+  if(error?.status===404){ended=true;cursor=0;hasMore=false;pause.hidden=true;more.hidden=true;announce.textContent='';root.querySelector('#live-event-status').textContent='Unavailable';root.querySelector('#live-event-title').textContent=root.querySelector('#live-event-title').textContent||'Coverage unavailable.';root.querySelector('#live-empty').hidden=true;clearTimeout(timer);root.querySelector('#live-timeline').replaceChildren();ids.clear();sequences.clear();}
  }
  async function loadUpdates(){
   if(!alive()||busy||!selected)return;

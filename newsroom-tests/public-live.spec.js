@@ -34,3 +34,9 @@ test('hidden tabs stop polling and visibility resumes one incremental request',a
  await page.evaluate(()=>{window.__liveHidden=true;Object.defineProperty(document,'hidden',{configurable:true,get:()=>window.__liveHidden});document.dispatchEvent(new Event('visibilitychange'));});await page.clock.fastForward(60000);expect(calls).toEqual([0]);
  await page.evaluate(()=>{window.__liveHidden=false;document.dispatchEvent(new Event('visibilitychange'));});await page.clock.fastForward(15000);await expect.poll(()=>calls.length).toBe(2);expect(calls).toEqual([0,1]);
 });
+test('an event that becomes unavailable clears its cursor and can reload when public again',async({page})=>{
+ await mock(page);await page.goto('/#live');await expect(page.locator('#live-timeline li')).toHaveCount(1);
+ await page.route('**/api/live-events/*/updates?**',r=>r.fulfill({status:404,json:{message:'PRIVATE'}}));await page.getByRole('button',{name:'Refresh updates',exact:true}).click();await expect(page.locator('#live-error')).toContainText('Coverage unavailable');await expect(page.locator('#live-timeline li')).toHaveCount(0);
+ await page.unroute('**/api/live-events/*/updates?**');let cursor;
+ await page.route('**/api/live-events/*/updates?**',r=>{cursor=Number(new URL(r.request().url()).searchParams.get('since'));return r.fulfill({json:{event,docs:[row(1)],nextSince:1}});});await page.getByRole('button',{name:'Refresh updates',exact:true}).click();await expect(page.locator('#live-timeline li')).toHaveCount(1);expect(cursor).toBe(0);await expect(page.locator('#live-error')).toBeHidden();
+});

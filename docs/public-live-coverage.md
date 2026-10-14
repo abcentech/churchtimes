@@ -39,7 +39,8 @@ tabs stop polling; returning resumes it. Navigation aborts outstanding reads and
 removes timers/listeners. Ended events stop automatic polling but keep their
 archives and manual batch/refresh controls. HTTP/JSON/network failures retain
 published updates, show safe messages and use bounded retry backoff; 429 respects
-Retry-After. A newly unavailable event clears its visible timeline and stops polling.
+Retry-After. A newly unavailable event clears its visible timeline/cursor and stops polling;
+manual retry can reload it if the event becomes public again.
 
 The feed is an append/publication cursor contract. Existing-row edits/retractions
 are not an additional server-supplied change stream; no such API or staff workflow
@@ -60,8 +61,8 @@ npm run export:pages
 npm run check:pages
 ```
 
-43 unit/contract, 58 public browser, 56 newsroom, 34 form, 22 advertising and
-18 real CMS/PostgreSQL browser checks passed (231 total). Targeted live browser
+43 unit/contract, 58 public browser, 58 newsroom, 34 form, 22 advertising and
+18 real CMS/PostgreSQL browser checks passed (233 total). Targeted live browser
 checks were repeated after the final accessibility/error-state fixes. Build/export
 consistency, whitespace and CMS TypeScript checks passed. Local public/forms suites
 used temporary port-only configs (5293/5295) to avoid existing servers; CI uses
