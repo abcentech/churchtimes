@@ -7,6 +7,11 @@ import {fileURLToPath} from 'node:url';
 import {fetchPublishedArticle} from '../src/lib/published-articles.js';
 import {renderArticleContent} from '../src/lib/article-content.js';
 import {cmsFigure} from '../src/lib/cms-media.js';
+import {siteCanonical,replaceSocialHTML} from '../src/lib/public-metadata.js';
+import {createPublicResponder} from './public-response.mjs';
+import {homeImageMetadata} from './public-home.mjs';
+import {createPublicPages} from './public-pages.mjs';
+import {createPublicFeeds} from './public-feeds.mjs';
 import {publicOrigin} from '../src/lib/public-url.js';
 import {normalizeBasePath,reportSlug,articleCanonical,articleSchema,safeJSON} from '../src/lib/public-routes.js';
 const escape=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -15,31 +20,34 @@ const replaceMeta=(html,attribute,name,value)=>html.replace(new RegExp(`(<meta $
 export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(fileURLToPath(new URL('../dist/',import.meta.url))),cmsUrl=process.env.PUBLIC_CMS_URL,siteUrl=process.env.PUBLIC_SITE_URL,basePath=process.env.PUBLIC_BASE_PATH || '/',indexable=process.env.PUBLIC_INDEXABLE==='true',fetchImpl=fetch}={}) {
   basePath=normalizeBasePath(basePath);
   if(cmsUrl && !publicOrigin(cmsUrl))throw new Error('PUBLIC_CMS_URL must be HTTPS or loopback HTTP without credentials');
+  const publicPages=createPublicPages({dist,cmsUrl,siteUrl,basePath,indexable,fetchImpl});
+  const publicFeeds=createPublicFeeds({cmsUrl,siteUrl,basePath,indexable,fetchImpl});
   async function htmlPage(article,message) {
     let html=await readFile(resolve(dist,'index.html'),'utf8');
     html=html.replace('<head>',`<head><base href="${escape(basePath)}">`);
-    const canonical=article ? articleCanonical(article.slug,{siteUrl,basePath}) : '';
+    const canonical=article ? articleCanonical(article.slug,{siteUrl,basePath}) : message ? '' : siteCanonical(basePath,{siteUrl});
+    html=replaceSocialHTML(html,article,canonical);
+    if(!article && !message)html=html.replace('</head>',()=>homeImageMetadata({siteUrl,basePath})+'</head>');
     const robots=indexable && canonical ? 'index,follow' : 'noindex,nofollow';
     let metadata=`<meta name="robots" content="${robots}">`;
+    if(canonical)metadata+=`<link rel="canonical" href="${escape(canonical)}">`;
     let body=`<main id="main"><h1>${escape(message || 'Church Times Nigeria')}</h1><a href="${escape(basePath)}#latest">Browse published reports</a></main>`;
     if(article) {
       html=html.replace(/<title>[^<]*<\/title>/,()=>`<title>${escape(article.title)} — Church Times Nigeria</title>`);
       html=replaceMeta(html,'name','description',article.excerpt);
-      html=replaceMeta(html,'property','og:title',article.title);
-      html=replaceMeta(html,'property','og:description',article.excerpt);
-      html=replaceMeta(html,'property','og:type','article');
-      if(canonical)metadata+=`<link rel="canonical" href="${escape(canonical)}"><meta property="og:url" content="${escape(canonical)}">`;
+      metadata+=`<script id="public-article" type="application/json">${safeJSON(article)}</script>`;
       metadata+=`<script id="article-schema" type="application/ld+json">${safeJSON(articleSchema(article,canonical))}</script>`;
       body=`<main id="main" class="container section-list newsroom-report"><a href="${escape(basePath)}#latest">Latest published reports</a><article><header class="article-header"><p>${escape(article.category)}</p><h1>${escape(article.title)}</h1><p class="article-deck">${escape(article.excerpt)}</p>${article.bylineName?`<p>By ${escape(article.bylineName)}</p>`:''}${article.publishedAt?`<time datetime="${escape(article.publishedAt)}">${escape(article.publishedAt.slice(0,10))}</time>`:''}</header>${cmsFigure(article.featuredImage,{eager:true,fallbackAlt:article.title})}<div class="article-body newsroom-article-body">${renderArticleContent(article.content,{baseUrl:cmsUrl})}</div>${article.corrections.length?`<section class="article-corrections"><h2>Corrections & updates</h2>${article.corrections.map(c=>`<p>${escape(c.note)}</p>`).join('')}</section>`:''}${article.legacyUrl?`<p><a href="${escape(article.legacyUrl)}" rel="noopener noreferrer">Original publication</a></p>`:''}</article></main>`;
     }
     return {html:html.replace('</head>',()=>metadata+'</head>').replace('<div id="app"></div>',()=>`<div id="app">${body}</div>`),robots};
   }
   return createServer(async(req,res)=>{
-    const respond=(status,type,body,headers={})=>{res.writeHead(status,{'Content-Type':type,'X-Content-Type-Options':'nosniff','Cache-Control':'no-store',...headers});res.end(req.method==='HEAD'?undefined:body);};
+    const respond=createPublicResponder(req,res);
     if(!['GET','HEAD'].includes(req.method))return respond(405,'text/plain','Method not allowed',{Allow:'GET, HEAD'});
     try {
       const url=new URL(req.url,'http://public.invalid');
       if(!url.pathname.startsWith(basePath))return respond(404,'text/plain','Not found');
+      if(await publicFeeds(url,respond) || await publicPages(url,respond))return;
       const slug=reportSlug(url.pathname,basePath);
       if(url.pathname.startsWith(basePath+'reports/')) {
         if(!slug) {const page=await htmlPage(null,'Article unavailable.');return respond(404,mime['.html'],page.html,{'X-Robots-Tag':'noindex,nofollow'});}
@@ -51,7 +59,7 @@ export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(file
         return respond(article?200:article===null?404:503,mime['.html'],page.html,{'X-Robots-Tag':page.robots});
       }
       const relative=decodeURIComponent(url.pathname.slice(basePath.length));
-      if(relative==='' || relative==='index.html') {const page=await htmlPage(null);return respond(200,mime['.html'],page.html,{'X-Robots-Tag':'noindex,nofollow'});}
+      if(relative==='' || relative==='index.html') {const page=await htmlPage(null);return respond(200,mime['.html'],page.html,{'X-Robots-Tag':page.robots});}
       if(relative.includes('\\') || relative.includes('\0'))return respond(400,'text/plain','Invalid path');
       const file=resolve(dist,relative);
       if(!file.startsWith(resolve(dist)+sep))return respond(404,'text/plain','Not found');

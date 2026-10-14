@@ -35,7 +35,8 @@ const media = await f.payload.create({collection:'media',overrideAccess:true,
   file:{data:bytes,name:runId+'-fixture.jpg',mimetype:'image/jpeg',size:bytes.length},
 })
 const published = await f.seedArticle({status:'published',publishedAt:new Date().toISOString(),
-  bylineName:'CMS integration byline',featuredImage:media.id,content:lexical('Published text from real Payload and PostgreSQL.'),
+  bylineName:'CMS integration byline',featuredImage:media.id,excerpt:'Faith & public life: a published report from the community.',
+  content:{root:{...lexical('Published text from real Payload and PostgreSQL.').root,children:[...lexical('Published text from real Payload and PostgreSQL.').root.children,{type:'upload',version:3,relationTo:'media',value:media.id,fields:{}}]}},
   corrections:[{note:'A verified fixture correction.',correctedAt:new Date().toISOString()}],legacyUrl:first.source,
 })
 const reporterDraft = await f.createArticle(f.tokens.reporter,{status:'draft'})

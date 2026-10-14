@@ -35,7 +35,7 @@ const publicationDate = value => {
   return text && Number.isFinite(Date.parse(text)) ? new Date(text).toISOString() : '';
 };
 
-function mediaUrl(value, baseUrl) {
+export function mediaUrl(value, baseUrl) {
   if (typeof value !== 'string' || !value.trim()) return '';
   try {
     const url = new URL(value, baseUrl);
@@ -50,15 +50,21 @@ export function normalizePublicMedia(record, baseUrl) {
   const url = mediaUrl(record.url, baseUrl);
   if (!url) return null;
   const dimension = value => Number.isSafeInteger(value) && value > 0 && value <= 20000 ? value : null;
+  const original={url,width:dimension(record.width),height:dimension(record.height)};
+  const variants=[original,...Object.values(record.sizes || {}).slice(0,32).map(size=>({
+    url:mediaUrl(size?.url,baseUrl),width:dimension(size?.width),height:dimension(size?.height),
+  }))].filter(v=>v.url && v.width && v.height).sort((a,b)=>a.width-b.width)
+    .filter((v,i,all)=>all.findIndex(other=>other.width===v.width)===i);
+  const choose = minimum => variants.find(v=>v.width>=minimum) || variants.at(-1) || original;
+  const card=choose(420),hero=choose(800);
   return {
-    url, cardUrl:mediaUrl(record.sizes?.card?.url, baseUrl) || url,
-    heroUrl:mediaUrl(record.sizes?.hero?.url, baseUrl) || url,
-    alt:plainText(record.alt,300), caption:plainText(record.caption,1000), credit:plainText(record.credit,300),
-    width:dimension(record.width), height:dimension(record.height),
-    cardWidth:record.sizes?.card?.url ? dimension(record.sizes.card.width) : dimension(record.width),
-    cardHeight:record.sizes?.card?.url ? dimension(record.sizes.card.height) : dimension(record.height),
-    heroWidth:record.sizes?.hero?.url ? dimension(record.sizes.hero.width) : dimension(record.width),
-    heroHeight:record.sizes?.hero?.url ? dimension(record.sizes.hero.height) : dimension(record.height),
+    ...original,variants,mimeType:record.mimeType,
+    fileSize:Number.isSafeInteger(record.filesize) && record.filesize>0 ? record.filesize : null,
+    cardUrl:mediaUrl(record.sizes?.card?.url,baseUrl) || card.url,
+    cardWidth:mediaUrl(record.sizes?.card?.url,baseUrl) ? dimension(record.sizes.card.width) : card.width,
+    cardHeight:mediaUrl(record.sizes?.card?.url,baseUrl) ? dimension(record.sizes.card.height) : card.height,
+    heroUrl:hero.url,heroWidth:hero.width,heroHeight:hero.height,
+    alt:plainText(record.alt,300),caption:plainText(record.caption,1000),credit:plainText(record.credit,300),
   };
 }
 function legacyUrl(value) {
@@ -78,6 +84,7 @@ export function normalizePublishedArticle(record, {baseUrl} = {}) {
     title,
     excerpt: plainText(record.excerpt || record.summary, 600),
     publishedAt: publicationDate(record.publishedAt),
+    updatedAt: publicationDate(record.updatedAt),
     category: plainText(typeof record.category === 'object' ? record.category?.title : record.category, 100),
     bylineName: plainText(record.bylineName,200),
     featuredImage: normalizePublicMedia(record.featuredImage,baseUrl),
@@ -142,7 +149,7 @@ async function requestPublishedArticles({
     const articles = collection==='categories' ? payload.docs.map(normalizeCategory).filter(Boolean) : payload.docs.map(record=>normalizePublishedArticle(record,{baseUrl})).filter(Boolean);
     const nextPage = payload.hasNextPage === true && Number.isSafeInteger(payload.nextPage)
       && payload.nextPage > Number(url.searchParams.get('page')) ? payload.nextPage : null;
-    return { articles, nextPage };
+    return { articles, nextPage, totalPages:Number.isSafeInteger(payload.totalPages) && payload.totalPages>=0 ? Math.max(1,payload.totalPages) : null };
   } catch(error) {
     if(error instanceof CMSReadError)throw error;
     if(signal?.aborted)throw new CMSReadError('cancelled','CMS request aborted on navigation');
