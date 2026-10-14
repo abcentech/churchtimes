@@ -286,9 +286,17 @@ const tsCandidates = () => [
 
 /** Absolute/bare command that answers `tailscale version`, or null. */
 // Test seam: a .js/.mjs "tailscale" is run with node (lets tests stub the CLI on Windows, where a script is not directly executable).
+// A script stub is accepted only with FUNNEL_TEST=1, so a forgotten stub can never hide what the real Tailscale publishes.
 const invocation = (bin, args) => (/[.]m?js$/i.test(bin) ? [process.execPath, [bin, ...args]] : [bin, args])
 
 export function findTailscale() {
+  const override = process.env.TAILSCALE_BIN
+  if (override) {
+    if (/[.]m?js$/i.test(override) && process.env.FUNNEL_TEST !== '1') {
+      throw new Error(`TAILSCALE_BIN=${override} is a script stub; set FUNNEL_TEST=1 to use it (tests only), or unset TAILSCALE_BIN.`)
+    }
+    console.warn(`[funnel] using TAILSCALE_BIN=${override} instead of the installed Tailscale`)
+  }
   for (const bin of tsCandidates().filter(Boolean)) {
     const [cmd, cmdArgs] = invocation(bin, ['version'])
     const res = spawnSync(cmd, cmdArgs, { encoding: 'utf8', windowsHide: true, timeout: 15_000 })
@@ -383,7 +391,8 @@ const portOfKey = (key) => Number(String(key).split(':').pop())
 export function isPortListed(serve, httpsPort) {
   const web = Object.keys(serve?.Web ?? {}).some((k) => portOfKey(k) === httpsPort)
   const funnel = Object.entries(serve?.AllowFunnel ?? {}).some(([k, on]) => on && portOfKey(k) === httpsPort)
-  return web || funnel
+  const tcp = Object.keys(serve?.TCP ?? {}).some((k) => portOfKey(k) === httpsPort)
+  return web || funnel || tcp
 }
 
 /**
@@ -436,6 +445,7 @@ export async function funnelOrphans(serve) {
 
 /** Commands that clear EVERYTHING served on one https port (Funnel off, then every handler). */
 export function clearPortCommands(syntax, entry) {
+  // A raw TCP forward on the port is not cleared here: isPortListed() still sees it afterwards, so up refuses (fails closed).
   return [...funnelOffCommands(syntax, entry), syntax === 'legacy' ? ['serve', `https:${entry.httpsPort}`, 'off'] : ['serve', `--https=${entry.httpsPort}`, 'off']]
 }
 

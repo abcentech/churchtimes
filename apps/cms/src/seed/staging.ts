@@ -56,6 +56,12 @@ const readCredentials = (): Creds => {
       throw new Error(`Credentials file is missing a valid "${key}" entry.`)
     }
   }
+  // The seed creates these accounts and resets their passwords, so it may only ever touch synthetic addresses.
+  for (const [key, u] of Object.entries(parsed.users ?? {})) {
+    if (!/^[a-z0-9._-]+@staging\.invalid$/i.test(u?.email ?? '')) {
+      throw new Error(`Credentials file entry "${key}" is not a synthetic @staging.invalid address; refusing to seed.`)
+    }
+  }
   return parsed
 }
 
@@ -97,7 +103,9 @@ async function main(): Promise<void> {
   if (!staging.enabled) throw new Error(`Refusing to seed synthetic staging data: ${staging.problems.join(' ')}`)
   let dbHost = ''
   try {
-    dbHost = new URL(process.env.DATABASE_URL ?? '').hostname
+    const dbUrl = new URL(process.env.DATABASE_URL ?? '')
+    // pg honours ?host= / ?hostaddr= over the URL's host, which would get around the loopback check.
+    if (!dbUrl.searchParams.has('host') && !dbUrl.searchParams.has('hostaddr')) dbHost = dbUrl.hostname
   } catch {
     // not a URL: refused below
   }

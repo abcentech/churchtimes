@@ -38,5 +38,7 @@ describe('funnel serve analysis', () => {
     expect(entriesToOurPorts({ Web: web(443, { '/': { Proxy: 'http://127.0.0.1:9999' } }) }, cfg)).toEqual([])
     expect(isPortListed(serve, 10000)).toBe(true)
     expect(isPortListed(serve, 443)).toBe(false)
+    // a raw TCP forward alone still counts as "something is on this port" (clearing the web handler must not hide it)
+    expect(isPortListed({ TCP: { '8443': { TCPForward: '127.0.0.1:22' } } }, 8443)).toBe(true)
   })
 })
