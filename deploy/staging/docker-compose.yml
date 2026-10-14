@@ -1,0 +1,219 @@
+# Church Times newsroom MVP: ONE-VPS STAGING stack (Caddy + PostgreSQL 16 + CMS + public SSR host).
+# Sized for a 1 vCPU / 2 GB RAM VPS with a 2 GB swapfile (see README "Memory budget").
+#
+# Run it through setup.sh / update.sh. Manual use, from this directory:
+#   docker compose up -d
+#   docker compose --profile tools run --rm -T migrate          # the CMS image does NOT migrate on start
+#
+# Files this stack needs (all created by setup.sh, all gitignored):
+#   .env            non-secret settings: STAGING_DOMAIN, TURNSTILE_SITE_KEY, TURNSTILE_ACTION, CMS_IMAGE, ACME_CA
+#   .env.cms        CMS secrets and origins (mode 600)       template: .env.cms.example
+#   .env.postgres   PostgreSQL credentials (mode 600)
+#   build/public    compiled public site     (build-static.sh)
+#   build/newsroom  compiled newsroom SPA    (build-static.sh)
+#
+# The CMS image is built in GitHub Actions and pulled from GHCR (private package; `docker login ghcr.io` once).
+# To build it on this machine instead (needs ~4 GB RAM), add the override file docker-compose.build.yml
+# (see that file) with CMS_IMAGE=churchtimes-cms:local in .env.
+name: churchtimes-staging
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  caddy:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    ports:
+      # The only published ports on the host. (HTTP/3 is switched off in the Caddyfile, so no 443/udp.)
+      - "80:80"
+      - "443:443"
+    environment:
+      STAGING_DOMAIN: ${STAGING_DOMAIN:?set STAGING_DOMAIN in .env}
+      ACME_CA: ${ACME_CA:-https://acme-v02.api.letsencrypt.org/directory}
+      GOMEMLIMIT: 70MiB
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./build/newsroom:/srv/newsroom:ro
+      # Certificates and ACME account. Keep this volume: re-issuing hits Let's Encrypt rate limits.
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      default:
+        aliases:
+          # The public SSR host must read the CMS over https (it refuses plain http to a remote host). This alias
+          # lets it reach the CMS hostname through Caddy inside the compose network, with no hairpin through the
+          # VPS public IP.
+          - cms.${STAGING_DOMAIN}
+    depends_on:
+      - cms
+      - public
+    mem_limit: 100m
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
+  postgres:
+    image: postgres:16.10-alpine
+    restart: unless-stopped
+    # Not published to the host: reachable only as "postgres" inside the compose network.
+    env_file: .env.postgres
+    command:
+      - postgres
+      - -c
+      - shared_buffers=64MB
+      - -c
+      - effective_cache_size=192MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=32MB
+      - -c
+      - max_connections=30
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U churchtimes -d churchtimes"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    mem_limit: 320m
+    logging: *default-logging
+
+  cms:
+    image: ${CMS_IMAGE:-ghcr.io/abcentech/churchtimes-cms:staging}
+    pull_policy: always
+    init: true
+    restart: unless-stopped
+    env_file: .env.cms
+    environment:
+      # Keep the image's --no-deprecation and cap the V8 heap so the container stays inside mem_limit.
+      NODE_OPTIONS: "--no-deprecation --max-old-space-size=640"
+    volumes:
+      - cms-media:/app/media
+    expose:
+      - "3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # The image defines the same HEALTHCHECK (GET /api/users/me); restated so compose shows the intent.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/users/me').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 15s
+      timeout: 15s
+      start_period: 60s
+      retries: 5
+    mem_limit: 900m
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
+  public:
+    # Public site SSR host: tools/serve-public.mjs from the repo, serving the pre-built dist and fetching published
+    # articles from the CMS. Only what it imports is mounted (read-only): the script, src/lib and package.json
+    # (which carries "type": "module").
+    image: node:24-bookworm-slim
+    restart: unless-stopped
+    working_dir: /app
+    user: node
+    read_only: true
+    command: ["node", "tools/serve-public.mjs"]
+    environment:
+      PORT: "5373"
+      HOST: 0.0.0.0
+      PUBLIC_DIST: /app/dist
+      PUBLIC_CMS_URL: https://cms.${STAGING_DOMAIN}
+      PUBLIC_BASE_PATH: /
+      # Staging is never indexable (this is also the default).
+      PUBLIC_INDEXABLE: "false"
+      NODE_OPTIONS: "--max-old-space-size=96"
+      NODE_ENV: production
+    volumes:
+      - ../../tools/serve-public.mjs:/app/tools/serve-public.mjs:ro
+      - ../../src/lib:/app/src/lib:ro
+      - ../../package.json:/app/package.json:ro
+      - ./build/public:/app/dist:ro
+    expose:
+      - "5373"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5373/').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 15s
+      timeout: 10s
+      start_period: 10s
+      retries: 5
+    mem_limit: 150m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
+  # ---- one-shot tools (profile "tools"; never started by `up`) ---------------------------------------------------
+  migrate:
+    image: ${CMS_IMAGE:-ghcr.io/abcentech/churchtimes-cms:staging}
+    pull_policy: always
+    profiles: ["tools"]
+    init: true
+    env_file: .env.cms
+    environment:
+      NODE_OPTIONS: "--no-deprecation --max-old-space-size=640"
+    command: ["npm", "run", "migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    mem_limit: 800m
+
+  # Synthetic staff + fixtures. The repo's staging seed (src/seed/staging.ts) refuses to run unless the origins and the
+  # database are loopback-only. This service satisfies that for THIS ONE CONTAINER ONLY by (a) sharing PostgreSQL's
+  # network namespace, so 127.0.0.1:5432 really is the staging database, and (b) overriding the origins/flag/Turnstile
+  # secret below. None of those overrides touch .env.cms or the running CMS. Runs as root only to read the root-only
+  # credentials file.
+  seed:
+    image: ${CMS_IMAGE:-ghcr.io/abcentech/churchtimes-cms:staging}
+    pull_policy: always
+    profiles: ["tools"]
+    init: true
+    user: "0:0"
+    network_mode: "service:postgres"
+    env_file: .env.cms
+    environment:
+      NODE_OPTIONS: "--no-deprecation --max-old-space-size=640"
+      CMS_ALLOW_INSECURE_LOCAL_STAGING: "true"
+      CMS_PUBLIC_URL: http://localhost:3000
+      CMS_CORS_ORIGINS: http://localhost:5174
+      CMS_CSRF_ORIGINS: http://localhost:3000
+      PUBLIC_SUBMISSION_ORIGINS: http://localhost:5173
+      # Cloudflare's PUBLIC always-pass TEST secret (not a secret). Needed only so the seed process passes startup
+      # validation; the real secret in .env.cms is overridden for this container and never used here.
+      TURNSTILE_SECRET_KEY: "1x0000000000000000000000000000000AA"
+      SCHEDULER_ENABLED: "false"
+      STAGING_CREDENTIALS_FILE: /run/seed/credentials.json
+    volumes:
+      - ${SEED_CREDENTIALS_FILE:-/root/churchtimes-staging-credentials.json}:/run/seed/credentials.json:ro
+    # DATABASE_URL comes from .env.cms (host "postgres"); only the host is rewritten to loopback here, so the password is
+    # never interpolated into this file. (A doubled dollar sign stops compose from interpolating the shell variables.)
+    command:
+      - sh
+      - -c
+      - |
+        DATABASE_URL="$$(printf '%s' "$$DATABASE_URL" | sed 's#@postgres:#@127.0.0.1:#')"
+        export DATABASE_URL
+        exec node_modules/.bin/payload run src/seed/staging.ts
+    depends_on:
+      postgres:
+        condition: service_healthy
+    mem_limit: 800m
+
+networks:
+  default:
+    name: churchtimes-staging
+
+volumes:
+  pgdata:
+  cms-media:
+  caddy-data:
+  caddy-config:

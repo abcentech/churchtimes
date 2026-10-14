@@ -4,3 +4,15 @@ test-results/
 playwright-report/
 .env
 .env.local
+
+# deploy/staging: secrets, generated files, backups (see deploy/staging/.gitignore)
+deploy/staging/.env
+deploy/staging/.env.*
+!deploy/staging/.env.example
+!deploy/staging/.env.cms.example
+deploy/staging/build/
+deploy/staging/build.new/
+deploy/staging/build.old/
+deploy/staging/backups/
+deploy/staging/*credentials*
+deploy/staging/*.dump

@@ -1,0 +1,116 @@
+# Church Times staging edge. Caddy is the ONLY public listener (80/443) and the ONLY trusted proxy hop in front of the CMS.
+#
+# Environment (set by docker-compose.yml from .env):
+#   STAGING_DOMAIN  base staging hostname, e.g. staging.churchtimesnigeria.net
+#   ACME_CA         ACME directory (Let's Encrypt production by default; use the LE staging directory to debug)
+#
+# Hostnames served (the owner adds three A records pointing at this VPS):
+#   {$STAGING_DOMAIN}            public site (SSR host)
+#   newsroom.{$STAGING_DOMAIN}   staff newsroom SPA (static files)
+#   cms.{$STAGING_DOMAIN}        Payload CMS + admin + API
+# All three share the registrable domain, i.e. they are SAME-SITE, which the CMS's host-only SameSite=Lax payload-token
+# cookie needs when the newsroom (a different origin) calls the CMS API with credentials.
+{
+	acme_ca {$ACME_CA}
+	servers {
+		# No HTTP/3: only 80/443 tcp are opened.
+		protocols h1 h2
+	}
+}
+
+# Shared by all three sites.
+(staging_common) {
+	encode zstd gzip
+	header {
+		# Staging must never be indexed. ">" defers the operation until the response is written, so it also
+		# replaces any value set by the upstream and applies to Caddy-generated errors.
+		>X-Robots-Tag "noindex, nofollow"
+		-Server
+	}
+
+	# Caddy-generated errors (404 for a missing file, 502 when an upstream is down) skip the deferred header above.
+	handle_errors {
+		header X-Robots-Tag "noindex, nofollow"
+		respond "{err.status_code} {err.status_text}"
+	}
+}
+
+# ---- public site -------------------------------------------------------------------------------------------------
+{$STAGING_DOMAIN} {
+	import staging_common
+
+	header {
+		>Strict-Transport-Security "max-age=15552000"
+		>X-Content-Type-Options "nosniff"
+		>Referrer-Policy "strict-origin-when-cross-origin"
+		>X-Frame-Options "SAMEORIGIN"
+		>Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()"
+		# No script CSP: the public page has an inline bootstrap script and loads Cloudflare Turnstile.
+	}
+
+	# The public host only serves GET/HEAD.
+	request_body {
+		max_size 64KB
+	}
+
+	reverse_proxy public:5373 {
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+}
+
+# ---- staff newsroom (static SPA) -----------------------------------------------------------------------------------
+newsroom.{$STAGING_DOMAIN} {
+	import staging_common
+
+	header {
+		>Strict-Transport-Security "max-age=15552000"
+		>X-Content-Type-Options "nosniff"
+		>Referrer-Policy "no-referrer"
+		>X-Frame-Options "DENY"
+		>Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()"
+		# Same-origin scripts only; the SPA talks to the CMS origin and shows its media. Style attributes are used by
+		# the views, hence 'unsafe-inline' for style-src only. If a browser console ever reports a blocked resource,
+		# loosen THIS line (it is the one most likely to need it) and tell the developers.
+		>Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://cms.{$STAGING_DOMAIN}; connect-src 'self' https://cms.{$STAGING_DOMAIN}; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+	}
+
+	root * /srv/newsroom
+
+	# Vite emits content-hashed files under /assets/: cache forever. Everything else (index.html, favicon) revalidates,
+	# so a new release is picked up on the next load.
+	@hashed path /assets/*
+	header @hashed >Cache-Control "public, max-age=31536000, immutable"
+	@mutable not path /assets/*
+	header @mutable >Cache-Control "no-cache"
+
+	file_server
+}
+
+# ---- CMS (Payload on Next.js) ----------------------------------------------------------------------------------------
+cms.{$STAGING_DOMAIN} {
+	import staging_common
+
+	# Reject oversized bodies before they reach the app (largest legitimate request: an 11 MB media upload).
+	request_body {
+		max_size 12MB
+	}
+
+	# Security headers (nosniff, X-Frame-Options, frame-ancestors CSP, Referrer-Policy, HSTS) are set by the app itself
+	# (apps/cms/next.config.mjs), so they are not repeated here.
+
+	reverse_proxy cms:3000 {
+		# The CMS rate limits (src/lib/rateLimit.ts getClientIp) trust ONLY what this proxy writes. TRUST_PROXY=true and
+		# TRUST_PROXY_HOPS=1 mean "the client is the LAST X-Forwarded-For entry". So the header is OVERWRITTEN with the
+		# TCP peer address Caddy saw, never appended to, and anything the client sent is discarded. CLIENT_IP_HEADER is
+		# left unset (this is the single hop; there is no Cloudflare in front).
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Real-IP {remote_host}
+		# Also overwritten: tells Next the original scheme, so absolute URLs and the Secure cookie logic are consistent.
+		header_up X-Forwarded-Proto {scheme}
+		transport http {
+			read_timeout 60s
+		}
+	}
+}

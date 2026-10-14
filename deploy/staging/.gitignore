@@ -1,0 +1,14 @@
+# Everything secret or generated on the staging server. Never commit any of it.
+.env
+.env.*
+!.env.example
+!.env.cms.example
+build/
+build.new/
+build.old/
+backups/
+credentials*
+*credentials*.json
+*.dump
+*.pem
+*.key
