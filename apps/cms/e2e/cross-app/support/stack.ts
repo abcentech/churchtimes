@@ -4,7 +4,8 @@
  *   proxy -> Vite build of the REAL public site -> Vite build of the REAL newsroom SPA -> two static servers.
  * Everything lives in an OS temp dir that is removed on teardown. No secret is printed; secrets are random per run.
  *
- * Ports (strict, this lane only): CMS 3400 (proxy) / 3401 (next start), PostgreSQL 55435, public 5373, newsroom 5374.
+ * Ports (strict, this lane only): CMS 3400 (proxy) / 3401 (next start), PostgreSQL 55435, public 5373, newsroom 5374,
+ * public gap build 5375; each shifted by XAPP_PORT_OFFSET.
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
@@ -23,7 +24,21 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 export const cmsRoot = path.resolve(here, '../../..')
 export const repoRoot = path.resolve(cmsRoot, '../..')
 
-export const PORTS = { cms: 3400, cmsInternal: 3401, pg: 55435, public: 5373, newsroom: 5374, publicGap: 5375 } as const
+/** XAPP_PORT_OFFSET (0-1000, default 0) shifts every port so several checkouts can run this lane side by side. */
+const PORT_OFFSET = (() => {
+  const raw = process.env.XAPP_PORT_OFFSET ?? '0'
+  const n = Number(raw)
+  if (!/^\d+$/.test(raw) || n > 1000) throw new Error(`XAPP_PORT_OFFSET must be an integer 0-1000, got "${raw}"`)
+  return n
+})()
+export const PORTS = {
+  cms: 3400 + PORT_OFFSET,
+  cmsInternal: 3401 + PORT_OFFSET,
+  pg: 55435 + PORT_OFFSET,
+  public: 5373 + PORT_OFFSET,
+  newsroom: 5374 + PORT_OFFSET,
+  publicGap: 5375 + PORT_OFFSET,
+} as const
 export const HOSTS = {
   cms: `http://cms.churchtimes.localhost:${PORTS.cms}`,
   newsroom: `http://newsroom.churchtimes.localhost:${PORTS.newsroom}`,

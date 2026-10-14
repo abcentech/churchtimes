@@ -9,7 +9,8 @@ import { defineConfig, devices } from '@playwright/test'
  *   npm run test:e2e:cross-app
  *
  * Ports (this lane only): CMS 3400 (recording proxy) -> 3401 (next start), PostgreSQL 55435, public site 5373,
- * newsroom 5374. Env: XAPP_KEEP_EVIDENCE=0 skips writing docs/evidence/cross-app-* files.
+ * newsroom 5374. Env: XAPP_KEEP_EVIDENCE=0 skips writing docs/evidence/cross-app-* files; XAPP_PORT_OFFSET=<n>
+ * shifts every port by n so several checkouts can run the lane at the same time.
  *
  * `.next` must already exist (this lane never runs `next build`; build once with `npm run build`).
  * Chromium resolves *.churchtimes.localhost to loopback via --host-resolver-rules, so no hosts-file change is needed.
