@@ -359,8 +359,8 @@ npx tsx e2e/cross-app/dev-stack.ts <scratch>/xapp.json                      # te
 XAPP_ATTACH=<scratch>/xapp.json npx playwright test -c playwright.cross-app.config.ts 02-newsroom   # terminal 2
 ```
 
-Ports (this lane only): CMS 3400 (recording proxy) to 3401 (`next start`), PostgreSQL 55435, public site 5373, newsroom 5374, 5375 (second public build, known-gap
-evidence). Origins: `http://cms|newsroom|www.churchtimes.localhost:<port>` (same-site, `--host-resolver-rules`). `XAPP_KEEP_EVIDENCE=0` skips writing `docs/evidence/cross-app-*`.
+Ports (this lane only): CMS 3400 (recording proxy) to 3401 (`next start`), PostgreSQL 55435, public site 5373 (served by its real host `tools/serve-public.mjs`: clean `/reports/:slug/` URLs, server-rendered
+article HTML, real 404s), newsroom 5374, 5375 (second public build exactly as section 9 says, no endpoint override). Origins: `http://cms|newsroom|www.churchtimes.localhost:<port>` (same-site, `--host-resolver-rules`). `XAPP_KEEP_EVIDENCE=0` skips writing `docs/evidence/cross-app-*`.
 Instance-only settings: `AUTH_LOGIN_RATE_LIMIT`, `SUBMISSION_RATE_LIMIT`, `SUBMISSION_EMAIL_RATE_LIMIT` raised to 500 (browsers send no `X-Forwarded-For`).
 Uploaded test images land in `apps/cms/media` with a per-run prefix and are removed on teardown.
 
@@ -369,10 +369,10 @@ Uploaded test images land in `apps/cms/media` with a per-run prefix and are remo
 | File | Scenario | What is asserted |
 | --- | --- | --- |
 | `01-public-tip.spec.ts` | B (reader), C (public failures) | real Turnstile iframe from challenges.cloudflare.com verifies; real form shows the receipt `SUB-xxxxxxxx`; the same reference exists in PostgreSQL with `status=new`; tip is absent from the public API and Latest list. Duplicate: CMS 409 shown as an error, no receipt, one row. **HARNESS tamper:** token blanked in flight (the real widget cannot fail with the test key) gives CMS 400 shown as "Verification was not accepted", no receipt. Incomplete form sends nothing. |
-| `02-newsroom-article.spec.ts` | A | reporter logs in (LIVE CMS banner, no mock store), writes title/standfirst/category/body, uploads a generated PNG through the media picker (multipart `POST /api/media` 201), saves (server `draft`), submits (server `in_review`); approve/publish buttons absent AND direct `PATCH` from the newsroom origin returns 403 (status unchanged); section editor inspects, approves, publishes (`publishedAt` set); fresh anonymous context sees card + article page, `naturalWidth > 0` for card and hero image, no draft/staff-only fields, no cookie sent by the public origin. |
-| `03-newsroom-tip-review.spec.ts` | B (newsroom) | editor finds the tip by its reference in Reader Tips, converts it (`POST /api/submissions/:id/convert`), editor opens the new draft; submission `converted`, article `draft`; anonymous API 404, public site "Article unavailable". Reporter sees "only editors", direct `GET /api/submissions` refused. |
+| `02-newsroom-article.spec.ts` | A | reporter logs in (LIVE CMS banner, no mock store), writes title/standfirst/category/body, uploads a generated PNG through the media picker (multipart `POST /api/media` 201), saves (server `draft`), submits (server `in_review`); approve/publish buttons absent AND direct `PATCH` from the newsroom origin returns 403 (status unchanged); section editor inspects, approves, publishes (`publishedAt` set); fresh anonymous context sees card + article page at `/reports/<slug>/` (cold reload 200 with server-rendered `<h1>`), `naturalWidth > 0` for card and hero image, no draft/staff-only fields, no cookie sent by the public origin. |
+| `03-newsroom-tip-review.spec.ts` | B (newsroom) | editor finds the tip by its reference in Reader Tips, converts it (`POST /api/submissions/:id/convert`), editor opens the new draft; submission `converted`, article `draft`; anonymous API 404; public `/reports/<slug>/` is a real 404 "Article unavailable", and the legacy `#report/<slug>` link normalises to it. Reporter sees "only editors", direct `GET /api/submissions` refused. |
 | `04-newsroom-unauthorized.spec.ts` | C | logged-out newsroom shows only sign-in on every route and loads no protected data; wrong password shows the server error; logout ends the server session; stale editor save forbidden by the CMS shows the CMS error (no success toast, nothing changed); non-image upload shows the CMS rejection; revoked session on a write is refused with nothing created; revoked session on read-only navigation returns to sign-in ("Your session has ended") and the server agrees `user: null`. |
-| `05-public-gap.spec.ts` | known gap (public site) | `test.fail()` markers (see below): green while the gap exists, red when it is fixed. |
+| `05-public-gap.spec.ts` | public regression (#15) | the public site built with only `VITE_PUBLIC_CMS_URL=http://cms.churchtimes.localhost:<port>` enables the story form (gap 1 below, fixed by #22). |
 | `06-newsroom-mobile-layout.spec.ts` | D | no newsroom view forces horizontal page scrolling at the project viewport (`KNOWN_OVERFLOW` lists any view that still does). |
 
 Evidence: `docs/evidence/cross-app-2026-10-13.txt` (per-step log, server-side checks, results), headline screenshots `docs/evidence/cross-app-<scenario>-<project>.png`,
@@ -380,10 +380,10 @@ every step in `docs/evidence/cross-app-steps/`. Screenshots contain synthetic da
 
 ### Frontend gaps found (owners: public-site lane and newsroom lane)
 
-1. **Public site: the story form is disabled for `VITE_PUBLIC_CMS_URL=http://cms.churchtimes.localhost:<port>`** (the value in section 9 A). `src/lib/public-submissions.js`
+1. **Fixed by #22 (public site, issue #15).** Was: **the story form is disabled for `VITE_PUBLIC_CMS_URL=http://cms.churchtimes.localhost:<port>`** (the value in section 9 A). `src/lib/public-submissions.js`
    `submissionEndpoint()` accepts `http:` only for hostnames `localhost`, `127.0.0.1`, `[::1]`; the form then shows "Online sending is not available yet", `#send-submission` is
    disabled and no Turnstile widget mounts. Evidence: `05-public-gap.spec.ts`. This lane builds the public site with `VITE_PUBLIC_SUBMISSIONS_URL=http://localhost:3400/api/public/submissions`
-   (same CMS) so tips can be tested; the section 9 checklist item "Submit a tip" fails as written. Fix: allow `*.localhost` (or any host under an explicit dev flag).
+   (same CMS) so tips can be tested; the section 9 checklist item "Submit a tip" fails as written. #22 allows `*.localhost` for http; the lane no longer sets `VITE_PUBLIC_SUBMISSIONS_URL`.
 2. **Newsroom: a revoked/expired session is not noticed on read-only navigation.** Payload turns a dead token into an anonymous request, so `GET /api/articles` answers 200 (published
    only) and `/api/users/me` answers `user: null`; the SPA only reacts to 401/403, so after "revoke sessions" the Review view renders with the signed-in chrome and an empty "In Review 0"
    queue. Writes were refused correctly and shown as errors. **Fixed on the integration branch**: the router calls `CmsAdapter.verifySession()` (`GET /api/users/me`) before rendering

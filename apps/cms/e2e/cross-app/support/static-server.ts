@@ -1,8 +1,13 @@
-/** Minimal static file server for a Vite build output directory (no SPA fallback: both apps use hash routes). */
+/**
+ * Minimal static file server for a Vite build output directory (no SPA fallback; the newsroom uses hash routes), plus
+ * startPublicHost, which serves the public site through its real frontend host (tools/serve-public.mjs, issue #15) so
+ * clean /reports/:slug/ URLs, cold reloads and real 404s are exercised.
+ */
 import fs from 'node:fs'
 import http from 'node:http'
 import type { Socket } from 'node:net'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -27,7 +32,6 @@ export type StaticServer = { port: number; close: () => Promise<void> }
 
 export function startStaticServer(root: string, port: number): Promise<StaticServer> {
   const base = path.resolve(root)
-  const sockets = new Set<Socket>()
   const server = http.createServer((req, res) => {
     let rel = '/'
     try {
@@ -52,6 +56,19 @@ export function startStaticServer(root: string, port: number): Promise<StaticSer
     })
     fs.createReadStream(file).pipe(res)
   })
+  return listenTracked(server, port)
+}
+
+/** The public site's own host: compiled assets + server-rendered published articles from the CMS (never forwards cookies). */
+export async function startPublicHost(repoRoot: string, dist: string, port: number, cmsUrl: string): Promise<StaticServer> {
+  const mod = (await import(pathToFileURL(path.join(repoRoot, 'tools', 'serve-public.mjs')).href)) as {
+    createPublicServer: (opts: { dist: string; cmsUrl: string; basePath: string }) => http.Server
+  }
+  return listenTracked(mod.createPublicServer({ dist, cmsUrl, basePath: '/' }), port)
+}
+
+function listenTracked(server: http.Server, port: number): Promise<StaticServer> {
+  const sockets = new Set<Socket>()
   server.on('connection', (s) => {
     sockets.add(s)
     s.on('close', () => sockets.delete(s))
