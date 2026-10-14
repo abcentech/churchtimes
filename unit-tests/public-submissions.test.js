@@ -42,7 +42,7 @@ test('sends anonymous JSON and requires explicit backend receipt confirmation',a
     assert.equal(options.method,'POST'); assert.equal(options.credentials,'omit');
     assert.equal(options.cache,'no-store'); assert.equal(options.headers.Authorization,undefined);
     assert.equal(JSON.parse(options.body).turnstileToken,'opaque');
-    return response(201,{ok:true,reference:'TEST-ONLY'});
+    return response(201,{ok:true,reference:'TEST-ONLY',message:'Received. An editor will review your submission.'});
   }});
   assert.equal(result.reference,'TEST-ONLY');
   await assert.rejects(sendPublicSubmission({endpoint:'https://cms.example.test/api',values,token:'opaque',fetchImpl:async()=>response(200,{})}),e=>e.type==='unconfirmed');
@@ -81,4 +81,11 @@ test('handles duplicate, origin denial and oversized requests without fake recei
     await assert.rejects(sendPublicSubmission({endpoint:'https://cms.example.test/api',values,token:'opaque',fetchImpl:async()=>response(status,{ok:false,errors:[{message:'A backend error.'}]})}),error=>error.type===type);
   }
   await assert.rejects(sendPublicSubmission({endpoint:'https://cms.example.test/api',values:{...values,message:'\u0000'.repeat(20000)},token:'opaque',fetchImpl:()=>assert.fail('oversized JSON must not be sent')}),error=>error.type==='size');
+});
+
+test('401 and HTTP-date Retry-After are handled; message is required in a 201 receipt',async()=>{
+  const send=(status,body,headers)=>sendPublicSubmission({endpoint:'https://cms.example.test/api',values,token:'opaque',fetchImpl:async()=>response(status,body,headers)});
+  await assert.rejects(send(401,{}),e=>e.type==='forbidden');
+  await assert.rejects(send(429,{}, {'Retry-After':new Date(Date.now()+30000).toUTCString()}),e=>e.type==='rate-limit'&&e.retryAfter>=29&&e.retryAfter<=30);
+  for(const message of [undefined,'',123,'x'.repeat(1001)])await assert.rejects(send(201,{ok:true,reference:'SUB-12345678',message}),e=>e.type==='unconfirmed');
 });

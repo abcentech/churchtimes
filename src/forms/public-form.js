@@ -124,8 +124,9 @@ export function bindPublicForm(kind='story') {
       const heading=document.createElement('h2');
       heading.textContent=kind==='story'?'Your story is awaiting review.':'Your message has been received.';
       const message=document.createElement('p');
-      message.textContent='Thank you. The newsroom will review your submission. It has not been published.';
-      result.replaceChildren(heading,message);
+      message.textContent=receipt.message;
+      const review=document.createElement('p'); review.textContent='It has not been published.';
+      result.replaceChildren(heading,message,review);
       if (receipt.reference) { const reference=document.createElement('p'); reference.textContent=`Reference: ${receipt.reference}`; result.append(reference); }
       const link=document.createElement('a'); link.href='#home'; link.className='text-link'; link.textContent='Return to the current edition'; result.append(link);
       result.hidden=false; result.focus();

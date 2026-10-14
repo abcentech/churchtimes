@@ -29,7 +29,7 @@ async function noOverflow(page){ expect(await page.evaluate(()=>document.documen
 
 test('accessible field errors focus the summary and never call the API',async({page})=>{
   await widget(page);
-  let calls=0;await page.route('**/api/public/submissions',route=>{calls++;return route.fulfill({status:201,json:{ok:true,reference:'MOCK-ONLY-RECEIPT'}});});
+  let calls=0;await page.route('**/api/public/submissions',route=>{calls++;return route.fulfill({status:201,json:{ok:true,reference:'MOCK-ONLY-RECEIPT',message:'Received. An editor will review your submission.'}});});
   await page.goto('/#submit');
   await submit(page).click();
   await expect(page.locator('#form-errors')).toBeFocused();
@@ -50,7 +50,7 @@ test('mocked success sends one anonymous request, clears text and promises revie
     calls++;const body=route.request().postDataJSON();
     expect(body.turnstileToken).toBe('test-token-0');expect(body.body).toContain('key facts');
     expect(body.status).toBeUndefined();expect(body.categorySuggestion).toBe('News');expect(body.category).toBeUndefined();expect(body.website).toBe('');expect(body.consent).toBeUndefined();expect(route.request().headers().authorization).toBeUndefined();
-    await pending;await route.fulfill({status:201,json:{ok:true,reference:'MOCK-ONLY-123'}});
+    await pending;await route.fulfill({status:201,json:{ok:true,reference:'MOCK-ONLY-123',message:'Received. An editor will review your submission.'}});
   });
   await page.goto('/#submit');await fill(page);await complete(page);
   await submit(page).click();
@@ -70,7 +70,7 @@ test('mocked success sends one anonymous request, clears text and promises revie
 
 test('expired verification blocks sending until a new token is obtained',async({page})=>{
   await widget(page);let calls=0;
-  await page.route('**/api/public/submissions',route=>{calls++;return route.fulfill({status:201,json:{ok:true,reference:'MOCK-ONLY-RECEIPT'}});});
+  await page.route('**/api/public/submissions',route=>{calls++;return route.fulfill({status:201,json:{ok:true,reference:'MOCK-ONLY-RECEIPT',message:'Received. An editor will review your submission.'}});});
   await page.goto('/#submit');await fill(page);await complete(page);
   await page.evaluate(()=>window.__widgetOptions['expired-callback']());
   await expect(page.locator('#challenge-status')).toContainText('Verification expired');
@@ -82,7 +82,7 @@ test('expired verification blocks sending until a new token is obtained',async({
 test('rate limits respect Retry-After and require a fresh token',async({page})=>{
   await widget(page);await page.clock.install();let calls=0;
   await page.route('**/api/public/submissions',route=>{
-    calls++;return calls===1?route.fulfill({status:429,headers:{'Retry-After':'2'},json:{}}):route.fulfill({status:201,json:{ok:true,reference:'MOCK-ONLY-RECEIPT'}});
+    calls++;return calls===1?route.fulfill({status:429,headers:{'Retry-After':'2'},json:{}}):route.fulfill({status:201,json:{ok:true,reference:'MOCK-ONLY-RECEIPT',message:'Received. An editor will review your submission.'}});
   });
   await page.goto('/#submit');await fill(page);await complete(page);await submit(page).click();
   await expect(page.locator('#form-errors')).toContainText('Too many submissions');
@@ -126,7 +126,7 @@ test('HTTP success without an explicit receipt is never shown as received',async
 
 test('widget script failures can be retried without bypassing verification',async({page})=>{
   let loads=0;await page.route(SCRIPT,route=>++loads===1?route.abort('failed'):route.fulfill({contentType:'application/javascript',body:widgetScript}));
-  let calls=0;await page.route('**/api/public/submissions',route=>{calls++;return route.fulfill({status:201,json:{ok:true,reference:'MOCK-ONLY-RECEIPT'}});});
+  let calls=0;await page.route('**/api/public/submissions',route=>{calls++;return route.fulfill({status:201,json:{ok:true,reference:'MOCK-ONLY-RECEIPT',message:'Received. An editor will review your submission.'}});});
   await page.goto('/#submit');await fill(page);
   await expect(page.locator('#challenge-status')).toContainText('Verification could not load');
   await submit(page).click();expect(calls).toBe(0);
@@ -139,7 +139,7 @@ test('contact form uses its separate configured endpoint and subject/message fie
   await page.route('**/api/public/contact',route=>{
     const body=route.request().postDataJSON();expect(body.subject).toBe('A story from the community');
     expect(body.message).toContain('key facts');expect(body.title).toBeUndefined();expect(body.body).toBeUndefined();
-    return route.fulfill({status:201,json:{ok:true,reference:'MOCK-ONLY-CONTACT'}});
+    return route.fulfill({status:201,json:{ok:true,reference:'MOCK-ONLY-CONTACT',message:'Received. An editor will review your submission.'}});
   });
   await page.goto('/#contact');await fill(page,'contact');await complete(page);
   await page.getByRole('button',{name:'Send message',exact:true}).click();
@@ -160,7 +160,7 @@ test('navigation removes widgets and releases form data without storage',async({
 
 test('narrow screens use compact verification and resizing discards the old token',async({page})=>{
   await widget(page);let calls=0;
-  await page.route('**/api/public/submissions',route=>{calls++;return route.fulfill({status:201,json:{ok:true,reference:'MOCK-ONLY-RECEIPT'}});});
+  await page.route('**/api/public/submissions',route=>{calls++;return route.fulfill({status:201,json:{ok:true,reference:'MOCK-ONLY-RECEIPT',message:'Received. An editor will review your submission.'}});});
   await page.setViewportSize({width:320,height:800});await page.goto('/#submit');await fill(page);await complete(page);
   expect(await page.evaluate(()=>window.__widgetOptions.size)).toBe('compact');await noOverflow(page);
   await page.setViewportSize({width:800,height:900});
@@ -186,7 +186,7 @@ for (const kind of ['story','contact']) {
     let calls=0;
     await page.route(kind==='story'?'**/api/public/submissions':'**/api/public/contact',route=>{
       calls++;expect(route.request().postDataJSON().phone).toBe('+234 803 123 4567');
-      return route.fulfill({status:201,json:{ok:true,reference:'MOCK-ONLY-RECEIPT'}});
+      return route.fulfill({status:201,json:{ok:true,reference:'MOCK-ONLY-RECEIPT',message:'Received. An editor will review your submission.'}});
     });
     await page.goto(kind==='story'?'/#submit':'/#contact');await fill(page,kind);await complete(page);
     const phone=page.getByLabel('Phone number (required)',{exact:true});
@@ -230,4 +230,14 @@ test('CMS minimum story length prevents invalid sending before verification is c
  await widget(page);let calls=0;await page.route('**/api/public/submissions',route=>{calls++;return route.fulfill({json:{ok:true,reference:'SHOULD-NOT-SEND'}});});
  await page.goto('/#submit');await fill(page);await page.getByLabel('Your story or tip').fill('Too short.');await complete(page);await submit(page).click();
  await expect(page.locator('#error-message')).toContainText('at least 30 characters');expect(calls).toBe(0);
+});
+
+test('gateway 401 and incomplete 201 receipts never confirm or discard the draft',async({page})=>{
+  await widget(page);let calls=0;
+  await page.route('**/api/public/submissions',route=>route.fulfill(++calls===1?{status:401,json:{ok:false}}:{status:201,json:{ok:true,reference:'MISSING-MESSAGE'}}));
+  await page.goto('/#submit');await fill(page);await complete(page);await submit(page).click();
+  await expect(page.locator('#form-result')).toBeHidden();await expect(page.locator('#form-errors')).toBeVisible();
+  await expect(page.locator('#public-message')).toHaveValue('The key facts and source links for the newsroom.');
+  await complete(page);await submit(page).click();await expect(page.locator('#form-errors')).toContainText('did not confirm receipt');
+  await expect(page.locator('#form-result')).toBeHidden();expect(calls).toBe(2);
 });
