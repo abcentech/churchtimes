@@ -70,6 +70,15 @@ export function stateDir() {
   if (!/churchtimes-staging-funnel/.test(path.basename(dir))) {
     fail(`FUNNEL_STATE_DIR must end in a folder whose name contains "churchtimes-staging-funnel" (got "${dir}").`)
   }
+  if (override) {
+    // `--wipe` deletes this folder recursively, so an override is only accepted inside the user's own profile.
+    const allowed = [os.homedir(), process.env.LOCALAPPDATA].filter(Boolean).map((d) => path.resolve(d))
+    const inside = (base) => {
+      const r = path.relative(base, dir)
+      return r !== '' && !r.startsWith('..') && !path.isAbsolute(r)
+    }
+    if (!allowed.some(inside)) fail(`FUNNEL_STATE_DIR must be inside your user profile (${allowed.join(' or ')}); got "${dir}".`)
+  }
   const rel = path.relative(repoRoot, dir)
   if (!rel.startsWith('..') && !path.isAbsolute(rel)) fail(`The state directory must be OUTSIDE the repository (got "${dir}").`)
   return dir
@@ -79,11 +88,11 @@ export const pathsFor = (dir) => ({
   dir,
   secrets: path.join(dir, 'secrets.json'),
   turnstile: path.join(dir, 'turnstile.json'),
+  media: path.join(dir, 'media'),
   state: path.join(dir, 'state.json'),
   credentialsHuman: path.join(dir, 'staff-logins.txt'),
   credentialsRemote: path.join(dir, 'xapp-remote-credentials.json'),
   seedUsers: path.join(dir, 'seed-users.json'),
-  seeded: path.join(dir, 'seeded.json'),
   pgData: path.join(dir, 'pgdata'),
   pgReady: path.join(dir, 'pg.ready'),
   logs: path.join(dir, 'logs'),
@@ -103,13 +112,12 @@ const intEnv = (name, fallback, { min = 1, max = 65535 } = {}) => {
 /** Ports, rate limits and proxy settings. Every value can be overridden with the FUNNEL_* variables documented in the README. */
 export function loadConfig() {
   const cfg = {
-    publicPort: intEnv('FUNNEL_PUBLIC_PORT', 8501),
-    newsroomPort: intEnv('FUNNEL_NEWSROOM_PORT', 8502),
-    cmsPort: intEnv('FUNNEL_CMS_PORT', 8503),
-    pgPort: intEnv('FUNNEL_PG_PORT', 55500),
+    publicPort: intEnv('FUNNEL_PUBLIC_PORT', 48501),
+    newsroomPort: intEnv('FUNNEL_NEWSROOM_PORT', 48502),
+    cmsPort: intEnv('FUNNEL_CMS_PORT', 48503),
+    pgPort: intEnv('FUNNEL_PG_PORT', 48500),
     // Tailscale's serve proxy overwrites X-Forwarded-For with the real client address (single entry) = one trusted hop.
     trustProxyHops: intEnv('FUNNEL_TRUST_PROXY_HOPS', 1, { min: 1, max: 10 }),
-    clientIpHeader: (process.env.FUNNEL_CLIENT_IP_HEADER || '').trim(),
     authLoginRateLimit: intEnv('FUNNEL_AUTH_LOGIN_RATE_LIMIT', 200, { min: 200, max: 100000 }),
     submissionRateLimit: intEnv('FUNNEL_SUBMISSION_RATE_LIMIT', 20, { min: 10, max: 100000 }),
     schedulerSeconds: intEnv('FUNNEL_SCHEDULER_INTERVAL_SECONDS', 60, { min: 5, max: 3600 }),
@@ -119,7 +127,8 @@ export function loadConfig() {
   const all = [cfg.publicPort, cfg.newsroomPort, cfg.cmsPort, cfg.pgPort]
   if (new Set(all).size !== all.length) fail('FUNNEL_PUBLIC_PORT, FUNNEL_NEWSROOM_PORT, FUNNEL_CMS_PORT and FUNNEL_PG_PORT must all differ.')
   if (!/^[A-Za-z0-9_-]{1,32}$/.test(cfg.turnstileAction)) fail('FUNNEL_TURNSTILE_ACTION must be 1-32 chars of A-Z a-z 0-9 _ - (Cloudflare\'s rule).')
-  if (cfg.clientIpHeader && !/^[A-Za-z0-9-]{1,64}$/.test(cfg.clientIpHeader)) fail('FUNNEL_CLIENT_IP_HEADER must be a single header name.')
+  // A custom client-IP header would let any visitor choose their own rate-limit bucket, so it is not offered.
+  if ((process.env.FUNNEL_CLIENT_IP_HEADER || '').trim()) fail('FUNNEL_CLIENT_IP_HEADER is not supported: a custom client-IP header would be spoofable through Funnel. The CMS reads X-Forwarded-For, which Tailscale overwrites.')
   return cfg
 }
 
@@ -276,16 +285,21 @@ const tsCandidates = () => [
 ]
 
 /** Absolute/bare command that answers `tailscale version`, or null. */
+// Test seam: a .js/.mjs "tailscale" is run with node (lets tests stub the CLI on Windows, where a script is not directly executable).
+const invocation = (bin, args) => (/[.]m?js$/i.test(bin) ? [process.execPath, [bin, ...args]] : [bin, args])
+
 export function findTailscale() {
   for (const bin of tsCandidates().filter(Boolean)) {
-    const res = spawnSync(bin, ['version'], { encoding: 'utf8', windowsHide: true, timeout: 15_000 })
+    const [cmd, cmdArgs] = invocation(bin, ['version'])
+    const res = spawnSync(cmd, cmdArgs, { encoding: 'utf8', windowsHide: true, timeout: 15_000 })
     if (!res.error && res.status === 0) return bin
   }
   return null
 }
 
 export function tsRun(bin, args, { timeoutMs = 60_000 } = {}) {
-  const res = spawnSync(bin, args, { encoding: 'utf8', windowsHide: true, timeout: timeoutMs, stdio: ['ignore', 'pipe', 'pipe'] })
+  const [cmd, cmdArgs] = invocation(bin, args)
+  const res = spawnSync(cmd, cmdArgs, { encoding: 'utf8', windowsHide: true, timeout: timeoutMs, stdio: ['ignore', 'pipe', 'pipe'] })
   return {
     status: res.status,
     stdout: String(res.stdout ?? ''),
@@ -348,11 +362,111 @@ export function tailscalePreflight(bin) {
 /** Parsed `tailscale serve status --json`: { Web: { "host:port": { Handlers: { "/": { Proxy } } } }, AllowFunnel: { "host:port": true }, TCP } */
 export function tsServeConfig(bin) {
   const res = tsRun(bin, ['serve', 'status', '--json'], { timeoutMs: 30_000 })
+  if (res.status !== 0) return null
   try {
-    return JSON.parse(res.stdout) ?? {}
+    const parsed = JSON.parse(res.stdout.trim() || '{}')
+    return parsed && typeof parsed === 'object' ? parsed : {}
   } catch {
-    return {}
+    return null // cannot tell what is published: callers must not assume "nothing"
   }
+}
+
+const trimSlash = (t) => String(t ?? '').replace(/\/+$/, '')
+/** Local port of a `http://127.0.0.1:N` / localhost / [::1] proxy target, else null. */
+export const proxyPort = (target) => {
+  const m = /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):(\d+)$/.exec(trimSlash(target))
+  return m ? Number(m[1]) : null
+}
+const portOfKey = (key) => Number(String(key).split(':').pop())
+
+/** True when `tailscale serve` lists anything for this https port (any host name): a web handler, or Funnel switched on. */
+export function isPortListed(serve, httpsPort) {
+  const web = Object.keys(serve?.Web ?? {}).some((k) => portOfKey(k) === httpsPort)
+  const funnel = Object.entries(serve?.AllowFunnel ?? {}).some(([k, on]) => on && portOfKey(k) === httpsPort)
+  return web || funnel
+}
+
+/**
+ * What `tailscale serve` already holds on each of the three Funnel ports of `host`. Funnel publishes a WHOLE host:port, so
+ * anything other than our own single "/" proxy on it (other path handlers, a raw TCP forward) would become public too.
+ * `foreignReasons` lists those; `ours` is true when the port holds exactly our own "/" proxy.
+ */
+export function analyzeServe(serve, host, cfg) {
+  return funnelEntries(cfg).map((e) => {
+    const key = `${host}:${e.httpsPort}`
+    const handlers = serve?.Web?.[key]?.Handlers ?? {}
+    const paths = Object.keys(handlers)
+    const tcp = serve?.TCP?.[String(e.httpsPort)]
+    const foreignReasons = []
+    if (tcp && !tcp.HTTPS && !tcp.HTTP) foreignReasons.push(tcp.TCPForward ? `a raw TCP forward to ${tcp.TCPForward}` : 'a non-web (TCP) entry')
+    for (const pth of paths) {
+      const h = handlers[pth]
+      if (pth !== '/') foreignReasons.push(`a handler for the path ${pth}`)
+      else if (proxyPort(h?.Proxy) !== e.localPort) foreignReasons.push(h?.Proxy ? `a proxy to ${h.Proxy}` : 'a non-proxy handler on /')
+    }
+    return { ...e, key, listed: isPortListed(serve, e.httpsPort), funnel: !!serve?.AllowFunnel?.[key], foreignReasons, ours: paths.length === 1 && foreignReasons.length === 0 }
+  })
+}
+
+/** Serve entries (any host/port) whose proxy target is one of OUR local ports: { key, name, httpsPort, localPort, funnel }. */
+export function entriesToOurPorts(serve, cfg) {
+  const ours = new Map(funnelEntries(cfg).map((e) => [e.localPort, e.name]))
+  const out = []
+  for (const [key, web] of Object.entries(serve?.Web ?? {})) {
+    for (const h of Object.values(web?.Handlers ?? {})) {
+      const lp = proxyPort(h?.Proxy)
+      if (lp !== null && ours.has(lp)) out.push({ key, name: ours.get(lp), httpsPort: portOfKey(key), localPort: lp, funnel: !!serve?.AllowFunnel?.[key] })
+    }
+  }
+  return out
+}
+
+/** Funnel entries that forward to a loopback port where nothing is listening: { key, localPort }. They would expose whatever binds that port next. */
+export async function funnelOrphans(serve) {
+  const out = []
+  for (const [key, web] of Object.entries(serve?.Web ?? {})) {
+    if (!serve?.AllowFunnel?.[key]) continue
+    for (const h of Object.values(web?.Handlers ?? {})) {
+      const lp = proxyPort(h?.Proxy)
+      if (lp !== null && !(await portInUse(lp))) out.push({ key, localPort: lp })
+    }
+  }
+  return out
+}
+
+/** Commands that clear EVERYTHING served on one https port (Funnel off, then every handler). */
+export function clearPortCommands(syntax, entry) {
+  return [...funnelOffCommands(syntax, entry), syntax === 'legacy' ? ['serve', `https:${entry.httpsPort}`, 'off'] : ['serve', `--https=${entry.httpsPort}`, 'off']]
+}
+
+/**
+ * Turns the given funnels off and returns the ones that are STILL on: an entry only counts as off when every `off` command exited 0
+ * AND `tailscale serve status --json` no longer lists its port. An unreadable status counts as "still on".
+ */
+export function turnOffFunnels(bin, syntax, funnels) {
+  const remaining = []
+  const before = tsServeConfig(bin)
+  for (const f of funnels) {
+    if (before && !isPortListed(before, f.httpsPort)) {
+      log(`funnel on port ${f.httpsPort} (${f.name}) was already off`)
+      continue
+    }
+    let allOk = true
+    for (const c of funnelOffCommands(syntax, f)) {
+      const res = tsRun(bin, c, { timeoutMs: 30_000 })
+      if (res.status !== 0 || res.timedOut) {
+        allOk = false
+        warn(`\`tailscale ${c.join(' ')}\` failed: ${(res.stderr || res.stdout || 'no output').trim().split('\n')[0]}`)
+      }
+    }
+    const after = tsServeConfig(bin)
+    if (allOk && after && !isPortListed(after, f.httpsPort)) log(`funnel on port ${f.httpsPort} (${f.name}) turned off and confirmed`)
+    else {
+      remaining.push(f)
+      warn(`funnel on port ${f.httpsPort} (${f.name}) could NOT be confirmed off. It is probably still public.`)
+    }
+  }
+  return remaining
 }
 
 /** Commands that turn one entry on / off, as argument arrays (without the binary). */
@@ -394,9 +508,9 @@ export const rotateLog = (file) => {
 }
 
 /** `fetch` that never throws: { status, headers, text, error }. */
-export async function probe(url, { timeoutMs = 15_000, headers } = {}) {
+export async function probe(url, { timeoutMs = 15_000, headers, method, body } = {}) {
   try {
-    const res = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(timeoutMs), headers })
+    const res = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(timeoutMs), headers, method, body })
     const text = await res.text()
     return { status: res.status, headers: res.headers, text, error: null }
   } catch (e) {

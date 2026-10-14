@@ -71,7 +71,8 @@ if (mode === 'public') {
     'Referrer-Policy': 'no-referrer',
     'X-Frame-Options': 'DENY',
     'Permissions-Policy': PERMISSIONS,
-    'Strict-Transport-Security': 'max-age=15552000',
+    // Short on purpose: browsers pin HSTS to the whole ts.net host name (every port) for as long as this says.
+    'Strict-Transport-Security': 'max-age=300',
     // Same-origin scripts only; the SPA talks to the CMS origin and shows its media. Style attributes need 'unsafe-inline' for styles.
     'Content-Security-Policy':
       `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: ${cmsOrigin}; ` +

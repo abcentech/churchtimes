@@ -1,5 +1,5 @@
 // Show what the on-demand staging is doing: processes, ports, funnel state, URLs.   npm run staging:funnel:status
-import { findTailscale, isOwnProcess, loadConfig, markers, origins, parseArgs, pathsFor, portInUse, probe, readJson, stateDir, tsRun, tsServeConfig } from './funnel-lib.mjs'
+import { entriesToOurPorts, findTailscale, funnelOrphans, isOwnProcess, loadConfig, markers, origins, parseArgs, pathsFor, portInUse, probe, readJson, stateDir, tsRun, tsServeConfig } from './funnel-lib.mjs'
 
 parseArgs(process.argv.slice(2), {})
 const dir = stateDir()
@@ -41,7 +41,8 @@ console.log('')
 const bin = state?.mode === 'funnel' || !state ? findTailscale() : null
 if (bin) {
   const serve = tsServeConfig(bin)
-  const funnelOn = Object.keys(serve.AllowFunnel ?? {}).filter((k) => serve.AllowFunnel[k])
+  const funnelOn = Object.keys(serve?.AllowFunnel ?? {}).filter((k) => serve.AllowFunnel[k])
+  if (!serve) console.log('  WARNING: `tailscale serve status --json` could not be read; the Funnel state below is unverified.')
   console.log('Tailscale (`tailscale funnel status`):')
   const res = tsRun(bin, ['funnel', 'status'], { timeoutMs: 30_000 })
   console.log(
@@ -54,6 +55,18 @@ if (bin) {
   if (state?.funnels?.length) {
     const live = state.funnels.filter((f) => funnelOn.some((k) => k.endsWith(`:${f.httpsPort}`)))
     console.log(`  funnels created by this tool: ${state.funnels.map((f) => f.httpsPort).join(', ')}; currently public: ${live.map((f) => f.httpsPort).join(', ') || 'none'}`)
+  }
+  // A Funnel entry outlives the programs behind it (it is persistent). With nothing listening it would publish whatever binds that port next.
+  const ours = entriesToOurPorts(serve, cfg).filter((e) => e.funnel)
+  const dead = []
+  for (const e of ours) if (!(await portInUse(e.localPort))) dead.push(e)
+  for (const o of await funnelOrphans(serve)) if (!dead.some((e) => e.key === o.key)) dead.push({ key: o.key, localPort: o.localPort })
+  if (dead.length) {
+    console.log('')
+    console.log(`  !! FUNNEL IS ON BUT NOTHING OF OURS IS LISTENING: ${dead.map((e) => `${e.key} -> 127.0.0.1:${e.localPort}`).join(', ')}`)
+    console.log('  !! Whatever starts on those ports next becomes public. Run: npm run staging:funnel:down')
+  } else if (ours.length && !state) {
+    console.log('  !! Funnel entries for this tool exist but there is no state.json. Run: npm run staging:funnel:down')
   }
 } else if (state?.mode === 'local') {
   console.log('Funnel: not used in this run (local mode).')

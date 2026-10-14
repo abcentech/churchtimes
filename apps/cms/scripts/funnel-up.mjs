@@ -10,9 +10,9 @@
 //   --no-funnel            start and test the three services on 127.0.0.1 only; no tailscale calls, no https verification
 //   --test-keys            LOCAL TEST ONLY: Cloudflare's always-pass site key + a placeholder secret, nothing stored; never funnels
 //   --rotate-turnstile     ask for the Turnstile keys again
-//   --reseed               run the synthetic seed again (it is idempotent; it only runs by itself on the first run)
 //   --rebuild              force the CMS production build (otherwise reused when newer than apps/cms/src)
-//   --overwrite-serve      take over ports 443/8443/10000 even if `tailscale serve` already uses them for something else
+//   --overwrite-serve      CLEAR everything `tailscale serve` holds on ports 443/8443/10000 (all paths, TCP forwards, Funnel flags)
+//                          and take them over. Funnel publishes a whole host:port, so nothing else may stay on those ports.
 //
 // State lives OUTSIDE the repo (see funnel-lib.mjs stateDir()). Nothing secret is printed.
 import { spawn, spawnSync } from 'node:child_process'
@@ -22,14 +22,17 @@ import path from 'node:path'
 
 import {
   ADMIN_STEPS,
+  analyzeServe,
   assertHost,
+  clearPortCommands,
   ensureDir,
   explainTailscaleFailure,
   fail,
   findTailscale,
+  entriesToOurPorts,
   funnelEntries,
-  funnelOffCommands,
   funnelOnCommands,
+  funnelOrphans,
   isOwnProcess,
   killTree,
   loadConfig,
@@ -55,6 +58,7 @@ import {
   tsServeConfig,
   tsSyntax,
   tsVersion,
+  turnOffFunnels,
   waitFor,
   warn,
   writeJson,
@@ -62,7 +66,7 @@ import {
 } from './funnel-lib.mjs'
 
 const args = parseArgs(process.argv.slice(2), {
-  flags: ['dry-run', 'no-funnel', 'test-keys', 'rotate-turnstile', 'reseed', 'rebuild', 'overwrite-serve'],
+  flags: ['dry-run', 'no-funnel', 'test-keys', 'rotate-turnstile', 'rebuild', 'overwrite-serve'],
   options: ['host'],
 })
 const dryRun = !!args['dry-run']
@@ -78,6 +82,8 @@ const SECRET_KEYS = new Set(['PAYLOAD_SECRET', 'PREVIEW_SECRET', 'IP_HASH_SALT',
 const PG_USER = 'staging'
 const PG_DB = 'churchtimes_staging'
 const loopback = (port) => `http://127.0.0.1:${port}`
+const STAGING_BUILD_FLAGS = { CMS_HSTS_MAX_AGE: '300', CMS_NOINDEX: 'true' }
+const PLACEHOLDER_HOST = 'churchtimes-staging.example-tailnet.ts.net'
 
 const hex = (n) => randomBytes(n).toString('hex')
 const quote = (a) => (/[\s"]/.test(a) ? `"${a}"` : a)
@@ -112,7 +118,8 @@ function cmsEnvValues({ host, secrets, turnstile }) {
     // The CMS refuses to start in production unless TRUST_PROXY is "true".
     TRUST_PROXY: 'true',
     TRUST_PROXY_HOPS: String(cfg.trustProxyHops),
-    CLIENT_IP_HEADER: cfg.clientIpHeader,
+    // Never set: a custom client-IP header would be spoofable (see FUNNEL_CLIENT_IP_HEADER in funnel-lib.mjs).
+    CLIENT_IP_HEADER: '',
     // One shared bucket is possible if client addresses turn out not to be forwarded; the remote test run needs these as well.
     AUTH_LOGIN_RATE_LIMIT: String(cfg.authLoginRateLimit),
     AUTH_RATE_WINDOW_SECONDS: '900',
@@ -121,6 +128,11 @@ function cmsEnvValues({ host, secrets, turnstile }) {
     SCHEDULER_ENABLED: 'true',
     SCHEDULER_INTERVAL_SECONDS: String(cfg.schedulerSeconds),
     PAYLOAD_DB_PUSH: 'false',
+    // Uploads go to the private state folder, not into the repository checkout.
+    CMS_MEDIA_DIR: p.media,
+    // Browsers pin HSTS to the whole ts.net host name: keep it short. Both are compiled in at `next build` (see cmsBuildMarker).
+    CMS_HSTS_MAX_AGE: STAGING_BUILD_FLAGS.CMS_HSTS_MAX_AGE,
+    CMS_NOINDEX: STAGING_BUILD_FLAGS.CMS_NOINDEX,
     // Blank on purpose: never inherit these from a developer shell or apps/cms/.env.
     CMS_ALLOW_INSECURE_LOCAL_STAGING: '',
     STAGING_CREDENTIALS_FILE: '',
@@ -148,6 +160,7 @@ function seedEnvValues({ secrets }) {
     STAGING_CREDENTIALS_FILE: p.seedUsers,
     TRUST_PROXY: 'true',
     CLIENT_IP_HEADER: '',
+    CMS_MEDIA_DIR: p.media,
     SCHEDULER_ENABLED: 'false',
     PAYLOAD_DB_PUSH: 'false',
     SMTP_HOST: '',
@@ -186,12 +199,12 @@ function printDryRun() {
   console.log('3. PostgreSQL (embedded, persistent, 127.0.0.1 only):')
   cmd(`${node} ${path.relative(repoRoot, markers.postgres)}   # PG_PORT=${cfg.pgPort}, data in ${p.pgData}`)
   console.log(lines.splice(0).join('\n'))
-  console.log('4. Migrate, then seed synthetic staff + fixtures (first run or --reseed) in a separate short-lived process:')
+  console.log('4. Migrate, then seed synthetic staff + fixtures on EVERY start (idempotent; separate short-lived process), then check /api/users/init and an admin login BEFORE any funnel:')
   cmd(`${node} node_modules/payload/bin.js migrate`)
   cmd(`${node} node_modules/payload/bin.js run src/seed/staging.ts   # loopback-only env, see below`)
   console.log(lines.splice(0).join('\n'))
   console.log('5. Builds (cwd apps/cms and repo root):')
-  cmd(`${node} node_modules/next/dist/bin/next build           # only if apps/cms/.next/BUILD_ID is older than apps/cms/src (or --rebuild)`)
+  cmd(`CMS_HSTS_MAX_AGE=300 CMS_NOINDEX=true ${node} node_modules/next/dist/bin/next build   # only if apps/cms/.next is older than apps/cms/src, was not built with these switches, or --rebuild`)
   cmd(`VITE_PUBLIC_CMS_URL=${o.cms} VITE_TURNSTILE_SITE_KEY=<site key> VITE_TURNSTILE_ACTION=${cfg.turnstileAction} VITE_PUBLIC_SITE_URL= ${node} node_modules/vite/bin/vite.js build --outDir ${p.distPublic}`)
   cmd(`VITE_CMS_URL=${o.cms} VITE_PUBLIC_SITE_URL=${o.public} ${node} node_modules/vite/bin/vite.js build apps/newsroom --outDir ${p.distNewsroom}   # mock builds are refused`)
   console.log(lines.splice(0).join('\n'))
@@ -201,7 +214,8 @@ function printDryRun() {
   cmd(`${node} apps/cms/scripts/funnel-serve.mjs   # FUNNEL_SERVE_MODE=newsroom   127.0.0.1:${cfg.newsroomPort}  (static, security headers)`)
   console.log(lines.splice(0).join('\n'))
   if (!noFunnel) {
-    console.log('7. Funnels (modern CLI shown; tailscale older than 1.52 uses `serve https:<port> / <target>` + `funnel <port> on`):')
+    console.log('7. Funnels (refused if `tailscale serve` already holds other paths/TCP forwards on those ports, or Funnel is still on for our ports; --overwrite-serve clears the three ports first).')
+    console.log('   Modern CLI shown; tailscale older than 1.52 uses `serve https:<port> / <target>` + `funnel <port> on`:')
     for (const e of entries) for (const c of funnelOnCommands('modern', e, { supportsYes: true })) cmd(`tailscale ${c.join(' ')}`)
     console.log(lines.splice(0).join('\n'))
     console.log('8. Verify over the internet path from this PC:')
@@ -235,13 +249,19 @@ if (dryRun) {
 if (testKeys && !args['no-funnel']) log('--test-keys is a local test: funnels are NEVER configured in this mode.')
 if (process.env.VITE_NEWSROOM_MOCK) fail('VITE_NEWSROOM_MOCK is set in the environment: refusing to build the newsroom in mock mode.')
 
-// 1. refuse to start twice
+// 1. refuse to start twice, and never overwrite a state.json that still lists funnels
 const previous = readJson(p.state)
 if (
   previous &&
   Object.entries(previous.pids ?? {}).some(([name, pid]) => isOwnProcess(pid, name === 'postgres' ? markers.postgres : name === 'cms' ? markers.cms : markers.serve))
 ) {
   fail('The staging is already running. `npm run staging:funnel:status` shows it; `npm run staging:funnel:down` stops it.')
+}
+if (previous?.funnels?.length) {
+  fail(
+    `state.json still lists Funnel entries from an earlier run (port(s) ${previous.funnels.map((f) => f.httpsPort).join(', ')}), which may still be public. ` +
+      'Run `npm run staging:funnel:down` first; it turns them off and confirms it.',
+  )
 }
 for (const [what, port] of [
   ['public site', cfg.publicPort],
@@ -252,11 +272,27 @@ for (const [what, port] of [
   if (await portInUse(port)) fail(`Port ${port} (${what}) is already in use. Stop that program, or pick another port with the FUNNEL_*_PORT variables (README).`)
 }
 
-// 2. Tailscale preflight (read-only) before anything is created or asked
+// 2. Tailscale preflight (read-only) before anything is created or asked.
+// Even in the local modes: a Funnel entry left over from an earlier run would silently publish whatever listens on our ports.
 let host = args.host ? assertHost(args.host.toLowerCase()) : null
 let ts = null
+const tsBin = findTailscale()
+const staleCheck = async (serve) => {
+  if (!serve) return
+  const stale = entriesToOurPorts(serve, cfg).filter((e) => e.funnel)
+  if (stale.length) {
+    fail(
+      `Tailscale Funnel is already ON for ${[...new Set(stale.map((e) => e.key))].join(', ')}, forwarding to this tool's local port(s) ` +
+        `${[...new Set(stale.map((e) => e.localPort))].join(', ')} (left over from an earlier run). Starting now would publish the new services immediately. ` +
+        'Run `npm run staging:funnel:down` first (it turns the entries off and confirms it).',
+    )
+  }
+  for (const orphan of await funnelOrphans(serve)) {
+    warn(`Funnel entry ${orphan.key} forwards to 127.0.0.1:${orphan.localPort} where nothing is listening; whatever starts there next becomes public. Check \`tailscale serve status\`.`)
+  }
+}
 if (!noFunnel) {
-  const bin = findTailscale()
+  const bin = tsBin
   if (!bin) fail(`The tailscale command line tool was not found. ${ADMIN_STEPS.install}`)
   const version = tsVersion(bin)
   const pre = tailscalePreflight(bin)
@@ -265,35 +301,60 @@ if (!noFunnel) {
     for (const msg of pre.problems) console.error(`  - ${msg}`)
     process.exit(1)
   }
-  if (host && host !== pre.host) warn(`--host ${host} differs from this machine's name ${pre.host}; funnels will serve ${pre.host}, not ${host}.`)
+  // The funnels serve THIS machine's name, so a different --host would make the Turnstile hostname, the CORS origins and the builds wrong.
+  if (host && host !== pre.host) fail(`--host ${host} differs from this machine's Tailscale name ${pre.host}; with funnels it must be the same (omit --host).`)
   host ??= pre.host
-  if (!pre.funnelCapabilityListed) warn('This node does not list the "funnel" capability yet. If the funnel step fails, follow: ' + ADMIN_STEPS.funnel)
+  if (!pre.funnelCapabilityListed) warn(`This node does not list the "funnel" capability yet. If the funnel step fails, follow: ${ADMIN_STEPS.funnel}`)
   assertHost(host)
-  const supportsYes = /--yes\b/.test(tsRun(bin, ['funnel', '--help']).stdout + tsRun(bin, ['funnel', '--help']).stderr)
+  const helpText = tsRun(bin, ['funnel', '--help'])
+  const supportsYes = /--yes\b/.test(helpText.stdout + helpText.stderr)
   ts = { bin, version, syntax: tsSyntax(version), supportsYes }
   log(`tailscale ${version.text} (${ts.syntax} CLI syntax), host ${host}`)
   const serve = tsServeConfig(bin)
-  const conflicts = entries.filter((e) => {
-    const handlers = serve.Web?.[`${host}:${e.httpsPort}`]?.Handlers
-    if (!handlers) return false
-    return Object.values(handlers).some((h) => h?.Proxy !== loopback(e.localPort) && h?.Proxy !== `${loopback(e.localPort)}/`)
-  })
-  if (conflicts.length && !args['overwrite-serve']) {
+  if (!serve) fail('`tailscale serve status --json` could not be read, so it is unknown what is already published. Fix the Tailscale service and re-run.')
+  await staleCheck(serve)
+  // Funnel publishes a WHOLE host:port. Refuse when anything of the owner's other than our own "/" proxy lives on those ports.
+  const foreign = analyzeServe(serve, host, cfg).filter((e) => e.foreignReasons.length)
+  if (foreign.length && !args['overwrite-serve']) {
     fail(
-      `\`tailscale serve\` already serves something else on port(s) ${conflicts.map((e) => e.httpsPort).join(', ')} of ${host} (see \`tailscale serve status\`). ` +
-        'Funnel can only use 443, 8443 and 10000, so stop that first, or pass --overwrite-serve to replace those entries.',
+      `${foreign.map((e) => `port ${e.httpsPort}: ${e.foreignReasons.join(', ')}`).join('; ')} already exist in \`tailscale serve\` for ${host}. ` +
+        'Funnel makes a whole host:port public (every path, not only ours), so those would become public too. Funnel can only use 443, 8443 and 10000. ' +
+        'Remove them yourself (`tailscale serve status`), or pass --overwrite-serve to CLEAR everything on those three ports first.',
     )
   }
+  if (args['overwrite-serve']) {
+    for (const e of analyzeServe(serve, host, cfg).filter((x) => x.listed || x.foreignReasons.length)) {
+      warn(`--overwrite-serve: clearing everything on port ${e.httpsPort} (${e.foreignReasons.join(', ') || 'our own earlier entry'}).`)
+      for (const c of clearPortCommands(ts.syntax, e)) {
+        log(`tailscale ${c.join(' ')}`)
+        tsRun(bin, c, { timeoutMs: 30_000 }) // a "not found" exit is fine here; the status check below decides
+      }
+      const after = tsServeConfig(bin)
+      if (!after || analyzeServe(after, host, cfg).find((x) => x.httpsPort === e.httpsPort)?.listed) fail(`Port ${e.httpsPort} could not be cleared; run \`tailscale serve status\` and remove it by hand.`)
+    }
+  }
 } else {
-  host ??= 'churchtimes-staging.example-tailnet.ts.net'
+  host ??= PLACEHOLDER_HOST
   warn(`${testKeys ? '--test-keys' : '--no-funnel'}: nothing is published; the services run on 127.0.0.1 only and the origins use the placeholder host ${host}.`)
+  if (tsBin) {
+    const serve = tsServeConfig(tsBin)
+    if (!serve) warn('Could not read `tailscale serve status --json`; cannot check for leftover Funnel entries.')
+    await staleCheck(serve)
+  }
 }
 const o = origins(host)
 
 // 3. state, secrets, Turnstile keys, synthetic logins
 ensureDir(p.dir)
 ensureDir(p.logs)
+ensureDir(p.media)
 ensureDir(path.dirname(p.distPublic))
+const validSeedUsers = (u) => !!u?.users && ROLES.every((r) => u.users[r]?.email && u.users[r]?.password)
+// An existing database whose passwords/logins were lost cannot be reached again, and fresh logins would leave the old privileged
+// synthetic accounts behind with passwords nobody knows. Start clean instead.
+if (fs.existsSync(p.pgData) && (!loadOrCreateSecrets(p, { create: false }) || !validSeedUsers(readJson(p.seedUsers)))) {
+  fail(`The database in ${p.pgData} exists but secrets.json or seed-users.json is missing/invalid, so its logins cannot be matched. Run \`npm run staging:funnel:down -- --wipe\` and start again.`)
+}
 const secrets = loadOrCreateSecrets(p)
 let turnstile
 if (testKeys) {
@@ -304,9 +365,10 @@ if (testKeys) {
 }
 
 let seedUsers = readJson(p.seedUsers)
-if (!seedUsers?.users || ROLES.some((r) => !seedUsers.users[r]?.password)) {
+if (!validSeedUsers(seedUsers)) {
+  // Random per-install local part: the repository must not reveal the staff e-mail addresses (login lockout from the internet).
   seedUsers = { generatedAt: new Date().toISOString(), users: {} }
-  for (const role of ROLES) seedUsers.users[role] = { email: `staging-${role}@staging.invalid`, password: `Stg-${hex(12)}`, role }
+  for (const role of ROLES) seedUsers.users[role] = { email: `staging-${role}-${hex(4)}@staging.invalid`, password: `Stg-${hex(12)}`, role }
   writeJson(p.seedUsers, seedUsers)
 }
 const credsRemote = {
@@ -397,9 +459,13 @@ function newestMtime(target) {
   visit(target)
   return newest
 }
+// `next build` compiles CMS_HSTS_MAX_AGE / CMS_NOINDEX into the response headers. A build made without them (the normal production
+// one) must not be reused here, and `next build` wipes .next, so this marker only survives next to a build made by this tool.
+const cmsBuildMarker = path.join(root, '.next', 'funnel-staging-build.json')
 function cmsBuildFresh() {
   const id = path.join(root, '.next', 'BUILD_ID')
   if (!fs.existsSync(id)) return false
+  if (JSON.stringify(readJson(cmsBuildMarker)) !== JSON.stringify(STAGING_BUILD_FLAGS)) return false
   const built = fs.statSync(id).mtimeMs
   const inputs = [path.join(root, 'src'), ...['next.config.mjs', 'package.json', 'tsconfig.json'].map((f) => path.join(root, f))].filter(fs.existsSync)
   return inputs.every((i) => newestMtime(i) <= built)
@@ -437,26 +503,25 @@ try {
   const payloadBin = path.join(root, 'node_modules', 'payload', 'bin.js')
   const cmsValues = cmsEnvValues({ host, secrets, turnstile })
   run('applying migrations', [payloadBin, 'migrate'], { ...baseEnv(), ...cmsValues, SCHEDULER_ENABLED: 'false' })
-  if (!readJson(p.seeded) || args.reseed) {
-    run('seeding synthetic staff and fixtures (separate short-lived process, loopback-only values)', [payloadBin, 'run', 'src/seed/staging.ts'], {
-      ...baseEnv(),
-      ...seedEnvValues({ secrets }),
-    })
-    writeJson(p.seeded, { at: new Date().toISOString() })
-  } else {
-    log('synthetic data already seeded (use --reseed to run the seed again)')
-  }
+  // Seeded on EVERY start (idempotent, a few seconds): an empty or reset database must never be published, because the first visitor
+  // to an empty Payload creates the first admin. It also re-syncs the synthetic passwords with the credentials file.
+  run('seeding synthetic staff and fixtures (separate short-lived process, loopback-only values)', [payloadBin, 'run', 'src/seed/staging.ts'], {
+    ...baseEnv(),
+    ...seedEnvValues({ secrets }),
+  })
 
   // ---- CMS production build
   const nextBin = markers.cms
   if (!args.rebuild && cmsBuildFresh()) {
-    log('apps/cms/.next is newer than apps/cms/src: reusing the existing production build (--rebuild forces a new one)')
+    log('apps/cms/.next is newer than apps/cms/src and was built with the staging switches: reusing it (--rebuild forces a new build)')
   } else {
     run('building the CMS (next build, can take several minutes)', [nextBin, 'build'], {
       ...baseEnv(),
       PAYLOAD_SECRET: 'build-only-placeholder-not-a-secret-000000000000',
       DATABASE_URL: cmsValues.DATABASE_URL,
+      ...STAGING_BUILD_FLAGS, // response headers are compiled into the build
     })
+    fs.writeFileSync(cmsBuildMarker, JSON.stringify(STAGING_BUILD_FLAGS) + '\n')
   }
 
   // ---- public site + newsroom, built for the funnel URLs
@@ -517,9 +582,30 @@ try {
   await waitHealthy('newsroom', news.pid, `${loopback(cfg.newsroomPort)}/`, (r) => r.status === 200, 60_000)
   log('all three services answer on 127.0.0.1')
 
+  // ---- the database must be initialised BEFORE anything can become public: on an empty Payload the first visitor creates the first admin
+  const init = await probe(`${loopback(cfg.cmsPort)}/api/users/init`)
+  let initialized = false
+  try {
+    initialized = JSON.parse(init.text).initialized === true
+  } catch {
+    // stays false
+  }
+  if (!initialized) throw new Error(`Refusing to continue: the CMS reports no users yet (GET /api/users/init -> HTTP ${init.status}). An empty CMS would let the first visitor become admin.`)
+  const adminCreds = seedUsers.users.admin
+  const adminLogin = await probe(`${loopback(cfg.cmsPort)}/api/users/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email: adminCreds.email, password: adminCreds.password }),
+  })
+  if (adminLogin.status !== 200) throw new Error(`Refusing to continue: the synthetic admin from seed-users.json cannot log in (HTTP ${adminLogin.status}); the credentials file and the database disagree.`)
+  log('database check passed: users exist and the synthetic admin login works')
+
   // ---- publish the funnels
   if (!noFunnel) {
     for (const e of entries) {
+      // Recorded BEFORE the command runs: if it half-succeeds, funnel-down still knows about the entry.
+      state.funnels.push({ name: e.name, httpsPort: e.httpsPort, localPort: e.localPort })
+      saveState()
       for (const c of funnelOnCommands(ts.syntax, e, ts)) {
         log(`tailscale ${c.join(' ')}`)
         const res = tsRun(ts.bin, c, { timeoutMs: 60_000 })
@@ -532,8 +618,6 @@ try {
         }
         if (/https?:\/\/login\.tailscale\.com\/\S+/i.test(text) && !/available on the internet|Funnel on/i.test(text)) log(text)
       }
-      state.funnels.push({ name: e.name, httpsPort: e.httpsPort, localPort: e.localPort })
-      saveState()
     }
   }
 
@@ -565,10 +649,11 @@ try {
     expect(`CMS /api/users/me -> 200, user null`, r4.status === 200 && userNull(r4), `HTTP ${r4.status}`)
   }
   if (!noFunnel) {
-    log(`checks through Funnel from this PC (a first certificate can take a minute; retrying up to 3 minutes):`)
+    const verifyAttempts = Math.max(1, Number(process.env.FUNNEL_VERIFY_ATTEMPTS) || 18)
+    log(`checks through Funnel from this PC (a first certificate can take a minute; retrying up to ${Math.round((verifyAttempts * 10) / 60)} minute(s)):`)
     const viaFunnel = async (label, url, good) => {
       let last
-      for (let i = 0; i < 18; i++) {
+      for (let i = 0; i < verifyAttempts; i++) {
         last = await probe(url)
         if (good(last)) break
         await sleep(10_000)
@@ -608,12 +693,12 @@ try {
   console.error(`[funnel] ${err instanceof Error ? err.message : err}`)
   console.error('[funnel] startup failed; stopping what was started. Data and logs are kept (see the state folder).')
   stopAll()
-  if (!noFunnel) {
-    // Turn off only the entries this run managed to create.
-    for (const f of state.funnels) for (const c of funnelOffCommands(ts.syntax, f)) tsRun(ts.bin, c, { timeoutMs: 30_000 })
-  }
   state.pids = {}
-  state.funnels = []
+  if (!noFunnel && state.funnels.length) {
+    // Turn off only the entries this run created, and keep any that cannot be confirmed off in state.json so funnel-down retries them.
+    state.funnels = turnOffFunnels(ts.bin, ts.syntax, state.funnels)
+    if (state.funnels.length) console.error('[funnel] WARNING: some Funnel entries could not be confirmed off. Run `npm run staging:funnel:down` (or `tailscale funnel status`).')
+  }
   saveState()
   process.exit(1)
 }
