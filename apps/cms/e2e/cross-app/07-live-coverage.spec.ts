@@ -6,7 +6,7 @@
  *   L3 section editor (UI): approves two pending updates in a different order than they were written, rejects one.
  *   L4 anonymous reader: public polling feed shows published updates in PUBLICATION order, no drafts / pending / rejected / staff fields.
  *   L5 section editor (UI) ends coverage; the feed stays readable; a reporter can no longer post (API-driven check).
- *   L6 public site has no live coverage page (known gap outside this lane; L6a proves the data is public, L6b documents the gap with test.fail).
+ *   L6 public site discovers the live event and displays its published update at #live.
  *
  * Steps are real UI unless the test name says "API-driven". Synthetic data only; unique titles per run.
  */
@@ -339,8 +339,8 @@ test.describe('Live coverage: editor + reporter in the newsroom, anonymous reade
   // L6a: the data a public page would have to show exists and is public through the CMS (a real test, not an expected failure).
   test('L6a API-driven setup: a live event with a published update is readable through the public feed', async ({ browser }, info) => {
     const tag = uniq('gap').replace(/\s+/g, '-')
-    const title = `Public gap live event ${tag}`
-    const body = `Gap update ${tag}`
+    const title = `Public live event ${tag}`
+    const body = `Published live update ${tag}`
     const made = await api.send('admin', 'POST', '/api/live-events', { title, category: cfg.categoryId, status: 'live' })
     expect(made.status, 'admin creates a live event').toBe(201)
     const upd = await api.send('admin', 'POST', '/api/live-updates', { event: made.json.doc.id, body, status: 'approved' })
@@ -355,14 +355,11 @@ test.describe('Live coverage: editor + reporter in the newsroom, anonymous reade
     gap.set(info.project.name, { title, body })
   })
 
-  // Known gap OUTSIDE this lane (the public site belongs to another team): it has no live coverage page at all.
-  // test.fail keeps the suite green while the gap exists and turns RED as soon as the page ships (then drop test.fail).
-  // L6a proved the data is readable, so the only reason this can fail is the missing page.
-  test('L6b public site shows live coverage to readers (GAP: no live page exists on the public site)', async ({ browser }, info) => {
-    test.fail(true, 'public site (repo root src/) has no live-coverage route; see codexRequests')
+  // Public-site regression: the readable CMS feed must also reach readers through #live.
+  test('L6b public site shows live coverage to readers', async ({ browser }, info) => {
     const g = gap.get(info.project.name)
     if (!g) throw new Error('L6a did not run')
-    const ev = new Evidence(cfg, info, 'L6b-live-public-gap')
+    const ev = new Evidence(cfg, info, 'L6b-live-public-page')
     const ctx = await freshContext(browser, info)
     const page = await ctx.newPage()
     await page.goto(`${cfg.publicOrigin}/#live`)

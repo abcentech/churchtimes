@@ -124,3 +124,5 @@ The advertising suite uses labelled test creatives and a mocked fallback provide
 it does not serve paid campaigns or contact Google.
 
 Public staging, clean article URLs, CMS category/search integration and the optional SSR host: [issue #15 setup](docs/public-staging-issue15.md).
+
+Public live coverage and its #25 contract: [reading page, polling and validation](docs/public-live-coverage.md).
