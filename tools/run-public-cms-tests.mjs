@@ -37,7 +37,7 @@ try {
     PAYLOAD_SECRET:randomBytes(32).toString('hex'),PREVIEW_SECRET:randomBytes(32).toString('hex'),IP_HASH_SALT:randomBytes(32).toString('hex'),
     CMS_PUBLIC_URL:url,CMS_CORS_ORIGINS:publicUrl+','+ssrUrl+','+aliasUrl,CMS_CSRF_ORIGINS:url,PUBLIC_SUBMISSION_ORIGINS:publicUrl+','+aliasUrl,
     TURNSTILE_EXPECTED_ACTION:'submit-story',TURNSTILE_ALLOWED_HOSTNAMES:'127.0.0.1',SUBMISSION_RATE_LIMIT:'100',
-    SCHEDULER_ENABLED:'false',PAYLOAD_DB_PUSH:'false',TRUST_PROXY:'false',PUBLIC_CMS_TEST_PORT:String(port),
+    PUBLIC_LEGACY_SAMPLES:process.env.PUBLIC_LEGACY_SAMPLES || 'false',SCHEDULER_ENABLED:'false',PAYLOAD_DB_PUSH:'false',TRUST_PROXY:'false',PUBLIC_CMS_TEST_PORT:String(port),
   };
   // Never inherit a real service credential into a fixture server.
   for(const name of ['TURNSTILE_SECRET_KEY','SMTP_HOST','SMTP_USER','SMTP_PASS'])delete env[name];
