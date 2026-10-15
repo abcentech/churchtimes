@@ -290,13 +290,8 @@ test.describe('Images in stories and live updates (REAL UI)', () => {
     lives.set(info.project.name, { eventId, slug, title, body, alt, mediaId: media.id, updateId: rows[0].id })
   })
 
-  // KNOWN GAP (public-site follow-up): src/live/public-live-page.js does not render `image` yet. The data is public (I3).
-  // The text check is a real assertion; the gap is pinned with toHaveCount(0) and goes red when photos ship.
-  test('I4 public #live page shows the update text; its photo is not rendered yet (KNOWN GAP pinned, goes red when the public site ships photos)', async ({ browser }, info) => {
-    info.annotations.push({
-      type: 'known-gap',
-      description: 'The public #live timeline does not render update photos yet (public-site follow-up). When it does, the last assertion fails on purpose: replace toHaveCount(0) with a check for the photo (alt = update photo alt).',
-    })
+  // Combined acceptance gate: public photo must match the approved image from the real CMS feed.
+  test('I4 public #live page shows the approved live-update photo', async ({ browser }, info) => {
     const l = need(lives, info.project.name, 'I3')
     const ev = new Evidence(cfg, info, 'I4-live-public-photo')
     const ctx = await freshContext(browser, info)
@@ -304,10 +299,18 @@ test.describe('Images in stories and live updates (REAL UI)', () => {
     await page.goto(`${cfg.publicOrigin}/#live/${l.slug}`)
     const item = page.locator('#live-timeline li').filter({ hasText: l.body })
     await expect(item).toBeVisible({ timeout: 30_000 })
-    ev.note('the update text is on the public page; looking for its photo')
-    await ev.shot(page, 'public #live page, update with a photo', { final: true })
-    // The gap, pinned: no picture in the public timeline item today. Goes red when the public team renders update photos.
-    await expect(item.locator('img'), 'KNOWN GAP: public #live does not render update photos yet').toHaveCount(0)
+    const photo = item.locator('figure img')
+    await expect(photo).toHaveCount(1)
+    await expect(photo).toHaveAttribute('alt', l.alt)
+    const feed = await anonymousGet(page, cfg.cmsUrl, `/api/live-events/${l.slug}/updates`)
+    expect(feed.status).toBe(200)
+    const update = feed.json.docs.find((row: { id: number }) => String(row.id) === String(l.updateId))
+    expect(update?.image, 'approved photo is exposed by the real public feed').toBeTruthy()
+    await expect(photo).toHaveAttribute('src', new URL(update.image.url, cfg.cmsUrl).href)
+    await photo.scrollIntoViewIfNeeded()
+    await expectImagesLoaded(photo, 1, 'public live-update photo')
+    ev.note('verified visible approved image, alt text, exact CMS source and loaded image')
+    await ev.shot(page, 'public #live page, update with approved photo', { final: true })
     await ctx.close()
   })
 
