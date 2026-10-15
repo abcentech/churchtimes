@@ -20,6 +20,7 @@ jobs:
     env:
       CI: 'true'
       XAPP_KEEP_EVIDENCE: '0'
+      PAYLOAD_SECRET: 'ci-only-synthetic-payload-secret-2026-photos-acceptance'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
