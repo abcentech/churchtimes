@@ -3,7 +3,10 @@
  *
  * Supported: paragraphs (single newline = line break), headings h2/h3 (`## `, `### `; `# ` is read as h2),
  * block quotes (`> `), bullet lists (`- `), numbered lists (`1. `), **bold**, *italic*, [links](https://...).
- * Anything else found in an existing Lexical document (images, embeds, nested lists, underline, ...) sets
+ * Images inside the body: a line of its own `![alt](media:<id>)` <-> Payload upload node
+ * `{ type: 'upload', relationTo: 'media', value: <numeric id>, fields: null, format: '', id, version: 3 }`.
+ * The alt in the token is only a label for the writer; the real alt text lives on the media record.
+ * Anything else found in an existing Lexical document (embeds, nested lists, underline, uploads with extra data, ...) sets
  * `lossy: true` so the editor can refuse to rewrite a body it cannot represent faithfully.
  *
  * Output node shapes match what Payload's Lexical editor and the public site renderer (src/lib/article-content.js) read.
@@ -17,6 +20,100 @@ const SAFE_URL = /^(https?:\/\/|mailto:)[^\s<>"']+$/i;
 
 export function isSafeUrl(url) {
   return typeof url === 'string' && SAFE_URL.test(url);
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Image token: `![alt](media:<id>)` alone on a line
+// ---------------------------------------------------------------------------------------------------------
+
+// Ids are the CMS's integer primary keys: 1..2147483647, no leading zeros. Anything else is NOT an image line.
+const IMAGE_LINE_RE = /^!\[((?:\\.|[^\]\\\n])*)\]\(media:([1-9]\d{0,9})\)$/;
+const MEDIA_ID_RE = /^[1-9]\d{0,9}$/;
+export const MAX_MEDIA_ID = 2147483647;
+export const UPLOAD_NODE_VERSION = 3;
+
+/**
+ * Line shown for an upload node whose media no longer exists (`value: null`). It converts back to an upload node
+ * with `value: null`, which the CMS refuses to save: the writer has to remove the line.
+ */
+export const MISSING_IMAGE_TOKEN = '![missing image](media:missing)';
+
+const validMediaId = s => MEDIA_ID_RE.test(s) && Number(s) <= MAX_MEDIA_ID;
+
+/** @returns {{ id: string, alt: string, missing: boolean } | null} what an own-line image token says, or null */
+function matchImageLine(line) {
+  const t = String(line).trim();
+  if (t === MISSING_IMAGE_TOKEN) return { id: '', alt: 'missing image', missing: true };
+  const m = IMAGE_LINE_RE.exec(t);
+  if (!m || Number(m[2]) > MAX_MEDIA_ID) return null;
+  return { id: String(Number(m[2])), alt: m[1].replace(/\\(.)/g, '$1'), missing: false };
+}
+
+/** One-line, bracket-safe label for the token (the CMS media record stays the source of truth for alt text). */
+function tokenAlt(alt) {
+  return String(alt ?? '').replace(/\s+/g, ' ').trim().slice(0, 300).replace(/([\\*\[\]])/g, '\\$1');
+}
+
+/** @returns {string} the markdown line for a media id, or '' when the id is not a positive integer. */
+export function imageToken(id, alt = '') {
+  const s = String(id ?? '');
+  if (!validMediaId(s)) return '';
+  return `![${tokenAlt(alt)}](media:${s})`;
+}
+
+/**
+ * Every image token line in a markdown body, in order: [{ id: '5', alt: 'label', missing: false }].
+ * A "missing image" line has `missing: true` and an empty id.
+ */
+export function listImages(markdown) {
+  const out = [];
+  for (const raw of String(markdown || '').replace(/\r\n?/g, '\n').split('\n')) {
+    const m = matchImageLine(raw);
+    if (m) out.push(m);
+  }
+  return out;
+}
+
+/**
+ * The body with every image label emptied (`![](media:5)`): the label is display-only, so two bodies that differ
+ * only in labels are the same document. Used to decide whether the body was edited.
+ */
+export function stripImageLabels(markdown) {
+  return String(markdown || '').split('\n').map(line => {
+    const m = matchImageLine(line);
+    if (!m) return line;
+    return m.missing ? MISSING_IMAGE_TOKEN : `![](media:${m.id})`;
+  }).join('\n');
+}
+
+/** Remove the n-th (0-based) image token line from a markdown body, and the blank line it leaves behind. */
+export function removeImageLine(markdown, index) {
+  const lines = String(markdown || '').replace(/\r\n?/g, '\n').split('\n');
+  let seen = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (!matchImageLine(lines[i])) continue;
+    if (++seen !== index) continue;
+    lines.splice(i, 1);
+    if (lines[i] === '' && (i === 0 || lines[i - 1] === '')) lines.splice(i, 1);
+    break;
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Text-model edit: put `line` on its own line at the cursor/selection of `value` (blank line before and after so
+ * it can never merge into a paragraph). Returns the new value and the caret position after the inserted block.
+ */
+export function insertBlockLine(value, start, end, line) {
+  const v = String(value ?? '');
+  const a = Math.max(0, Math.min(Number.isFinite(start) ? start : v.length, v.length));
+  const b = Math.max(a, Math.min(Number.isFinite(end) ? end : a, v.length));
+  const before = v.slice(0, a);
+  const after = v.slice(b);
+  const lead = !before ? '' : before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n';
+  const trail = !after ? '\n\n' : after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n';
+  const inserted = `${lead}${line}${trail}`;
+  return { value: before + inserted + after, caret: before.length + inserted.length };
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -105,7 +202,10 @@ export function parseMarkdown(markdown) {
     if (!line.trim()) { flushAll(); continue; }
 
     let m;
-    if ((m = RE_H.exec(line))) {
+    if ((m = matchImageLine(line))) {
+      flushAll();
+      blocks.push({ type: 'image', id: m.missing ? null : Number(m.id), alt: m.alt, missing: m.missing });
+    } else if ((m = RE_H.exec(line))) {
       flushAll();
       blocks.push({ type: m[1].length >= 3 ? 'h3' : 'h2', inline: parseInline(m[2]) });
     } else if ((m = RE_QUOTE.exec(line))) {
@@ -159,10 +259,42 @@ function inlineToLexical(nodes) {
   });
 }
 
+/** 24-hex node id (Payload uses ObjectId-style strings): stable per (media, occurrence) so re-saving never churns ids. */
+function uploadNodeId(mediaId, occurrence) {
+  let out = '';
+  for (let seed = 1; seed <= 3; seed++) {
+    let h = 0x811c9dc5 ^ (seed * 0x9e3779b1);
+    for (const ch of `${mediaId}:${occurrence}:${seed}`) {
+      h ^= ch.charCodeAt(0);
+      h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    out += h.toString(16).padStart(8, '0');
+  }
+  return out.slice(0, 24);
+}
+
+function uploadNode(mediaId, occurrence) {
+  return {
+    format: '',
+    id: uploadNodeId(mediaId, occurrence),
+    fields: null,
+    relationTo: 'media',
+    type: 'upload',
+    value: mediaId,
+    version: UPLOAD_NODE_VERSION
+  };
+}
+
 export function markdownToLexical(markdown) {
   const blocks = parseMarkdown(markdown);
+  const seen = new Map();
   const children = blocks.map(b => {
     switch (b.type) {
+      case 'image': {
+        const n = seen.get(b.id) || 0;
+        seen.set(b.id, n + 1);
+        return uploadNode(b.id, n);
+      }
       case 'h2':
       case 'h3':
         return baseElement('heading', inlineToLexical(b.inline), { tag: b.type });
@@ -294,6 +426,19 @@ function blockToMarkdown(node, state, { onlyBlock = false } = {}) {
         return marker + singleLine(inlineToMarkdown(inlineKids, state), state);
       }).filter(Boolean).join('\n');
     }
+    case 'upload': {
+      const info = uploadInfo(node);
+      if (!info) {
+        state.lossy = true;
+        return '';
+      }
+      if (info.missing) {
+        state.missingImages += 1;
+        return MISSING_IMAGE_TOKEN;
+      }
+      state.images.push({ id: info.id, alt: info.alt, media: info.media });
+      return imageToken(info.id, info.alt);
+    }
     default:
       state.lossy = true;
       return '';
@@ -301,14 +446,34 @@ function blockToMarkdown(node, state, { onlyBlock = false } = {}) {
 }
 
 /**
+ * Reads a Payload upload node. `value` may be the media id (number or numeric string) or the populated media document.
+ * Anything the token cannot carry (another collection, node-level fields, pending uploads) returns null => lossy.
+ */
+function uploadInfo(node) {
+  if (node.relationTo !== 'media' || node.pending) return null;
+  if (node.fields !== undefined && node.fields !== null
+    && !(typeof node.fields === 'object' && !Array.isArray(node.fields) && Object.keys(node.fields).length === 0)) return null;
+  const v = node.value;
+  // The media was deleted: the node points at nothing. Keep the body editable; the writer sees a "missing image" line.
+  if (v === null || v === undefined) return { missing: true };
+  const populated = typeof v === 'object' ? v : null;
+  const rawId = populated ? populated.id : v;
+  if (typeof rawId !== 'number' && typeof rawId !== 'string') return null;
+  const id = String(rawId);
+  if (!validMediaId(id)) return null;
+  return { id, alt: populated && typeof populated.alt === 'string' ? populated.alt : '', media: populated };
+}
+
+/**
  * @param {unknown} content Lexical document ({ root }) as returned by the CMS
- * @returns {{ markdown: string, lossy: boolean }}
+ * @returns {{ markdown: string, lossy: boolean, images: { id: string, alt: string, media: object|null }[], missingImages: number }}
+ *   `images`: the body's upload nodes in order (`media` is the populated document when the CMS sent one)
  */
 export function lexicalToMarkdown(content) {
-  const state = { lossy: false };
-  if (typeof content === 'string') return { markdown: content, lossy: false };
+  const state = { lossy: false, images: [], missingImages: 0 };
+  if (typeof content === 'string') return { markdown: content, lossy: false, images: [], missingImages: 0 };
   let children = content?.root?.children;
-  if (!Array.isArray(children)) return { markdown: '', lossy: false };
+  if (!Array.isArray(children)) return { markdown: '', lossy: false, images: [], missingImages: 0 };
   // Payload's own editor usually leaves a blank paragraph at the end; trailing blank paragraphs carry no content, so drop them
   // instead of making the whole body read-only. Blank paragraphs between content still count as lossy.
   const isBlankParagraph = n => n?.type === 'paragraph' && !(n.children || []).some(c => c?.type !== 'text' || String(c.text || '').trim());
@@ -320,7 +485,7 @@ export function lexicalToMarkdown(content) {
     const md = blockToMarkdown(child, state, { onlyBlock: children.length === 1 });
     if (md !== '' || child.type !== 'paragraph') blocks.push(md);
   }
-  return { markdown: blocks.filter(b => b !== '').join('\n\n'), lossy: state.lossy };
+  return { markdown: blocks.filter(b => b !== '').join('\n\n'), lossy: state.lossy, images: state.images, missingImages: state.missingImages };
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -341,9 +506,25 @@ function inlineToHtml(nodes) {
   }).join('');
 }
 
-export function markdownToHtml(markdown) {
+/**
+ * @param {string} markdown
+ * @param {{ media?: (id: string) => ({ url?: string, thumbUrl?: string, alt?: string } | null | undefined) }} [options]
+ *   `media` resolves an image token to an already URL-checked media view-model; unknown ids render as a text label.
+ */
+export function markdownToHtml(markdown, { media } = {}) {
   return parseMarkdown(markdown).map(b => {
     switch (b.type) {
+      case 'image': {
+        if (b.missing) {
+          return '<figure class="preview-inline-figure preview-inline-missing" data-testid="preview-inline-image-missing"><figcaption>Missing image: this picture no longer exists in the media library. Remove this line before saving.</figcaption></figure>';
+        }
+        const m = media ? media(String(b.id)) : null;
+        const src = m && (m.url || m.thumbUrl);
+        const label = (m && m.alt) || b.alt || '';
+        return src
+          ? `<figure class="preview-inline-figure" data-testid="preview-inline-image" data-media-id="${b.id}"><img src="${escapeHtmlLocal(src)}" alt="${escapeHtmlLocal(label)}" class="preview-inline-img"><figcaption>${escapeHtmlLocal(label)}</figcaption></figure>`
+          : `<figure class="preview-inline-figure preview-inline-missing" data-testid="preview-inline-image" data-media-id="${b.id}"><figcaption>Image #${b.id}${label ? `: ${escapeHtmlLocal(label)}` : ''}</figcaption></figure>`;
+      }
       case 'h2': return `<h2>${inlineToHtml(b.inline)}</h2>`;
       case 'h3': return `<h3>${inlineToHtml(b.inline)}</h3>`;
       case 'quote': return `<blockquote>${inlineToHtml(b.inline)}</blockquote>`;
@@ -355,6 +536,8 @@ export function markdownToHtml(markdown) {
 }
 
 export function countWords(markdown) {
-  const plain = String(markdown || '').replace(/[*#>\[\]()\\]/g, ' ').trim();
+  const plain = String(markdown || '')
+    .replace(/^[ \t]*!\[(?:\\.|[^\]\\\n])*\]\(media:(?:[1-9]\d{0,9}|missing)\)[ \t]*$/gm, ' ')
+    .replace(/[*#>\[\]()\\]/g, ' ').trim();
   return plain ? plain.split(/\s+/).length : 0;
 }

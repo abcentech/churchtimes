@@ -286,38 +286,13 @@ html, body {
   font-weight: 700;
 }
 
-/* Rate Limit Banner & Validation Summary */
-.rate-limit-banner {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.75rem;
-  background-color: #FEF2F2;
-  border: 1px solid #FCA5A5;
-  border-radius: var(--radius-md);
-  padding: 1rem;
-  margin-bottom: 1.5rem;
-}
-.rate-limit-icon {
-  font-size: 1.75rem;
-  line-height: 1;
-}
+/* Validation Summary */
 .validation-summary-alert {
   background-color: #FEF2F2;
   border: 1px solid #F87171;
   border-radius: var(--radius-md);
   padding: 0.85rem 1rem;
   margin-bottom: 1.25rem;
-}
-.form-error-msg {
-  color: #DC2626;
-  font-size: 0.75rem;
-  font-weight: 600;
-  margin-top: 0.25rem;
-  display: block;
-}
-.has-error {
-  border-color: #DC2626 !important;
-  box-shadow: 0 0 0 1px #DC2626 !important;
 }
 
 /* Primary Navigation Bar (Desktop) */
@@ -530,10 +505,6 @@ html, body {
   padding: 0.35rem 0.65rem;
   font-size: 0.75rem;
 }
-.btn-lg {
-  padding: 0.8rem 1.5rem;
-  font-size: 1rem;
-}
 
 /* Badges & Status Chips */
 .badge {
@@ -706,9 +677,6 @@ html, body {
 }
 .launch-card.live {
   border-left-color: var(--status-live-pulse);
-}
-.launch-icon {
-  font-size: 1.75rem;
 }
 .launch-info h3 {
   font-size: 0.9375rem;
@@ -935,10 +903,6 @@ html, body {
 .form-input:focus, .form-select:focus, .form-textarea:focus {
   border-color: var(--color-forest);
   outline: none;
-}
-.form-help {
-  font-size: 0.75rem;
-  color: var(--color-muted);
 }
 
 /* Formatting toolbar */
@@ -1181,15 +1145,6 @@ html, body {
 /* ==========================================
    PUBLIC SUBMISSION FORM
    ========================================== */
-.submit-container {
-  max-width: 760px;
-  margin: 0 auto;
-  background-color: var(--color-parchment-card);
-  border: 1px solid var(--color-rule);
-  border-radius: var(--radius-lg);
-  padding: 2rem 2.25rem;
-  box-shadow: var(--shadow-sm);
-}
 .ethics-notice-box {
   background-color: #FEF3C7;
   border-left: 4px solid #D97706;
@@ -1240,12 +1195,6 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
-}
-.live-update-card.pinned {
-  border-left-color: var(--color-clay);
-  background-color: var(--color-clay-soft);
-  padding: 0.75rem 1rem;
-  border-radius: var(--radius-sm);
 }
 .live-time-badge {
   font-size: 0.75rem;
@@ -1436,10 +1385,6 @@ html, body {
   .headline-textarea {
     font-size: 1.5rem;
   }
-  .submit-container {
-    padding: 1.25rem 1rem;
-    margin-bottom: 6rem;
-  }
   .metrics-grid {
     grid-template-columns: repeat(2, 1fr);
   }
@@ -1521,4 +1466,82 @@ body[data-auth="out"] .session-chip:empty {
   .session-chip { min-width: 0; }
   .session-chip .btn { padding: 0.2rem 0.4rem; font-size: 0.6875rem; }
   .brand-subtitle { display: none; }
+}
+
+/* ==========================================
+   INLINE STORY IMAGES + LIVE UPDATE PHOTOS
+   ========================================== */
+.body-images {
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+.body-image-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-sm);
+  background-color: var(--color-parchment-light);
+  font-size: 0.8125rem;
+}
+.body-image-label {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.body-image-thumb {
+  width: 56px;
+  height: 40px;
+  flex: none;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-rule);
+}
+.body-image-thumb-missing {
+  display: inline-block;
+  background-color: var(--color-sage-soft);
+}
+.preview-inline-figure {
+  margin: 1.25rem 0;
+}
+.preview-inline-img {
+  display: block;
+  width: 100%;
+  max-height: 420px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+}
+.preview-inline-figure figcaption {
+  font-size: 0.8125rem;
+  color: var(--color-muted);
+  font-style: italic;
+  margin-top: 0.35rem;
+}
+.preview-inline-missing {
+  padding: 0.75rem;
+  border: 1px dashed var(--color-rule);
+  border-radius: var(--radius-sm);
+}
+.live-photo-thumb {
+  display: block;
+  max-width: 220px;
+  max-height: 160px;
+  width: auto;
+  height: auto;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-rule);
+}
+.live-photo-draft {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  font-size: 0.8125rem;
+}
+.body-image-item-missing {
+  border-color: #DC2626;
+  background-color: #FEF2F2;
 }

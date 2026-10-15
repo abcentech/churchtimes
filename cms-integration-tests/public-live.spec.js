@@ -5,7 +5,7 @@ test('anonymous public live page shows real published feed, delayed approvals an
  const f=await (await request.get(cms+'/__test/fixtures')).json();
  await request.post(cms+'/__test/live-stage?stage=start');
  const feed=await (await request.get(cms+'/api/live-events/'+f.liveSlug+'/updates')).json();
- expect(Object.keys(feed.docs[0]).sort()).toEqual(['approvedAt','body','id','occurredAt','sequence']);
+ expect(Object.keys(feed.docs[0]).sort()).toEqual(['approvedAt','body','id','image','occurredAt','sequence']);
  await page.goto('/#live');await expect(page.locator('#live-event-title')).toHaveText(f.liveTitle);
  await expect(page.locator('#live-timeline')).toContainText('First published update');await expect(page.locator('#live-timeline')).toContainText('Second published update');await expect(page.locator('main')).not.toContainText('PRIVATE');
  const paused=page.locator('#live-pause');await paused.click();await expect(paused).toHaveAttribute('aria-pressed','true');

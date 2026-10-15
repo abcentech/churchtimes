@@ -1,5 +1,7 @@
+import { sql } from '@payloadcms/db-postgres'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
+import * as migration from '../../src/migrations/20261014_221500_live_events_started_at_backfill'
 import { api, newRunId, setupFixtures, type Fixtures } from './helpers'
 
 const runId = newRunId()
@@ -83,7 +85,7 @@ describe('live updates', () => {
     expect([u2.sequence, u4.sequence]).toEqual([2, 4])
     expect(all.json.nextSince).toBe(2)
     for (const d of all.json.docs) {
-      expect(Object.keys(d).sort()).toEqual(['approvedAt', 'body', 'id', 'occurredAt', 'sequence'])
+      expect(Object.keys(d).sort()).toEqual(['approvedAt', 'body', 'id', 'image', 'occurredAt', 'sequence'])
       expect(d.approvedAt).toBeTruthy()
     }
     expect(all.text).not.toContain(u1.body)
@@ -160,5 +162,97 @@ describe('live updates', () => {
       (await api('POST', '/api/live-updates', { body: { event: ev.id, body: 'anon' } })).status,
     )
     expect(idOf(approved.event)).toBe(ev.id)
+  })
+})
+
+describe('live event timestamps', () => {
+  const patchEvent = (id: number, body: Record<string, unknown>) =>
+    api('PATCH', `/api/live-events/${id}`, { token: f.tokens.eic, body })
+  const stored = async (id: number) =>
+    (await f.payload.findByID({ collection: 'live-events', id, depth: 0, overrideAccess: true })) as unknown as {
+      startedAt?: string | null
+      endedAt?: string | null
+    }
+
+  it('stamps startedAt for an event created directly as live, and endedAt + startedAt when created as ended', async () => {
+    const live = await createEvent('ts-live', 'live')
+    const l = await stored(live.id)
+    expect(l.startedAt).toEqual(expect.any(String))
+    expect(l.endedAt ?? null).toBeNull()
+
+    const ended = await createEvent('ts-ended', 'ended')
+    const e = await stored(ended.id)
+    expect(e.startedAt).toEqual(expect.any(String))
+    expect(e.endedAt).toEqual(expect.any(String))
+    expect(new Date(e.endedAt!).getTime()).toBeGreaterThanOrEqual(new Date(e.startedAt!).getTime())
+
+    const draft = await createEvent('ts-draft', 'draft')
+    const d = await stored(draft.id)
+    expect(d.startedAt ?? null).toBeNull()
+    expect(d.endedAt ?? null).toBeNull()
+  })
+
+  it('stamps startedAt when a draft moves straight to ended or live, and when live moves to ended without it', async () => {
+    const a = await createEvent('ts-draft-ended', 'draft')
+    expect((await patchEvent(a.id, { status: 'ended' })).status).toBe(200)
+    const sa = await stored(a.id)
+    expect(sa.startedAt).toEqual(expect.any(String))
+    expect(sa.endedAt).toEqual(expect.any(String))
+
+    const b = await createEvent('ts-draft-live', 'draft')
+    expect((await patchEvent(b.id, { status: 'live' })).status).toBe(200)
+    expect((await stored(b.id)).startedAt).toEqual(expect.any(String))
+
+    // A legacy live row without startedAt (written before the hook) gets it on its next status change.
+    const c = await createEvent('ts-legacy', 'live')
+    await f.payload.db.drizzle.execute(sql`UPDATE "live_events" SET "started_at" = NULL WHERE "id" = ${c.id}`)
+    expect((await stored(c.id)).startedAt ?? null).toBeNull()
+    expect((await patchEvent(c.id, { status: 'ended' })).status).toBe(200)
+    const sc = await stored(c.id)
+    expect(sc.startedAt).toEqual(expect.any(String))
+    expect(sc.endedAt).toEqual(expect.any(String))
+  })
+
+  it('keeps timestamps that are supplied or already set', async () => {
+    const started = '2026-01-02T03:04:05.000Z'
+    const ended = '2026-01-02T05:00:00.000Z'
+    const ev = await api('POST', '/api/live-events', {
+      token: f.tokens.eic,
+      body: { title: `${runId} ts-keep`, slug: `${runId}-ts-keep`, category: f.catA.id, status: 'ended', startedAt: started, endedAt: ended },
+    })
+    expect(ev.status).toBe(201)
+    const s = await stored(ev.json.doc.id)
+    expect(new Date(s.startedAt!).toISOString()).toBe(started)
+    expect(new Date(s.endedAt!).toISOString()).toBe(ended)
+    // Re-saving an ended event does not move either stamp.
+    expect((await patchEvent(ev.json.doc.id, { summary: 'later edit' })).status).toBe(200)
+    const again = await stored(ev.json.doc.id)
+    expect(new Date(again.startedAt!).toISOString()).toBe(started)
+    expect(new Date(again.endedAt!).toISOString()).toBe(ended)
+  })
+
+  it('an event created as ended no longer sorts ahead of live events under -startedAt', async () => {
+    const live = await createEvent('ts-sort-live', 'live')
+    const ended = await createEvent('ts-sort-ended', 'ended')
+    const res = await api('GET', `/api/live-events?where[slug][like]=${runId}-ts-sort&sort=-startedAt&depth=0`)
+    expect(res.status).toBe(200)
+    expect(res.json.docs.map((d: { id: number }) => d.id).sort()).toEqual([live.id, ended.id].sort())
+  })
+
+  it('the backfill migration sets startedAt = createdAt for non-draft rows without one, and leaves the rest', async () => {
+    const ended = await createEvent('ts-bf-ended', 'ended')
+    const draft = await createEvent('ts-bf-draft', 'draft')
+    const live = await createEvent('ts-bf-live', 'live')
+    const db = f.payload.db.drizzle
+    await db.execute(sql`UPDATE "live_events" SET "started_at" = NULL, "ended_at" = NULL WHERE "id" IN (${ended.id}, ${live.id})`)
+    await migration.up({ db, payload: f.payload, req: {} as never })
+    const e = (await db.execute(sql`SELECT started_at, created_at, ended_at, updated_at FROM "live_events" WHERE "id" = ${ended.id}`)).rows[0] as Record<string, Date>
+    expect(new Date(e.started_at).getTime()).toBe(new Date(e.created_at).getTime())
+    expect(e.ended_at).not.toBeNull()
+    const l = (await db.execute(sql`SELECT started_at, created_at, ended_at FROM "live_events" WHERE "id" = ${live.id}`)).rows[0] as Record<string, Date>
+    expect(new Date(l.started_at).getTime()).toBe(new Date(l.created_at).getTime())
+    expect(l.ended_at).toBeNull()
+    const d = (await db.execute(sql`SELECT started_at FROM "live_events" WHERE "id" = ${draft.id}`)).rows[0] as Record<string, unknown>
+    expect(d.started_at).toBeNull()
   })
 })

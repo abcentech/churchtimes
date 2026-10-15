@@ -70,6 +70,9 @@ describe('1. media ownership and replacement', () => {
 
     const staff = await api('GET', `/api/media/${m.id}?depth=0`, { token: f.tokens.reporter })
     expect(staff.json.uploadedBy).toBe(f.users.reporter.id)
+    // Anonymous readers only see media that is on the public site (media privacy): private until a published article uses it.
+    expect((await api('GET', `/api/media/${m.id}?depth=0`)).status).toBe(404)
+    await f.seedArticle({ status: 'published', publishedAt: new Date().toISOString(), featuredImage: m.id })
     const anon = await api('GET', `/api/media/${m.id}?depth=0`)
     expect(anon.status).toBe(200)
     expect(anon.json).not.toHaveProperty('uploadedBy')

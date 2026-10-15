@@ -10,6 +10,18 @@ import { escapeHtml, debounce } from '../util.js';
 
 export const ACCEPTED_IMAGE_TYPES = 'image/jpeg,image/png,image/webp';
 
+/**
+ * Picker `validate` for images that go into published content (story body, live update): the media record must have a
+ * numeric id and alt text. Returns '' when fine, otherwise a message for the writer.
+ */
+export function mediaImageProblem(media) {
+  if (!media || !/^\d+$/.test(String(media.id ?? ''))) return 'This media item cannot be used here (it has no numeric id).';
+  if (!String(media.alt || '').trim()) {
+    return 'Alt text is required for images in published content and this image has none. Upload the picture again with alt text (the upload form requires it), or ask an editor to add alt text to the media record in the CMS admin.';
+  }
+  return '';
+}
+
 /** HTML for the upload form (all values static). Ids are stable for E2E tests. */
 export function uploadFormHtml(prefix = 'media') {
   return `
@@ -89,8 +101,12 @@ export function mediaCardHtml(item) {
     </div>`;
 }
 
-/** Pick an existing image from /api/media (or upload a new one). onSelect(mediaVm). */
-export async function openMediaPicker({ onSelect }) {
+/**
+ * Pick an existing image from /api/media (or upload a new one). onSelect(mediaVm).
+ * `validate(mediaVm)` may return a message to refuse a choice (it is shown in the dialog, which stays open).
+ * `title` is the dialog heading.
+ */
+export async function openMediaPicker({ onSelect, validate, title = 'Select Featured Photograph' }) {
   let list = [];
   try {
     list = (await api.getMedia()).data;
@@ -100,9 +116,10 @@ export async function openMediaPicker({ onSelect }) {
   }
 
   openModal({
-    title: 'Select Featured Photograph',
+    title,
     contentHtml: `
       <div data-testid="media-picker">
+        <div id="picker-error" data-testid="media-picker-error" role="alert" style="display:none; color:#B91C1C; font-size:0.8125rem; margin-bottom:0.5rem;"></div>
         <div class="filter-group" style="margin-bottom: 0.75rem;">
           <input type="search" id="picker-search" class="search-input" placeholder="Search by alt text..." aria-label="Search media" data-testid="media-picker-search">
         </div>
@@ -114,6 +131,17 @@ export async function openMediaPicker({ onSelect }) {
       </div>`,
     onRender: (body, close) => {
       const grid = body.querySelector('#picker-grid');
+      const pickerError = body.querySelector('#picker-error');
+      // Returns true (and closes) when the choice is accepted.
+      const accept = chosen => {
+        const problem = typeof validate === 'function' ? validate(chosen) : '';
+        pickerError.textContent = problem || '';
+        pickerError.style.display = problem ? 'block' : 'none';
+        if (problem) return false;
+        onSelect(chosen);
+        close();
+        return true;
+      };
       const paint = items => {
         list = items;
         grid.innerHTML = items.length
@@ -122,7 +150,7 @@ export async function openMediaPicker({ onSelect }) {
         grid.querySelectorAll('.media-item-card').forEach(card => {
           const choose = () => {
             const found = list.find(m => m.id === card.getAttribute('data-media-id'));
-            if (found) { onSelect(found); close(); }
+            if (found) accept(found);
           };
           card.addEventListener('click', choose);
           card.addEventListener('keydown', e => {
@@ -140,10 +168,7 @@ export async function openMediaPicker({ onSelect }) {
         }
       }, 250));
 
-      bindUploadForm(body, 'picker', async uploaded => {
-        onSelect(uploaded);
-        close();
-      });
+      bindUploadForm(body, 'picker', async uploaded => { accept(uploaded); });
     }
   });
 }

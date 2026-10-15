@@ -7,12 +7,15 @@ import type {
   CollectionBeforeOperationHook,
   CollectionConfig,
   FieldAccess,
+  PayloadRequest,
   Where,
 } from 'payload'
 
-import { anyone, editorInChiefOnly, idOf, isEditorRole, isStaff, staffOnly, type UserLike } from '../access/roles'
+import { editorInChiefOnly, idOf, isEditorRole, isStaff, staffOnly, type UserLike } from '../access/roles'
 import { writeAuditLog } from '../lib/audit'
 import { clampLimit } from '../lib/clampLimit'
+import { verifyPreviewToken } from '../lib/previewToken'
+import { nextCounter } from './LiveUpdates'
 
 const asUser = (u: unknown): UserLike | null => (u ? (u as UserLike) : null)
 
@@ -55,10 +58,35 @@ export function sanitizeFilename(name: string): string {
   return safeExt ? `${safeStem}.${safeExt}` : safeStem
 }
 
+/**
+ * Joins are never needed from a media read (the three join fields below exist only for `readAccess`). VERIFIED against
+ * payload@3.90.2: `joins` is destructured from `args` AFTER the beforeOperation hooks (`operations/find.js` L34,
+ * `operations/findByID.js` L29), and the db adapter otherwise defaults `joinQuery` to `{}`, i.e. it adds one correlated
+ * subquery per join field to every media row read (list, by id, and every depth>=1 population of a media). Field-level
+ * `access.read` does NOT prevent that: `sanitizeJoinQuery` only checks the joined collection's access. `joins: false`
+ * switches them all off; the Where built by `readAccess` makes its own SQL joins and is unaffected. The file route
+ * (`uploads/checkFileAccess.js`) calls `db.findOne` directly, so it still evaluates the joins once per file hit.
+ */
+const skipJoins: CollectionBeforeOperationHook = ({ args, operation }) => {
+  if (operation === 'read') (args as { joins?: unknown }).joins = false
+  return args
+}
+
 const checkUpload: CollectionBeforeOperationHook = ({ args, operation }) => {
   if (operation !== 'create' && operation !== 'update') return args
   const file = (args.req as { file?: { name: string; data?: Uint8Array; mimetype?: string } }).file
   if (!file) return args
+  // A file upload that then fails field validation is not harmless on update: VERIFIED against payload@3.90.2,
+  // `operations/utilities/update.js` ~L90 deletes the OLD file (deleteAssociatedFiles) and ~L152 writes the new one
+  // BEFORE field validation runs, so a refused replacement (empty or too long alt) would leave the record pointing at a
+  // deleted file (URL answers 500). Validate `alt` here, before any file handling.
+  const data = (args as { data?: Record<string, unknown> }).data
+  if (data && (operation === 'create' || 'alt' in data)) {
+    const alt = data.alt
+    if (typeof alt !== 'string' || alt.trim() === '' || alt.length > 300) {
+      throw new APIError('Alt text is required and must be 1 to 300 characters.', 400)
+    }
+  }
   file.name = sanitizeFilename(file.name)
   if (file.data && file.data.length > 0) {
     const sniffed = sniffImageMime(file.data)
@@ -72,6 +100,70 @@ const checkUpload: CollectionBeforeOperationHook = ({ args, operation }) => {
 
 const never: FieldAccess = () => false
 const staffRead: FieldAccess = ({ req }) => isStaff(asUser(req.user))
+
+/**
+ * Read access (list, by id, and the upload file route `/api/media/file/<name>`, image size variants included).
+ *
+ * - Any authenticated staff role reads everything (the media library, pickers, previews of drafts).
+ * - Everyone else (anonymous, or any non-staff user) only reads media that readers can already see on the
+ *   public site: the featured image or a body image of a PUBLISHED article (scheduled and archived articles are
+ *   not public), or the image of an APPROVED live update whose event is live or ended (the same rule as
+ *   `LiveUpdates.read`). Uploads that are unreferenced, used only by drafts / in-review / scheduled / archived
+ *   articles, or attached to pending / rejected live updates are private.
+ *
+ * The visibility rule is a Where over the three virtual join fields below, so it is evaluated in SQL (one
+ * query, no per-row hooks) and is index-friendly: articles.featured_image_id (articles_featured_image_idx),
+ * articles_rels.media_id + path (articles_rels_media_id_idx, articles_rels_path_idx) and live_updates.image_id
+ * (live_updates_image_idx), then the status columns (articles_status_idx, live_updates_status_idx).
+ *
+ * VERIFIED against payload@3.90.2: the file route (`uploads/endpoints/getFile.js` L21 -> `uploads/checkFileAccess.js`
+ * L10-16) runs this same `access.read`; when it returns a Where, L29-57 look the file up with
+ * `(filename = x OR sizes.<name>.filename = x) AND <this where>` and answer 403 (L79) when nothing matches, so size
+ * variants share the original's visibility. List/by-id reads AND the Where into the query (`operations/find.js`
+ * L72, `operations/findByID.js` L56) and relationship population (articles -> featuredImage / body upload nodes)
+ * goes through the same by-id read with the caller's `overrideAccess` (`fields/hooks/afterRead/
+ * relationshipPopulationPromise.js` L29-44), so an inaccessible media shows up as a bare id, a public one is
+ * populated. `validateQueryPaths` only validates the CLIENT's where (`find.js` L130), not this access result, which
+ * is why the join fields may deny field-level read.
+ */
+function previewArticleId(req: PayloadRequest): number | string | undefined {
+  let token: string | null = null
+  try {
+    token = req.searchParams?.get('preview') ?? new URL(req.url ?? 'http://x').searchParams.get('preview')
+  } catch {
+    return undefined
+  }
+  if (!token) return undefined
+  const id = verifyPreviewToken(token)?.articleId
+  if (id === undefined) return undefined
+  return typeof id === 'string' && /^\d{1,15}$/.test(id) ? Number(id) : id
+}
+
+const readAccess: Access = ({ req }) => {
+  if (isStaff(asUser(req.user))) return true
+  // A valid preview token (`?preview=<token>` on the media URL, appended by `GET /api/preview/articles`) also grants the
+  // media of THAT article only (featuredImage + bodyMedia), whatever its status. verifyPreviewToken is HMAC +
+  // constant-time compare + expiry; the article id comes from the signed payload, never from the request.
+  const previewArticle = previewArticleId(req)
+  return {
+    or: [
+      ...(previewArticle === undefined
+        ? []
+        : [
+            { 'publishedAsFeatured.id': { equals: previewArticle } },
+            { 'publishedInBody.id': { equals: previewArticle } },
+          ]),
+      { 'publishedAsFeatured.status': { equals: 'published' } },
+      { 'publishedInBody.status': { equals: 'published' } },
+      {
+        and: [
+          { 'liveUpdateImages.status': { equals: 'approved' } },
+          { 'liveUpdateImages.event.status': { in: ['live', 'ended'] } },
+        ],
+      },
+    ],
+  } as Where
+}
 
 /**
  * Update access. Editors (admin / editor-in-chief / section-editor) may edit any media. Everyone else
@@ -89,10 +181,76 @@ const updateAccess: Access = ({ req }) => {
 type MediaContext = { seed?: boolean; mediaFileReplaced?: boolean }
 
 /**
+ * "Frozen" media is shown to readers: it is the featured image or a body image of a published or scheduled
+ * article (`bodyMedia` is derived from the Lexical upload nodes), or the image of an approved live update.
+ * Non-editors may not change its details or replace its file. Throws 403 with a message that says why.
+ */
+async function assertMediaNotFrozen(req: PayloadRequest, mediaId: number | string, replacing: boolean): Promise<void> {
+  const used = await req.payload.count({
+    collection: 'articles',
+    where: {
+      and: [
+        { or: [{ featuredImage: { equals: mediaId } }, { bodyMedia: { equals: mediaId } }] },
+        { status: { in: ['published', 'scheduled'] } },
+      ],
+    },
+    overrideAccess: true,
+    req,
+  })
+  if (used.totalDocs > 0) {
+    throw new APIError(
+      replacing
+        ? 'This image is used by a published or scheduled article; ask an editor to replace the file.'
+        : 'This image is used by a published or scheduled article; ask an editor to change its details.',
+      403,
+    )
+  }
+  const usedLive = await req.payload.count({
+    collection: 'live-updates',
+    where: { and: [{ image: { equals: mediaId } }, { status: { equals: 'approved' } }] },
+    overrideAccess: true,
+    req,
+  })
+  if (usedLive.totalDocs > 0) {
+    throw new APIError(
+      replacing
+        ? 'This image is used by a published live update; ask an editor to replace the file.'
+        : 'This image is used by a published live update; ask an editor to change its details.',
+      403,
+    )
+  }
+}
+
+/**
+ * The freeze must be decided BEFORE Payload touches any file. VERIFIED against payload@3.90.2: in
+ * `collections/operations/updateByID.js` the `beforeOperation` hooks run first (L59-66), then access (L95), the lookup,
+ * `generateFileData` (L157), and then `updateDocument` (`operations/utilities/update.js`), which calls
+ * `deleteAssociatedFiles` (the OLD file is removed from disk, ~L90) and `uploadFiles` (the new one is written, ~L152)
+ * BEFORE the collection `beforeChange` hooks run (~L157). A `beforeChange` guard therefore returns 403 only after the
+ * original file is already gone (the DB row is untouched, so the public URL answers 500). Hence this check lives here,
+ * in `beforeOperation`; `guardMediaChange` stays as a second line of defence. (Delete is editor-in-chief only via
+ * `access.delete`, which `deleteByID.js` evaluates at L39, before `deleteAssociatedFiles` at L90.)
+ *
+ * Bulk updates (no id, `where`) would hit the same file handling per document and are not part of the contract: refused
+ * for non-editors.
+ */
+const guardFrozenMediaBeforeFiles: CollectionBeforeOperationHook = async ({ args, operation }) => {
+  if (operation !== 'update') return args
+  const a = args as { overrideAccess?: boolean; id?: number | string; req: PayloadRequest }
+  const ctx = (a.req.context ?? {}) as MediaContext
+  if (a.overrideAccess === true || ctx.seed === true) return args
+  const user = asUser(a.req.user)
+  if (!user || isEditorRole(user)) return args
+  if (a.id === undefined || a.id === null) throw new APIError('Bulk media updates are not permitted.', 403)
+  await assertMediaNotFrozen(a.req, a.id, Boolean((a.req as { file?: unknown }).file))
+  return args
+}
+
+/**
  * - create: `uploadedBy` is set from the authenticated caller (the field is not client-writable;
  *   trusted server code without a user may supply it).
  * - update by a non-editor: the media must not be the featured image of a published or scheduled
- *   article (metadata edits there are public-facing edits, and replacing the file swaps a live
+ *   article (or an image inside its body), nor the image of an approved live update (metadata edits there are public-facing edits, and replacing the file swaps a live
  *   image). Editors are not restricted.
  *
  * VERIFIED against payload@3.90.2: a multipart PATCH carries the new file on `req.file`
@@ -116,22 +274,7 @@ const guardMediaChange: CollectionBeforeChangeHook = async ({ data, originalDoc,
     if (String(idOf(originalDoc?.uploadedBy) ?? '') !== String(user.id)) {
       throw new APIError('You can only edit media you uploaded.', 403)
     }
-    const used = await req.payload.count({
-      collection: 'articles',
-      where: {
-        and: [{ featuredImage: { equals: originalDoc.id } }, { status: { in: ['published', 'scheduled'] } }],
-      },
-      overrideAccess: true,
-      req,
-    })
-    if (used.totalDocs > 0) {
-      throw new APIError(
-        replacing
-          ? 'This image is used by a published or scheduled article; ask an editor to replace the file.'
-          : 'This image is used by a published or scheduled article; ask an editor to change its details.',
-        403,
-      )
-    }
+    await assertMediaNotFrozen(req, originalDoc.id, replacing) // second line of defence, see guardFrozenMediaBeforeFiles
     // Ownership is never transferable by the owner (field access already strips this).
     data.uploadedBy = idOf(originalDoc.uploadedBy) ?? null
   }
@@ -156,6 +299,29 @@ const auditMedia: CollectionAfterChangeHook = async ({ doc, previousDoc, operati
   const prev = (previousDoc ?? {}) as Record<string, unknown>
   const replaced = ctx.mediaFileReplaced === true || (prev.filename !== undefined && prev.filename !== doc.filename)
   const changed = MEDIA_META_FIELDS.filter((k) => (prev[k] ?? null) !== ((doc as Record<string, unknown>)[k] ?? null))
+  // The public feed shows this media's url (the file name changes on replacement) and alt text. Approved live updates
+  // that use it must be re-delivered to pollers whose cursor already passed them, exactly like an edit of their
+  // image: give each a new publishSequence. Written through the adapter (no hooks): LiveUpdates' own hooks would run
+  // as this user and strip the counter.
+  if (replaced || changed.includes('alt')) {
+    const affected = await req.payload.find({
+      collection: 'live-updates',
+      where: { and: [{ image: { equals: doc.id } }, { status: { equals: 'approved' } }] },
+      sort: 'publishSequence',
+      limit: 100,
+      pagination: false,
+      depth: 0,
+      overrideAccess: true,
+      select: { event: true },
+      req,
+    })
+    for (const u of affected.docs as Array<{ id: number | string; event: unknown }>) {
+      const eventId = idOf(u.event)
+      if (eventId === undefined) continue
+      const publishSequence = await nextCounter(req, eventId, 'publishSequence')
+      await req.payload.db.updateOne({ collection: 'live-updates', id: u.id, data: { publishSequence }, req, returning: false })
+    }
+  }
   if (replaced) {
     await writeAuditLog(req, {
       action: 'media.replace-file',
@@ -191,13 +357,13 @@ export const Media: CollectionConfig = {
   slug: 'media',
   admin: { useAsTitle: 'filename', defaultColumns: ['filename', 'alt', 'credit', 'createdAt'] },
   access: {
-    read: anyone,
+    read: readAccess,
     create: staffOnly,
     update: updateAccess,
     delete: editorInChiefOnly,
   },
   hooks: {
-    beforeOperation: [clampLimit, checkUpload],
+    beforeOperation: [clampLimit, skipJoins, guardFrozenMediaBeforeFiles, checkUpload],
     beforeChange: [guardMediaChange],
     afterChange: [auditMedia],
     afterDelete: [auditDelete],
@@ -224,6 +390,34 @@ export const Media: CollectionConfig = {
       index: true,
       admin: { readOnly: true, position: 'sidebar' },
       access: { read: staffRead, create: never, update: never },
+    },
+    // Virtual (no column, no migration) reverse relations used ONLY by `readAccess` to decide public visibility.
+    // Field read access is denied for everyone so they never appear in a response unless a caller reads with
+    // overrideAccess (e.g. the preview endpoint, which strips them anyway), and `skipJoins` (beforeOperation, read) turns
+    // the per-row join subqueries off so they cost nothing. Access Where clauses are not subject to either (see readAccess).
+    {
+      name: 'publishedAsFeatured',
+      type: 'join',
+      collection: 'articles',
+      on: 'featuredImage',
+      access: { read: never },
+      admin: { hidden: true },
+    },
+    {
+      name: 'publishedInBody',
+      type: 'join',
+      collection: 'articles',
+      on: 'bodyMedia',
+      access: { read: never },
+      admin: { hidden: true },
+    },
+    {
+      name: 'liveUpdateImages',
+      type: 'join',
+      collection: 'live-updates',
+      on: 'image',
+      access: { read: never },
+      admin: { hidden: true },
     },
   ],
 }

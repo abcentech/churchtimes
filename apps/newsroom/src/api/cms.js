@@ -11,6 +11,9 @@ import { can } from '../permissions.js';
 import { lexicalToMarkdown, markdownToLexical } from '../lexical.js';
 import { ApiError, toApiError } from './errors.js';
 import { createCountCache } from './count-cache.js';
+import { liveUpdatePayload } from '../live-photo.js';
+import { loadLiveTimeline } from '../live-timeline.js';
+import { liveStatusBody, transitionBody } from '../stale-guard.js';
 
 const ID_RE = /^\d+$/;
 
@@ -67,13 +70,17 @@ function normalizeMedia(m) {
 function normalizeArticle(doc) {
   const cat = doc.category && typeof doc.category === 'object' ? doc.category : null;
   const author = doc.author && typeof doc.author === 'object' ? doc.author : null;
-  const { markdown, lossy } = lexicalToMarkdown(doc.content);
+  const { markdown, lossy, images } = lexicalToMarkdown(doc.content);
+  // Media documents the CMS populated inside the body (upload nodes), by id, for the editor's previews.
+  const bodyMedia = {};
+  for (const img of images) if (img.media) bodyMedia[img.id] = normalizeMedia(img.media);
   return {
     id: String(doc.id),
     title: doc.title || '',
     slug: doc.slug || '',
     standfirst: doc.excerpt || '',
     bodyMd: markdown,
+    bodyMedia,
     lossy,
     categoryId: relId(doc.category),
     categoryTitle: cat?.title || '',
@@ -131,8 +138,11 @@ function normalizeUpdate(u) {
     status: u.status || 'pending',
     sequence: u.sequence ?? null,
     publishSequence: u.publishSequence ?? null,
+    updatedAt: u.updatedAt || null, // the version a reviewer saw: sent back as expectedUpdatedAt on approve / reject
     occurredAt: u.occurredAt || u.createdAt || null,
-    authorName: author?.name || ''
+    authorName: author?.name || '',
+    // Optional photo: the CMS sends the media id (depth 0) or the populated document (depth 1).
+    image: u.image === null || u.image === undefined ? null : normalizeMedia(u.image)
   };
 }
 
@@ -372,11 +382,13 @@ export class CmsAdapter {
     }
   }
 
-  /** Explicit workflow transition. Sends only `status` (+ editor `reviewNotes`). */
-  async transitionArticle(id, status, { reviewNotes } = {}) {
+  /**
+   * Explicit workflow transition. Sends only `status` (+ editor `reviewNotes`, + `expectedUpdatedAt`: the `updatedAt` of the
+   * version the reviewer saw; the CMS answers 409 if the story changed since).
+   */
+  async transitionArticle(id, status, { reviewNotes, expectedUpdatedAt } = {}) {
     if (!ARTICLE_STATUSES.includes(status)) throw new ApiError('Unknown status.', { status: 400 });
-    const body = { status };
-    if (reviewNotes !== undefined) body.reviewNotes = reviewNotes;
+    const body = transitionBody(status, { reviewNotes, expectedUpdatedAt });
     try {
       const data = await this.request(`/articles/${encodeURIComponent(safeId(id))}`, {
         method: 'PATCH', json: body, query: { depth: '1' }
@@ -482,21 +494,22 @@ export class CmsAdapter {
   }
 
   async getLiveUpdates(eventId) {
-    const data = await this.request('/live-updates', {
-      query: {
-        'where[event][equals]': safeId(eventId),
-        sort: '-sequence',
-        limit: '100',
-        depth: '1'
-      }
-    });
-    return { data: (data?.docs || []).map(normalizeUpdate) };
+    // Approved (by -publishSequence) and pending (by -sequence) are separate queries so an old update approved late
+    // cannot fall out of the newest-100 window of the Published Timeline. See live-timeline.js.
+    const docs = await loadLiveTimeline(
+      async query => (await this.request('/live-updates', { query }))?.docs || [],
+      safeId(eventId)
+    );
+    return { data: docs.map(normalizeUpdate) };
   }
 
-  /** publishNow asks the CMS to publish immediately; it only honours it for editors in scope (otherwise: pending). */
-  async postLiveUpdate({ eventId, body, publishNow = false }) {
-    const payload = { event: Number(safeId(eventId)), body };
-    if (publishNow) payload.status = 'approved';
+  /**
+   * publishNow asks the CMS to publish immediately; it only honours it for editors in scope (otherwise: pending).
+   * imageId (optional) attaches one photo: the CMS requires an image with alt text and answers 400 with a message otherwise.
+   */
+  async postLiveUpdate({ eventId, body, publishNow = false, imageId = null }) {
+    const hasImage = imageId !== null && imageId !== undefined && imageId !== '';
+    const payload = liveUpdatePayload({ eventId: safeId(eventId), body, publishNow, imageId: hasImage ? safeId(imageId) : null });
     const data = await this.request('/live-updates', {
       method: 'POST',
       json: payload,
@@ -505,10 +518,10 @@ export class CmsAdapter {
     return { data: normalizeUpdate(data.doc) };
   }
 
-  async setLiveUpdateStatus(id, status) {
+  async setLiveUpdateStatus(id, status, { expectedUpdatedAt } = {}) {
     if (!['approved', 'rejected', 'pending'].includes(status)) throw new ApiError('Unknown update status.', { status: 400 });
     const data = await this.request(`/live-updates/${encodeURIComponent(safeId(id))}`, {
-      method: 'PATCH', json: { status }, query: { depth: '1' }
+      method: 'PATCH', json: liveStatusBody(status, { expectedUpdatedAt }), query: { depth: '1' }
     });
     return { data: normalizeUpdate(data.doc) };
   }

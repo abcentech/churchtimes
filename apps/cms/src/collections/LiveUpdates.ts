@@ -19,6 +19,8 @@ import {
 import { writeAuditLog } from '../lib/audit'
 import { clampLimit } from '../lib/clampLimit'
 import { advisoryTransactionLock } from '../lib/dbTransaction'
+import { assertExpectedUpdatedAt, captureExpectedUpdatedAt } from '../lib/expectedUpdatedAt'
+import { assertAttachableImage } from '../lib/mediaChecks'
 import { cleanText } from '../lib/sanitize'
 
 const asUser = (u: unknown) => u as UserLike | null | undefined
@@ -65,7 +67,7 @@ const serverOnly = { create: () => false, update: () => false }
  * the same number; the compound unique indexes remain as the backstop (a violation fails the request
  * instead of producing duplicates).
  */
-async function nextCounter(
+export async function nextCounter(
   req: PayloadRequest,
   eventId: number | string,
   field: 'sequence' | 'publishSequence',
@@ -118,10 +120,14 @@ export const LiveUpdates: CollectionConfig = {
     { fields: ['event', 'publishSequence'], unique: true },
   ],
   hooks: {
-    beforeOperation: [clampLimit],
+    beforeOperation: [clampLimit, captureExpectedUpdatedAt],
     beforeChange: [
+      assertExpectedUpdatedAt('live_updates'),
       async ({ data, originalDoc, operation, req }) => {
         const user = asUser(req.user)
+        // idOf() is undefined for an absent or null image (nothing to attach, nothing to check).
+        const nextImage = idOf(data.image)
+        if (nextImage !== undefined) await assertAttachableImage(req, nextImage)
         if (!user) {
           // Internal/system call (seed, scheduler): trusted, but counters must still be stamped.
           const sysEventId = operation === 'create' ? idOf(data.event) : idOf(originalDoc?.event)
@@ -194,6 +200,9 @@ export const LiveUpdates: CollectionConfig = {
             if (!(editorInScope || (tpInScope && own))) {
               throw new APIError('You are not allowed to approve updates.', 403)
             }
+            // Re-check an already attached image (alt text / type) before it becomes public.
+            const storedImage = data.image === undefined ? idOf(originalDoc?.image) : undefined
+            if (storedImage !== undefined) await assertAttachableImage(req, storedImage)
             data.approvedBy = user.id
             data.approvedAt = new Date().toISOString()
           } else if (!editorInScope) {
@@ -208,6 +217,14 @@ export const LiveUpdates: CollectionConfig = {
         delete data.author
         delete data.publishSequence
         await stampPublishSequence(req, eventId, data, originalDoc, 'update')
+        // An edit of the public content (body or image) of an update that stays approved gets a fresh
+        // publication sequence, so pollers whose cursor already passed it receive the corrected item.
+        if (from === 'approved' && to === 'approved') {
+          const bodyChanged = data.body !== undefined && data.body !== originalDoc?.body
+          const imageChanged =
+            data.image !== undefined && String(idOf(data.image) ?? '') !== String(idOf(originalDoc?.image) ?? '')
+          if (bodyChanged || imageChanged) data.publishSequence = await nextCounter(req, eventId, 'publishSequence')
+        }
         return data
       },
     ],
@@ -228,6 +245,25 @@ export const LiveUpdates: CollectionConfig = {
         }
         return doc
       },
+      async ({ doc, previousDoc, operation, req }) => {
+        // Changing the image of an update is a content edit like changing its body. Bodies are not audited
+        // field by field, but an image swap after approval changes what the public sees, so record it.
+        if (operation !== 'update') return doc
+        const before = idOf(previousDoc?.image) ?? null
+        const after = idOf(doc.image) ?? null
+        if (String(before) === String(after)) return doc
+        await writeAuditLog(req, {
+          action: 'live-update.image',
+          collection: 'live-updates',
+          docId: doc.id,
+          toStatus: doc.status,
+          summary: `Live update #${doc.sequence} (event ${idOf(doc.event)}) image ${
+            after === null ? 'removed' : before === null ? 'attached' : 'replaced'
+          }`,
+          details: { event: idOf(doc.event), previousImage: before, image: after },
+        })
+        return doc
+      },
     ],
   },
   fields: [
@@ -238,6 +274,14 @@ export const LiveUpdates: CollectionConfig = {
       required: true,
       maxLength: 5000,
       hooks: { beforeValidate: [({ value }) => cleanText(value, { multiline: true })] },
+    },
+    {
+      // Optional photo shown above the update text. Must be an image with alt text (assertAttachableImage).
+      name: 'image',
+      type: 'upload',
+      relationTo: 'media',
+      hasMany: false,
+      required: false,
     },
     {
       name: 'status',
