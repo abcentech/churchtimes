@@ -34,13 +34,12 @@ export function createPublicPages({dist,cmsUrl,siteUrl,basePath,indexable,fetchI
     const canonical=status===200?siteCanonical(url.pathname,{siteUrl}):'';
     const robots=indexable && canonical?'index,follow':'noindex,nofollow';
     let html=await readFile(resolve(dist,'index.html'),'utf8');
-    html=html.replace('class="skip-link" href="#main"',()=>`class="skip-link" href="${escape(url.pathname)}#main"`);
     html=html.replace('<head>',`<head><base href="${escape(basePath)}">`)
       .replace(/<title>[^<]*<\/title>/,()=>`<title>${escape(title)} — ${SITE_NAME}</title>`)
       .replace(/(<meta name="description" content=")[^"]*(">)/,(_all,a,b)=>a+escape(description)+b);
     html=replaceSocialHTML(html,null,canonical).replace(/(property="og:title" content=")[^"]*"/,(_all,a)=>a+escape(title)+'"').replace(/(property="og:description" content=")[^"]*"/,(_all,a)=>a+escape(description)+'"');
     html=html.replace('</head>',()=>`<meta name="robots" content="${robots}">${canonical?`<link rel="canonical" href="${escape(canonical)}">`:''}</head>`)
-      .replace('<div id="app"></div>',()=>`<div id="app"><main id="main" tabindex="-1" class="container section-list"><a href="${escape(basePath)}">Church Times Nigeria home</a><h1>${escape(title)}</h1><p>${escape(description)}</p>${body}</main></div>`);
+      .replace('<div id="app"></div>',()=>`<div id="app"><main id="main" class="container section-list"><a href="${escape(basePath)}">Church Times Nigeria home</a><h1>${escape(title)}</h1><p>${escape(description)}</p>${body}</main></div>`);
     respond(status,'text/html; charset=utf-8',html,{'X-Robots-Tag':robots});return true;
   };
 }

@@ -1,3 +1,4 @@
+import {publicSkipHTML} from '../tools/public-skip-link.mjs';
 // Synthetic Lighthouse report STUBS validate the checker; not browser evidence.
 import test from 'node:test';import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';import {join} from 'node:path';import {tmpdir} from 'node:os';
@@ -28,4 +29,11 @@ test('passing metric stubs cannot bypass missing production journey evidence',as
  const dist=await fixture(t),output=await mkdtemp(join(tmpdir(),'quality-reports-stub-'));t.after(()=>rm(output,{recursive:true,force:true}));
  for(const [name,report] of Object.entries(reports()))await writeFile(join(output,name+'.json'),JSON.stringify(report));
  const result=await writePublicQualityReport({dist,output});assert.equal(result.passed,false);assert.match(result.failures.join(),/journey evidence is missing/);
+});
+
+test('SSR skip links stay local, focusable and idempotent',()=>{
+ const html='<a class="skip-link" href="#main">Skip</a><main id="main" class="article"></main>';
+ const rendered=publicSkipHTML(html,'/reports/synthetic/?private=unused');
+ assert.match(rendered,/href="\/reports\/synthetic\/#main"/);assert.match(rendered,/<main id="main" tabindex="-1"/);assert.equal(publicSkipHTML(rendered,'/reports/synthetic/'),rendered);
+ assert.doesNotMatch(publicSkipHTML(html,'http://public.invalid//outside.example.test/'),/href="\/\/outside/);
 });

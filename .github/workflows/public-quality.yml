@@ -1,0 +1,69 @@
+name: Public production quality
+on:
+  push:
+    branches: [feat/newsroom-mvp]
+    paths:
+      - 'src/**'
+      - 'apps/cms/**'
+      - 'cms-integration-tests/**'
+      - 'tools/*public-cms*'
+      - 'tools/serve-public.mjs'
+      - 'tools/public-*.mjs'
+      - 'tools/audit-public.mjs'
+      - 'playwright.cms.config.js'
+      - 'package*.json'
+      - 'tools/*public-quality*'
+      - '.github/workflows/public-quality.yml'
+  pull_request:
+    branches: [feat/newsroom-mvp]
+    paths:
+      - 'src/**'
+      - 'apps/cms/**'
+      - 'cms-integration-tests/**'
+      - 'tools/*public-cms*'
+      - 'tools/serve-public.mjs'
+      - 'tools/public-*.mjs'
+      - 'tools/audit-public.mjs'
+      - 'playwright.cms.config.js'
+      - 'package*.json'
+      - 'tools/*public-quality*'
+      - '.github/workflows/public-quality.yml'
+permissions:
+  contents: read
+jobs:
+  public-quality:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: churchtimes
+          POSTGRES_PASSWORD: test-only-public-cms
+          POSTGRES_DB: churchtimes_public_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U churchtimes -d churchtimes_public_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://churchtimes:test-only-public-cms@127.0.0.1:5432/churchtimes_public_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            apps/cms/package-lock.json
+      - run: npm ci
+      - run: npm ci --prefix apps/cms
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:quality
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: public-quality-aggregates
+          path: |
+            public-quality-results/quality.json
+            public-quality-results/journeys.json
+          retention-days: 7

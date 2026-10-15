@@ -26,4 +26,4 @@ launch approval.
 
 The full public browser suite passed 62 tests, including the deterministic
 search-input/history regression. The real-CMS suite passed 24 tests including
-clean-article keyboard skip focus. Validator unit tests: 57 passed.
+clean-article keyboard skip focus. Validator unit tests: 58 passed.

@@ -1,6 +1,6 @@
 # Wave 1 P11: public quality gates
 
-This public-only change adds `npm run test:quality` to the public CMS CI job.
+This public-only change adds `npm run test:quality` as a separate public production CI job.
 It uses disposable local PostgreSQL and real anonymous Payload REST, builds the
 production frontend, and serves it through `tools/serve-public.mjs` with the
 same Pages asset layout as the normal build. It never accepts a live target or
@@ -21,7 +21,8 @@ and requires:
 
 The gate found a real base-URL skip-link bug on clean articles. The enhanced
 skip link now focuses within the current document without changing its URL.
-Server-rendered article/static skip links also point at their own path and
+A shared HTML response helper gives article, static and error skip links their
+own path and
 have a focusable main target for the JavaScript-disabled case. Duplicate history
 and hash notifications are deduplicated after each completed route render,
 preventing a second render from discarding an edited search input. The browser

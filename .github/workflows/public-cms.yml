@@ -10,7 +10,6 @@ on:
       - 'tools/serve-public.mjs'
       - 'tools/public-*.mjs'
       - 'tools/audit-public.mjs'
-      - 'tools/*public-quality*'
       - 'playwright.cms.config.js'
       - 'package*.json'
       - '.github/workflows/public-cms.yml'
@@ -24,7 +23,6 @@ on:
       - 'tools/serve-public.mjs'
       - 'tools/public-*.mjs'
       - 'tools/audit-public.mjs'
-      - 'tools/*public-quality*'
       - 'playwright.cms.config.js'
       - 'package*.json'
       - '.github/workflows/public-cms.yml'
@@ -59,12 +57,3 @@ jobs:
       - run: npm ci --prefix apps/cms
       - run: npx playwright install --with-deps chromium
       - run: npm run test:cms
-      - run: npm run test:quality
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: public-quality-aggregates
-          path: |
-            public-quality-results/quality.json
-            public-quality-results/journeys.json
-          retention-days: 7
