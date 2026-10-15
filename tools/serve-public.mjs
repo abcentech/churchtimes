@@ -53,8 +53,14 @@ export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(file
       const relative=decodeURIComponent(url.pathname.slice(basePath.length));
       if(relative==='' || relative==='index.html') {const page=await htmlPage(null);return respond(200,mime['.html'],page.html,{'X-Robots-Tag':'noindex,nofollow'});}
       if(relative.includes('\\') || relative.includes('\0'))return respond(400,'text/plain','Invalid path');
-      const file=resolve(dist,relative);
-      if(!file.startsWith(resolve(dist)+sep))return respond(404,'text/plain','Not found');
+      // The prepared Pages build keeps assets in dist/site; an unprepared
+      // dist keeps them at its root. Preserve the /site/ URL in either layout.
+      const assetPath=relative.startsWith('site/')?relative.slice(5):relative;
+      const siteRoot=resolve(dist,'site');
+      const prepared=(await stat(siteRoot).catch(()=>null))?.isDirectory();
+      const file=resolve(relative.startsWith('site/')&&prepared?siteRoot:dist,assetPath);
+      const staticRoot=relative.startsWith('site/')&&prepared?siteRoot:resolve(dist);
+      if(!file.startsWith(staticRoot+sep))return respond(404,'text/plain','Not found');
       if(!(await stat(file)).isFile())return respond(404,'text/plain','Not found');
       return respond(200,mime[extname(file)] || 'application/octet-stream',await readFile(file),{'Cache-Control':/\/assets\//.test(file)?'public, max-age=31536000, immutable':'no-cache'});
     } catch {return respond(404,'text/plain','Not found');}
