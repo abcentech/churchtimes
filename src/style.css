@@ -32,50 +32,6 @@
 .newsroom-article-body blockquote{border-left:3px solid var(--clay);margin:28px 0;padding:8px 24px;font:26px/1.5 var(--serif)}
 .newsroom-article-end{border-top:1px solid var(--line);padding:25px 0}
 @media(max-width:760px){.newsroom-home{padding:32px 0}.newsroom-feed .story-grid,.newsroom-home .story-grid{grid-template-columns:1fr}.newsroom-card{padding:23px}.newsroom-card h2{font-size:31px}.newsroom-card p{font-size:15px}.newsroom-state h2{font-size:32px}.newsroom-article-body{margin:30px auto}.newsroom-article-body blockquote{padding-left:18px;font-size:24px}.nav-actions .reading-link{display:flex}.icon-button,.reading-link,.save-button{min-height:44px;min-width:44px}.nav-inner{gap:10px}.nav-actions{gap:0}.desktop-nav{min-width:40px}}
-.public-form-section{display:grid;grid-template-columns:1fr 1.6fr;gap:70px;padding-block:45px 65px;border-top:1px solid var(--line)}
-.public-form-aside h2{font-size:39px;line-height:1.12;margin:17px 0 22px}
-.public-form-aside>p{font-size:14px;color:var(--muted);margin-bottom:24px}
-.public-form-aside .small{font-size:12px}
-.form-review-note{padding:22px;background:var(--sage);margin-bottom:25px;font-size:14px;line-height:1.6}
-.form-review-note p{font-size:13px;margin-top:12px}
-.public-form-panel{min-width:0;background:var(--white);border:1px solid var(--line);padding:30px}
-.public-form-panel fieldset{margin:0;padding:0;border:0;min-width:0}
-.public-field-row{display:grid;grid-template-columns:1fr 1fr;gap:20px}
-.public-field{margin-bottom:24px;min-width:0}
-.public-field label{display:block;font-size:14px;font-weight:600;margin-bottom:9px;line-height:1.6}
-.public-field label>span{font-weight:400}
-.public-field input:not([type=checkbox]),.public-field select,.public-field textarea{display:block;width:100%;min-width:0;border:1px solid #82908b;border-radius:0;background:var(--white);padding:12px;color:var(--ink);font:16px/1.5 var(--sans);min-height:48px}
-.public-field textarea{resize:vertical;min-height:180px}
-.public-field input:focus-visible,.public-field textarea:focus-visible,.public-field select:focus-visible{outline:3px solid var(--clay);outline-offset:3px}
-.public-field [aria-invalid=true]{border-color:#923522!important}
-.public-field .field-hint{font-size:12px;color:var(--muted);line-height:1.7;margin-bottom:12px}
-.public-field .field-error{font-size:13px;color:#923522;margin-top:8px;line-height:1.6}
-.consent-field label{display:flex;align-items:flex-start;gap:12px;font-size:13px;font-weight:400}
-.consent-field input{width:20px;height:20px;flex:0 0 20px;margin:2px 0 0;accent-color:var(--ink)}
-.public-form-panel button:disabled{opacity:.6;cursor:default;transform:none}
-.form-error-summary{padding:22px;background:#fff3eb;border:1px solid #923522;margin-bottom:24px;color:#752d20}
-.form-error-summary h3{font-size:25px;line-height:1.2;margin-bottom:14px}
-.form-error-summary ul{padding-left:20px;margin:0;font-size:13px;line-height:1.7}
-.form-error-summary li+li{margin-top:8px}
-.form-error-summary a{text-decoration:underline;text-underline-offset:3px}
-.form-error-summary:focus,#form-result:focus{outline:3px solid var(--clay);outline-offset:4px}
-.form-notice{padding:20px;background:var(--sage);font-size:14px;line-height:1.7;margin-bottom:24px}
-.form-notice p{margin-top:10px}
-.form-verification{border-top:1px solid var(--line);padding-top:20px;margin-bottom:20px;min-width:0}
-#turnstile-widget{margin-top:14px;min-width:0}
-#challenge-status{font-size:12px;color:var(--muted);line-height:1.7;margin-block:12px}
-#retry-challenge{font-size:13px;min-height:44px}
-.submission-status{font-size:13px;margin-bottom:16px}
-.submission-status:empty{display:none}
-.form-fine-print{font-size:11px;color:var(--muted);margin-top:18px;line-height:1.8}
-.form-fine-print a{text-decoration:underline;text-underline-offset:3px}
-#form-result h2{font-size:36px;line-height:1.15;margin-bottom:20px}
-#form-result p{font-size:15px;line-height:1.7;margin-bottom:20px;overflow-wrap:anywhere}
-@media(max-width:1000px){.public-form-section{gap:35px;grid-template-columns:1fr 1.5fr}.public-form-panel{padding:25px}.public-field-row{grid-template-columns:1fr;gap:0}}
-@media(max-width:760px){.public-form-section{grid-template-columns:1fr;gap:28px;padding-block:32px 40px}.public-form-aside h2{font-size:34px}.public-form-panel{padding:22px}.public-form-panel .button{min-height:48px;width:100%;font-size:13px}.public-field label{font-size:14px}.form-error-summary{padding:18px}}
-@media(max-width:400px){.public-form-panel{padding:16px}.public-form-section{width:calc(100% - 24px)}}
-@media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
-
 /* Keep the editorial palette while meeting contrast on sage and paper panels. */
 :root{--muted:#596566}
 .perspective-number{color:#737e70}

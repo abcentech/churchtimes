@@ -47,10 +47,16 @@ try {
   for(let i=0;i<120;i++){if(server.exitCode!==null)throw new Error('REST host failed; inspect '+join(data,'rest-host.log'));try{const response=await fetch(url+'/__test/fixtures');if(response.ok){ready=true;break;}}catch{}await wait(500);}
   if(!ready)throw new Error('REST host did not become ready; inspect '+join(data,'rest-host.log'));
   console.log('Testing real Payload REST and PostgreSQL; Turnstile script/Siteverify transport are STUBBED.');
-  build=spawn(process.execPath,['node_modules/vite/bin/vite.js','build','--outDir',dist],{cwd:root,
+  const auditSource=process.env.PUBLIC_AUDIT_SOURCE || root;
+  build=spawn(process.execPath,['node_modules/vite/bin/vite.js','build','--outDir',dist],{cwd:process.env.PUBLIC_AUDIT_DIR?auditSource:root,
     env:{...process.env,NODE_ENV:'production',VITE_PUBLIC_CMS_URL:url,VITE_PUBLIC_SITE_URL:'https://staging-public.example.test',VITE_PUBLIC_SUBMISSIONS_URL:'',VITE_PUBLIC_CONTACT_URL:'',VITE_TURNSTILE_SITE_KEY:'1x00000000000000000000AA',VITE_TURNSTILE_ACTION:'submit-story'},stdio:'inherit'});
   if(await exitCode(build)!==0)throw new Error('Compiled public test build failed.');
+  if(process.env.PUBLIC_AUDIT_DIR) {
+    const {auditPublic}=await import('./audit-public.mjs');
+    await auditPublic({cmsUrl:url,dist,output:process.env.PUBLIC_AUDIT_DIR,port:ssrPort,sourceRoot:auditSource});
+  } else {
   browser=spawn(process.execPath,['node_modules/@playwright/test/cli.js','test','--config','playwright.cms.config.js',...process.argv.slice(2)],{cwd:root,env:{...process.env,PUBLIC_CMS_TEST_URL:url,PUBLIC_FRONTEND_TEST_URL:publicUrl,PUBLIC_SSR_TEST_URL:ssrUrl,PUBLIC_ALIAS_TEST_URL:aliasUrl,PUBLIC_TEST_DIST:dist},stdio:'inherit'});
   process.exitCode=await exitCode(browser);
+  }
 } catch(error){console.error(error.message);process.exitCode=1;}
 finally{await stop(build);await stop(browser);await stop(server);log.end();if(pg)await pg.stop();}

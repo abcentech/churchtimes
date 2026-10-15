@@ -1,0 +1,5 @@
+/* Load the Latin faces used by this English edition. Optional avoids late font
+   swaps shifting headlines; system fonts remain available for every script. */
+@font-face{font-family:'Newsreader Variable';font-style:normal;font-display:optional;font-weight:200 800;src:url('@fontsource-variable/newsreader/files/newsreader-latin-wght-normal.woff2') format('woff2')}
+@font-face{font-family:'Newsreader Variable';font-style:italic;font-display:optional;font-weight:200 800;src:url('@fontsource-variable/newsreader/files/newsreader-latin-wght-italic.woff2') format('woff2')}
+@font-face{font-family:'DM Sans Variable';font-style:normal;font-display:optional;font-weight:100 1000;src:url('@fontsource-variable/dm-sans/files/dm-sans-latin-wght-normal.woff2') format('woff2')}

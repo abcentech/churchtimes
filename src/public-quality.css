@@ -1,0 +1,14 @@
+/* Reserve the first screen of the asynchronous published feed. */
+#cms-latest{min-height:60vh}
+:where(select,textarea):focus-visible{outline:3px solid var(--clay);outline-offset:3px}
+
+/* Keep secondary navigation and supporting copy legible on mobile. */
+@media(max-width:760px){.utility-inner>span,.utility-inner>div{font-size:10px}.footer-main>div:not(:first-child),.footer-bottom,.footer-main>div .eyebrow,.connect-action small,.connect-inner .eyebrow,.small{font-size:12px}}
+
+@media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
+.wordmark i svg{width:.11em;height:.11em;vertical-align:baseline;display:inline}
+/* Keep shared footer and signup content below the first viewport while a public
+   route fetches its content. This also stabilises short/error pages. */
+#main{min-height:calc(100svh - 160px)}
+
+.wordmark>span{word-spacing:-.15em}

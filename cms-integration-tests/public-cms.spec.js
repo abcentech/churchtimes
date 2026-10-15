@@ -23,7 +23,7 @@ test('real published API shows populated media, byline, correction and no draft/
   await page.goto('/#report/'+fixture.publishedSlug);
   await expect(page.locator('.article-header')).toContainText('CMS integration byline');
   await expect(page.locator('.article-corrections')).toContainText('A verified fixture correction.');
-  const image=page.locator('.newsroom-figure img');await expect(image).toHaveJSProperty('complete',true);
+  const image=page.locator('.newsroom-figure img').first();await expect(image).toHaveJSProperty('complete',true);
   expect(await image.evaluate(img=>img.naturalWidth)).toBeGreaterThan(0);
   await expect(image).toHaveAttribute('src',new RegExp('^'+cms.replaceAll('.','\\.')+'/api/media/file/'));
   await page.goto('/#report/'+fixture.draftSlug);
