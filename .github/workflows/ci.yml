@@ -19,7 +19,13 @@ jobs:
       - run: npm run build
       - run: npm run check:pages
       - run: npx playwright install --with-deps chromium
-      - run: npm test -- --workers=2
-      - run: npm run test:newsroom -- --workers=2
-      - run: npm run test:forms -- --workers=2
-      - run: npm run test:advertising -- --workers=2
+      - run: npm test -- --workers=2 --reporter=list,github
+      - run: npm run test:newsroom -- --workers=2 --reporter=list,github
+      - run: npm run test:forms -- --workers=2 --reporter=list,github
+      - run: npm run test:advertising -- --workers=2 --reporter=list,github
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: public-browser-failure-evidence
+          path: test-results/
+          retention-days: 7
