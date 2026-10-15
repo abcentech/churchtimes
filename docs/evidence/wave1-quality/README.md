@@ -11,16 +11,19 @@ use report **STUBS** and are not part of this browser evidence.
 
 | Page | Performance | Accessibility | Best practices | LCP ms | CLS |
 | --- | --- | --- | --- | --- | --- |
-| Home | 93 | 100 | 100 | 3234 | 0.000 |
-| Latest | 93 | 100 | 100 | 3155 | 0.040 |
-| Article | 99 | 100 | 100 | 2258 | 0.000 |
-| Live | 96 | 100 | 100 | 2706 | 0.041 |
+| Home | 93 | 100 | 100 | 3233 | 0.000 |
+| Latest | 93 | 100 | 100 | 3162 | 0.040 |
+| Article | 99 | 100 | 100 | 2257 | 0.000 |
+| Live | 96 | 100 | 100 | 2704 | 0.041 |
 
-Initial JS gzip: 34,582 bytes; initial CSS gzip: 9,946 bytes; shipped fonts:
-159,536 bytes. All declared budgets passed. This is one recorded mobile audit,
+Initial JS gzip: 34,609 bytes; initial CSS gzip: 9,946 bytes; shipped fonts: 159,536 bytes. All declared budgets passed. This is one recorded mobile audit,
 not a statistical performance guarantee. Staging noindex remained enabled.
 
 Reproduce with `npm run test:quality`; CI publishes its own aggregate rather
 than relying on this checked-in sample. Private raw DOM/network reports remain
 local and ignored. This does not constitute a production or staff cross-app
 launch approval.
+
+The full public browser suite passed 62 tests, including the deterministic
+search-input/history regression. The real-CMS suite passed 24 tests including
+clean-article keyboard skip focus. Validator unit tests: 57 passed.

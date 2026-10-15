@@ -6,7 +6,7 @@
       "performance": 93,
       "accessibility": 100,
       "bestPractices": 100,
-      "lcpMs": 3234.4019000000008,
+      "lcpMs": 3232.5094999999997,
       "cls": 0
     },
     {
@@ -14,7 +14,7 @@
       "performance": 93,
       "accessibility": 100,
       "bestPractices": 100,
-      "lcpMs": 3155.4022999999993,
+      "lcpMs": 3161.7052000000003,
       "cls": 0.04003760516375523
     },
     {
@@ -22,7 +22,7 @@
       "performance": 99,
       "accessibility": 100,
       "bestPractices": 100,
-      "lcpMs": 2258.2630499999996,
+      "lcpMs": 2257.4037000000003,
       "cls": 0
     },
     {
@@ -30,12 +30,12 @@
       "performance": 96,
       "accessibility": 100,
       "bestPractices": 100,
-      "lcpMs": 2706.3334000000004,
+      "lcpMs": 2704.3242,
       "cls": 0.04149492225938817
     }
   ],
   "assets": {
-    "initialJsGzipBytes": 34582,
+    "initialJsGzipBytes": 34609,
     "initialCssGzipBytes": 9946,
     "fontBytes": 159536
   },
@@ -99,5 +99,5 @@
     "maxInitialCssGzipBytes": 12288,
     "maxFontBytes": 196608
   },
-  "completedAt": "2026-10-15T18:16:59.991Z"
+  "completedAt": "2026-10-15T18:26:26.569Z"
 }

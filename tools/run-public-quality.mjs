@@ -5,6 +5,7 @@ import {mkdir,writeFile} from 'node:fs/promises';
 const output=resolve(process.env.PUBLIC_QUALITY_OUTPUT || 'public-quality-results');
 await mkdir(output,{recursive:true});
 await writeFile(join(output,'quality.json'),JSON.stringify({passed:false,failures:['Quality run did not complete'],startedAt:new Date().toISOString()})+'\n');
+await writeFile(join(output,'journeys.json'),'[]\n');
 const child=spawn(process.execPath,['tools/run-public-cms-tests.mjs'],{stdio:'inherit',env:{...process.env,
   PUBLIC_AUDIT_DIR:output,PUBLIC_QUALITY_GATE:'true',PUBLIC_INDEXABLE:'false',
   PUBLIC_AUDIT_SOURCE:'',PUBLIC_AUDIT_ONLY_SCREENSHOTS:'false',PUBLIC_AUDIT_SCREENSHOTS:'false',

@@ -22,7 +22,10 @@ and requires:
 The gate found a real base-URL skip-link bug on clean articles. The enhanced
 skip link now focuses within the current document without changing its URL.
 Server-rendered article/static skip links also point at their own path and
-have a focusable main target for the JavaScript-disabled case.
+have a focusable main target for the JavaScript-disabled case. Duplicate history
+and hash notifications are deduplicated after each completed route render,
+preventing a second render from discarding an edited search input. The browser
+regression exercises duplicate notifications, search submission and Back.
 
 ## Budgets
 
