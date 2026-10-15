@@ -1,0 +1,48 @@
+name: Combined live-photo cross-app acceptance
+on:
+  pull_request:
+    paths:
+      - 'apps/cms/**'
+      - 'apps/newsroom/**'
+      - 'src/**'
+      - 'unit-tests/**'
+      - 'site/**'
+      - '.github/workflows/combined-live-photo-acceptance.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  images-cross-app:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CI: 'true'
+      XAPP_KEEP_EVIDENCE: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install root dependencies
+        run: npm ci
+      - name: Install CMS dependencies
+        run: npm ci --prefix apps/cms
+      - name: Install Chromium
+        run: npx --prefix apps/cms playwright install --with-deps chromium
+      - name: Build public frontend
+        run: npm run build
+      - name: Build CMS
+        run: npm run build --prefix apps/cms
+      - name: Run real Payload/PostgreSQL cross-app images acceptance (desktop and Android)
+        working-directory: apps/cms
+        run: npx playwright test -c playwright.cross-app.config.ts e2e/cross-app/10-images.spec.ts --reporter=list
+      - name: Upload failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-photo-cross-app-failures
+          path: apps/cms/test-results/cross-app
+          if-no-files-found: ignore
