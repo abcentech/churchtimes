@@ -6,6 +6,7 @@ import lighthouse from 'lighthouse';
 import {launch} from 'chrome-launcher';
 import {chromium,devices} from '@playwright/test';
 import {pathToFileURL} from 'node:url';
+import {existsSync} from 'node:fs';
 export async function auditPublic({cmsUrl,dist,output,port,sourceRoot}) {
   await mkdir(output,{recursive:true});
   const fixture=await (await fetch(cmsUrl+'/__test/fixtures')).json();
@@ -18,10 +19,16 @@ export async function auditPublic({cmsUrl,dist,output,port,sourceRoot}) {
   const server=createPublicServer({cmsUrl,dist,siteUrl:'https://staging-public.example.test'});
   await new Promise(resolve=>server.listen(port,'127.0.0.1',resolve));
   const origin='http://127.0.0.1:'+server.address().port;
-  const chrome=await launch({chromePath:process.env.CHROMIUM_PATH || '/usr/bin/chromium',chromeFlags:['--headless','--no-sandbox','--disable-dev-shm-usage']});
+  const chromePath=process.env.CHROMIUM_PATH || (existsSync('/usr/bin/chromium')?'/usr/bin/chromium':chromium.executablePath());
+  const chrome=await launch({chromePath,chromeFlags:['--headless','--no-sandbox','--disable-dev-shm-usage']});
   const results=[];
   const pages=[['home','/'],['latest','/#latest'],['article','/reports/'+fixture.publishedSlug+'/'],['live','/#live']];
   try {
+    if(process.env.PUBLIC_QUALITY_GATE==='true') {
+      const {checkPublicJourneys}=await import('./public-quality-journeys.mjs');
+      const journeys=await checkPublicJourneys({origin,fixture,output,chromePath,cmsUrl});
+      if(journeys.some(row=>!row.passed))throw new Error('Production browser journey gate failed; inspect journeys.json');
+    }
     if(process.env.PUBLIC_AUDIT_ONLY_SCREENSHOTS!=='true') for(const [name,path] of pages) {
       const result=await lighthouse(origin+path,{port:chrome.port,output:['json','html'],onlyCategories:['performance','accessibility','best-practices','seo'],logLevel:'error'},{extends:'lighthouse:default',settings:{formFactor:'mobile',screenEmulation:{mobile:true,width:412,height:823,deviceScaleFactor:1.75,disabled:false}}});
       await writeFile(join(output,name+'.json'),result.report[0]);
@@ -32,8 +39,13 @@ export async function auditPublic({cmsUrl,dist,output,port,sourceRoot}) {
       results.push(row);console.log(name,JSON.stringify({...row,failures:row.failures.map(f=>f.id)}));
     }
     await writeFile(join(output,'summary.json'),JSON.stringify(results,null,2));
+    if(process.env.PUBLIC_QUALITY_GATE==='true') {
+      const {writePublicQualityReport}=await import('./public-quality-report.mjs');
+      const report=await writePublicQualityReport({output,dist});
+      if(!report.passed)throw new Error('Public quality gate failed: '+report.failures.join('; '));
+    }
     if(process.env.PUBLIC_AUDIT_SCREENSHOTS==='true') {
-      const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH || '/usr/bin/chromium',args:['--no-sandbox']});
+      const browser=await chromium.launch({executablePath:chromePath,args:['--no-sandbox']});
       try {
         for(const [size,device] of [['desktop',{viewport:{width:1440,height:1000}}],['android',{...devices['Pixel 7'],deviceScaleFactor:1}]]) {
           const context=await browser.newContext(device),page=await context.newPage();

@@ -20,7 +20,8 @@
     "test:advertising": "playwright test --config playwright.advertising.config.js",
     "test:cms": "node tools/run-public-cms-tests.mjs",
     "test:newsroom-unit": "node --test apps/newsroom/test/*.test.js",
-    "serve:public": "node tools/serve-public.mjs"
+    "serve:public": "node tools/serve-public.mjs",
+    "test:quality": "node tools/run-public-quality.mjs"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",

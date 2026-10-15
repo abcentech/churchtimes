@@ -1,0 +1,11 @@
+{
+  "pages": ["home", "latest", "article", "live"],
+  "minPerformance": 80,
+  "minAccessibility": 100,
+  "minBestPractices": 95,
+  "maxLcpMs": 6000,
+  "maxCls": 0.1,
+  "maxInitialJsGzipBytes": 40960,
+  "maxInitialCssGzipBytes": 12288,
+  "maxFontBytes": 196608
+}

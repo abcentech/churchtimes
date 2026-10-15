@@ -1,3 +1,4 @@
+import {bindSkipLink} from './lib/skip-link.js';
 import {publicPageRoute} from './lib/public-page-routes.js';
 import {siteCanonical,socialMetadata} from './lib/public-metadata.js';
 import {livePageMarkup,mountLivePage} from './live/public-live-page.js';
@@ -15,6 +16,7 @@ import './public-quality.css';
 import edition from './data/stories.json';
 import imageSizes from './data/image-sizes.json';
 
+bindSkipLink();
 const stories = edition.stories;
 const asset = path => `${import.meta.env.BASE_URL}${import.meta.env.PROD ? 'site/' : ''}${path}`;
 const escape = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));

@@ -24,6 +24,7 @@ export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(file
   const publicFeeds=createPublicFeeds({cmsUrl,siteUrl,basePath,indexable,fetchImpl});
   async function htmlPage(article,message) {
     let html=await readFile(resolve(dist,'index.html'),'utf8');
+    html=html.replace('class="skip-link" href="#main"',()=>`class="skip-link" href="${escape(article?basePath+'reports/'+article.slug+'/':basePath)}#main"`);
     html=html.replace('<head>',`<head><base href="${escape(basePath)}">`);
     const canonical=article ? articleCanonical(article.slug,{siteUrl,basePath}) : message ? '' : siteCanonical(basePath,{siteUrl});
     html=replaceSocialHTML(html,article,canonical);
@@ -31,13 +32,13 @@ export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(file
     const robots=indexable && canonical ? 'index,follow' : 'noindex,nofollow';
     let metadata=`<meta name="robots" content="${robots}">`;
     if(canonical)metadata+=`<link rel="canonical" href="${escape(canonical)}">`;
-    let body=`<main id="main"><h1>${escape(message || 'Church Times Nigeria')}</h1><a href="${escape(basePath)}#latest">Browse published reports</a></main>`;
+    let body=`<main id="main" tabindex="-1"><h1>${escape(message || 'Church Times Nigeria')}</h1><a href="${escape(basePath)}#latest">Browse published reports</a></main>`;
     if(article) {
       html=html.replace(/<title>[^<]*<\/title>/,()=>`<title>${escape(article.title)} — Church Times Nigeria</title>`);
       html=replaceMeta(html,'name','description',article.excerpt);
       metadata+=`<script id="public-article" type="application/json">${safeJSON(article)}</script>`;
       metadata+=`<script id="article-schema" type="application/ld+json">${safeJSON(articleSchema(article,canonical))}</script>`;
-      body=`<main id="main" class="container section-list newsroom-report"><a href="${escape(basePath)}#latest">Latest published reports</a><article><header class="article-header"><p>${escape(article.category)}</p><h1>${escape(article.title)}</h1><p class="article-deck">${escape(article.excerpt)}</p>${article.bylineName?`<p>By ${escape(article.bylineName)}</p>`:''}${article.publishedAt?`<time datetime="${escape(article.publishedAt)}">${escape(article.publishedAt.slice(0,10))}</time>`:''}</header>${cmsFigure(article.featuredImage,{eager:true,fallbackAlt:article.title})}<div class="article-body newsroom-article-body">${renderArticleContent(article.content,{baseUrl:cmsUrl})}</div>${article.corrections.length?`<section class="article-corrections"><h2>Corrections & updates</h2>${article.corrections.map(c=>`<p>${escape(c.note)}</p>`).join('')}</section>`:''}${article.legacyUrl?`<p><a href="${escape(article.legacyUrl)}" rel="noopener noreferrer">Original publication</a></p>`:''}</article></main>`;
+      body=`<main id="main" tabindex="-1" class="container section-list newsroom-report"><a href="${escape(basePath)}#latest">Latest published reports</a><article><header class="article-header"><p>${escape(article.category)}</p><h1>${escape(article.title)}</h1><p class="article-deck">${escape(article.excerpt)}</p>${article.bylineName?`<p>By ${escape(article.bylineName)}</p>`:''}${article.publishedAt?`<time datetime="${escape(article.publishedAt)}">${escape(article.publishedAt.slice(0,10))}</time>`:''}</header>${cmsFigure(article.featuredImage,{eager:true,fallbackAlt:article.title})}<div class="article-body newsroom-article-body">${renderArticleContent(article.content,{baseUrl:cmsUrl})}</div>${article.corrections.length?`<section class="article-corrections"><h2>Corrections & updates</h2>${article.corrections.map(c=>`<p>${escape(c.note)}</p>`).join('')}</section>`:''}${article.legacyUrl?`<p><a href="${escape(article.legacyUrl)}" rel="noopener noreferrer">Original publication</a></p>`:''}</article></main>`;
     }
     return {html:html.replace('</head>',()=>metadata+'</head>').replace('<div id="app"></div>',()=>`<div id="app">${body}</div>`),robots};
   }
