@@ -23,8 +23,10 @@ site. The CMS needs 2 vCPU and 4 GB (`apps/cms/docs/operations.md` §1).
 ## 2. Decisions the owner needs to make
 
 1. **Where does the CMS live?** See section 3.
-2. **Where does the public site live?** Recommended: GitHub Pages (already set up) or Cloudflare Pages. It is static, so it
-   needs no server.
+2. **Where does the public site live?** It must be a host that can send **server-side 301 redirects** for the old
+   WordPress addresses and a real 404 for unknown paths (for example Caddy on the CMS server, Cloudflare Pages/Workers, or
+   Netlify). GitHub Pages alone cannot do per-URL redirects, so it is fine for staging but not enough for cutover. See
+   decision D2 in [go-live-build-spec.md](go-live-build-spec.md).
 3. **Which domain name structure?** For example, `www` for the public site, `cms.` for the CMS, `newsroom.` for the
    newsroom app. All under the current domain, with the CMS and newsroom cookies kept separate from the public site.
 4. **Who maintains it after launch?** A named person for hosting, backups and updates (the existing operations doc says
@@ -156,6 +158,9 @@ About 5 to 7 weeks end to end if decisions are quick. Phases 2 and 3 overlap. Th
 import quality and how fast the owner can decide on hosting and sign off on staging.
 
 ## 9. Next actions
+
+The build work found by auditing the live site (URL redirects, SEO, analytics, ads, newsletter, contact form, push,
+comments archive, import) is specified in [go-live-build-spec.md](go-live-build-spec.md), split by lane.
 
 1. Owner: choose a hosting option (section 3) and domain structure (section 2).
 2. Owner: set up uptime monitoring (section 6) and send the Truehost request.
