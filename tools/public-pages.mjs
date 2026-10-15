@@ -10,7 +10,7 @@ const staticPages={
   contact:{title:'Contact the newsroom',description:'News tips, reader correspondence and commercial enquiries for Church Times Nigeria.',body:'For a news tip or correction, include the relevant article link and enough detail for the newsroom to understand your enquiry.'},
   advertise:{title:'Advertise with Church Times',description:'Talk to the publication about print and digital advertising, publishing projects and special editions.',body:'Contact the publication to confirm current options, availability, pricing and tax treatment. Request written deliverables and clear advertising labels before committing.'},
 };
-export function createPublicPages({dist,cmsUrl,siteUrl,basePath,indexable,fetchImpl}) {
+export function createPublicPages({dist,cmsUrl,siteUrl,basePath,indexable,fetchImpl,extraHead=''}) {
   return async function publicPages(url,respond) {
     const route=publicPageRoute(url.pathname,basePath);if(!route)return false;
     if(!url.pathname.endsWith('/')){respond(308,'text/plain','Canonical page path',{Location:url.pathname+'/'});return true;}
@@ -38,7 +38,7 @@ export function createPublicPages({dist,cmsUrl,siteUrl,basePath,indexable,fetchI
       .replace(/<title>[^<]*<\/title>/,()=>`<title>${escape(title)} — ${SITE_NAME}</title>`)
       .replace(/(<meta name="description" content=")[^"]*(">)/,(_all,a,b)=>a+escape(description)+b);
     html=replaceSocialHTML(html,null,canonical).replace(/(property="og:title" content=")[^"]*"/,(_all,a)=>a+escape(title)+'"').replace(/(property="og:description" content=")[^"]*"/,(_all,a)=>a+escape(description)+'"');
-    html=html.replace('</head>',()=>`<meta name="robots" content="${robots}">${canonical?`<link rel="canonical" href="${escape(canonical)}">`:''}</head>`)
+    html=html.replace('</head>',()=>`<meta name="robots" content="${robots}">${extraHead}${canonical?`<link rel="canonical" href="${escape(canonical)}">`:''}</head>`)
       .replace('<div id="app"></div>',()=>`<div id="app"><main id="main" class="container section-list"><a href="${escape(basePath)}">Church Times Nigeria home</a><h1>${escape(title)}</h1><p>${escape(description)}</p>${body}</main></div>`);
     respond(status,'text/html; charset=utf-8',html,{'X-Robots-Tag':robots});return true;
   };
