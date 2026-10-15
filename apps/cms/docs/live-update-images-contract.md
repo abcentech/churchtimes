@@ -82,6 +82,9 @@ Required behaviour: key the timeline by `id`. If the `id` is already rendered, *
 `sequences` only to detect true duplicates of the same `(id, sequence)` pair, not to ignore a known `id`. Announce a replaced
 item as "update corrected" rather than as a new update.
 
+Re-delivery also happens when an editor replaces the image **file** of a media used by an approved update (the filename, and so
+`image.url`, changes) or edits its alt text: same `id`, new `sequence`, new `image`.
+
 Known gaps (not covered by this mechanism):
 - If a media document is **deleted** while an approved update uses it (`ON DELETE SET NULL`), no CMS hook runs. A fresh
   load shows the update without an image, but pollers already past it are not re-sent the update and keep showing the photo until

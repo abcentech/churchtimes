@@ -136,9 +136,10 @@ Test files are in `tests/integration/security.test.ts` (S) and `tests/unit/*` (U
     the featured / a body image of a **published** article, or the image of an **approved** update of a live/ended event. The rule is a Payload
     access Where over three virtual join fields (`publishedAsFeatured`, `publishedInBody`, `liveUpdateImages`; no migration), so list, by-id
     and `/api/media/file/<name>` (originals and size variants, `payload/dist/uploads/checkFileAccess.js` L10-57) share it, and relationship
-    population of published articles keeps working. **Remaining limitation:** images of draft / scheduled articles are not readable by
-    anonymous browsers, so a future **preview-link page** (`/api/preview/articles?token=`, no consumer exists yet) cannot show its images
-    without an extra mechanism (e.g. accept the preview token on the media file route). Files already downloaded or cached stay downloaded.
+    population of published articles keeps working. Images of draft / scheduled articles are not readable by anonymous browsers, **except** with a valid preview
+    token for that article: `/api/preview/articles?token=` returns every media URL with `?preview=<token>`, and `media.read` accepts it for the
+    featured / body images of that single article (HMAC, constant-time, expiry, article id from the signed payload). Files already downloaded or
+    cached stay downloaded.
 13. **Media "in use" freeze covers `featuredImage` only.** A non-editor can still replace a media file they uploaded if it is used solely
     inside an article body (Lexical upload node). Editors are never restricted.
 14. **The admin UI shows `currentPassword` as a plain text input** (Payload has no password-type field for custom fields); it is cleared on

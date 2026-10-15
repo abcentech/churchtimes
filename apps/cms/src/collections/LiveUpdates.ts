@@ -67,7 +67,7 @@ const serverOnly = { create: () => false, update: () => false }
  * the same number; the compound unique indexes remain as the backstop (a violation fails the request
  * instead of producing duplicates).
  */
-async function nextCounter(
+export async function nextCounter(
   req: PayloadRequest,
   eventId: number | string,
   field: 'sequence' | 'publishSequence',

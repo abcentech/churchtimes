@@ -1,4 +1,4 @@
-# Church Times CMS — API contracts (v1.6)
+# Church Times CMS — API contracts (v1.7)
 
 Status: implemented on `agent/payload-core`. v1.1 added Turnstile, duplicate detection, staff auth/session
 contract and security hardening; v1.2 closes the verified security-review findings: media ownership, version
@@ -134,8 +134,9 @@ The public site needs no change; see §6.3.
 Anonymous readers see only `live` and `ended` events. `startedAt` is server-stamped: it is set (to "now") whenever an event
 is created or saved with a status other than `draft` and has no `startedAt`, so an event created directly as `ended` (or moved
 `draft`/`live` -> `ended`) never has an empty `startedAt`. That matters for `sort=-startedAt`: Postgres sorts NULL first in a
-descending order, which would put such events ahead of live ones. `endedAt` is stamped the same way whenever the status is
-`ended` and it is empty. Supplied values are kept. Migration `20261014_221500_live_events_started_at_backfill` fills existing
+descending order, which would put such events ahead of live ones. `endedAt` is stamped whenever the status becomes `ended` (also on a second `ended` after `live`, so `ended -> live -> ended` records the
+new end) or is `ended` with none, and is cleared (`null`) while the status is `live` or `draft`. A value supplied by the client on the
+move to `ended`, and an existing `endedAt` of an event that stays `ended`, are kept. Migration `20261014_221500_live_events_started_at_backfill` fills existing
 rows (`startedAt = createdAt`, `endedAt = updatedAt` for ended rows without one).
 
 ### LiveUpdate (`/api/live-updates`) — `{ id, event, body, image?, status: 'pending'|'approved'|'rejected', sequence, occurredAt, approvedAt? }`
@@ -291,6 +292,8 @@ Polling endpoint for live coverage (recommended interval: 15–30 s).
   the corrected update again: **same `id`, higher `sequence`, new content** (including `image: null` when the photo was removed).
   Clients must treat `id` as the key and **replace** the item they hold (and re-position it by the new `sequence`); ignoring a
   known `id` hides the edit until a full reload. A PATCH that changes neither field (or only other fields) does not re-stamp.
+  The same re-delivery happens when an editor replaces the **file** (new `image.url`) or changes the **alt text** of a media that an
+  approved update uses (v1.7).
   Not covered: deleting a media document that an approved update uses (`ON DELETE SET NULL`) fires no hook, so the feed
   drops the image on the next full read but pollers with a newer cursor are not re-sent the update, and no
   `live-update.image` audit entry is written; only the media delete itself is audited (`delete`, collection `media`).
@@ -300,7 +303,15 @@ Polling endpoint for live coverage (recommended interval: 15–30 s).
 ### 4.4 `GET /api/preview/articles?token=<token>`
 
 Returns a single article in any status for a valid preview token. `401` for missing, invalid or expired tokens.
-Response: `{ "doc": Article }`, `Cache-Control: no-store`.
+Response: `{ "doc": Article }`, `Cache-Control: no-store`. Staff-only data is not returned (`reviewNotes`, `author`, `scheduledFor`,
+`bodyMedia`, and on populated media `uploadedBy` and the access-only join fields).
+
+**Images in a preview (v1.7).** Draft images are private (§3 Media), so every media URL in the response (`featuredImage.url`,
+`featuredImage.sizes.*.url`, and the `value.url` of body upload nodes) is returned with `?preview=<token>` appended. The media read
+access (`GET /api/media/file/<name>`, `GET /api/media/:id`) accepts that parameter and then also allows the **featured image and body
+images of that one article** (any status), nothing else: the article id comes from the signed token (HMAC, constant-time comparison,
+expiry enforced); a token for another article, an expired, tampered or empty token grants nothing (`403`/`404` as for anonymous). Use the
+returned URLs as they are; do not cache them beyond the token's lifetime.
 
 ## 5. Staff authentication and sessions
 
@@ -427,7 +438,8 @@ Send either the cookie (browser, same rules as §5) or `Authorization: JWT <toke
   row-locked document, so two editors acting on the same version cannot both succeed (the second gets `409`). The field is
   never stored and never returned. Absent or `null` means no check (existing API clients are unchanged); a value that is not an
   ISO date string is `400`. Send it with every approve / publish / request-changes (and reject) action. Not supported on bulk
-  updates (`400`). Collection-level access denials (`403`/`404`) come first because access is evaluated before the hooks; the version check runs before the workflow/role checks.
+  updates (`400`). Order of checks: a malformed `expectedUpdatedAt` is `400` first (it is validated in `beforeOperation`, before access, so even an
+  unauthorised caller sees that `400`); then collection access (`403`/`404`); then the version check (`409`), which runs before the workflow/role checks.
 - `DELETE /api/articles/:id` — **editor-in-chief and admin only** (everyone else 403/404). Prefer `status: "archived"`
   to retire an article; delete is for mistakes.
 
@@ -475,6 +487,10 @@ new `file` to replace the file):
   `scheduled` (`403`: metadata edits and file replacement there are public-facing changes; ask an editor).
 - Media without `uploadedBy` (uploaded before v1.2) can only be edited by editors. `uploadedBy` cannot be changed.
 - Every update is audited (`media.update`); a file replacement is audited separately (`media.replace-file`).
+- A multipart `PATCH` that carries `alt` must carry a non-blank `alt` of at most 300 characters (`400` otherwise, nothing changes: the
+  old file is kept). Omit `alt` to keep the stored one.
+- Replacing the file (or changing the `alt`) of a media that is the image of an approved live update gives that update a new
+  `publishSequence` (§4.3), so pollers receive the new `image.url`. Applies to editors (non-editors are frozen out, above).
 - The "in use" freeze (v1.4) covers: the `featuredImage` **and the body images** (`Articles.bodyMedia`, §2) of an article whose
   status is `published` or `scheduled`, and the `image` of an `approved` live update. It applies to metadata edits and to
   multipart file replacement alike (`403`); editors are exempt. It is evaluated at edit time, so removing the image from the
@@ -519,6 +535,17 @@ proxy) and https-only `CMS_PUBLIC_URL`/CORS/CSRF settings (`docs/security.md`). 
 limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/operations.md` §4).
 
 ## 9. Changelog
+
+### v1.7
+Review round 3. Additive.
+- Preview tokens also open the images of that article (§4.4); the preview payload no longer contains `bodyMedia` or any staff-only media field.
+- Media reads no longer evaluate the access-only join fields (`joins: false` in `beforeOperation`); the media file route still evaluates them once per file hit.
+- Replacing the file (or changing the alt text) of a media used by an approved live update re-delivers that update to pollers (new
+  `publishSequence`, new `image.url`), like an edit of its image (§4.3).
+- `live-events.endedAt` is re-stamped on every move to `ended` and cleared while `live`/`draft` (§3).
+- A multipart media upload or replacement whose `alt` is present but empty/blank/longer than 300 characters (or, on create, missing) is `400`
+  *Alt text is required and must be 1 to 300 characters.* before any file is touched, so a refused replacement keeps the old file (§6.3).
+- Docs: order of `expectedUpdatedAt` checks (§6.1).
 
 ### v1.6
 Security follow-ups (review findings M3 and L2). Additive for correct clients; **media read access is a behaviour change**.

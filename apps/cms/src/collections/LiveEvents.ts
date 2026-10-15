@@ -72,7 +72,13 @@ export const LiveEvents: CollectionConfig = {
         const endedAt = data.endedAt !== undefined ? data.endedAt : originalDoc?.endedAt
         const now = new Date().toISOString()
         if (status && status !== 'draft' && !startedAt) data.startedAt = now
-        if (status === 'ended' && !endedAt) data.endedAt = now
+        // ended -> live -> ended must not keep the first endedAt, and a live (or draft) event has no endedAt.
+        const previous = operation === 'create' ? undefined : originalDoc?.status
+        if (status === 'ended') {
+          if ((previous !== 'ended' && !data.endedAt) || !endedAt) data.endedAt = now
+        } else if (status === 'live' || status === 'draft') {
+          data.endedAt = null
+        }
         return data
       },
     ],
