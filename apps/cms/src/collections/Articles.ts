@@ -25,6 +25,9 @@ import { articlePreviewTokenEndpoint } from '../endpoints/articlePreviewToken'
 import { writeAuditLog } from '../lib/audit'
 import { clampLimit } from '../lib/clampLimit'
 import { deepEqual } from '../lib/deepEqual'
+import { assertExpectedUpdatedAt, captureExpectedUpdatedAt } from '../lib/expectedUpdatedAt'
+import { collectUploadNodes, uploadValueId } from '../lib/lexicalMedia'
+import { assertAttachableImage, isMediaId } from '../lib/mediaChecks'
 import {
   ARTICLE_STATUSES,
   type ArticleStatus,
@@ -163,6 +166,49 @@ const autoSlug: CollectionBeforeValidateHook = async ({ data, operation, origina
 
 // Canonical comparison: jsonb (Lexical content) does not preserve key order, JSON.stringify does.
 const same = deepEqual
+
+/**
+ * Every `upload` node of the body must be a real, usable image: relationTo 'media', an integer id in
+ * 1..2147483647 (a populated media object is accepted for its id), and media that exists and passes the same
+ * rules as a live-update photo (JPEG/PNG/WebP, non-empty alt). Payload itself only checks relationTo and the
+ * id format, so an out-of-range id would otherwise be stored and later fail every depth>=1 read with a 500.
+ * Runs on every write that carries `content`; skipped for trusted seed/system calls.
+ */
+const validateBodyImages: CollectionBeforeValidateHook = async ({ data, req }) => {
+  const ctx = (req.context ?? {}) as { seed?: boolean }
+  if (ctx.seed === true || !data || data.content === undefined) return data
+  const seen = new Set<number>()
+  for (const node of collectUploadNodes(data.content)) {
+    if (node.relationTo !== 'media') {
+      throw new APIError('Images in the article body must come from the media library (relationTo "media").', 400)
+    }
+    const id = uploadValueId(node.value)
+    if (!isMediaId(id)) {
+      throw new APIError('An image in the article body has an invalid media id (expected an integer from 1 to 2147483647).', 400)
+    }
+    if (seen.has(id)) continue
+    seen.add(id)
+    await assertAttachableImage(req, id, `An image in the article body (media ${id})`)
+  }
+  return data
+}
+
+/**
+ * `bodyMedia` is derived, server-only: the distinct media ids referenced by the body's upload nodes. It exists
+ * so the media freeze (collections/Media.ts) can find "media shown in a published article body" with a plain
+ * query instead of scanning jsonb. Recomputed whenever `content` is written (client values are stripped by field
+ * access before this runs).
+ */
+const deriveBodyMedia: CollectionBeforeChangeHook = ({ data }) => {
+  if (data.content === undefined) return data
+  const ids: number[] = []
+  for (const node of collectUploadNodes(data.content)) {
+    const id = uploadValueId(node.value)
+    if (node.relationTo === 'media' && isMediaId(id) && !ids.includes(id)) ids.push(id)
+  }
+  data.bodyMedia = ids
+  return data
+}
 
 const CONTENT_KEYS = ['title', 'slug', 'excerpt', 'content', 'featuredImage', 'bylineName'] as const
 
@@ -403,9 +449,9 @@ export const Articles: CollectionConfig = {
     readVersions: readVersionsAccess,
   },
   hooks: {
-    beforeOperation: [clampLimit, markRestore],
-    beforeValidate: [autoSlug],
-    beforeChange: [enforceWorkflow],
+    beforeOperation: [clampLimit, markRestore, captureExpectedUpdatedAt],
+    beforeValidate: [autoSlug, validateBodyImages],
+    beforeChange: [assertExpectedUpdatedAt('articles'), deriveBodyMedia, enforceWorkflow],
     afterChange: [auditChanges],
     afterDelete: [auditDelete],
   },
@@ -437,6 +483,15 @@ export const Articles: CollectionConfig = {
       admin: { position: 'sidebar' },
     },
     { name: 'featuredImage', type: 'upload', relationTo: 'media' },
+    {
+      // Derived from `content` by deriveBodyMedia; never client-writable, staff-readable only.
+      name: 'bodyMedia',
+      type: 'relationship',
+      relationTo: 'media',
+      hasMany: true,
+      access: { read: staffRead, create: never, update: never },
+      admin: { readOnly: true, hidden: true },
+    },
     {
       name: 'author',
       type: 'relationship',

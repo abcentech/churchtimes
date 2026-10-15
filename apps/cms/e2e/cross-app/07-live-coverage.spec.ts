@@ -28,7 +28,7 @@ const st = (project: string): State => {
   return s
 }
 
-const PUBLIC_UPDATE_KEYS = ['approvedAt', 'body', 'id', 'occurredAt', 'sequence']
+const PUBLIC_UPDATE_KEYS = ['approvedAt', 'body', 'id', 'image', 'occurredAt', 'sequence']
 const PUBLIC_EVENT_KEYS = ['id', 'slug', 'status', 'title']
 const STAFF_ONLY = ['author', 'approvedBy', 'e2e-section-editor', 'e2e-reporter', 'churchtimes.invalid', 'publishSequence', 'reviewNotes']
 

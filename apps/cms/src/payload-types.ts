@@ -80,7 +80,13 @@ export interface Config {
     'payload-preferences': PayloadPreference;
     'payload-migrations': PayloadMigration;
   };
-  collectionsJoins: {};
+  collectionsJoins: {
+    media: {
+      publishedAsFeatured: 'articles';
+      publishedInBody: 'articles';
+      liveUpdateImages: 'live-updates';
+    };
+  };
   collectionsSelect: {
     users: UsersSelect<false> | UsersSelect<true>;
     categories: CategoriesSelect<false> | CategoriesSelect<true>;
@@ -187,6 +193,21 @@ export interface Media {
   caption?: string | null;
   credit?: string | null;
   uploadedBy?: (number | null) | User;
+  publishedAsFeatured?: {
+    docs?: (number | Article)[];
+    hasNextPage?: boolean;
+    totalDocs?: number;
+  };
+  publishedInBody?: {
+    docs?: (number | Article)[];
+    hasNextPage?: boolean;
+    totalDocs?: number;
+  };
+  liveUpdateImages?: {
+    docs?: (number | LiveUpdate)[];
+    hasNextPage?: boolean;
+    totalDocs?: number;
+  };
   updatedAt: string;
   createdAt: string;
   url?: string | null;
@@ -254,6 +275,7 @@ export interface Article {
   };
   category: number | Category;
   featuredImage?: (number | null) | Media;
+  bodyMedia?: (number | Media)[] | null;
   author?: (number | null) | User;
   bylineName?: string | null;
   status: 'draft' | 'in_review' | 'changes_requested' | 'approved' | 'scheduled' | 'published' | 'archived';
@@ -274,24 +296,20 @@ export interface Article {
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
- * via the `definition` "submissions".
+ * via the `definition` "live-updates".
  */
-export interface Submission {
+export interface LiveUpdate {
   id: number;
-  reference?: string | null;
-  name: string;
-  email: string;
-  phone?: string | null;
-  title: string;
+  event: number | LiveEvent;
   body: string;
-  categorySuggestion?: string | null;
-  location?: string | null;
-  status: 'new' | 'under_review' | 'accepted' | 'rejected' | 'converted';
-  reviewerNotes?: string | null;
-  article?: (number | null) | Article;
-  ipHash?: string | null;
-  contentHash?: string | null;
-  userAgent?: string | null;
+  image?: (number | null) | Media;
+  status: 'pending' | 'approved' | 'rejected';
+  sequence?: number | null;
+  publishSequence?: number | null;
+  occurredAt: string;
+  author?: (number | null) | User;
+  approvedBy?: (number | null) | User;
+  approvedAt?: string | null;
   updatedAt: string;
   createdAt: string;
 }
@@ -316,19 +334,24 @@ export interface LiveEvent {
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
- * via the `definition` "live-updates".
+ * via the `definition` "submissions".
  */
-export interface LiveUpdate {
+export interface Submission {
   id: number;
-  event: number | LiveEvent;
+  reference?: string | null;
+  name: string;
+  email: string;
+  phone?: string | null;
+  title: string;
   body: string;
-  status: 'pending' | 'approved' | 'rejected';
-  sequence?: number | null;
-  publishSequence?: number | null;
-  occurredAt: string;
-  author?: (number | null) | User;
-  approvedBy?: (number | null) | User;
-  approvedAt?: string | null;
+  categorySuggestion?: string | null;
+  location?: string | null;
+  status: 'new' | 'under_review' | 'accepted' | 'rejected' | 'converted';
+  reviewerNotes?: string | null;
+  article?: (number | null) | Article;
+  ipHash?: string | null;
+  contentHash?: string | null;
+  userAgent?: string | null;
   updatedAt: string;
   createdAt: string;
 }
@@ -505,6 +528,9 @@ export interface MediaSelect<T extends boolean = true> {
   caption?: T;
   credit?: T;
   uploadedBy?: T;
+  publishedAsFeatured?: T;
+  publishedInBody?: T;
+  liveUpdateImages?: T;
   updatedAt?: T;
   createdAt?: T;
   url?: T;
@@ -562,6 +588,7 @@ export interface ArticlesSelect<T extends boolean = true> {
   content?: T;
   category?: T;
   featuredImage?: T;
+  bodyMedia?: T;
   author?: T;
   bylineName?: T;
   status?: T;
@@ -624,6 +651,7 @@ export interface LiveEventsSelect<T extends boolean = true> {
 export interface LiveUpdatesSelect<T extends boolean = true> {
   event?: T;
   body?: T;
+  image?: T;
   status?: T;
   sequence?: T;
   publishSequence?: T;

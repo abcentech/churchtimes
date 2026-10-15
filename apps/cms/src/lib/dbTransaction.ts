@@ -45,3 +45,23 @@ export async function claimSubmissionForConversion(req: PayloadRequest, id: numb
   )
   return (res.rowCount ?? res.rows?.length ?? 0) > 0
 }
+
+/**
+ * The current `updated_at` of one row, read with `FOR UPDATE` so it joins the request's transaction and takes the row
+ * lock the following UPDATE needs anyway. Under READ COMMITTED a second transaction that blocked on the lock re-reads
+ * the row after the first commit, so it sees the newer value. Returns null when the row does not exist. Outside a
+ * transaction it is a plain read. `table` is restricted to a fixed allow-list (it is interpolated as an identifier).
+ */
+export async function lockedUpdatedAt(
+  req: PayloadRequest,
+  table: 'articles' | 'live_updates',
+  id: number,
+): Promise<Date | null> {
+  const { db } = await executor(req)
+  const tableName = sql.raw(`"${table === 'articles' ? 'articles' : 'live_updates'}"`)
+  const res = await db.execute(sql`select "updated_at" from ${tableName} where "id" = ${id} for update`)
+  const value = (res.rows?.[0] as { updated_at?: Date | string } | undefined)?.updated_at
+  if (value === undefined || value === null) return null
+  const d = value instanceof Date ? value : new Date(value)
+  return Number.isNaN(d.getTime()) ? null : d
+}

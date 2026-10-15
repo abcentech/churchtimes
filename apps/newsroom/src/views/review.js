@@ -17,6 +17,7 @@ import { showApiError } from '../components/notify.js';
 import { markdownToHtml } from '../lexical.js';
 import { PUBLIC_SITE_URL } from '../config.js';
 import { escapeHtml, formatTimeAgo, statusBadge, cssToken, latestGuard } from '../util.js';
+import { STALE_MESSAGE, isStaleConflict } from '../stale-guard.js';
 
 let activeTab = 'articles_review';
 let tipFilter = 'open';
@@ -176,9 +177,18 @@ async function renderCurrentTabContent(container) {
     btn.addEventListener('click', () => store.setCurrentView('editor', { storyId: btn.getAttribute('data-id') }));
   });
   area.querySelectorAll('[data-action="inspect-story"]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const article = articles.find(a => a.id === btn.getAttribute('data-id'));
-      if (article) inspectStoryModal(article, container);
+    btn.addEventListener('click', async () => {
+      const id = btn.getAttribute('data-id');
+      if (!articles.some(a => a.id === id)) return;
+      // Approve what you saw: open the CURRENT version, never the list's copy (it can be stale right after an earlier action).
+      btn.disabled = true;
+      try {
+        inspectStoryModal((await api.getArticle(id)).data, container);
+      } catch (err) {
+        showApiError(err);
+      } finally {
+        btn.disabled = false;
+      }
     });
   });
 }
@@ -361,7 +371,23 @@ async function openConvertModal(sub, container) {
 // Story inspection
 // ---------------------------------------------------------------------------------------------------
 
-function inspectStoryModal(article, container) {
+/**
+ * Approve what you saw: every action below sends the `updatedAt` of the version shown in this modal. When the CMS answers
+ * 409 (the story changed after it was opened) the story is reloaded and the modal is reopened on the new version with the
+ * message, so the reviewer reads what changed before acting again.
+ */
+async function reloadAfterConflict(articleId, container, message) {
+  try {
+    const fresh = (await api.getArticle(articleId)).data;
+    await Promise.all([updateTabCounters(container), renderCurrentTabContent(container)]);
+    inspectStoryModal(fresh, container, message);
+  } catch (err) {
+    showApiError(err);
+  }
+  showToast(message, 'info');
+}
+
+function inspectStoryModal(article, container, notice = '') {
   const ctx = { status: article.status, categoryId: article.categoryId, isAuthor: false };
   const canApprove = api.can('story.approve', ctx);
   const canRequest = api.can('story.request_changes', ctx);
@@ -388,7 +414,7 @@ function inspectStoryModal(article, container) {
             </div>
           </div>` : ''}
         <div class="preview-body" data-testid="inspect-body" style="max-height: 250px; overflow-y: auto; background: var(--color-parchment-light); padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--color-rule);">
-          ${markdownToHtml(article.bodyMd)}
+          ${markdownToHtml(article.bodyMd, { media: id => article.bodyMedia?.[id] })}
         </div>
 
         <div class="checklist-box">
@@ -411,15 +437,23 @@ function inspectStoryModal(article, container) {
       </div>`,
     onRender: (body, close) => {
       const errEl = body.querySelector('#inspect-error');
+      if (notice) {
+        errEl.textContent = notice;
+        errEl.style.display = 'block';
+      }
       const transition = async (status, opts, success) => {
         errEl.style.display = 'none';
         try {
-          await api.transitionArticle(article.id, status, opts);
+          await api.transitionArticle(article.id, status, { ...opts, expectedUpdatedAt: article.updatedAt });
           close();
           showToast(success, status === 'changes_requested' ? 'info' : 'success');
           await updateTabCounters(container);
           await renderCurrentTabContent(container);
         } catch (err) {
+          if (isStaleConflict(err)) {
+            await reloadAfterConflict(article.id, container, err.message || STALE_MESSAGE);
+            return;
+          }
           errEl.textContent = showApiError(err);
           errEl.style.display = 'block';
         }

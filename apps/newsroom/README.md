@@ -49,8 +49,14 @@ builds the app and asserts the bundle contains no demo password, mock data, role
 ## Editing model
 
 - Body is edited as a markdown subset and stored as Lexical JSON in `content` (`src/lexical.js`): paragraphs, h2/h3,
-  bold, italic, quotes, bullet and numbered lists, `http(s)`/`mailto` links. Stories containing anything else (images,
-  nested lists, underline, ...) open with a read-only body so nothing is lost.
+  bold, italic, quotes, bullet and numbered lists, `http(s)`/`mailto` links, and images. Stories containing anything
+  else (embeds, nested lists, underline, uploads carrying extra data, ...) open with a read-only body so nothing is lost.
+- Images inside the body: "Insert image" (body toolbar) opens the media picker (library or upload; alt text is required)
+  and puts `![alt](media:<id>)` on a line of its own at the cursor. That line is stored as a Lexical upload node
+  `{ type: 'upload', relationTo: 'media', value: <numeric id>, fields: null, format: '', id, version: 3 }` and read back
+  from either an id or a populated media document. The alt in the token is only a label; the media record owns the alt text.
+- Live updates carry one optional photo (`image` = media id): "Add photo" in the composer, removable thumbnail,
+  thumbnails on pending and published updates (URLs pass the same CMS-origin guard as every other media URL).
 - Saving PATCHes only changed, allowlisted fields (`title`, `slug`, `excerpt` = standfirst, `content`, `category` id,
   `featuredImage` id, `bylineName`). Workflow actions are separate PATCHes (`status`, plus `reviewNotes` for request
   changes). Editing a published story asks for the correction note the CMS requires. Autosave only applies to

@@ -49,7 +49,7 @@ export const INITIAL_CATEGORIES = [
 
 export const INITIAL_MEDIA = [
   {
-    id: 'med-29276',
+    id: '29276',
     title: 'Omololu Falobi Archive Portrait',
     url: '/site/news-media/29276.jpg',
     filename: '29276.jpg',
@@ -61,7 +61,7 @@ export const INITIAL_MEDIA = [
     dimensions: '1200x800'
   },
   {
-    id: 'med-29267',
+    id: '29267',
     title: 'ANLCA 72nd Stakeholders Meeting',
     url: '/site/news-media/29267.jpg',
     filename: '29267.jpg',
@@ -73,7 +73,7 @@ export const INITIAL_MEDIA = [
     dimensions: '1024x680'
   },
   {
-    id: 'med-29264',
+    id: '29264',
     title: 'Teenagers Center Building Dedication',
     url: '/site/news-media/29264.jpg',
     filename: '29264.jpg',
@@ -85,7 +85,7 @@ export const INITIAL_MEDIA = [
     dimensions: '800x533'
   },
   {
-    id: 'med-29259',
+    id: '29259',
     title: 'Omoyele Sowore and Pastor E.A. Adeboye',
     url: '/site/news-media/29259.jpg',
     filename: '29259.jpg',
@@ -97,7 +97,7 @@ export const INITIAL_MEDIA = [
     dimensions: '1024x576'
   },
   {
-    id: 'med-29255',
+    id: '29255',
     title: 'Biblical Faith & Theology Seminar',
     url: '/site/news-media/29255.jpg',
     filename: '29255.jpg',
@@ -109,7 +109,7 @@ export const INITIAL_MEDIA = [
     dimensions: '992x1024'
   },
   {
-    id: 'med-29253',
+    id: '29253',
     title: 'Berean Bible Conference Session',
     url: '/site/news-media/29253.jpg',
     filename: '29253.jpg',

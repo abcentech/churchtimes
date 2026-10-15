@@ -10,6 +10,7 @@ import {
 } from './mock-data.js';
 import { can, normRole } from '../permissions.js';
 import { ApiError } from './errors.js';
+import { STALE_MESSAGE, versionMatches } from '../stale-guard.js';
 
 const STORAGE_KEY = 'ctn_mock_store_v2';
 const ARTICLE_STATUSES = ['draft', 'in_review', 'changes_requested', 'approved', 'scheduled', 'published', 'archived'];
@@ -49,7 +50,7 @@ function seed() {
   const updates = INITIAL_LIVE_UPDATES.map((u, i) => ({
     id: u.id, eventId: u.eventId, body: u.headline ? `${u.headline}: ${u.body}` : u.body,
     status: u.status === 'pending_review' ? 'pending' : u.status, sequence: i + 1,
-    occurredAt: u.createdAt, authorName: u.reporterName
+    occurredAt: u.createdAt, updatedAt: u.createdAt, authorName: u.reporterName
   }));
   return { users, media, articles, submissions, events, updates, categories: clone(INITIAL_CATEGORIES) };
 }
@@ -165,9 +166,10 @@ export class MockAdapter {
     this.persist();
     return { data: clone(a) };
   }
-  async transitionArticle(id, status, { reviewNotes } = {}) {
+  async transitionArticle(id, status, { reviewNotes, expectedUpdatedAt } = {}) {
     const a = this.db.articles.find(x => x.id === id);
     if (!a) throw new ApiError('Story not found.', { status: 404 });
+    if (!versionMatches(a.updatedAt, expectedUpdatedAt)) throw new ApiError(STALE_MESSAGE, { status: 409 });
     const action = {
       in_review: 'story.submit_review', approved: 'story.approve', changes_requested: 'story.request_changes',
       published: 'story.publish', archived: 'story.archive'
@@ -261,21 +263,27 @@ export class MockAdapter {
     const list = this.db.updates.filter(u => u.eventId === eventId).sort((a, b) => b.sequence - a.sequence);
     return { data: clone(list) };
   }
-  async postLiveUpdate({ eventId, body }) {
+  async postLiveUpdate({ eventId, body, imageId = null }) {
     const isEditor = normRole(this.currentUser.role) !== 'reporter';
+    const image = imageId ? this.db.media.find(m => String(m.id) === String(imageId)) || null : null;
+    if (imageId && !image) throw new ApiError('The selected image does not exist.', { status: 400 });
+    if (image && !String(image.alt || '').trim()) throw new ApiError('The image needs alt text before it can be used.', { status: 400 });
     const u = {
-      id: `upd-${Date.now()}`, eventId, body, status: isEditor ? 'approved' : 'pending',
-      sequence: this.db.updates.length + 1, occurredAt: new Date().toISOString(), authorName: this.currentUser.name
+      id: `upd-${Date.now()}`, eventId, body, image: image ? clone(image) : null, status: isEditor ? 'approved' : 'pending',
+      sequence: this.db.updates.length + 1, occurredAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      authorName: this.currentUser.name
     };
     this.db.updates.unshift(u);
     this.persist();
     return { data: clone(u) };
   }
-  async setLiveUpdateStatus(id, status) {
+  async setLiveUpdateStatus(id, status, { expectedUpdatedAt } = {}) {
     if (!can(this.currentUser, 'live.approve', { categoryId: 'faith-society' })) throw forbidden();
     const u = this.db.updates.find(x => x.id === id);
     if (!u) throw new ApiError('Not found.', { status: 404 });
+    if (!versionMatches(u.updatedAt, expectedUpdatedAt)) throw new ApiError(STALE_MESSAGE, { status: 409 });
     u.status = status;
+    u.updatedAt = new Date().toISOString();
     this.persist();
     return { data: clone(u) };
   }
@@ -292,7 +300,7 @@ export class MockAdapter {
   async uploadMedia(file, { alt, caption, credit }) {
     if (!alt?.trim()) throw new ApiError('Alt text is required.', { status: 400 });
     const m = {
-      id: `med-${Date.now()}`, url: '/site/news-media/29276.jpg', thumbUrl: '/site/news-media/29276.jpg',
+      id: `${Date.now()}`, url: '/site/news-media/29276.jpg', thumbUrl: '/site/news-media/29276.jpg',
       alt, caption: caption || '', credit: credit || '', filename: file?.name || 'upload.jpg'
     };
     this.db.media.unshift(m);
