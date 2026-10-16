@@ -177,7 +177,11 @@ renderer (`src/lib/advertising.js`) already validates what it receives; the CMS 
 | --- | --- | --- |
 | `homepage-billboard` | 970x250 | 320x100 |
 | `article-inline` | 728x90 | 320x100 |
-| `mobile-banner` | none | 320x100 |
+| `mobile-banner` | none | 320x50 |
+
+The public renderer checks these dimensions **exactly** (`src/lib/advertising.js`), so a creative of any other size would be
+rejected on the page. Codex confirmed in review that `mobile-banner` is 320x50 (answer to O7); the billboard and article-inline
+sizes above match the renderer.
 
 ### C3.2 `GET /api/public/advertising` (no credentials)
 
@@ -204,7 +208,17 @@ Response shape is exactly the one in the public advertising contract:
 - `adsense.enabled` and `adsense.reviewed` come from server configuration `PUBLIC_ADSENSE_ENABLED` and
   `PUBLIC_ADSENSE_REVIEWED` (both default `false`). **The CMS never delivers an AdSense publisher ID or script.** Turning
   AdSense on stays an owner-approved step, with the publisher line supplied for `ads.txt` and configuration by the owner.
-- **Caching:** `Cache-Control: public, max-age=60` and an `ETag`; the endpoint is cheap and read-only. No rate limit, no 429.
+- **Caching and freshness:** the endpoint is cheap and read-only; no rate limit, no 429. `Cache-Control: public,
+  max-age=N` where **N = the smaller of 60 and the number of seconds until the next campaign start or end**, so a campaign never
+  appears after its `endsAt` because of a cache. A campaign that is **paused or cancelled** can still be shown for up to 60 s
+  (plus any CDN delay); that is the stated withdrawal latency. Within that window its creative file may already be private, in
+  which case the browser's image request fails and the public renderer removes the slot (no gap, no error).
+- **Conditional requests are for CDNs, not browsers.** An `ETag` is sent, but a cross-origin browser cannot read it (the
+  contract exposes only `Retry-After`) and `If-None-Match` would trigger a CORS preflight the CMS does not allow. Browsers rely
+  on `max-age` alone.
+- **Never block first paint on this call.** The response is small (the public host caps it at 100 campaigns and 1 MB). The
+  public site renders without ads and fills slots when the data arrives, or reads a cached copy; it must not hold the page back
+  (a 1.5 s wait was found in review). The CMS makes no promise that depends on the page waiting.
 - **Media privacy:** a creative's media becomes publicly readable only while its campaign is delivered (same model as live
   update photos in api-contracts §3 Media, v1.6) and is private again when the campaign ends or is paused.
 - **No tracking in v1:** no impression or click counters and no pixels. Advertiser reporting is a later, separate contract.
@@ -222,7 +236,8 @@ The CMS stores consent and subscribers; it **does not send newsletters in v1**. 
   "source": "footer", "website": "", "turnstileToken": "0.xxxx" }
 ```
 
-- `email` required, valid, 254 max, lower-cased. `name` optional, 2 to 120. `consent` must be literally `true`. `source` is
+- `email` required, valid, 254 max, lower-cased. `name` optional, 2 to 120; **an empty string or a missing field both mean "no
+  name"** (a form that cannot leave a field out must not get a 400 for an empty box). `consent` must be literally `true`. `source` is
   one of `footer`, `article`, `home`, `other`. Turnstile action: `newsletter-subscribe`. Body cap 8 KB.
 - **Double opt-in.** The subscriber is stored as `pending` with a hashed one-time token. The CMS emails a confirmation link to
   the **public site** page `/newsletter/confirm?token=...` (never an API URL).
@@ -277,7 +292,8 @@ A separate endpoint and collection from story submissions, so the story review q
 - `name` 2 to 120; `email` valid; `topic` one of `general`, `advertising`, `corrections`, `tips`, `other`; `message` 20 to
   5 000, plain text. Turnstile action `contact-message`. Body cap 16 KB.
 - Stored in **`contact-messages`** (staff-only, `admin` and `editor-in-chief`; section editors may be added later):
-  `reference` (server-made), `name`, `email`, `topic`, `message`, `status` (`new`, `read`, `replied`, `spam`), `ipHash`,
+  `reference` (server-made; **format fixed as `MSG-` plus exactly 8 characters from `ABCDEFGHJKMNPQRSTUVWXYZ23456789`**, the same
+  alphabet as story submissions, so the public form can validate it), `name`, `email`, `topic`, `message`, `status` (`new`, `read`, `replied`, `spam`), `ipHash`,
   `userAgent`, `contentHash`. Never readable anonymously.
 - **Notification:** an email goes to `CONTACT_NOTIFY_TO` (comma list, server-side, validated at startup, **never returned
   to the client**) with `Reply-To` set to the sender. CR and LF are stripped from every header-bound value (name, subject) to
@@ -328,15 +344,25 @@ The CMS produces the **exact-match** redirect list for the old WordPress address
 - **`redirects`** collection (staff-only, `admin` and `editor-in-chief`, audited): `from` (path starting with `/`, no scheme,
   host or fragment, 1 to 300, unique), `to` (a path starting with `/`, or an absolute `https:` URL whose host is in
   `REDIRECT_ALLOWED_HOSTS`), `status` (`301`, `302`, `410`), `source` (`manual`, `rank-math`, `legacy-url`), `note?`.
+- **Canonical form of paths (both `from` and `to`).** A leading `/`; a trailing `/` for directory-style paths (no file
+  extension); percent-encoding in **upper case** (`/caf%C3%A9/`, because WordPress stores lower-case `%c3%a9`, which is converted at
+  import); no dot segments, no query string or fragment. The public host applies the same normalisation to the request path
+  before the lookup, so `/old-slug` and `/old-slug/` find one rule and answer in **one** hop, and a non-ASCII slug matches
+  however the client encoded it. The generator rejects rows that are not in canonical form after normalising.
 - Rows imported from a **Rank Math redirects export** (supplied privately by the owner) use `source = rank-math`. A row that
-  would create a loop or a chain is rejected at write time with the conflicting rule named.
+  would create a loop or a chain is rejected at write time with the conflicting rule named. **One rule for chains:** manual rows
+  are rejected if they chain (so an editor fixes them); rows produced by the Rank Math import and the derived rules are
+  **flattened** to their final target and the number flattened is reported. Loops always fail. The exact list never contains a
+  query string: `/?p=ID` and AMP addresses (`/<slug>/amp/`) are pattern rules owned by the public host, which resolves `?p=ID`
+  through the public `legacyId` field of the article.
 
 ### C7.2 Derived rules
 
 For every **published** article with a `legacyUrl`, the generator derives `from` = the path of `legacyUrl` and `to` = the
-article's current public path, built from `PUBLIC_ARTICLE_PATH_TEMPLATE` (`/{slug}/` for the D1 default, `/reports/{slug}/`
-otherwise). When `from` already equals `to`, **no rule is emitted**: with the D1 default most articles need no redirect, only
-renamed slugs (C1.3) and non-article addresses do. Unpublished and archived articles emit no rule, so their old addresses
+article's current public path, built from `PUBLIC_ARTICLE_PATH_TEMPLATE`, **the same environment value the public host reads**
+(the exporter and the public host must never disagree). Until the owner decides D1 the value is `/reports/{slug}/`; if D1 keeps
+the old addresses it becomes `/{slug}/`. When `from` already equals `to`, **no rule is emitted**: with `/{slug}/` most articles
+need no redirect, only renamed slugs (C1.3) and non-article addresses do. Unpublished and archived articles emit no rule, so their old addresses
 answer a plain 404 unless a staff row says `410`.
 
 ### C7.3 `GET /api/public/redirects` and the export command
@@ -359,6 +385,10 @@ answer a plain 404 unless a staff row says `410`.
   traffic URLs from Search Console, kept outside the repository) and prints how many resolve, how many do not, and the status
   of each, **without printing the addresses to CI logs**. The go-live gate is **zero unresolved top-traffic addresses**.
 - Junk such as `tel:` paths is handled by the public host as a cheap 404 or 410 and never appears in this list.
+- **Public host behaviour that goes with this list** (for Codex, recorded so both sides agree): an invalid or partial rules
+  fetch keeps serving the **last good map** and logs a counted warning (it never silently drops every redirect); the refresh runs
+  in the background so a request never waits on it; a stray `%` in a query string is not a reason to answer 404; and one
+  article with a reserved slug is skipped and reported, not allowed to fail the whole sitemap or feed.
 - **Tests expected:** derived-rule skipping when `from = to`, collision renames, loop and chain rejection, hash stability,
   size cap refusal, anonymous cannot read the collection, endpoint omits unpublished articles.
 
@@ -366,13 +396,13 @@ answer a plain 404 unless a staff row says `410`.
 
 | # | Item | Needed from | Default if unanswered |
 | --- | --- | --- | --- |
-| O1 | D1 article path: `/{slug}/` or `/reports/{slug}/` | Owner | `/{slug}/` |
+| O1 | D1 article path: `/{slug}/` or `/reports/{slug}/` | Owner | Recommendation `/{slug}/`, but **`/reports/{slug}/` stays in force until the owner decides** (the public host's default) |
 | O2 | D2 production host and where `/wp-content/uploads/*` is served from | Owner and Codex | Same path on the public host, files from public media |
 | O3 | D3 comments | Owner | Read-only archive (C6) |
 | O4 | D4 ads: payment before delivery? | Owner | Yes (`ADS_REQUIRE_PAYMENT=true`) |
 | O5 | D5 newsletter provider and whether the Mailchimp audience is live | Owner | Store consent, no sync, CSV export |
-| O6 | Does the public renderer accept the `youtubeEmbed` block shape (C1.1)? | Codex | Yes, with consent gating |
-| O7 | Are the placement sizes in C3.1 the real slot sizes in `advertising.js`? | Codex | As listed |
+| O6 | Does the public renderer accept the `youtubeEmbed` block shape (C1.1)? | Codex | **Answered: yes** (labelled-link fallback now, consent-gated player later; needs a title length cap and tests for malformed IDs) |
+| O7 | Are the placement sizes in C3.1 the real slot sizes in `advertising.js`? | Codex | **Answered: no for `mobile-banner`, which is 320x50**; table corrected, other sizes match |
 
 ## Order of implementation (CMS lane)
 
