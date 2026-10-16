@@ -13,7 +13,7 @@ test('reader endpoint protects personal data and token endpoint has no query',()
 });
 test('C4/C5 synthetic payload projection and neutral statuses',async()=>{
   let seen;
-  for(const [kind,values,status,result] of [['newsletter',newsletter,202,{ok:true}],['contact',contact,201,{ok:true,reference:'MSG-SYNTHETIC'}],['confirm',{},200,{ok:true}],['unsubscribe',{},200,{ok:true}]]) {
+  for(const [kind,values,status,result] of [['newsletter',newsletter,202,{ok:true}],['contact',contact,201,{ok:true,reference:'MSG-7KQ2M9XA'}],['confirm',{},200,{ok:true}],['unsubscribe',{},200,{ok:true}]]) {
     await postReaderForm({endpoint,kind,values,token:'synthetic-token',fetchImpl:async(url,options)=>{seen=options;return new Response(JSON.stringify(result),{status});}});
     assert.equal(seen.method,'POST');assert.equal(seen.credentials,'omit');assert.equal(seen.referrerPolicy,'no-referrer');assert.equal(seen.cache,'no-store');
     const body=JSON.parse(seen.body); assert.equal(body.token||body.turnstileToken,'synthetic-token');assert.equal(body.phone,undefined);assert.equal(body.subject,undefined);
@@ -54,4 +54,26 @@ test('malformed error payload shapes remain typed and safe (STUB)',async()=>{
   for(const errors of [{field:'email'},[null,4,{}, {field:'email'}],'bad']) {
     await assert.rejects(postReaderForm({endpoint,kind:'newsletter',values:newsletter,token:'x',fetchImpl:stub(400,{errors})}),error=>error.type==='validation');
   }
+});
+test('static clean newsletter routes ignore misleading document base and scrub all query/fragment data',()=>{
+  for (const path of ['/newsletter/confirm','/newsletter/unsubscribe/','/preview/newsletter/confirm']) {
+    let replaced;
+    const location={pathname:path,search:'?token=synthetic&tracking=private',hash:'#private'};
+    const result=captureNewsletterLink(location,{replaceState:(_a,_b,url)=>{replaced=url;}},'/newsletter/');
+    assert.equal(result.token,'synthetic');assert.equal(result.action,path.includes('confirm')?'confirm':'unsubscribe');assert.equal(replaced,path);
+  }
+});
+test('blank optional name is omitted and rejected Turnstile 403 is distinct from an origin denial (STUB)',async()=>{
+  let payload;
+  await postReaderForm({endpoint,kind:'newsletter',values:{...newsletter,name:'  '},token:'x',fetchImpl:async(_url,options)=>{payload=JSON.parse(options.body);return new Response('{"ok":true}',{status:202});}});
+  assert.equal(Object.hasOwn(payload,'name'),false);
+  for(const [errors,type] of [[[null,{field:'turnstileToken',message:'private'}],'challenge'],[[{message:'private origin'}],'forbidden']]) {
+    await assert.rejects(postReaderForm({endpoint,kind:'newsletter',values:newsletter,token:'x',fetchImpl:stub(403,{errors})}),error=>error.type===type);
+  }
+});
+test('C5 receipt accepts exactly eight unambiguous contract characters (STUB)',async()=>{
+  for(const reference of ['MSG-SYNTHETIC','MSG-12345678','MSG-7KQ2M9X','MSG-7KQ2M9XAA','MSG-7KQ2M9XI','MSG-7KQ2M9XO']) {
+    await assert.rejects(postReaderForm({endpoint,kind:'contact',values:contact,token:'x',fetchImpl:stub(201,{ok:true,reference})}),error=>error.type==='unconfirmed');
+  }
+  assert.deepEqual(await postReaderForm({endpoint,kind:'contact',values:contact,token:'x',fetchImpl:stub(201,{ok:true,reference:'MSG-7KQ2M9XA'})}),{reference:'MSG-7KQ2M9XA'});
 });

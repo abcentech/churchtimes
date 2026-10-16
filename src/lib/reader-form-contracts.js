@@ -41,7 +41,7 @@ export async function postReaderForm({ endpoint, kind, values = {}, token = '', 
   const fields = tokenAction ? {} : validateReaderForm(values, kind);
   if (Object.keys(fields).length) throw new ReaderFormError('validation', { fields });
   const body = tokenAction ? { token } : kind === 'newsletter'
-    ? { email: values.email.trim().toLowerCase(), name: values.name?.trim() || '', consent: true, source: ['footer','article','home','other'].includes(values.source) ? values.source : 'other', website: values.website || '', turnstileToken: token }
+    ? { email: values.email.trim().toLowerCase(), ...(values.name?.trim() ? { name: values.name.trim() } : {}), consent: true, source: ['footer','article','home','other'].includes(values.source) ? values.source : 'other', website: values.website || '', turnstileToken: token }
     : { name: values.name.trim(), email: values.email.trim(), topic: values.topic, message: values.message.trim(), website: values.website || '', turnstileToken: token };
   const encoded = JSON.stringify(body);
   if (new TextEncoder().encode(encoded).length > (kind === 'contact' ? 16384 : 8192)) throw new ReaderFormError('size');
@@ -57,18 +57,19 @@ export async function postReaderForm({ endpoint, kind, values = {}, token = '', 
     if (response.status === 429) throw new ReaderFormError('rate-limit', { retryAfter: boundedRetryAfter(response.headers.get('Retry-After')) });
     let data;
     try { data = await response.json(); } catch { data = null; }
+    const backendErrors = Array.isArray(data?.errors) ? data.errors : [];
+    if ([400,403,422].includes(response.status) && backendErrors.some(error => error?.field === 'turnstileToken')) throw new ReaderFormError('challenge');
     if (response.status === 400 || response.status === 422) {
       if (tokenAction) throw new ReaderFormError('invalid-token');
-      if (Array.isArray(data?.errors) && data.errors.some(error => error?.field === 'turnstileToken')) throw new ReaderFormError('challenge');
       const errors = {};
-      for (const error of Array.isArray(data?.errors) ? data.errors : []) if (['name','email','message','topic','consent'].includes(error?.field)) errors[error.field] = 'Please check this field and try again.';
+      for (const error of backendErrors) if (['name','email','message','topic','consent'].includes(error?.field)) errors[error.field] = 'Please check this field and try again.';
       throw new ReaderFormError('validation', { fields: errors });
     }
     const errors = { 403: 'forbidden', 409: 'duplicate', 413: 'size', 415: 'configuration', 503: 'unavailable' };
     if (errors[response.status]) throw new ReaderFormError(errors[response.status]);
     if (!response.ok) throw new ReaderFormError('server');
     const expected = tokenAction ? 200 : kind === 'newsletter' ? 202 : 201;
-    if (response.status !== expected || data?.ok !== true || (kind === 'contact' && !/^MSG-[A-Z0-9]{1,32}$/.test(data.reference || ''))) throw new ReaderFormError('unconfirmed');
+    if (response.status !== expected || data?.ok !== true || (kind === 'contact' && !/^MSG-[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{8}$/.test(data.reference || ''))) throw new ReaderFormError('unconfirmed');
     return kind === 'contact' ? { reference: data.reference } : { ok: true };
   } catch (error) {
     if (error instanceof ReaderFormError) throw error;
@@ -77,10 +78,11 @@ export async function postReaderForm({ endpoint, kind, values = {}, token = '', 
 }
 
 // Capture once, remove credentials before optional third-party code can run. Never persist the token.
-export function captureNewsletterLink(location, history, basePath = '/') {
-  const base = basePath.endsWith('/') ? basePath : `${basePath}/`;
-  const action = location.pathname.slice(base.length).match(/^newsletter\/(confirm|unsubscribe)\/?$/)?.[1];
-  if (!action || !location.pathname.startsWith(base)) return null;
+export function captureNewsletterLink(location, history) {
+  // Match the actual route suffix. A relative <base> on a static clean URL
+  // can point at /newsletter/ instead of the deployment root. It is not a route authority.
+  const action = location.pathname.startsWith('/') && location.pathname.match(/\/newsletter\/(confirm|unsubscribe)\/?$/)?.[1];
+  if (!action) return null;
   const params = new URLSearchParams(location.search);
   const values = params.getAll('token');
   const token = values.length === 1 && values[0].length <= 4096 ? values[0] : '';
