@@ -190,3 +190,26 @@ test('cutover smoke dry run against synthetic HTTP STUB checks one hop, title, m
   assert.equal(await new Promise(resolve => child.on('exit', resolve)), 0);
   assert.deepEqual(JSON.parse(stdout), {total: 2, passed: 2, failed: 0}); assert.equal(stderr, '');
 });
+
+
+test('stub endpoint rejects wildcard/unquoted ETags so refreshes cannot be pinned to an old map',async()=>{
+ for(const etag of ['*','unquoted-token']) {
+  let time=1000,calls=0;
+  const handler=createPublicRedirects({endpoint:'https://cms.example.test/api/public/redirects',now:()=>time,cacheMs:1000,fetchImpl:async(_url,options)=>{
+   calls++;assert.equal(options.headers['If-None-Match'],undefined);
+   return Response.json(map([row('/old/',calls===1?'/first/':'/second/')]),{headers:{etag}});
+  }});
+  assert.equal((await invoke(handler)).response[3].Location,'/first/');time+=1001;
+  assert.equal((await invoke(handler)).response[3].Location,'/second/');assert.equal(calls,2);
+ }
+});
+test('synthetic file refresh replaces a generation and fails closed after file removal',async t=>{
+ let time=1000;const file=await tempFile(t,map([row('/old/','/first/')]));
+ const handler=createPublicRedirects({file,now:()=>time,cacheMs:1000});
+ assert.equal((await invoke(handler)).response[3].Location,'/first/');
+ await writeFile(file,JSON.stringify(map([row('/old/','/second/')])));time+=1001;
+ assert.equal((await invoke(handler)).response[3].Location,'/second/');
+ await rm(file);time+=1001;assert.equal((await invoke(handler)).handled,false);
+ const unsolicited=createPublicRedirects({endpoint:'https://cms.example.test/api/public/redirects',fetchImpl:async()=>new Response(null,{status:304})});
+ assert.equal((await invoke(unsolicited)).handled,false);
+});

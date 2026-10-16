@@ -190,7 +190,7 @@ export function createPublicRedirects({
           data = await responseJSON(response);
           // ETags are opaque HTTP header values, not URLs or loggable identifiers.
           const next = response.headers.get('etag') || '';
-          etag = /^[\x21-\x7e]{1,256}$/.test(next) ? next : '';
+          etag = /^(?:W\/)?"[\x21\x23-\x7e]{0,240}"$/.test(next) ? next : '';
         }
         map = validatePatterns(compileRedirectMap(data, {allowedHosts: [...hosts], ...routeOptions}));
       } catch { map = emptyMap(); etag = ''; }
