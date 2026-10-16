@@ -18,5 +18,6 @@ test('Copy fallback remains accessible and local Listen is available',async({pag
   await page.getByRole('button',{name:'Copy original article link'}).click();
   await expect(page.getByRole('dialog',{name:'Share this story'})).toBeVisible();await page.getByRole('button',{name:'Copy link',exact:true}).click();
   await expect(page.locator('#share-status')).toContainText('link is selected');
+  await page.mouse.move(0,0);await page.locator('#copy-share-url').evaluate(async button=>{await Promise.allSettled(button.getAnimations().map(animation=>animation.finished));});
   const results=await new AxeBuilder({page}).include('#share-dialog').analyze();expect(results.violations).toEqual([]);
 });
