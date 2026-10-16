@@ -62,3 +62,15 @@ The CMS fixes are Claude's. These three are in the public host:
 3. **SHOULD: the allowlist setting has a different name on each side.** The CMS reads `REDIRECT_ALLOWED_HOSTS`; the host reads
    `PUBLIC_REDIRECT_ALLOWED_HOSTS` and also needs `PUBLIC_SITE_URL`. One disagreement makes the host reject the whole list. Document
    that they must match, and reject at startup if the host's list is empty while the map contains an absolute `to`.
+
+## Added after the review of the CMS contact and newsletter endpoints (PR #56): public-form item for #49
+
+1. **MUST: handle a Turnstile rejection as "verify again", not a dead end.** The CMS answers **403** with `field: 'turnstileToken'`
+   when a token is rejected, expired, already used or for the wrong action (the same behaviour as the story submission
+   endpoint). `src/lib/reader-form-contracts.js` only reads that field on 400 or 422, so a reader whose token expired, or who
+   retries after a network error, gets "This service cannot accept requests from this website. Please email the newsroom."
+   Treat 403 with `field: 'turnstileToken'` as "verification expired, please try again": reset the widget and keep the form values.
+   A 403 without that field (origin not allowed) stays the dead-end message.
+2. **SHOULD: the confirmation links need the public site served at the root of its domain.** The CMS builds
+   `${PUBLIC_SITE_URL}/newsletter/confirm?token=...` from a bare origin. Say so in `docs/public-reader-forms.md` and export pages for
+   `/newsletter/confirm` and `/newsletter/unsubscribe` (still open from the first review).
