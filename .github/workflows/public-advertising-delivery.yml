@@ -5,6 +5,7 @@ on:
       - 'src/main.js'
       - 'src/lib/advertising*.js'
       - 'advertising-delivery-tests/**'
+      - 'unit-tests/advertising*.test.js'
       - 'playwright.advertising-delivery.config.js'
       - 'package*.json'
       - '.github/workflows/public-advertising-delivery.yml'

@@ -7,9 +7,14 @@ import { cmsImage, cmsFigure, bindCMSImages } from './lib/cms-media.js';
 import { selectHomepage, uniqueHomeReports } from './lib/homepage.js';
 import { mountAdvertisingPlacements } from './lib/advertising.js';
 import bundledAdvertising from './data/advertising.json';
-import { createAdvertisingDelivery } from './lib/advertising-delivery.js';
-const advertisingDelivery=createAdvertisingDelivery({endpoint:import.meta.env.VITE_PUBLIC_ADVERTISING_URL});
-let advertising=bundledAdvertising;
+let advertisingDelivery, advertisingModule;
+function mountPublicAdvertising(root) {
+  if(!import.meta.env.VITE_PUBLIC_ADVERTISING_URL)return mountAdvertisingPlacements(root,bundledAdvertising,{resolveAsset:asset});
+  const signal=routeController.signal;
+  if(advertisingDelivery)return advertisingDelivery.mount(root,{resolveAsset:asset,signal});
+  advertisingModule ||= import('./lib/advertising-delivery.js').then(({createAdvertisingDelivery})=>advertisingDelivery=createAdvertisingDelivery({endpoint:import.meta.env.VITE_PUBLIC_ADVERTISING_URL}));
+  void advertisingModule.then(delivery=>{if(root.isConnected&&!signal.aborted)return delivery.mount(root,{resolveAsset:asset,signal});}).catch(()=>{});
+}
 import { publicFormMarkup } from './forms/public-form-markup.js';
 import { fetchPublishedPage, fetchPublishedArticle, fetchPublicCategory, fetchPublicCategories, cmsErrorMessage } from './lib/published-articles.js';
 import { renderArticleContent } from './lib/article-content.js';
@@ -107,7 +112,7 @@ function shell(content, route='home') {
     <dialog id="share-dialog" aria-labelledby="share-title"><div class="dialog-bar"><h2 id="share-title">Share this story</h2><button class="icon-button" data-close aria-label="Close sharing">${icon('close')}</button></div><p>Copy this link to share the article.</p><label for="share-url">Article link</label><input id="share-url" type="url" readonly><button class="outline-button" id="select-share-url">Select link</button></dialog>
     <div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>`;
   bindCommon();
-  mountAdvertisingPlacements(document.querySelector('#main'), advertising, { resolveAsset: asset });
+  mountPublicAdvertising(document.querySelector('#main'));
 }
 function card(s, featured=false) {
   return `<article data-story-slug="${escape(s.slug)}" class="story-card ${featured?'wide-card':''}"><a class="card-image" href="${href(s)}" tabindex="-1" aria-hidden="true">${picture(s)}<span class="image-tag">${escape(s.category)}</span></a><div class="card-copy"><div class="story-meta"><time datetime="${s.dateGMT}">${date(s)}</time>${mark(s)}</div><h3><a href="${href(s)}">${escape(s.title)}</a></h3><p>${escape(s.summary)}</p><div class="card-byline"><span>By ${escape(s.author)}</span><a href="${href(s)}" aria-label="Read briefing: ${escape(s.title)}">${icon('arrow',18)}</a></div></div></article>`;
@@ -315,7 +320,7 @@ async function reportPage(slug) {
       }
       const body = renderArticleContent(article.content,{baseUrl:cmsUrl});
       target.innerHTML = `<div class="breadcrumbs"><a href="#home">Home</a><span>/</span><a href="#latest">Latest reports</a></div><article><header class="article-header"><span class="eyebrow clay">${escape(article.category || 'Newsroom')}</span><h1>${escape(article.title)}</h1><p class="article-deck">${escape(article.excerpt)}</p><div class="article-meta"><div>${article.bylineName?`<strong class="newsroom-byline">By ${escape(article.bylineName)}</strong>`:''}${reportDate(article)}</div><button class="icon-button" id="share-report" aria-label="Copy article link">${icon('share',19)}</button></div></header>${cmsFigure(article.featuredImage,{eager:true,fallbackAlt:article.title})}<div class="newsroom-article-body article-body">${body || '<p>The full article text is not available yet. Please check back shortly.</p>'}</div>${article.corrections.length?`<section class="newsroom-corrections article-corrections" aria-labelledby="corrections-title"><h2 id="corrections-title">Corrections & updates</h2><ul>${article.corrections.map(c=>`<li>${c.correctedAt?`<time datetime="${escape(c.correctedAt)}">${date({dateGMT:c.correctedAt},true)}</time>`:''}<p>${escape(c.note)}</p></li>`).join('')}</ul></section>`:''}${article.legacyUrl?`<p class="legacy-source"><a href="${escape(article.legacyUrl)}" target="_blank" rel="noopener noreferrer">Original publication ${icon('diagonal',15)}</a></p>`:''}${adMarker('article-inline')}<div class="newsroom-article-end"><a class="text-link" href="#latest">More from the newsroom ${icon('arrow',17)}</a></div></article>`;
-      mountAdvertisingPlacements(target, advertising, { resolveAsset: asset });
+      mountPublicAdvertising(target);
       bindCMSImages(target);
       setArticleMetadata(article);
       document.title = `${article.title} — Church Times Nigeria`;
@@ -334,8 +339,7 @@ async function reportPage(slug) {
 function livePage(slug){shell(livePageMarkup(),'live');mountLivePage(document.querySelector('.public-live'),{baseUrl:cmsUrl,slug,signal:routeController.signal});}
 
 let renderedLocation;
-let renderGeneration=0;
-async function render(){const generation=++renderGeneration;advertising=import.meta.env.VITE_PUBLIC_ADVERTISING_URL?await advertisingDelivery.load():bundledAdvertising;if(generation!==renderGeneration)return;renderRoute();renderedLocation=location.href;}
+function render(){renderRoute();renderedLocation=location.href;}
 function renderRoute(){let parts;try{parts=location.hash?decodeURIComponent(location.hash.slice(1)).split('/'):location.pathname.startsWith(publicBase+'reports/')?['report',reportSlug(location.pathname,publicBase)||'']:publicPageRoute(location.pathname,publicBase)||['home'];}catch{parts=['404'];}const [route='home',...rest]=parts;const param=rest.join('/');const pages={home,about,contact,advertise,submit:submissionPage,saved:savedPage};if(route==='main'){if(!document.querySelector('#main'))home();document.querySelector('#main').focus();return;}if(route==='connect'){if(!document.querySelector('#connect'))home();requestAnimationFrame(()=>document.querySelector('#connect').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'}));return;}resetArticleMetadata();if(route==='report' && reportPath(param,publicBase))history.replaceState(null,'',reportPath(param,publicBase));if(route==='section')sectionPage(param);else if(route==='story')storyPage(param);else if(route==='search')searchPage(param);else if(route==='latest')latestPage();else if(route==='live')livePage(param);else if(route==='category')latestPage({categorySlug:param});else if(route==='report')reportPage(param);else if(pages[route])pages[route]();else if(!route)home();else notFound();const heading=document.querySelector('h1')?.textContent||'The journal';if(publicPageRoute(location.pathname,publicBase) && !location.hash){document.querySelector('meta[property="og:title"]').content=heading;document.querySelector('meta[property="og:description"]').content=document.querySelector('.page-intro p')?.textContent||heading;}document.title=`${heading} — Church Times Nigeria`;document.querySelector('meta[name="description"]').content=document.querySelector('.article-deck')?.textContent||'Church Times Nigeria: news, features, interviews and perspectives on faith and public life.';window.scrollTo({top:0,behavior:'instant'});}
 function handlePublicNavigation(){
   // Chromium can notify both history and hash listeners for one navigation.
