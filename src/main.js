@@ -6,7 +6,10 @@ import { reportPath, reportSlug, articleCanonical, articleSchema, safeJSON } fro
 import { cmsImage, cmsFigure, bindCMSImages } from './lib/cms-media.js';
 import { selectHomepage, uniqueHomeReports } from './lib/homepage.js';
 import { mountAdvertisingPlacements } from './lib/advertising.js';
-import advertising from './data/advertising.json';
+import bundledAdvertising from './data/advertising.json';
+import { createAdvertisingDelivery } from './lib/advertising-delivery.js';
+const advertisingDelivery=createAdvertisingDelivery({endpoint:import.meta.env.VITE_PUBLIC_ADVERTISING_URL});
+let advertising=bundledAdvertising;
 import { publicFormMarkup } from './forms/public-form-markup.js';
 import { fetchPublishedPage, fetchPublishedArticle, fetchPublicCategory, fetchPublicCategories, cmsErrorMessage } from './lib/published-articles.js';
 import { renderArticleContent } from './lib/article-content.js';
@@ -326,7 +329,8 @@ async function reportPage(slug) {
 function livePage(slug){shell(livePageMarkup(),'live');mountLivePage(document.querySelector('.public-live'),{baseUrl:cmsUrl,slug,signal:routeController.signal});}
 
 let renderedLocation;
-function render(){renderRoute();renderedLocation=location.href;}
+let renderGeneration=0;
+async function render(){const generation=++renderGeneration;advertising=import.meta.env.VITE_PUBLIC_ADVERTISING_URL?await advertisingDelivery.load():bundledAdvertising;if(generation!==renderGeneration)return;renderRoute();renderedLocation=location.href;}
 function renderRoute(){let parts;try{parts=location.hash?decodeURIComponent(location.hash.slice(1)).split('/'):location.pathname.startsWith(publicBase+'reports/')?['report',reportSlug(location.pathname,publicBase)||'']:publicPageRoute(location.pathname,publicBase)||['home'];}catch{parts=['404'];}const [route='home',...rest]=parts;const param=rest.join('/');const pages={home,about,contact,advertise,submit:submissionPage,saved:savedPage};if(route==='main'){if(!document.querySelector('#main'))home();document.querySelector('#main').focus();return;}if(route==='connect'){if(!document.querySelector('#connect'))home();requestAnimationFrame(()=>document.querySelector('#connect').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'}));return;}resetArticleMetadata();if(route==='report' && reportPath(param,publicBase))history.replaceState(null,'',reportPath(param,publicBase));if(route==='section')sectionPage(param);else if(route==='story')storyPage(param);else if(route==='search')searchPage(param);else if(route==='latest')latestPage();else if(route==='live')livePage(param);else if(route==='category')latestPage({categorySlug:param});else if(route==='report')reportPage(param);else if(pages[route])pages[route]();else if(!route)home();else notFound();const heading=document.querySelector('h1')?.textContent||'The journal';if(publicPageRoute(location.pathname,publicBase) && !location.hash){document.querySelector('meta[property="og:title"]').content=heading;document.querySelector('meta[property="og:description"]').content=document.querySelector('.page-intro p')?.textContent||heading;}document.title=`${heading} — Church Times Nigeria`;document.querySelector('meta[name="description"]').content=document.querySelector('.article-deck')?.textContent||'Church Times Nigeria: news, features, interviews and perspectives on faith and public life.';window.scrollTo({top:0,behavior:'instant'});}
 function handlePublicNavigation(){
   // Chromium can notify both history and hash listeners for one navigation.
