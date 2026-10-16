@@ -8,8 +8,9 @@ const MAX_SITEMAP_PAGES=1000,MAX_CATEGORY_PAGES=20,CACHE_MS=60000;
 export const xml=value=>String(value ?? '').replace(/[^\u0009\u000a\u000d\u0020-\ud7ff\ue000-\ufffd\u{10000}-\u{10ffff}]/gu,'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
 const declaration='<?xml version="1.0" encoding="UTF-8"?>';
 export const PUBLIC_STATIC_PAGES=['','latest/','about/','contact/','advertise/'];
-export function createPublicFeeds({cmsUrl,siteUrl,basePath='/',indexable=false,articlePathTemplate,fetchImpl=fetch}={}) {
-  const articlePath=slug=>reportPath(slug,basePath,articlePathTemplate);
+export function createPublicFeeds({cmsUrl,siteUrl,basePath='/',indexable=false,articlePathTemplate,fetchImpl=fetch,warn=record=>console.warn(JSON.stringify(record))}={}) {
+  let skippedCount=0;
+  const articlePath=slug=>{const path=reportPath(slug,basePath,articlePathTemplate);if(!path){skippedCount++;try{warn({code:'public_discovery_reserved_slug_skipped',count:skippedCount});}catch{}}return path;};
   const canonical=path=>siteCanonical(basePath+path,{siteUrl});
   const options={baseUrl:cmsUrl,fetchImpl,timeoutMs:6000};
   const cache=new Map();

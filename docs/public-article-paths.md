@@ -28,3 +28,8 @@ Review follow-up: empty/whitespace-only template settings use the unchanged defa
 `/{slug}/`, a reserved article slug is skipped in RSS and the article portion of sitemap output; other valid stories and
 static-page sitemap entries remain available. The import/editor must still resolve the collision before that article can
 have a public root URL. The new reserved-slug coverage remains an explicitly synthetic API fixture.
+
+C2 is now implemented in integration by CMS PR #53. `cms-integration-tests/public-c2-seo.spec.js` seeds only synthetic
+metadata through real Payload, confirms the fields on the anonymous REST projection, and checks both article templates in
+the compiled browser on desktop and Pixel 7, including SSR hydration, fallback fields, JSON-LD and unchanged RSS excerpts.
+The older unit fixtures remain labelled fixtures. This proves C2 projection/consumption, not C7 redirects or a real archive import.

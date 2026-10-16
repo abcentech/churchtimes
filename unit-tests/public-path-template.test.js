@@ -58,8 +58,10 @@ for(const template of ['/{slug}/','/reports/{slug}/'])test('anonymous API STUB: 
 
 
 test('synthetic root-template feed skips reserved slugs without breaking discovery',async t=>{
+ const warnings=[];t.mock.method(console,'warn',record=>warnings.push(record));
  const dist=await mkdtemp(join(tmpdir(),'public-template-reserved-'));await writeFile(join(dist,'index.html'),await readFile(new URL('../src/index.template.html',import.meta.url),'utf8'));
  const server=createPublicServer({dist,cmsUrl:'https://cms.example.test',siteUrl:'https://public.example.test',articlePathTemplate:'/{slug}/',fetchImpl:async url=>Response.json({docs:new URL(url).pathname==='/api/categories'?[]:[{...raw,slug:'about'},raw],totalPages:1})});
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(async()=>{await new Promise(resolve=>server.close(resolve));await rm(dist,{recursive:true,force:true});});
  for(const route of ['sitemap.xml','feed.xml']){const response=await fetch('http://127.0.0.1:'+server.address().port+'/'+route);assert.equal(response.status,200);const body=await response.text();assert.match(body,/synthetic-report/);if(route==='feed.xml')assert.equal((body.match(/<item>/g)||[]).length,1);}
+ assert.ok(warnings.length>=2);assert.match(warnings[0],/public_discovery_reserved_slug_skipped/);assert.doesNotMatch(JSON.stringify(warnings),/example.test|synthetic-report|\"about\"/);
 });
