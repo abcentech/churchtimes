@@ -2,6 +2,13 @@ name: Public reader forms contract stubs
 on:
   pull_request:
     paths:
+      - 'src/main.js'
+      - 'src/index.template.html'
+      - 'tools/public-reader-export.mjs'
+      - 'tools/prepare-pages.mjs'
+      - 'tools/test-reader-shell.mjs'
+      - 'reader-shell-tests/**'
+      - 'playwright.reader-shell.config.js'
       - 'src/forms/reader-forms.*'
       - 'src/lib/reader-form-contracts.js'
       - 'src/lib/turnstile.js'
@@ -23,3 +30,4 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: node --test unit-tests/reader-forms.test.js
       - run: npx playwright test --config playwright.reader-forms.config.js --reporter=list,github
+      - run: npx playwright test --config playwright.reader-shell.config.js --reporter=list,github
