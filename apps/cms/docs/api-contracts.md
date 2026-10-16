@@ -1,4 +1,4 @@
-# Church Times CMS — API contracts (v1.7)
+# Church Times CMS — API contracts (v1.8)
 
 Status: implemented on `agent/payload-core`. v1.1 added Turnstile, duplicate detection, staff auth/session
 contract and security hardening; v1.2 closes the verified security-review findings: media ownership, version
@@ -91,6 +91,8 @@ Rules:
   title: string                // ≤ 240 chars
   slug: string                 // ^[a-z0-9]+(?:-[a-z0-9]+)*$, unique, ≤ 160
   excerpt?: string             // ≤ 600 chars, plain text
+  seoTitle?: string | null     // v1.8, ≤ 70 chars, plain text; null when unset (public site falls back to `title`)
+  seoDescription?: string | null // v1.8, ≤ 200 chars, plain text; null when unset (falls back to `excerpt`)
   content: LexicalRichText     // structured JSON, never raw HTML
   category: number | Category  // depends on `depth`
   featuredImage?: number | Media
@@ -104,6 +106,17 @@ Rules:
   updatedAt: string
 }
 ```
+
+**SEO fields (v1.8).** `seoTitle` and `seoDescription` are optional and public on **published** articles (like every other
+non-staff field); drafts and unpublished articles are never readable anonymously, so neither are their SEO values.
+On write the server strips markup and control characters, collapses the text to one line and stores an empty result as `null`.
+More than 70 / 200 characters after cleaning is `400` naming the field (*SEO title must be at most 70 characters.*). A value that
+contains a template variable such as `%title%` or `%sitename%` is `400` (the public site builds its own title pattern). A
+non-string (number, object, array) is `400`, never silently dropped. Fallbacks are the public site's job: title tag = `seoTitle`
+else `title`; meta and share-card description = `seoDescription` else `excerpt`; RSS keeps `excerpt`. There is no canonical
+override: the canonical address is derived from the article path. Who may edit follows `content`: reporters only while the
+article is a draft or changes are requested, editors in scope, trusted publishers for their own. Changing **only** these two
+fields of a published article is **not** a material change (no `corrections` entry needed) but is still versioned.
 
 Staff-only fields (never returned to anonymous readers): `author`, `reviewNotes`, `scheduledFor`, `bodyMedia`.
 `bodyMedia` (v1.4) is derived by the server from the `upload` nodes of `content` (distinct media ids), never client-writable
@@ -535,6 +548,13 @@ proxy) and https-only `CMS_PUBLIC_URL`/CORS/CSRF settings (`docs/security.md`). 
 limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/operations.md` §4).
 
 ## 9. Changelog
+
+### v1.8
+Go-live contract C2 (SEO fields). Additive, no breaking change.
+- New optional article fields `seoTitle` (≤ 70) and `seoDescription` (≤ 200): plain text, sanitised, `null` when unset, public on published
+  articles, no template variables, not a material change for corrections (§2, §3). Migration `20261016_094708_article_seo_fields`
+  adds four nullable columns (two on `articles`, two on its versions table); reversible.
+- The rest of the go-live contracts (C1, C3 to C7) are still **proposed** in `go-live-contracts.md`.
 
 ### v1.7
 Review round 3. Additive.

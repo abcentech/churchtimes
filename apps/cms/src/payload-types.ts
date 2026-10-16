@@ -258,6 +258,14 @@ export interface Article {
    */
   slug: string;
   excerpt?: string | null;
+  /**
+   * Optional search-result title, up to 70 characters. Leave empty to use the headline.
+   */
+  seoTitle?: string | null;
+  /**
+   * Optional search-result description, up to 200 characters. Leave empty to use the excerpt.
+   */
+  seoDescription?: string | null;
   content: {
     root: {
       type: string;
@@ -585,6 +593,8 @@ export interface ArticlesSelect<T extends boolean = true> {
   title?: T;
   slug?: T;
   excerpt?: T;
+  seoTitle?: T;
+  seoDescription?: T;
   content?: T;
   category?: T;
   featuredImage?: T;
