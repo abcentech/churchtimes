@@ -10,14 +10,14 @@ The article template still defaults to `/reports/{slug}/`.
 | --- | --- |
 | `PUBLIC_REDIRECTS_FILE` | Optional private local JSON export in C7.3 shape. Takes precedence over a configured endpoint. Missing/unreadable file means no exact redirects, without an HTTP error. |
 | `PUBLIC_REDIRECTS_URL` | Optional explicit `https://<cms-host>/api/public/redirects`; loopback HTTP is accepted for local tests. No endpoint is inferred from `PUBLIC_CMS_URL`. No credentials, query or fragment. Ignored while a file is configured. |
-| `PUBLIC_REDIRECT_ALLOWED_HOSTS` | Comma-separated exact HTTPS hosts, including a nonstandard port when necessary; no wildcard. Empty by default, so destinations must be internal paths. Equivalent to the CMS's `REDIRECT_ALLOWED_HOSTS` policy, configured separately on this host. |
+| `PUBLIC_REDIRECT_ALLOWED_HOSTS` | Comma-separated exact HTTPS hosts, bare hostnames only (no port, scheme or wildcard), matching CMS `REDIRECT_ALLOWED_HOSTS`. Empty by default, so destinations must be internal paths. The host also accepts `REDIRECT_ALLOWED_HOSTS` directly. If both names are set they must match after normalization, or startup fails. |
 | `PUBLIC_REDIRECT_PATTERNS` | Optional JSON object of explicitly approved destination templates. Every pattern is off unless its destination is supplied. |
 | `PUBLIC_ARTICLE_PATH_TEMPLATE`, `PUBLIC_BASE_PATH`, `PUBLIC_SITE_URL` | Shared routing settings, also used to reject destinations that would need a second canonical-path redirect. |
 
 File and endpoint responses must have `{version, generatedAt, count, rules}` with
 `version: "sha256:..."`, a parseable generation timestamp and `count === rules.length`.
 Each rule has `from`, `to`, numeric `status` and `source` (`manual`, `rank-math` or
-`legacy-url`). Internal source paths are unique and at most 300 characters. A 410
+`legacy-url`). Canonical source paths are unique and at most 300 characters. The shared C7 normalizer adds directory slashes, NFC-normalizes UTF-8, encodes apostrophes and uses uppercase percent bytes before lookup. A 410
 may omit `to`; a provided destination must still be safe and is never emitted as
 `Location` for that response.
 
@@ -25,10 +25,9 @@ The module caps each generation at **5 MiB / 20,000 rules** and validates it ato
 Duplicate sources, loops, chains, unsupported statuses and unsafe destinations reject
 the entire generation. File reads and remote responses are bounded; response streaming
 also enforces the byte cap when Content-Length is absent. Remote fetches omit
-credentials, refuse redirects and time out after five seconds. Refreshes are coalesced,
+credentials, refuse redirects and time out after five seconds. Refreshes run in the background, are coalesced,
 use `If-None-Match`, and cache for at most **300 seconds**. A 304 retains the validated
-map. A failed or invalid refresh removes the previous map, with a short negative cache;
-there is no stale redirect fallback. There is no per-request-URL cache or per-URL log.
+map. A failed, timed-out, invalid or partial refresh keeps the last good map and emits an address-free counted warning (`public_redirect_refresh_failed`). It retries at the next refresh interval; it never swaps in a partial map. There is no per-request-URL cache or per-URL log.
 
 Only GET and HEAD may redirect, with status 301, 302 or 410. Exact rules use a `Map`
 lookup and win over patterns. Request query parameters are not carried to exact
@@ -132,3 +131,20 @@ base path) as neutral HTML shells before redirects or CMS reads. GET and HEAD ne
 pages have no canonical, no token echo, `X-Robots-Tag: noindex,nofollow`, `Cache-Control: no-store` and
 `Referrer-Policy: no-referrer`. The separate Session B reader PR owns token capture, URL scrubbing and explicit POST
 buttons. These paths are excluded from sitemap/static-page discovery. The shell alone does not implement a newsletter endpoint.
+
+## Startup readiness and review corrections
+
+The CLI awaits `server.publicReady` before listening. An embedding host should also await that promise before exposing the
+server. Redirect HTTP handling never awaits map I/O; expiry triggers a coalesced background refresh while requests use the
+last good generation. A periodic unref'ed timer also refreshes without traffic. Server close stops its timer. The handler's
+`diagnostics()` returns only loaded/rule/count/refresh metrics; warnings never include addresses, paths or response text.
+Local absolute targets without an allowlist or canonical site origin fail startup explicitly. Remote startup configuration
+errors reject readiness. General transient remote failure retains any last-good generation, or starts with none if no map
+has ever loaded, and emits a counted warning. Keep the CMS and public-host hostname allowlists identical.
+
+`tools/public-redirect-paths.mjs` and `tools/fixtures/public-redirect-paths.json` transcribe the dependency-free C7.1
+contract and synthetic cases from CMS PR #55 a90183c, with the reviewed NFC correction. The current CMS PR has not yet
+landed that correction or exported JSON vectors. This is **provisional contract/fixture validation**, not claimed shared
+CMS parity or A9 real-CMS integration. The host's separate junk guard still rejects unsafe encoded separators before lookup.
+Stray query-string percent characters are ignored for path normalization; malformed path encodings remain junk. Empty
+article path settings use `/reports/{slug}/`; reserved root slugs are skipped with counted address-free discovery warnings.

@@ -46,7 +46,7 @@ export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(file
     }
     return {html:html.replace('</head>',()=>metadata+'</head>').replace('<div id="app"></div>',()=>`<div id="app">${body}</div>`),robots};
   }
-  return createServer(async(req,res)=>{
+  const server=createServer(async(req,res)=>{
     const respond=createPublicResponder(req,res);
     if(!['GET','HEAD'].includes(req.method))return respond(405,'text/plain','Method not allowed',{Allow:'GET, HEAD'});
     if(isJunkPath(req.url))return respond(404,'text/plain','Not found');
@@ -80,10 +80,13 @@ export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(file
       return respond(200,mime[extname(file)] || 'application/octet-stream',await readFile(file),{'Cache-Control':/\/assets\//.test(file)?'public, max-age=31536000, immutable':'no-cache'});
     } catch {return respond(404,'text/plain','Not found');}
   });
+  server.publicReady=redirects.ready;
+  server.on('close',()=>redirects.close());
+  return server;
 }
 if(process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
   const port=Number(process.env.PORT || 5373);
   if(!Number.isInteger(port)||port<1||port>65535)throw new Error('Invalid PORT');
-  const server=createPublicServer();server.listen(port,process.env.HOST || '127.0.0.1',()=>console.log(`Public frontend ready on port ${port}`));
+  const server=createPublicServer();await server.publicReady;server.listen(port,process.env.HOST || '127.0.0.1',()=>console.log(`Public frontend ready on port ${port}`));
   for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>server.close(()=>process.exit(0)));
 }

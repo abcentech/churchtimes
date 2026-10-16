@@ -13,6 +13,7 @@ import {readRedirectChecks, checkRedirects, redirectCheckCLI} from '../tools/che
 const map = (rules = [{from: '/old/', to: '/reports/new/', status: 301, source: 'legacy-url'}]) => ({version: 'sha256:synthetic', generatedAt: '2026-10-16T00:00:00Z', count: rules.length, rules});
 const row = (from, to, status = 301) => ({from, to, status, source: 'manual'});
 async function invoke(handler, path = '/old/', method = 'GET') {
+  await handler.ready;
   let response;
   const handled = await handler({method, url: new URL(path, 'https://public.example.test'), rawUrl: path}, (...args) => { response = args; });
   return {handled, response};
@@ -66,19 +67,19 @@ test('synthetic maps reject duplicates, loops, chains, unsupported status, unsaf
 
 test('junk is detected before URL normalisation with zero CMS requests or map load', async () => {
   let calls = 0;
-  const handler = createPublicRedirects({endpoint: 'https://cms.example.test/api/public/redirects', fetchImpl: () => { calls++; assert.fail(); }});
-  for (const path of ['/tel:+2340000', '/archive/tel:123/', '/%74el:123/', '/a'.repeat(2049), '/bad%zz', '/%2fhost/', '/%252fhost/', '/a\\b', '/a/../b', '/a/%2e%2e/b', '//evil.test/path', '/x%00y', '/x?bad=%0d', '/x?bad=%zz']) {
+  const handler = createPublicRedirects({endpoint: 'https://cms.example.test/api/public/redirects', fetchImpl:async()=>{calls++;return Response.json(map());}});await handler.ready;const initialCalls=calls;
+  for (const path of ['/tel:+2340000', '/archive/tel:123/', '/%74el:123/', '/a'.repeat(2049), '/bad%zz', '/%2fhost/', '/%252fhost/', '/a\\b', '/a/../b', '/a/%2e%2e/b', '//evil.test/path', '/x%00y', ]) {
     assert.equal(isJunkPath(path), true, path);
     // The parsed URL is deliberately unrelated: the raw request guard must win.
     let status;
     assert.equal(await handler({method: 'GET', url: new URL('https://public.example.test/'), rawUrl: path}, code => { status = code; }), true);
     assert.equal(status, 404);
   }
-  for (const path of ['/', '/reports/new/', '/category/church/', '/?p=42', '/api/media/file/synthetic.webp', '/api/media/file/synthetic%20image.webp', '/?search=church%20news']) assert.equal(isJunkPath(path), false, path);
-  assert.equal(calls, 0);
+  for (const path of ['/', '/reports/new/', '/category/church/', '/?p=42', '/api/media/file/synthetic.webp', '/api/media/file/synthetic%20image.webp', '/?search=church%20news', '/x?bad=%0d', '/x?bad=%zz', '/?x=%']) assert.equal(isJunkPath(path), false, path);
+  assert.equal(calls,initialCalls);
 });
 
-test('stub C7 endpoint uses bounded ETag cache, omits credentials, coalesces reads and drops a bad refresh', async () => {
+test('stub C7 endpoint uses bounded ETag cache, omits credentials, coalesces reads and retains the last good map after a bad refresh', async () => {
   let time = 1000, calls = 0;
   const handler = createPublicRedirects({endpoint: 'https://cms.example.test/api/public/redirects', now: () => time, cacheMs: 1000,
     fetchImpl: async (url, options) => {
@@ -91,9 +92,9 @@ test('stub C7 endpoint uses bounded ETag cache, omits credentials, coalesces rea
   });
   const first = await Promise.all([invoke(handler), invoke(handler), invoke(handler)]);
   assert.equal(calls, 1); assert.ok(first.every(result => result.response[0] === 301));
-  time += 1001; assert.equal((await invoke(handler)).handled, true); assert.equal(calls, 2);
-  time += 1001; assert.equal((await invoke(handler)).handled, false); assert.equal(calls, 3);
-  assert.equal((await invoke(handler)).handled, false); assert.equal(calls, 3);
+  time += 1001; assert.equal((await invoke(handler)).handled, true);await handler.settled(); assert.equal(calls, 2);
+  time += 1001; assert.equal((await invoke(handler)).handled, true);await handler.settled(); assert.equal(calls, 3);
+  assert.equal((await invoke(handler)).handled, true); assert.equal(calls, 3);assert.equal(handler.diagnostics().warningCount,1);
 });
 
 test('stub C7 endpoint fails closed on unavailable, wrong MIME, oversized or malformed responses', async () => {
@@ -128,9 +129,9 @@ test('pattern/exact and pattern/pattern chains never produce a multi-hop Locatio
 });
 
 test('canonical-path targets cannot introduce a second host redirect for either article template or base path', () => {
-  for (const to of ['/reports/story', '/latest', '/about', '/contact', '/advertise', '/category/church']) assert.throws(() => compileRedirectMap(map([row('/old/', to)])), /canonical-path/);
-  assert.throws(() => compileRedirectMap(map([row('/old/', '/story')]), {articlePathTemplate: '/{slug}/'}), /canonical-path/);
-  assert.throws(() => compileRedirectMap(map([row('/old/', '/journal/reports/story')]), {basePath: '/journal/'}), /canonical-path/);
+  for (const to of ['/reports/story', '/latest', '/about', '/contact', '/advertise', '/category/church']) assert.equal(compileRedirectMap(map([row('/old/', to)])).get('/old/').to,to+'/');
+  assert.equal(compileRedirectMap(map([row('/old/', '/story')]), {articlePathTemplate:'/{slug}/'}).get('/old/').to,'/story/');
+  assert.equal(compileRedirectMap(map([row('/old/','/journal/reports/story')]),{basePath:'/journal/'}).get('/old/').to,'/journal/reports/story/');
   assert.throws(() => createPublicRedirects({patterns: {amp: '/reports/{slug}'}}), /canonical-path/);
   assert.throws(() => createPublicRedirects({patterns: {amp: '/{slug}'}, articlePathTemplate: '/{slug}/'}), /canonical-path/);
   assert.equal(compileRedirectMap(map([row('/old/', '/reports/story/')])).size, 1);
@@ -200,16 +201,35 @@ test('stub endpoint rejects wildcard/unquoted ETags so refreshes cannot be pinne
    return Response.json(map([row('/old/',calls===1?'/first/':'/second/')]),{headers:{etag}});
   }});
   assert.equal((await invoke(handler)).response[3].Location,'/first/');time+=1001;
-  assert.equal((await invoke(handler)).response[3].Location,'/second/');assert.equal(calls,2);
+  await handler.refresh();assert.equal((await invoke(handler)).response[3].Location,'/second/');assert.equal(calls,2);
  }
 });
-test('synthetic file refresh replaces a generation and fails closed after file removal',async t=>{
+test('synthetic file refresh replaces a generation and retains the last good generation after file removal',async t=>{
  let time=1000;const file=await tempFile(t,map([row('/old/','/first/')]));
  const handler=createPublicRedirects({file,now:()=>time,cacheMs:1000});
  assert.equal((await invoke(handler)).response[3].Location,'/first/');
  await writeFile(file,JSON.stringify(map([row('/old/','/second/')])));time+=1001;
- assert.equal((await invoke(handler)).response[3].Location,'/second/');
- await rm(file);time+=1001;assert.equal((await invoke(handler)).handled,false);
+ await handler.refresh();assert.equal((await invoke(handler)).response[3].Location,'/second/');
+ await rm(file);time+=1001;await handler.refresh();assert.equal((await invoke(handler)).response[3].Location,'/second/');assert.equal(handler.diagnostics().warningCount,1);
  const unsolicited=createPublicRedirects({endpoint:'https://cms.example.test/api/public/redirects',fetchImpl:async()=>new Response(null,{status:304})});
  assert.equal((await invoke(unsolicited)).handled,false);
+});
+
+test('background STUB refresh never blocks a request and keeps the last good map for every failure',async()=>{
+ let time=1000,calls=0,release;const warnings=[];
+ const handler=createPublicRedirects({endpoint:'https://cms.example.test/api/public/redirects',cacheMs:1000,now:()=>time,autoRefresh:false,warn:record=>warnings.push(record),fetchImpl:async()=>{
+  calls++;if(calls===1)return Response.json(map());return new Promise((resolve,reject)=>{release={resolve,reject};});
+ }});
+ await handler.ready;
+ const failures=[()=>release.resolve(new Response('private response text',{status:500})),()=>release.reject(new Error('private timeout address')),()=>release.resolve(Response.json({...map(),count:2})),()=>release.resolve(Response.json(map([row('/bad/','//private.example.test/')])) )];
+ for(const finish of failures){time+=1001;const result=await invoke(handler);assert.equal(result.response[3].Location,'/reports/new/');assert.equal(handler.diagnostics().refreshing,true);const before=calls;assert.equal((await invoke(handler)).handled,true);assert.equal(calls,before);finish();await handler.settled();assert.equal((await invoke(handler)).response[3].Location,'/reports/new/');}
+ assert.equal(handler.diagnostics().warningCount,4);assert.deepEqual(warnings.map(v=>v.count),[1,2,3,4]);assert.doesNotMatch(JSON.stringify(warnings),/private|https|timeout address|response text/);
+ handler.close();
+});
+test('bad absolute-map allowlist configuration is explicit at startup, never a silent empty map',async t=>{
+ const file=await tempFile(t,map([row('/old/','https://approved.example.test/new/')]));
+ assert.throws(()=>createPublicRedirects({file,siteUrl:'https://public.example.test'}),/REDIRECT_ALLOWED_HOSTS/);
+ assert.throws(()=>createPublicRedirects({file,allowedHosts:['approved.example.test']}),/PUBLIC_SITE_URL/);
+ const remote=createPublicRedirects({endpoint:'https://cms.example.test/api/public/redirects',warn:()=>{},fetchImpl:async()=>Response.json(map([row('/old/','https://approved.example.test/new/')]))});
+ await assert.rejects(remote.ready,/REDIRECT_ALLOWED_HOSTS/);remote.close();
 });
