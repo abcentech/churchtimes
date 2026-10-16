@@ -10,14 +10,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      - name: Select explicit public source or committed-export validation
+        id: public-build-policy
+        run: node tools/public-build-policy.mjs
+        env:
+          PUBLIC_CI_EVENT: ${{ github.event_name }}
+          PUBLIC_CI_BASE_REF: ${{ github.base_ref }}
+          PUBLIC_CI_REF_NAME: ${{ github.ref_name }}
+          PUBLIC_CI_HEAD_REF: ${{ github.head_ref }}
+          PUBLIC_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          PUBLIC_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       - run: npm run test:unit
       - run: npm run build
-      - run: npm run check:pages
+      - name: Validate actual compiled public source assets
+        run: node tools/check-public-source.mjs
+      - name: Verify committed Pages export (main or dedicated rebuild only)
+        if: steps.public-build-policy.outputs.mode == 'strict'
+        run: npm run check:pages
       - run: npx playwright install --with-deps chromium
       - run: npm test -- --workers=2 --reporter=list,github
       - run: npm run test:newsroom -- --workers=2 --reporter=list,github
