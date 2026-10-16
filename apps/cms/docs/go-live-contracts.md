@@ -90,6 +90,27 @@ stores arbitrary third-party URLs. The replacement is a registered Lexical block
 - Shortcodes found in the export (inventory: 0 `[penci...]`, 1 form shortcode, per the 2026-10-15 audit) are removed from the
   body and listed in the QA report. A form shortcode is never rendered or executed.
 
+### C1.4 Tables (editor support is a precondition)
+
+The importer writes tables in the standard shape the public renderer reads (`table` > `tablerow` > `tablecell`). The CMS
+editor is the default `lexicalEditor()`, which has **no table feature registered**, and an unregistered node can stop the
+admin editor from loading the article (the same reason C1.1 refuses a raw `embed` node). Therefore:
+
+- The C1 PR must register Lexical's table feature on `articles.content` **and** prove it with a real-browser test that opens
+  an imported article containing a table in the admin editor and saves it without data loss.
+- If that proves unstable, the importer **flattens** each table to paragraphs (one paragraph per row, cells separated by
+  ` | `) and lists the table in the QA report. The contract fixes the data shape either way; the public renderer already
+  handles both.
+- Until one of the two is done, the importer must not write table nodes.
+
+### C1.5 Links in legacy bodies
+
+- Absolute links to the old domain are rewritten to the new root-relative article path through the slug map (C7). Links to
+  media on the old domain are rewritten the same way once C1.2 is decided.
+- Only `http:`, `https:`, `mailto:` and root-relative links are written. Anything else is converted to plain text.
+- The public renderer must therefore accept **root-relative** links (today they render as plain text). That is a public-side
+  follow-up recorded in the Codex briefs.
+
 ## C2. SEO fields
 
 Two optional plain-text fields on `articles`. No canonical override: the canonical address is **derived** by the public host
