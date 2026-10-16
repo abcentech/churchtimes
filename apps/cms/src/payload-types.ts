@@ -193,6 +193,10 @@ export interface Media {
   caption?: string | null;
   credit?: string | null;
   uploadedBy?: (number | null) | User;
+  /**
+   * Original WordPress upload path. Set by the import; staff only.
+   */
+  legacyPath?: string | null;
   publishedAsFeatured?: {
     docs?: (number | Article)[];
     hasNextPage?: boolean;
@@ -536,6 +540,7 @@ export interface MediaSelect<T extends boolean = true> {
   caption?: T;
   credit?: T;
   uploadedBy?: T;
+  legacyPath?: T;
   publishedAsFeatured?: T;
   publishedInBody?: T;
   liveUpdateImages?: T;
