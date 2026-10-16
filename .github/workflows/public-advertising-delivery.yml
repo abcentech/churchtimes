@@ -1,0 +1,24 @@
+name: Public advertising delivery contract stubs
+on:
+  pull_request:
+    paths:
+      - 'src/main.js'
+      - 'src/lib/advertising*.js'
+      - 'advertising-delivery-tests/**'
+      - 'playwright.advertising-delivery.config.js'
+      - 'package*.json'
+      - '.github/workflows/public-advertising-delivery.yml'
+  workflow_dispatch:
+jobs:
+  contract-stubs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: node --test unit-tests/advertising*.test.js
+      - run: npx playwright test --config playwright.advertising-delivery.config.js --reporter=list,github
