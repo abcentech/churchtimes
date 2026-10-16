@@ -72,6 +72,7 @@ export interface Config {
     media: Media;
     articles: Article;
     submissions: Submission;
+    'contact-messages': ContactMessage;
     'live-events': LiveEvent;
     'live-updates': LiveUpdate;
     'audit-logs': AuditLog;
@@ -93,6 +94,7 @@ export interface Config {
     media: MediaSelect<false> | MediaSelect<true>;
     articles: ArticlesSelect<false> | ArticlesSelect<true>;
     submissions: SubmissionsSelect<false> | SubmissionsSelect<true>;
+    'contact-messages': ContactMessagesSelect<false> | ContactMessagesSelect<true>;
     'live-events': LiveEventsSelect<false> | LiveEventsSelect<true>;
     'live-updates': LiveUpdatesSelect<false> | LiveUpdatesSelect<true>;
     'audit-logs': AuditLogsSelect<false> | AuditLogsSelect<true>;
@@ -364,6 +366,30 @@ export interface Submission {
   createdAt: string;
 }
 /**
+ * Messages sent through the public contact form. Reply by email; mark the status as you go.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "contact-messages".
+ */
+export interface ContactMessage {
+  id: number;
+  reference: string;
+  name: string;
+  email: string;
+  topic: 'general' | 'advertising' | 'corrections' | 'tips' | 'other';
+  message: string;
+  status: 'new' | 'read' | 'replied' | 'spam';
+  /**
+   * Did the notification email go out? "failed" or "not-configured": check the inbox here.
+   */
+  notifyStatus?: ('sent' | 'failed' | 'not-configured') | null;
+  ipHash?: string | null;
+  userAgent?: string | null;
+  contentHash?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
  * Read-only record of workflow and moderation actions.
  *
  * This interface was referenced by `Config`'s JSON-Schema
@@ -434,6 +460,10 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'submissions';
         value: number | Submission;
+      } | null)
+    | ({
+        relationTo: 'contact-messages';
+        value: number | ContactMessage;
       } | null)
     | ({
         relationTo: 'live-events';
@@ -636,6 +666,24 @@ export interface SubmissionsSelect<T extends boolean = true> {
   ipHash?: T;
   contentHash?: T;
   userAgent?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "contact-messages_select".
+ */
+export interface ContactMessagesSelect<T extends boolean = true> {
+  reference?: T;
+  name?: T;
+  email?: T;
+  topic?: T;
+  message?: T;
+  status?: T;
+  notifyStatus?: T;
+  ipHash?: T;
+  userAgent?: T;
+  contentHash?: T;
   updatedAt?: T;
   createdAt?: T;
 }

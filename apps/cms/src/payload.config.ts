@@ -10,12 +10,14 @@ import sharp from 'sharp'
 import { Articles } from './collections/Articles'
 import { AuditLogs } from './collections/AuditLogs'
 import { Categories } from './collections/Categories'
+import { ContactMessages } from './collections/ContactMessages'
 import { LiveEvents } from './collections/LiveEvents'
 import { LiveUpdates } from './collections/LiveUpdates'
 import { Media } from './collections/Media'
 import { Submissions } from './collections/Submissions'
 import { Users } from './collections/Users'
 import { previewArticleEndpoint } from './endpoints/previewArticle'
+import { publicContactEndpoint, publicContactPreflightEndpoint } from './endpoints/publicContact'
 import {
   publicSubmissionsEndpoint,
   publicSubmissionsPreflightEndpoint,
@@ -104,8 +106,24 @@ export default buildConfig({
     user: 'users',
     importMap: { baseDir: path.resolve(dirname) },
   },
-  collections: [Users, Categories, Media, Articles, Submissions, LiveEvents, LiveUpdates, AuditLogs],
-  endpoints: [publicSubmissionsEndpoint, publicSubmissionsPreflightEndpoint, previewArticleEndpoint],
+  collections: [
+    Users,
+    Categories,
+    Media,
+    Articles,
+    Submissions,
+    ContactMessages,
+    LiveEvents,
+    LiveUpdates,
+    AuditLogs,
+  ],
+  endpoints: [
+    publicSubmissionsEndpoint,
+    publicSubmissionsPreflightEndpoint,
+    publicContactEndpoint,
+    publicContactPreflightEndpoint,
+    previewArticleEndpoint,
+  ],
   editor: lexicalEditor(),
   db: postgresAdapter({
     pool: { connectionString: process.env.DATABASE_URL },

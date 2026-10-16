@@ -220,3 +220,13 @@ describe('Turnstile pinning warnings (production: logged, never a startup failur
     expect(validateProductionEnv(staging)).toEqual({ problems: [], warnings: [] })
   })
 })
+
+describe('CONTACT_NOTIFY_TO (C5)', () => {
+  it('is optional, accepts a comma list and fails startup on an invalid entry without echoing it', () => {
+    expect(validateProductionEnv(good).problems).toEqual([])
+    expect(validateProductionEnv({ ...good, CONTACT_NOTIFY_TO: 'a@example.test, b@example.test' }).problems).toEqual([])
+    const bad = validateProductionEnv({ ...good, CONTACT_NOTIFY_TO: 'a@example.test, not-an-address' }).problems
+    expect(bad.join()).toMatch(/CONTACT_NOTIFY_TO/)
+    expect(bad.join()).not.toMatch(/not-an-address/)
+  })
+})

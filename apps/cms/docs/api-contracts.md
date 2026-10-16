@@ -326,6 +326,45 @@ images of that one article** (any status), nothing else: the article id comes fr
 expiry enforced); a token for another article, an expired, tampered or empty token grants nothing (`403`/`404` as for anonymous). Use the
 returned URLs as they are; do not cache them beyond the token's lifetime.
 
+### Go-live C5: contact
+
+`POST /api/public/contact` stores a reader's message in the staff-only `contact-messages` collection (separate from story
+submissions, so the editorial queue stays editorial) and e-mails staff. Anonymous, credential-free, same rules as §4.1:
+`Origin` must be in `PUBLIC_SUBMISSION_ORIGINS` (403; allowlisted origins get an exact `Access-Control-Allow-Origin` echo and
+`Access-Control-Expose-Headers: Retry-After`), `Content-Type: application/json` (415), body at most **16 KB** (413), `OPTIONS` preflight answered.
+
+```json
+{ "name": "Ada Obi", "email": "ada@example.test", "topic": "general",
+  "message": "Plain text, 20 to 5000 characters.", "website": "", "turnstileToken": "0.xxxx" }
+```
+
+- `name` 2 to 120; `email` valid (lower-cased on store); `topic` one of `general`, `advertising`, `corrections`, `tips`, `other`;
+  `message` 20 to 5 000 characters of plain text (HTML tags and control characters are stripped before the length is judged).
+- Turnstile action **`contact-message`**. It must be listed in `TURNSTILE_EXPECTED_ACTION` when that variable is set. The endpoint
+  also pins the token to its own action: a valid token minted for another form's action (for example `newsletter-subscribe`) is `403`.
+- Processing order: origin, content type, declared size, per-IP limit, capped body read and JSON parse, honeypot, validation,
+  Turnstile, duplicate, per-address limit, write, notification. Rate limiting precedes Turnstile so bots cannot burn Siteverify quota.
+- Limits: per IP `CONTACT_RATE_LIMIT` (5) per `CONTACT_RATE_WINDOW_SECONDS` (900); per address 3 per hour (counted for verified,
+  non-duplicate messages); the same address with the same message (case and whitespace insensitive) within 72 h is `409`. Every `429`
+  carries `Retry-After` and exposes it.
+- A non-empty `website` (honeypot) returns the normal `201` with a throw-away reference, stores nothing, sends nothing, skips Siteverify.
+
+Responses:
+- `201 { "ok": true, "reference": "MSG-7KQ2M9XA", "message": "Received. We will reply by email." }`. The reference is `MSG-` plus exactly 8
+  characters from `ABCDEFGHJKMNPQRSTUVWXYZ23456789`.
+- `400 { ok:false, errors:[{ field, message }] }` (validation, bad JSON, missing Turnstile token) · `403` (origin, Turnstile) ·
+  `409` duplicate · `413` · `415` · `429` · `500` store failed.
+
+Notification: one e-mail to `CONTACT_NOTIFY_TO` (comma list, server-side, validated at startup in production, **never returned
+to a client or written to logs**), `Reply-To` = the sender's address, plain-text body. CR, LF and other control characters are removed
+from every header-bound value. The message is stored **before** any mail is attempted: if SMTP or `CONTACT_NOTIFY_TO` is missing, or sending
+fails, the message is still stored, the answer is still the normal `201`, the failure is logged (reference only) and the row shows
+`notifyStatus` = `failed` or `not-configured` to staff.
+
+`contact-messages` (`/api/contact-messages`, staff-only: `admin` and `editor-in-chief`; never anonymous): `reference`, `name`, `email`,
+`topic`, `message`, `status` (`new`, `read`, `replied`, `spam`), `notifyStatus` (`sent`, `failed`, `not-configured`), `ipHash`,
+`userAgent`, `contentHash`. Only `status` is editable over REST; rows cannot be created over REST; raw IP addresses are never stored.
+
 ## 5. Staff authentication and sessions
 
 Built-in Payload auth on the `users` collection plus PostgreSQL. No third-party auth provider.
@@ -548,6 +587,14 @@ proxy) and https-only `CMS_PUBLIC_URL`/CORS/CSRF settings (`docs/security.md`). 
 limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/operations.md` §4).
 
 ## 9. Changelog
+
+### Go-live C5 (contact): changelog
+Additive, no breaking change. The integrator assigns the version number.
+- New `POST /api/public/contact` and `OPTIONS` preflight (see "Go-live C5: contact" in §4). New staff-only collection `contact-messages`.
+- New environment variables `CONTACT_RATE_LIMIT`, `CONTACT_RATE_WINDOW_SECONDS`, `CONTACT_NOTIFY_TO`. `TURNSTILE_EXPECTED_ACTION` must
+  now also list `contact-message` when it is set.
+- New shared helper `src/lib/publicEndpoint.ts` (origin, CORS, body cap, error shape, per-endpoint Turnstile action pin) for new public endpoints;
+  `POST /api/public/submissions` is unchanged.
 
 ### v1.8
 Go-live contract C2 (SEO fields). Additive, no breaking change.

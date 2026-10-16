@@ -1,3 +1,4 @@
+import { parseRecipientList } from './contactMessage'
 import { isTurnstileDummySecret } from './turnstile'
 
 /**
@@ -211,6 +212,16 @@ export function validateProductionEnv(env: NodeJS.ProcessEnv): ProductionEnvChec
   const smtpHost = env.SMTP_HOST?.trim()
   if (smtpHost && !(env.EMAIL_FROM_ADDRESS ?? '').trim()) {
     problems.push('EMAIL_FROM_ADDRESS is required when SMTP_HOST is set.')
+  }
+
+  // Contact form notifications (C5). Recipients are server-side only. Invalid entries would silently drop mail,
+  // so they fail startup (the message never echoes an address). An empty list is allowed: messages are still
+  // stored (CMS > Contact messages) and each one logs that no notification was sent.
+  const notify = parseRecipientList(env.CONTACT_NOTIFY_TO)
+  if (notify.invalid.length > 0) {
+    problems.push(
+      `CONTACT_NOTIFY_TO has ${notify.invalid.length} invalid or surplus address(es); use a comma list of up to 10 valid e-mail addresses.`,
+    )
   }
 
   return { problems, warnings }

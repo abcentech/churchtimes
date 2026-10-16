@@ -111,7 +111,7 @@ message listing every problem (missing secrets, http or wildcard origins, dummy 
 | `IP_HASH_SALT` | yes | 32 hex chars | Salt for hashing client IPs on submissions, at least 16 characters. |
 | `TURNSTILE_SECRET_KEY` | **yes (production)** | `0x4AAAA…` (secret) | Cloudflare Turnstile secret key. Startup fails in production without it, or with a Cloudflare dummy test secret. Dev fallback: always-pass test secret + warning. |
 | `TURNSTILE_ALLOWED_HOSTNAMES` | recommended (startup warning when unset) | `www.churchtimesnigeria.net` | Comma list. Siteverify's `hostname` must match (case-insensitive), otherwise 403. Do not set it with dummy/test keys (they return a fixed hostname). |
-| `TURNSTILE_EXPECTED_ACTION` | recommended (startup warning when unset) | `submit-story` | Comma list. If set, the widget's `action` must be exactly one of the entries (case-sensitive); a token without an action is rejected (403). Must include the value the public site sends as `VITE_TURNSTILE_ACTION` (default `submit-story`). |
+| `TURNSTILE_EXPECTED_ACTION` | recommended (startup warning when unset) | `submit-story,contact-message,newsletter-subscribe` | Comma list. If set, the widget's `action` must be exactly one of the entries (case-sensitive); a token without an action is rejected (403). Must include every action the public site sends: `VITE_TURNSTILE_ACTION` (default `submit-story`) plus `contact-message` and `newsletter-subscribe` for the contact and newsletter forms. Each new endpoint also pins its own action, so a token for one form is refused by another. |
 | `CMS_PUBLIC_URL` | **yes (production)** | `https://cms.example.org` | Public origin of the CMS: https, no trailing slash. Used as Payload `serverURL` (also added to the CSRF allowlist), reset links, absolute media URLs. |
 | `CMS_CORS_ORIGINS` | yes | `https://www.example.org,https://newsroom.example.org` | Browser origins allowed to call the API (CORS). Explicit origins only. |
 | `CMS_CSRF_ORIGINS` | yes | `https://newsroom.example.org` | Extra origins allowed to make cookie-authenticated requests (the CMS origin is always included). |
@@ -119,6 +119,8 @@ message listing every problem (missing secrets, http or wildcard origins, dummy 
 | `SUBMISSION_RATE_LIMIT` / `SUBMISSION_RATE_WINDOW_SECONDS` | no | `5` / `900` | Submissions per IP per window. |
 | `SUBMISSION_EMAIL_RATE_LIMIT` / `SUBMISSION_EMAIL_RATE_WINDOW_SECONDS` | no | `3` / `3600` | Submissions per e-mail address per window. |
 | `SUBMISSION_DUPLICATE_WINDOW_HOURS` | no | `72` | Identical email+title+body inside this window is rejected (409). |
+| `CONTACT_RATE_LIMIT` / `CONTACT_RATE_WINDOW_SECONDS` | no | `5` / `900` | Contact messages per IP per window (`POST /api/public/contact`). Per e-mail address the limit is fixed at 3 per hour. |
+| `CONTACT_NOTIFY_TO` | recommended | `desk@example.org,editor@example.org` | Comma list (max 10) of staff addresses e-mailed for each contact message, with `Reply-To` set to the sender. Server-side only: never returned to a browser or written to logs. An invalid entry stops startup in production. Needs SMTP; without either, messages are still stored and show `notifyStatus: not-configured` in CMS > Contact messages. |
 | `AUTH_LOGIN_RATE_LIMIT`, `AUTH_FORGOT_RATE_LIMIT`, `AUTH_RESET_RATE_LIMIT`, `AUTH_RATE_WINDOW_SECONDS` | no | `10`, `5`, `10`, `900` | Per-IP limits for login / forgot-password / reset-password. |
 | `TRUST_PROXY` | **yes (production)** | `true` | The app always runs behind a reverse proxy, so production startup **fails** unless this is exactly `true`. Make sure the app is reachable only through that proxy (it listens on `127.0.0.1`). Without trust every client would share one rate-limit bucket. |
 | `TRUST_PROXY_HOPS` | no | `1` | Number of trusted reverse proxies in front of the app (1 to 10, default 1). The client address is the entry that many places from the **right** of `X-Forwarded-For` (the address your own proxy appended), never the leftmost, which clients can forge. A chain shorter than this fails closed (shared bucket). The §4.4 blocks overwrite the header, so `1`; use `2` only if two proxies each append (for example nginx with `$proxy_add_x_forwarded_for` behind another proxy). |
@@ -435,6 +437,9 @@ Confirm each item before go-live and again after any change to the server:
 - [ ] A public submission from a disallowed origin gets `403`. Verify with `curl -H "Origin: https://evil.example"`.
 - [ ] A reporter account cannot approve or publish an article. Verify in the admin UI and API.
 - [ ] A submission without a valid `turnstileToken` is refused (§4.1 step 6) and one from the real site form is accepted.
+- [ ] Contact form (C5): a message from the real site form gets a `201` with a `MSG-` reference, appears in CMS > Contact messages (admin and
+      editor-in-chief only), and `CONTACT_NOTIFY_TO` receives the notification with Reply-To set to the sender. With SMTP stopped, a message is
+      still stored (`notifyStatus: failed`) and the sender still sees the normal `201`.
 - [ ] Wrong password 5 times locks the account; **Forgot password?** works end to end; after logout the old token no longer works.
 
 ## 12. Status
