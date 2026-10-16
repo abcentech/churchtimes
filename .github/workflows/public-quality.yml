@@ -12,6 +12,7 @@ on:
       - 'tools/audit-public.mjs'
       - 'playwright.cms.config.js'
       - 'package*.json'
+      - 'vite.config.js'
       - 'tools/*public-quality*'
       - '.github/workflows/public-quality.yml'
   pull_request:
@@ -26,6 +27,7 @@ on:
       - 'tools/audit-public.mjs'
       - 'playwright.cms.config.js'
       - 'package*.json'
+      - 'vite.config.js'
       - 'tools/*public-quality*'
       - '.github/workflows/public-quality.yml'
 permissions:
