@@ -29,6 +29,7 @@ export function bindPublicForm(kind='story') {
   }
   function syncPermission() {
     if (!ready || disposed || form.hidden) return;
+    permission.disabled=false;
     const allowed = hasConsent('forms');
     permission.hidden = allowed;
     if (!allowed) {
