@@ -49,6 +49,7 @@ checks on the resulting approved integration branch.
 | Public CMS integration, including legacy corpus | 28 passed; actual anonymous Payload REST and disposable PostgreSQL |
 | Production route-template browser fixtures | 4 passed; explicitly STUBBED C2 article responses |
 | Combined production quality | 8 desktop/mobile journeys and 4 mobile Lighthouse audits passed |
+| Additional configured production-host reader probe | 8 passed on desktop/Pixel 7 with a non-root base path; C4/C5 and Cloudflare STUBBED |
 | Production build / compiled export | Built and export match checked |
 
 The CMS corpus checks 50 synthetic articles on desktop and Pixel 7, including a
@@ -82,6 +83,15 @@ fixed gate messages and boolean journey results. The additional
 [`root-template-quality.json`](root-template-quality.json) records Session A's
 separate real-CMS run with `PUBLIC_ARTICLE_PATH_TEMPLATE=/{slug}/`: eight journeys
 and four audits passed. It proves routing compatibility without choosing D1.
+
+[`configured-reader-stubs.json`](configured-reader-stubs.json) records a separate
+local probe of the compiled combined site on the actual Node public host under
+`/journal/`. On desktop and Pixel 7, confirmation/unsubscribe scrubbed the token,
+rendered one h1 and sent no API request until an explicit POST button press;
+configured contact and footer signup loaded no Cloudflare script before reader
+permission and showed the prescribed receipts. C4/C5 and Cloudflare were
+**STUBBED**. This supplementary probe is not a new CI lane or real CMS proof;
+the repeatable component/contract suites remain the automated lanes above.
 
 ## Remaining external integration
 
