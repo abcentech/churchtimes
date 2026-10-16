@@ -81,12 +81,17 @@ function wordmark(className='') { return `<a class="wordmark ${className}" href=
 function bindPublicForm(kind) {
   const form=document.querySelector('#public-form');
   let cancelled=false,dispose;
+  const fields=form.querySelector('fieldset');
+  const wasDisabled=fields?.disabled;
+  if(fields)fields.disabled=true;
   form.inert=true;
   import('./forms/public-form.js').then(module=>{
     if(cancelled || !form.isConnected)return;
+    if(fields)fields.disabled=wasDisabled;
     dispose=module.bindPublicForm(kind);form.inert=false;
   }).catch(()=>{
     if(cancelled || !form.isConnected)return;
+    if(fields)fields.disabled=wasDisabled;
     form.querySelector('#send-submission').disabled=true;
     form.querySelector('#challenge-status').textContent='Online sending could not load. Please reload or email the newsroom.';
     form.inert=false;
