@@ -241,6 +241,7 @@ test('CMS minimum story length prevents invalid sending before verification is c
 test('configured story form makes no Turnstile request until explicit permission',async({page})=>{
   let scripts=0;await page.route(SCRIPT,route=>{scripts++;return route.fulfill({contentType:'application/javascript',body:widgetScript});});
   await page.goto('/#submit');await expect(page.getByRole('button',{name:'Allow spam protection',exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Allow spam protection',exact:true})).toBeEnabled();
   await expect(page.locator('#challenge-status')).toContainText('Allow spam protection');
   await expect(page.locator('script[src*="challenges.cloudflare.com"]')).toHaveCount(0);expect(scripts).toBe(0);
   await page.getByRole('button',{name:'Allow spam protection',exact:true}).click();await expect(page.getByRole('button',{name:'Complete test verification',exact:true})).toBeVisible();expect(scripts).toBe(1);
