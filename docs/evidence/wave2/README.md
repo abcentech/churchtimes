@@ -1,7 +1,11 @@
-# Wave 2 public-site validation
+# Historical Wave 2 public-site validation (before review fixes)
 
-Validated on 2026-10-16 against integration base `ec2d798`. These results exercise
-an unpublished local combination of the public PRs below. No PR was merged,
+Validated on 2026-10-16 against integration base `ec2d798`, in unpublished local
+branch `agent/wave2-validation`, final snapshot `5bca99f`. These results exercise
+the pre-review combination of the public PRs below, not their current revised
+heads. CI checked the individual PR heads; **CI did not reproduce this combined
+local run**. Keep the numbers as historical evidence, not a current release gate.
+No PR was merged,
 no production setting was selected, and nothing was deployed in this round.
 
 ## Review inventory and dependencies
@@ -32,9 +36,13 @@ tested combination preserves all of: configured `reportSlug` routing, the SEO
 hydration guard, early newsletter-token scrubbing, lazy form UI, advertising
 snapshot loading before browser rendering, navigation-generation cancellation,
 and form field disabling while the lazy controller loads. Resolve those hooks
-together, then regenerate `index.html` and `site/` with `npm run export:pages` and
-run `npm run check:pages`; generated assets are not hand-merged. Repeat public
-checks on the resulting approved integration branch.
+together. Feature PRs must not commit generated `site/`, `newsletter/`, or root
+`index.html` changes. PR #57 checks the actual compiled source and explicitly
+reports the committed export as pending. After all approved feature PRs merge,
+one dedicated rebuild PR runs `npm run export:pages` and the unchanged strict
+`npm run check:pages`; generated assets are never hand-merged. Repeat public
+checks on that resulting approved integration branch. The final rebuild has not
+been performed or authorized by this historical record.
 
 ## Combined checks
 
