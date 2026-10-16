@@ -13,6 +13,12 @@ export function setConsent(category, value) {
 }
 export function requestConsent() { document.querySelector('#privacy-dialog')?.showModal(); }
 export const consentMarkup = () => `<fieldset><legend>Optional services — off unless you choose</legend><label><input type="checkbox" data-consent="analytics" ${hasConsent('analytics')?'checked':''}> Allow configured audience analytics</label><label><input type="checkbox" data-consent="forms" ${hasConsent('forms')?'checked':''}> Allow Cloudflare spam protection for online forms</label><p>Changing a choice saves it in this browser. Turning analytics off stops new events; reload to remove an already loaded provider.</p></fieldset>`;
+let unbindControls;
 export function bindConsentControls(root = document) {
+  unbindControls?.();
+  const controls=[...root.querySelectorAll('[data-consent]')];
+  const sync=()=>controls.forEach(input=>{input.checked=hasConsent(input.dataset.consent);});
+  sync();
+  unbindControls=subscribeConsent(sync);
   root.querySelectorAll('[data-consent]').forEach(input => input.addEventListener('change', () => setConsent(input.dataset.consent,input.checked)));
 }
