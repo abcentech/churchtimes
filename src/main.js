@@ -1,4 +1,10 @@
-import { copyShareLink, mountListen } from './lib/reader-tools.js';
+import { copyShareLink } from './lib/share-link.js';
+function bindArticleListen(root){
+  if(!root.querySelector('.article-body') || !window.speechSynthesis || !window.SpeechSynthesisUtterance)return ()=>{};
+  let cancelled=false,dispose;
+  import('./lib/reader-tools.js').then(module=>{if(!cancelled&&root.isConnected)dispose=module.mountListen(root);}).catch(()=>{});
+  return ()=>{cancelled=true;dispose?.();};
+}
 import {bindSkipLink} from './lib/skip-link.js';
 import {publicPageRoute} from './lib/public-page-routes.js';
 import {siteCanonical,socialMetadata} from './lib/public-metadata.js';
@@ -107,7 +113,7 @@ function shell(content, route='home') {
     <dialog id="share-dialog" aria-labelledby="share-title"><div class="dialog-bar"><h2 id="share-title">Share this story</h2><button class="icon-button" data-close aria-label="Close sharing">${icon('close')}</button></div><p>Copy this link to share the article.</p><label for="share-url">Article link</label><input id="share-url" type="url" readonly><button class="outline-button" id="copy-share-url">Copy link</button><button class="outline-button" id="select-share-url">Select link</button><p id="share-status" role="status"></p></dialog>
     <div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>`;
   bindCommon();
-  disposeListen=mountListen(document.querySelector('#main'));
+  disposeListen=bindArticleListen(document.querySelector('#main'));
   mountAdvertisingPlacements(document.querySelector('#main'), advertising, { resolveAsset: asset });
 }
 function card(s, featured=false) {
@@ -318,7 +324,7 @@ async function reportPage(slug) {
       target.innerHTML = `<div class="breadcrumbs"><a href="#home">Home</a><span>/</span><a href="#latest">Latest reports</a></div><article><header class="article-header"><span class="eyebrow clay">${escape(article.category || 'Newsroom')}</span><h1>${escape(article.title)}</h1><p class="article-deck">${escape(article.excerpt)}</p><div class="article-meta"><div>${article.bylineName?`<strong class="newsroom-byline">By ${escape(article.bylineName)}</strong>`:''}${reportDate(article)}</div><button class="icon-button" id="share-report" aria-label="Copy article link">${icon('share',19)}</button></div></header>${cmsFigure(article.featuredImage,{eager:true,fallbackAlt:article.title})}<div class="newsroom-article-body article-body">${body || '<p>The full article text is not available yet. Please check back shortly.</p>'}</div>${article.corrections.length?`<section class="newsroom-corrections article-corrections" aria-labelledby="corrections-title"><h2 id="corrections-title">Corrections & updates</h2><ul>${article.corrections.map(c=>`<li>${c.correctedAt?`<time datetime="${escape(c.correctedAt)}">${date({dateGMT:c.correctedAt},true)}</time>`:''}<p>${escape(c.note)}</p></li>`).join('')}</ul></section>`:''}${article.legacyUrl?`<p class="legacy-source"><a href="${escape(article.legacyUrl)}" target="_blank" rel="noopener noreferrer">Original publication ${icon('diagonal',15)}</a></p>`:''}${adMarker('article-inline')}<div class="newsroom-article-end"><a class="text-link" href="#latest">More from the newsroom ${icon('arrow',17)}</a></div></article>`;
       mountAdvertisingPlacements(target, advertising, { resolveAsset: asset });
       bindCMSImages(target);
-      disposeListen=mountListen(target);
+      disposeListen=bindArticleListen(target);
       setArticleMetadata(article);
       document.title = `${article.title} — Church Times Nigeria`;
       document.querySelector('meta[name="description"]').content = article.excerpt;
