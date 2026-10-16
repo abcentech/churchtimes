@@ -97,7 +97,14 @@ export function bindReaderForms(root = document, { hasConsent = () => false, req
       } catch (error) {
         if (disposed || error.type === 'cancelled') return;
         notify((error.type === 'unavailable' && kind === 'contact' ? 'Online sending is unavailable. Please email the newsroom.' : messages[error.type]) || messages.server);
-        if (summary) { summary.textContent = Object.values(error.fields || {}).join(' '); summary.hidden=!summary.textContent; }
+        if (summary) {
+          for (const [name, message] of Object.entries(error.fields || {})) {
+            const input=form.elements.namedItem(name); if (!input) continue;
+            input.setAttribute('aria-invalid','true'); const fieldError=form.querySelector(`#${input.id}-error`);
+            if (fieldError) { fieldError.textContent=message; fieldError.hidden=false; }
+          }
+          summary.textContent = Object.values(error.fields || {}).join(' '); summary.hidden=!summary.textContent;
+        }
         if (error.type === 'rate-limit') { cooldown=Date.now()+error.retryAfter*1000; notify(`${messages['rate-limit']} Try again in ${error.retryAfter} seconds.`); interval=setInterval(updateButton,1000); }
         status.focus();
       } finally {

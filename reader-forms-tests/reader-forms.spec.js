@@ -27,7 +27,7 @@ for(const kind of ['newsletter','contact']) {
     test(`${kind}: handles ${status} without false success (STUB)`,async({page})=>{
       const stub=await setup(page,{status,body:{ok:false,errors:[{field:'email',message:'<script>untrusted</script>'}]},retry:'9999999999'});
       await page.goto(`/reader-forms-tests/harness.html?kind=${kind}`);await fill(page,kind);await page.getByRole('button',{name:kind==='newsletter'?'Sign up':'Send message',exact:true}).click();
-      await expect(page.locator('[data-reader-status]')).toContainText(text);await expect(page.getByLabel('Email address')).toHaveValue('reader@example.test');expect(stub.requests).toHaveLength(1);expect(await page.locator('script').count()).toBe(2);
+      await expect(page.locator('[data-reader-status]')).toContainText(text);await expect(page.getByLabel('Email address')).toHaveValue('reader@example.test');expect(stub.requests).toHaveLength(1);await expect(page.locator('[data-reader-errors] script')).toHaveCount(0);
       if(status===429)await expect(page.getByRole('button',{name:/Try again in/})).toBeDisabled();
     });
   }

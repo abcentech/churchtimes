@@ -50,3 +50,8 @@ test('cancellation and network STUB failures never claim receipt',async()=>{
   await assert.rejects(postReaderForm({endpoint,kind:'confirm',token:'x',signal:controller.signal,fetchImpl:()=>assert.fail('No request after abort')}),e=>e.type==='cancelled');
   await assert.rejects(postReaderForm({endpoint,kind:'confirm',token:'x',fetchImpl:async()=>{throw Error('offline');}}),e=>e.type==='network');
 });
+test('malformed error payload shapes remain typed and safe (STUB)',async()=>{
+  for(const errors of [{field:'email'},[null,4,{}, {field:'email'}],'bad']) {
+    await assert.rejects(postReaderForm({endpoint,kind:'newsletter',values:newsletter,token:'x',fetchImpl:stub(400,{errors})}),error=>error.type==='validation');
+  }
+});

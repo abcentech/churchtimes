@@ -59,9 +59,9 @@ export async function postReaderForm({ endpoint, kind, values = {}, token = '', 
     try { data = await response.json(); } catch { data = null; }
     if (response.status === 400 || response.status === 422) {
       if (tokenAction) throw new ReaderFormError('invalid-token');
-      if (data?.errors?.some(error => error.field === 'turnstileToken')) throw new ReaderFormError('challenge');
+      if (Array.isArray(data?.errors) && data.errors.some(error => error?.field === 'turnstileToken')) throw new ReaderFormError('challenge');
       const errors = {};
-      for (const error of Array.isArray(data?.errors) ? data.errors : []) if (['name','email','message','topic','consent'].includes(error.field)) errors[error.field] = 'Please check this field and try again.';
+      for (const error of Array.isArray(data?.errors) ? data.errors : []) if (['name','email','message','topic','consent'].includes(error?.field)) errors[error.field] = 'Please check this field and try again.';
       throw new ReaderFormError('validation', { fields: errors });
     }
     const errors = { 403: 'forbidden', 409: 'duplicate', 413: 'size', 415: 'configuration', 503: 'unavailable' };

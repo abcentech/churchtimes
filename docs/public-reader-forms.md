@@ -1,0 +1,23 @@
+# Reader form contract components (Wave 2 B2/B3)
+
+These are public-site components against proposed CMS C4/C5 contracts. The endpoints are not implemented in this branch. All new automated response journeys are explicitly **STUB SERVER tests**, using synthetic addresses and tokens and a stub Cloudflare transport. They do not prove real CMS storage, SMTP delivery, real Turnstile verification, double opt-in security, provider delivery, staff-only access or a real cross-app journey.
+
+## Configuration and integration
+
+`VITE_PUBLIC_NEWSLETTER_URL` is the full subscribe endpoint, for example `https://cms.example.test/api/public/newsletter/subscribe`. `VITE_PUBLIC_CONTACT_URL` is the full contact endpoint. `VITE_TURNSTILE_SITE_KEY` is a public site key, never a verification secret. No endpoint is inferred from an existing CMS host. HTTPS is required except loopback development; credentials and query/fragment-bearing endpoints are rejected. These public values must be explicitly configured after owner review; no provider or hosting decision is implied.
+
+`src/forms/reader-forms.js` exports `newsletterMarkup(source)`, `contactMarkup()`, `newsletterTokenMarkup(action, token)`, `captureNewsletterLink(location, history, basePath)` and `bindReaderForms(root, options)` (returns a disposer). Sources `footer` and `article` produce distinct IDs. The shell integration is a separate dependent reader-feature change. Newsletter markup is empty when its endpoint or site key is absent. Contact retains email fallback; the main integration preserves the existing disabled contact layout when unconfigured.
+
+Binder options `hasConsent`, `requestConsent`, and `onConsentChange` connect to the reader privacy controls. Default consent is false. No widget mounts before permission; revocation removes the widget and clears its token. New contact and newsletter actions are fixed at `contact-message` and `newsletter-subscribe`, never the old submission action. Shared `mountTurnstile` handles responsive sizing, expiration, navigation disposal and restart. Existing story submission transport/validation remains unchanged.
+
+All requests are anonymous POST JSON, `credentials: omit`, no-store and `referrerPolicy: no-referrer`. Form text is never stored in local/session storage. No raw server error or success message is reflected. Newsletter success is always the exact neutral 202 text. Contact accepts only 201 with a validated MSG reference and does not promise publication. Unexpected success responses never claim receipt. Failure retains text. Errors include 400 field validation, 403, 409, 413, 415, bounded 429 cooldown (1–86,400 seconds; invalid defaults to 60), explicit 503 unavailability, server/network/unconfirmed states. Requests time out after 15 seconds, abort on navigation and never retry writes automatically.
+
+## Confirmation and unsubscribe privacy
+
+The CMS email links point to `/newsletter/confirm?token=...` and `/newsletter/unsubscribe?token=...`. The browser integration must call `captureNewsletterLink` before optional analytics/scripts. It reads a single bounded token, removes the complete query and fragment via `history.replaceState`, and holds the token only in memory. It does not put it in DOM attributes, analytics, browser storage or logs. Both pages explicitly say nothing changes until a reader presses the button. The binder POSTs `{ token }` only on that form's submit; a GET, scanner prefetch, render or widget consent never posts it. Success clears the in-memory token. Reloading after capture requires opening the original email link again. The public host must use no-referrer headers and no query-string access logging on these routes. Host clean-route wiring belongs to the routing PR.
+
+## Validation
+
+Run `node --test unit-tests/reader-forms.test.js` and `npx playwright test --config playwright.reader-forms.config.js`. The isolated component harness uses port 6192; all API responses and external Turnstile delivery are labelled STUBS. Desktop and Pixel 7 journeys cover contract statuses, explicit permission, exact action/payload, no false success, token POST-only, unset configuration, revocation, axe WCAG/best-practice rules and overflow. The modified legacy configured-contact browser case now asserts C5 topic/message and absence of phone/subject rather than the obsolete submission-shaped contact request. Existing story phone checks are retained; C5 deliberately collects no phone.
+
+No CMS/newsroom changes, scripts enabled in production, owner decisions, merge or deploy are included.
