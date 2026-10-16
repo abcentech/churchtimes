@@ -45,3 +45,20 @@ folded in), #46, #47, #48. Rebuild the site once at the end.
 - C3: `mobile-banner` is 320x50; freshness is the smaller of 60 s and the time to the next start or end; withdrawal latency stated; browsers do not use conditional requests; the page must never wait on the ad call.
 - C4.1: an empty `name` means no name. C5: fixed `reference` format.
 - O6 answered (yes, with a title cap and malformed-ID tests); O7 answered (no, 320x50).
+
+## Added after the review of the CMS redirect list (PR #55): host-side items for #44/#50
+
+The CMS-side review ran the real CMS output together with `tools/public-redirects.mjs` from branch `agent/wave2-public-redirects`.
+The CMS fixes are Claude's. These three are in the public host:
+
+1. **MUST: normalise the request path with the same function as the CMS before the lookup.** The host looks up the raw
+   `url.pathname`. For the rule `/caf%C3%A9-it%27s/`, the requests `/caf%c3%a9-it's`, `/caf%c3%a9-it's/` and `/caf%C3%A9-it's/` all got
+   no redirect (browsers send `'` unencoded), and any old address without a trailing slash also misses. The contract's
+   normalisation function (canonical form in C7.1) will ship as the single definition with a JSON test-vector fixture
+   (`apps/cms/tests/fixtures/`); use the vectors in your tests. Also NFC-normalise, so `/café/` and `/cafe%CC%81/` are one key.
+2. **MUST: one CMS failure must not remove every redirect.** In `public-redirects.mjs` the `catch` sets `map = emptyMap()`, so any
+   CMS 500, timeout or bad list leaves the site with **no** redirects (observed: fetch 1 gave a 301, fetch 2 with a CMS 500 gave
+   none). Keep the last good map and log a counted warning. Better still, drop only the offending rule instead of rejecting the whole list.
+3. **SHOULD: the allowlist setting has a different name on each side.** The CMS reads `REDIRECT_ALLOWED_HOSTS`; the host reads
+   `PUBLIC_REDIRECT_ALLOWED_HOSTS` and also needs `PUBLIC_SITE_URL`. One disagreement makes the host reject the whole list. Document
+   that they must match, and reject at startup if the host's list is empty while the map contains an absolute `to`.
