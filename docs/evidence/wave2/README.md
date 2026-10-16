@@ -15,7 +15,7 @@ no production setting was selected, and nothing was deployed in this round.
 | A | [#50](https://github.com/abcentech/churchtimes/pull/50) | A2/A3/A5: redirects, junk handling, private smoke checker; depends on #44; also supplies neutral newsletter token-page shells |
 | B | [#45](https://github.com/abcentech/churchtimes/pull/45) | B2/B3 shared form components and proposed-contract STUB tests; no site wiring by itself |
 | B | [#46](https://github.com/abcentech/churchtimes/pull/46) | B1: optional analytics and shared explicit consent |
-| B | [#47](https://github.com/abcentech/churchtimes/pull/47) | B4: optional advertising delivery, ETag/cache and no late slot insertion |
+| B | [#47](https://github.com/abcentech/churchtimes/pull/47) | B4: optional advertising delivery, ETag/cache and failure collapse |
 | B | [#48](https://github.com/abcentech/churchtimes/pull/48) | B5: clipboard fallback and optional on-device listening |
 | B | [#49](https://github.com/abcentech/churchtimes/pull/49) | B2/B3 site wiring; depends on #45/#46 and #50 for clean token URLs |
 | B | [#51](https://github.com/abcentech/churchtimes/pull/51) | Existing story-form spam-protection consent; shares #46's identical consent module |
