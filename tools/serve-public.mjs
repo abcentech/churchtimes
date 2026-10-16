@@ -11,16 +11,18 @@ import {siteCanonical,replaceSocialHTML} from '../src/lib/public-metadata.js';
 import {createPublicResponder} from './public-response.mjs';
 import {homeImageMetadata} from './public-home.mjs';
 import {createPublicPages} from './public-pages.mjs';
+import {publicSEOSettings} from './public-seo-settings.mjs';
 import {createPublicFeeds} from './public-feeds.mjs';
 import {publicOrigin} from '../src/lib/public-url.js';
 import {normalizeBasePath,reportSlug,articleCanonical,articleSchema,safeJSON} from '../src/lib/public-routes.js';
 const escape=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json','.svg':'image/svg+xml','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp','.woff2':'font/woff2'};
 const replaceMeta=(html,attribute,name,value)=>html.replace(new RegExp(`(<meta ${attribute}="${name}" content=")[^"]*(">)`),(_all,a,b)=>a+escape(value)+b);
-export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(fileURLToPath(new URL('../dist/',import.meta.url))),cmsUrl=process.env.PUBLIC_CMS_URL,siteUrl=process.env.PUBLIC_SITE_URL,basePath=process.env.PUBLIC_BASE_PATH || '/',indexable=process.env.PUBLIC_INDEXABLE==='true',fetchImpl=fetch}={}) {
+export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(fileURLToPath(new URL('../dist/',import.meta.url))),cmsUrl=process.env.PUBLIC_CMS_URL,siteUrl=process.env.PUBLIC_SITE_URL,basePath=process.env.PUBLIC_BASE_PATH || '/',adsTxtLine=process.env.PUBLIC_ADS_TXT_LINE,searchVerification=process.env.PUBLIC_SEARCH_CONSOLE_VERIFICATION,indexable=process.env.PUBLIC_INDEXABLE==='true',fetchImpl=fetch}={}) {
   basePath=normalizeBasePath(basePath);
   if(cmsUrl && !publicOrigin(cmsUrl))throw new Error('PUBLIC_CMS_URL must be HTTPS or loopback HTTP without credentials');
-  const publicPages=createPublicPages({dist,cmsUrl,siteUrl,basePath,indexable,fetchImpl});
+  const settings=publicSEOSettings({adsTxtLine,searchVerification});
+  const publicPages=createPublicPages({dist,cmsUrl,siteUrl,basePath,indexable,fetchImpl,extraHead:settings.head});
   const publicFeeds=createPublicFeeds({cmsUrl,siteUrl,basePath,indexable,fetchImpl});
   async function htmlPage(article,message) {
     let html=await readFile(resolve(dist,'index.html'),'utf8');
@@ -29,7 +31,7 @@ export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(file
     html=replaceSocialHTML(html,article,canonical);
     if(!article && !message)html=html.replace('</head>',()=>homeImageMetadata({siteUrl,basePath})+'</head>');
     const robots=indexable && canonical ? 'index,follow' : 'noindex,nofollow';
-    let metadata=`<meta name="robots" content="${robots}">`;
+    let metadata=`<meta name="robots" content="${robots}">${settings.head}`;
     if(canonical)metadata+=`<link rel="canonical" href="${escape(canonical)}">`;
     let body=`<main id="main"><h1>${escape(message || 'Church Times Nigeria')}</h1><a href="${escape(basePath)}#latest">Browse published reports</a></main>`;
     if(article) {
@@ -46,6 +48,7 @@ export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(file
     if(!['GET','HEAD'].includes(req.method))return respond(405,'text/plain','Method not allowed',{Allow:'GET, HEAD'});
     try {
       const url=new URL(req.url,'http://public.invalid');
+      if(settings.route(url,respond))return;
       if(!url.pathname.startsWith(basePath))return respond(404,'text/plain','Not found');
       if(await publicFeeds(url,respond) || await publicPages(url,respond))return;
       const slug=reportSlug(url.pathname,basePath);
