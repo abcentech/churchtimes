@@ -7,7 +7,7 @@ export function analyticsConfig(env = {}) {
 }
 export function createAnalytics({ env = {}, window: win = globalThis.window, document: doc = globalThis.document } = {}) {
   const config = analyticsConfig(env);
-  let loaded = false;
+  let loaded = false, ready = false;
   return {
     update(consented) {
       if (!config.enabled) return;
@@ -22,11 +22,11 @@ export function createAnalytics({ env = {}, window: win = globalThis.window, doc
       const script = doc.createElement('script');
       script.async = true; script.referrerPolicy = 'no-referrer';
       script.src = `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(config.id)}`;
-      script.addEventListener('load', () => { if (!win[`ga-disable-${config.id}`]) this.page(); }, { once: true });
+      script.addEventListener('load', () => { ready=true; if (!win[`ga-disable-${config.id}`]) this.page(); }, { once: true });
       doc.head.append(script);
     },
     page() {
-      if (!loaded || win[`ga-disable-${config.id}`]) return;
+      if (!ready || win[`ga-disable-${config.id}`]) return;
       win.gtag('event','page_view',{ page_location: `${win.location.origin}${win.location.pathname}`, page_title: doc.title });
     },
   };
