@@ -134,17 +134,19 @@ test('widget script failures can be retried without bypassing verification',asyn
   await submit(page).click();await expect(page.locator('#form-result')).toBeVisible();expect(loads).toBe(2);
 });
 
-test('contact form uses its separate configured endpoint and subject/message fields',async({page})=>{
-  await widget(page);
+test('contact C5 contract uses topic/message with explicit spam-protection permission (STUB)',async({page})=>{
+  await widget(page);let calls=0;
   await page.route('**/api/public/contact',route=>{
-    const body=route.request().postDataJSON();expect(body.subject).toBe('A story from the community');
-    expect(body.message).toContain('key facts');expect(body.title).toBeUndefined();expect(body.body).toBeUndefined();
-    return route.fulfill({status:201,json:{ok:true,reference:'MOCK-ONLY-CONTACT'}});
+    calls++;const body=route.request().postDataJSON();expect(body.topic).toBe('corrections');
+    expect(body.message).toContain('Synthetic correction');expect(body.subject).toBeUndefined();expect(body.phone).toBeUndefined();expect(body.title).toBeUndefined();expect(body.body).toBeUndefined();
+    return route.fulfill({status:201,json:{ok:true,reference:'MSG-SYNTHETIC'}});
   });
-  await page.goto('/#contact');await fill(page,'contact');await complete(page);
+  await page.goto('/#contact');await page.getByLabel('Name',{exact:true}).fill('Synthetic Reader');await page.getByLabel('Email address').fill('reader@example.test');
+  await page.getByLabel('Topic',{exact:true}).selectOption('corrections');await page.getByLabel('Message (20 to 5,000 characters)').fill('Synthetic correction for a contract fixture article.');
+  await page.getByRole('button',{name:'Allow spam protection',exact:true}).click();
+  await page.getByRole('checkbox',{name:/Allow Cloudflare spam protection/}).check();await page.getByRole('button',{name:'Close privacy notice'}).click();await complete(page);
   await page.getByRole('button',{name:'Send message',exact:true}).click();
-  await expect(page.getByRole('heading',{name:'Your message has been received.'})).toBeVisible();
-  await noOverflow(page);
+  await expect(page.locator('[data-reader-status]')).toContainText('MSG-SYNTHETIC');expect(calls).toBe(1);await noOverflow(page);
 });
 
 test('navigation removes widgets and releases form data without storage',async({page})=>{
@@ -180,7 +182,7 @@ test('late widget load after navigation does not mount into a detached page',asy
   expect(await page.evaluate(()=>window.__widgetOptions)).toBeUndefined();
 });
 
-for (const kind of ['story','contact']) {
+for (const kind of ['story']) {
   test(`${kind} form requires, validates and sends a phone number`,async({page})=>{
     await widget(page);
     let calls=0;
