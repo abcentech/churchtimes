@@ -13,13 +13,16 @@ import { Categories } from './collections/Categories'
 import { LiveEvents } from './collections/LiveEvents'
 import { LiveUpdates } from './collections/LiveUpdates'
 import { Media } from './collections/Media'
+import { Redirects } from './collections/Redirects'
 import { Submissions } from './collections/Submissions'
 import { Users } from './collections/Users'
 import { previewArticleEndpoint } from './endpoints/previewArticle'
+import { publicRedirectsEndpoint, publicRedirectsPreflightEndpoint } from './endpoints/publicRedirects'
 import {
   publicSubmissionsEndpoint,
   publicSubmissionsPreflightEndpoint,
 } from './endpoints/publicSubmissions'
+import { parseAllowedHosts, resolveArticlePathTemplate } from './lib/redirectPaths'
 import { startScheduler } from './lib/scheduler'
 import {
   checkOriginList,
@@ -41,6 +44,11 @@ const secret = process.env.PAYLOAD_SECRET
 if (!isTest && (!secret || secret.length < 32)) {
   throw new Error('PAYLOAD_SECRET must be set and at least 32 characters long.')
 }
+
+// Redirect settings (go-live C7) fail loudly at startup: a typo in PUBLIC_ARTICLE_PATH_TEMPLATE would otherwise turn
+// into wrong redirects. Unset values are fine (default template, no absolute redirect hosts).
+resolveArticlePathTemplate(process.env)
+parseAllowedHosts(process.env)
 
 const corsOrigins = csv(process.env.CMS_CORS_ORIGINS).map(normaliseOrigin)
 const csrfOrigins = csv(process.env.CMS_CSRF_ORIGINS).map(normaliseOrigin)
@@ -104,8 +112,14 @@ export default buildConfig({
     user: 'users',
     importMap: { baseDir: path.resolve(dirname) },
   },
-  collections: [Users, Categories, Media, Articles, Submissions, LiveEvents, LiveUpdates, AuditLogs],
-  endpoints: [publicSubmissionsEndpoint, publicSubmissionsPreflightEndpoint, previewArticleEndpoint],
+  collections: [Users, Categories, Media, Articles, Submissions, LiveEvents, LiveUpdates, Redirects, AuditLogs],
+  endpoints: [
+    publicSubmissionsEndpoint,
+    publicSubmissionsPreflightEndpoint,
+    publicRedirectsEndpoint,
+    publicRedirectsPreflightEndpoint,
+    previewArticleEndpoint,
+  ],
   editor: lexicalEditor(),
   db: postgresAdapter({
     pool: { connectionString: process.env.DATABASE_URL },

@@ -538,6 +538,64 @@ and the per-IP `login` / `forgot-password` / `reset-password` limits (`lib/authR
 Not rate limited, so no 429: the anonymous live feed `GET /api/live-events/:slug/updates` (cheap, read-only, answered with
 `Cache-Control: public, max-age=10` so a CDN absorbs polling) and all other reads. A locked staff account is a `401`, not a `429`.
 
+### Go-live C7: redirects
+
+Implements `go-live-contracts.md` C7 (exact-match redirects for the old WordPress addresses). Pattern rules (`/category/*`, `/tag/*`,
+`/page/N/`, `/feed/`, AMP variants, `/?p=ID`) stay with the public host.
+
+**Canonical path form** (`src/lib/redirectPaths.ts`, `normalizePath`; the public host applies the same function to the request path,
+query string and fragment removed first, before the lookup): leading `/`; trailing `/` unless the last segment has a file extension;
+every character except `A-Z a-z 0-9 - . _ ~` and the `/` separator percent-encoded as UTF-8 with **upper-case** hex (so `/café/`,
+`/caf%c3%a9/` and `/caf%C3%A9/` are one key, `%41` becomes `A`, `%2F` stays an encoded slash); case preserved. Rejected, not repaired:
+scheme or host, `//` prefix, backslash, control characters (also encoded: `%0D`, `%00`), inner whitespace, query string, fragment,
+`*`, dot segments, empty segments, more than 300 characters. A request path that fails normalisation has no rule (answer 404).
+
+**`redirects` collection** (`/api/redirects`): read = any staff role, create / update / delete = `admin` and `editor-in-chief`, anonymous
+403, every write audited (`redirect.create`, `redirect.update`, `redirect.delete`; a bulk import writes one `redirect.import`).
+Fields: `from` (canonical, unique, not `/`), `to` (canonical path, or `https://` URL whose host is in `REDIRECT_ALLOWED_HOSTS`; absent for
+410), `status` (301 default, 302, 410), `source` (`manual` default, `rank-math`, `legacy-url`), `note` (plain text, 500). Writes are refused
+with 400 naming the conflicting rule for: a loop (always), a duplicate address (also against a rule an article derives), a `manual`
+row that chains (either direction), and any address that is the current public address of a published article.
+`rank-math` and `legacy-url` rows may chain; they are flattened when the list is generated.
+
+**Derived rules**: each **published** article with a `legacyUrl` yields `from` = path of `legacyUrl`, `to` = the article path from
+`PUBLIC_ARTICLE_PATH_TEMPLATE` (`/reports/{slug}/` default, or `/{slug}/`; any other value stops startup). Nothing is emitted when
+`from` equals `to`, when the article is not published, or when the `legacyUrl` has a query string (e.g. `/?p=12`, which belongs to the
+public host) or is the root.
+
+**`GET /api/public/redirects`** (anonymous, GET/HEAD only):
+
+```json
+{ "version": "sha256:…", "generatedAt": "2026-10-16T00:00:00Z", "count": 2, "rules": [
+  { "from": "/old-slug/", "to": "/reports/new-slug/", "status": 301, "source": "legacy-url" },
+  { "from": "/retired/", "to": null, "status": 410, "source": "manual" } ] }
+```
+
+Sorted by `from` (plain code-unit order); `version` = sha256 of the canonical JSON of `rules` (independent of `generatedAt` and input
+order); a `410` rule has `"to": null`. Headers: `ETag: "<version>"`, `Cache-Control: public, max-age=300`, `Vary: Origin`;
+`If-None-Match` (strong, weak, list or `*`) answers `304` with no body. `Origin`, when sent, must be in `PUBLIC_SUBMISSION_ORIGINS`
+(403); allowlisted origins get an exact `Access-Control-Allow-Origin` echo and `Access-Control-Expose-Headers: ETag`; no credentials.
+No staff data, ids or notes, and nothing derived from an unpublished article. The list is rebuilt at most once per 10 s per process.
+Generation **refuses** (HTTP 500 `{ ok:false, errors:[{ message }] }`, `Cache-Control: no-store`, the reason with the rule names in the
+server log; the public host keeps its last good list) when: two rules share an address (both named), there is a loop, a stored row is not
+canonical, the template is invalid, there are more than **20,000 rules** or the body exceeds **5 MB** (never truncated). Chains are
+flattened to the final target (status becomes 302 if any hop is 302); a rule pointing at a 410 address is left as it is and counted
+(`pointsToGone`), never flattened through.
+
+**Commands** (run from `apps/cms`; output never contains an address from an input file):
+
+- `npm run export:redirects -- --out <file>` writes exactly the JSON the endpoint serves. The file is a generated artifact, never committed.
+- `npm run check:redirects -- --urls <file>` reads old addresses (one per line, `#` comments, absolute URLs or paths, query strings
+  ignored) and prints counts: resolved (by 301 / 302 / 410 / live article), unresolved (by no rule / query-only / invalid). Exit code 1
+  if anything is unresolved (the go-live gate is zero), 2 for a usage or file error.
+- `npm run import:redirects -- --file <csv> [--apply]`: CSV header `from,to,status` (`status` optional, default 301; `to` empty for 410;
+  RFC 4180 quoting). Dry run unless `--apply`. Rows are written with `source = rank-math`. Skipped and counted by reason: invalid
+  `from`/`to`/status, patterns containing `*`, duplicate in the file, already stored, address owned by an article rule, live article
+  address, loop. Chains are accepted (flattened later).
+
+Environment: `PUBLIC_ARTICLE_PATH_TEMPLATE`, `REDIRECT_ALLOWED_HOSTS` (`docs/operations.md`). Migration `20261016_111035_redirects`
+(new table `redirects`, enum `enum_redirects_source`, locked-documents relation column), reversible.
+
 ## 8. Environment variables
 
 See `apps/cms/.env.example` (annotated) and `docs/operations.md` §4. Secrets (`PAYLOAD_SECRET`, `PREVIEW_SECRET`,
@@ -548,6 +606,14 @@ proxy) and https-only `CMS_PUBLIC_URL`/CORS/CSRF settings (`docs/security.md`). 
 limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/operations.md` §4).
 
 ## 9. Changelog
+
+### Go-live C7: redirects
+Additive (the integrator assigns the version number).
+- New staff collection `redirects` (§ "Go-live C7: redirects"), new anonymous `GET /api/public/redirects` (ETag, 304, `max-age=300`),
+  pure canonical-path module shared with the public host, derived rules from `legacyUrl`, and the commands `export:redirects`,
+  `check:redirects`, `import:redirects`.
+- New environment values `PUBLIC_ARTICLE_PATH_TEMPLATE` and `REDIRECT_ALLOWED_HOSTS`; an invalid value stops startup.
+- Migration `20261016_111035_redirects`; no existing endpoint or field changed.
 
 ### v1.8
 Go-live contract C2 (SEO fields). Additive, no breaking change.
