@@ -14,7 +14,11 @@ headings start at h2 beneath the page's h1 and cannot skip a level. h5/h6 retain
 their requested depth once the preceding outline permits it. Whitespace/NBSP-only
 headings disappear without advancing that outline. Root-relative links remain
 links; protocol-relative URLs, backslashes and controls are rejected.
-Links with credentials are rendered as plain text, like unsafe schemes.
+Absolute HTTP(S) and mailto URLs are trimmed and parsed with `URL`, preserving
+spaces through standard URL encoding (for example a PDF filename or mail subject).
+Controls and backslashes are rejected before trimming; root-relative links also
+reject internal whitespace. Links with credentials are rendered as plain text,
+like unsafe schemes.
 
 Tables use the standard node types `table` → `tablerow` → `tablecell`.
 `headerState` follows Lexical's row/column header bitmask (1/2); supported spans
@@ -70,7 +74,9 @@ journeys do not replace the CMS-owned staff cross-app or editorial launch gates.
   create unapproved host aliases/redirects.
 - C1.1 `block` / `fields.blockType=youtubeEmbed` is supported as a labelled
   external video link only. An exactly 11-character `[A-Za-z0-9_-]` video ID
-  builds the YouTube watch URL; the optional title is escaped. The fixture
+  builds the YouTube watch URL; the optional title is capped at 200 UTF-16 code
+  units before escaping (without leaving a dangling high surrogate). A block
+  found inside a paragraph renders its link inline, without nested paragraphs. The fixture
   follows the PR #39 contract; it does not prove CMS editor registration or
   importer support. No iframe, thumbnail, SDK, script, automatic request or
   consent feature is introduced. Raw HTML and unsupported embeds remain excluded.

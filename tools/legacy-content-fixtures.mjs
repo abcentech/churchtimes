@@ -26,7 +26,10 @@ export function syntheticLegacyContent(index,mediaValue) {
     block('table',table),
     block('paragraph',[text('Synthetic narrative after table '+n)]),
     block('paragraph',[block('link',[text('Synthetic local reference '+n)],{fields:{url:'/news/synthetic-'+n}})]),
-    ...(index%5===0?[{type:'block',version:2,fields:{blockType:'youtubeEmbed',videoId:'abcdefghijk',title:'Synthetic video '+n}}]:[]),
+    ...(index%5===0?(()=>{
+      const video={type:'block',version:2,fields:{blockType:'youtubeEmbed',videoId:'abcdefghijk',title:'Synthetic video '+n}};
+      return [index%10===0?block('paragraph',[text('Synthetic inline video '+n+' '),video]):video];
+    })():[]),
     // Deliberately unsupported nodes demonstrate fail-closed behavior.
     {type:'html',version:1,html:'<script>window.legacyLeak=true</script>'},
     block('paragraph',[block('link',[text('Unsafe scheme omitted '+n)],{fields:{url:'javascript:window.legacyLeak=true'}})]),

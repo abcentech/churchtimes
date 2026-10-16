@@ -75,3 +75,20 @@ test('cumulative table budget remains separate from prose and every shortened ta
  assert.match(html,/Table shortened/);assert.match(html,/Prose survives all tables/);
  assert.ok([...html.matchAll(/<(?:td|th)(?: |>)/g)].length<8000);
 });
+test('absolute and mailto links preserve URL-encoded spaces and trim surrounding whitespace',()=>{
+ for(const [url,expected] of [['https://example.test/My File.pdf','https://example.test/My%20File.pdf'],[' https://example.test/My File.pdf ','https://example.test/My%20File.pdf'],['mailto:news@example.test?subject=Hi there','mailto:news@example.test?subject=Hi%20there']]) {
+  const html=renderArticleContent(article([{type:'link',fields:{url},children:[textNode('Reference')]}]));
+  assert.match(html,/<a /);assert.ok(html.includes(`href="${expected}"`));
+ }
+ for(const url of ['/news/My File','https://user:password@example.test/My File',' https://example.test/\n','mailto:news@example.test?subject=Hi\tthere']) {
+  assert.equal(renderArticleContent(article([{type:'link',fields:{url},children:[textNode('Reference')]}])),'Reference');
+ }
+});
+test('YouTube titles are bounded before escaping and paragraph-nested blocks stay valid inline links',()=>{
+ const block={type:'block',fields:{blockType:'youtubeEmbed',videoId:'abcdefghijk',title:'<'.repeat(100000)}};
+ const html=renderArticleContent(article([{type:'paragraph',children:[textNode('Video: '),block]}]));
+ assert.equal(html,`<p>Video: <a href="https://www.youtube.com/watch?v=abcdefghijk" rel="noopener noreferrer">Watch video on YouTube: ${'&lt;'.repeat(200)}</a></p>`);
+ assert.ok(html.length<1200);assert.doesNotMatch(html,/<p><p>/);
+ const unicode=renderArticleContent(article([{...block,fields:{...block.fields,title:'a'.repeat(199)+'\ud83d\ude00'}}]));
+ assert.doesNotMatch(unicode,/[\ud800-\udbff]/u);
+});

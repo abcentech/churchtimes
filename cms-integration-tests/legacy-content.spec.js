@@ -18,7 +18,10 @@ test('50 synthetic historical articles render through real CMS REST on a mobile/
   await expect(body.locator('h2,h3,h4,h5,h6')).toHaveCount(5);
   await expect(body.locator('a[href^="/news/synthetic-"]')).toHaveCount(1);
   await expect(body.locator('a[href^="https://www.youtube.com/watch"]')).toHaveCount(sample.index%5===0?1:0);
+  await expect(body.locator('p p')).toHaveCount(0);
+  if(sample.index%10===0)await expect(body.locator('p:has(> a[href^="https://www.youtube.com/watch"])')).toContainText('Synthetic inline video');
   if(sample.index===50)await expect(body.locator('td,th')).toHaveCount(2000);
+  if(sample.index===48)await expect(body.locator('td[colspan="20"]')).toHaveText('Synthetic spanning value');
   await expect(body.locator('.article-table-note')).toHaveCount(sample.index===49?1:0);
   await expect(body.locator('a[href^="https://example.test/"]')).toHaveCount(1);
   await expect(body.locator('figcaption')).toContainText('CMS integration caption');
