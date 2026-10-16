@@ -23,14 +23,19 @@ const para = (text: string) => ({
   textFormat: 0,
   children: [{ type: 'text', text, format: 0, detail: 0, mode: 'normal', style: '', version: 1 }],
 })
-const cell = (text: string, headerState: number) => ({
+const cell = (text: string, headerState: number, opts: { colSpan?: number; format?: number } = {}) => ({
   type: 'tablecell',
   version: 1,
   headerState,
-  colSpan: 1,
+  colSpan: opts.colSpan ?? 1,
   rowSpan: 1,
   backgroundColor: null,
-  children: [para(text)],
+  children: [
+    {
+      ...para(text),
+      children: [{ type: 'text', text, format: opts.format ?? 0, detail: 0, mode: 'normal', style: '', version: 1 }],
+    },
+  ],
 })
 const tableNode = () => ({
   type: 'table',
@@ -39,8 +44,10 @@ const tableNode = () => ({
   indent: 0,
   direction: 'ltr',
   children: [
-    { type: 'tablerow', version: 1, children: [cell('Parish', 1), cell('Members', 1)] },
+    // merged header cell (colSpan 2), a plain row, and a row with bold text (format 1)
+    { type: 'tablerow', version: 1, children: [cell('Parish report', 1, { colSpan: 2 })] },
     { type: 'tablerow', version: 1, children: [cell('St Example', 0), cell('120', 0)] },
+    { type: 'tablerow', version: 1, children: [cell('Total', 0, { format: 1 }), cell('120', 0, { format: 1 })] },
   ],
 })
 const youtubeNode = (videoId: string, title: string) => ({
@@ -123,9 +130,9 @@ test.describe('Article editor: table + youtubeEmbed block', () => {
     // The table is rendered as a real table with both rows and its header cells.
     const table = editor.locator('table').first()
     await expect(table).toBeVisible()
-    await expect(table.locator('tr')).toHaveCount(2)
+    await expect(table.locator('tr')).toHaveCount(3)
     await expect(table.getByText('St Example')).toBeVisible()
-    await expect(table.getByText('Members')).toBeVisible()
+    await expect(table.getByText('Parish report')).toBeVisible()
 
     // The YouTube block is rendered with its fields.
     const videoIdInput = page.locator('.rich-text-lexical input[value="dQw4w9WgXcQ"]')
@@ -136,35 +143,52 @@ test.describe('Article editor: table + youtubeEmbed block', () => {
     await editor.getByText('Synthetic opening paragraph.').click()
     await page.keyboard.press('End')
     await page.keyboard.type(' Edited in the browser.')
-    await table.getByText('120').click()
+    await table.getByText('St Example').click()
     await page.keyboard.press('End')
-    await page.keyboard.type('0')
+    await page.keyboard.type(' Church')
 
     await page.getByRole('button', { name: 'Save', exact: true }).first().click()
     await expect(page.getByText('Updated successfully')).toBeVisible({ timeout: 60_000 })
 
+    // "No data loss" compares the FULL stored body, as a projection that keeps everything meaningful: the order and
+    // type of the top-level nodes; for the table every row, every cell's headerState, colSpan, rowSpan and
+    // backgroundColor, and every text run's text and format (bold); for paragraphs every text run; for the block ALL
+    // of its fields exactly (id, blockName, blockType, videoId, title, nothing added). Expected = the body that was
+    // created, with only the two edits made in the browser applied.
+    const runs = (p: any) => (p.children ?? []).map((t: any) => ({ text: t.text, format: t.format }))
+    const project = (root: any) =>
+      (root.children as any[]).map((n) => {
+        if (n.type === 'table') {
+          return {
+            type: 'table',
+            rows: n.children.map((r: any) =>
+              r.children.map((c: any) => ({
+                headerState: c.headerState,
+                colSpan: c.colSpan,
+                rowSpan: c.rowSpan,
+                backgroundColor: c.backgroundColor ?? null,
+                paragraphs: c.children.map(runs),
+              })),
+            ),
+          }
+        }
+        if (n.type === 'block') return { type: 'block', fields: n.fields }
+        if (n.type === 'paragraph') return { type: 'paragraph', runs: runs(n) }
+        return { type: n.type }
+      })
+    const expected = project(structuredClone(content.root))
+    ;(expected[0] as any).runs[0].text += ' Edited in the browser.'
+    ;(expected[1] as any).rows[1][0].paragraphs[0][0].text = 'St Example Church'
     const stored = await api(token, 'GET', `/api/articles/${id}?depth=0`)
     expect(stored.status).toBe(200)
+    expect(project(stored.json.content.root)).toEqual(expected)
     const nodes = flat(stored.json.content.root)
-    const types = nodes.map((n) => n.type)
-    expect(types).toContain('table')
-    expect(types.filter((t) => t === 'tablerow')).toHaveLength(2)
-    expect(types.filter((t) => t === 'tablecell')).toHaveLength(4)
-    const text = JSON.stringify(stored.json.content)
-    expect(text).toContain('Parish')
-    expect(text).toContain('St Example')
-    expect(text).toContain('1200')
-    expect(text).toContain('Edited in the browser.')
-    expect(text).toContain('Closing paragraph.')
-    const block = nodes.find((n) => n.type === 'block')
-    expect(block?.fields).toMatchObject({ blockType: 'youtubeEmbed', videoId: 'dQw4w9WgXcQ', title: 'Synthetic harvest service' })
-    const headerStates = nodes.filter((n) => n.type === 'tablecell').map((n) => n.headerState)
-    expect(headerStates).toEqual([1, 1, 0, 0])
+    const cellCount = nodes.filter((n) => n.type === 'tablecell').length
 
     expect(pageErrors, `uncaught page errors: ${pageErrors.join(' | ')}`).toEqual([])
     evidence(
-      `admin editor opened article ${id} with table (2 rows x 2 cells) + youtubeEmbed block; edited a paragraph and a cell; saved; ` +
-        `stored body keeps table>tablerow>tablecell (${types.filter((t) => t === 'tablecell').length} cells) and the block (${block?.fields?.videoId})`,
+      `admin editor opened article ${id} with a 3-row table (merged header, bold row) + youtubeEmbed block; edited a paragraph and a cell; saved; ` +
+        `the stored body equals the created body plus those two edits (${cellCount} cells; colSpan, rowSpan, headerState, text formats and block fields compared)`,
     )
   })
 

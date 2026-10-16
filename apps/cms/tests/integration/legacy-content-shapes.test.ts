@@ -139,6 +139,42 @@ describe('C1.1 youtubeEmbed block in articles.content', () => {
     expect(nested.status).toBe(400)
   })
 
+  it('refuses a body nested past the depth limit, so an embed cannot hide deep inside lists', async () => {
+    const nestedLists = (levels: number, leaf: unknown): unknown => {
+      let node: unknown = leaf
+      for (let i = 0; i < levels; i++) node = { type: 'list', version: 1, listType: 'bullet', tag: 'ul', start: 1, children: [{ type: 'listitem', version: 1, value: 1, children: [node] }] }
+      return node
+    }
+    const evil = { type: 'embed', version: 1, embedType: 'iframe', url: 'https://evil.example.test/frame' }
+    // 15 levels: inside the limit, the embed itself is named
+    const shallow = await f.createArticle(f.tokens.eic, { content: body(nestedLists(15, evil)) })
+    expect(shallow.status).toBe(400)
+    expect(errorText(shallow)).toMatch(/Embeds other than YouTube are not accepted/)
+    // 16 and 40 levels used to be accepted
+    for (const levels of [16, 40]) {
+      const deep = await f.createArticle(f.tokens.eic, { content: body(nestedLists(levels, evil)) })
+      expect(deep.status, `${levels} levels`).toBe(400)
+    }
+    // deep but harmless is refused too (a body that cannot be checked is not stored)
+    const harmless = await f.createArticle(f.tokens.eic, { content: body(nestedLists(40, para('plain'))) })
+    expect(harmless.status).toBe(400)
+    expect(errorText(harmless)).toMatch(/nested too deeply/)
+    // on update as well
+    const ok = await f.createArticle(f.tokens.eic, { content: body(youtube({ videoId: 'dQw4w9WgXcQ' })) })
+    const upd = await patch(f.tokens.eic, ok.id!, body(nestedLists(20, evil)))
+    expect(upd.status).toBe(400)
+    // ordinary nesting is fine
+    const fine = await f.createArticle(f.tokens.eic, { content: body(nestedLists(4, para('ok'))) })
+    expect(fine.status, errorText(fine)).toBe(201)
+  })
+
+  it('refuses a YouTube block that carries a URL or children', async () => {
+    const withUrl = { ...youtube({ videoId: 'dQw4w9WgXcQ' }), url: 'https://evil.example.test/x' }
+    expect((await f.createArticle(f.tokens.eic, { content: body(withUrl) })).status).toBe(400)
+    const withField = youtube({ videoId: 'dQw4w9WgXcQ', src: 'https://evil.example.test/x' })
+    expect((await f.createArticle(f.tokens.eic, { content: body(withField) })).status).toBe(400)
+  })
+
   it('is skipped only for trusted seed calls (same rule as the body-image check)', async () => {
     const seeded = await f.seedArticle({ content: body({ type: 'embed', url: 'https://example.test/seed' }) })
     expect(seeded.id).toBeTruthy()
@@ -159,6 +195,42 @@ describe('C1.4 table nodes in articles.content', () => {
     expect(t.children[0].children.map((c: any) => c.type)).toEqual(['tablecell', 'tablecell'])
     expect(t.children[0].children[0].headerState).toBe(1)
     expect(JSON.stringify(t)).toContain('St Example')
+  })
+
+  it('an image inside a table cell is validated, recorded in bodyMedia and follows the media privacy rule', async () => {
+    const form = new FormData()
+    form.set('_payload', JSON.stringify({ alt: `${runId} cell image` }))
+    form.set('file', new Blob([new Uint8Array(png)], { type: 'image/png' }), `${runId}-cell.png`)
+    const up = await api('POST', '/api/media', { token: f.tokens.eic, body: form })
+    expect(up.status).toBe(201)
+    const mediaId = up.json.doc.id as number
+
+    const withImage = (value: unknown) => {
+      const t = table() as any
+      t.children[1].children[1].children.push({ type: 'upload', relationTo: 'media', value, fields: null, format: '', version: 3 })
+      return body(t)
+    }
+
+    // a bad id inside a cell is refused, exactly like a bad id at the top level
+    const bad = await f.createArticle(f.tokens.eic, { content: withImage(2147483646) })
+    expect(bad.status).toBe(400)
+    const badRel = await f.createArticle(f.tokens.eic, { content: withImage('x') })
+    expect(badRel.status).toBe(400)
+
+    const art = await f.createArticle(f.tokens.eic, { content: withImage(mediaId) })
+    expect(art.status, errorText(art)).toBe(201)
+    const staff = await api('GET', `/api/articles/${art.id}?depth=0`, { token: f.tokens.eic })
+    expect(staff.json.bodyMedia).toEqual([mediaId])
+
+    // draft: the image is private
+    expect((await api('GET', `/api/media/${mediaId}?depth=0`)).status).toBe(404)
+    // published: the image shown in the table cell is public
+    const pub = await api('PATCH', `/api/articles/${art.id}`, { token: f.tokens.eic, body: { status: 'published' } })
+    expect(pub.status, errorText(pub)).toBe(200)
+    expect((await api('GET', `/api/media/${mediaId}?depth=0`)).status).toBe(200)
+    // and frozen for a non-editor (the freeze follows bodyMedia, which includes cell images)
+    const frozen = await api('PATCH', `/api/media/${mediaId}`, { token: f.tokens.reporter, body: { alt: `${runId} changed` } })
+    expect([403, 404]).toContain(frozen.status)
   })
 
   it('accepts a table together with a YouTube block in one body', async () => {

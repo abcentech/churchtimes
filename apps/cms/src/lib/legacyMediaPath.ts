@@ -50,7 +50,8 @@ const SIZE_SUFFIX_RE = /^(.+)-\d{1,5}x\d{1,5}(\.[A-Za-z0-9]+)$/
 
 /**
  * Remove a WordPress thumbnail size suffix (`-300x200`) that sits directly before the extension of the file name.
- * Never touches other names: `photo-2020.jpg`, `300x200.jpg` and `photo-300x200` (no extension) stay as they are.
+ * A real original can end this way too (`banner-1920x1080.jpg`), so callers must try the exact path first: use
+ * `candidatePaths`. Never touches other names: `photo-2020.jpg`, `300x200.jpg` and `photo-300x200` (no extension) stay as they are.
  */
 export function stripSizeSuffix(path: string): string {
   const slash = path.lastIndexOf('/')
@@ -58,6 +59,16 @@ export function stripSizeSuffix(path: string): string {
   const name = path.slice(slash + 1)
   const m = SIZE_SUFFIX_RE.exec(name)
   return m ? `${dir}${m[1]}${m[2]}` : path
+}
+
+/**
+ * Paths to try, in order, when mapping an old upload address to a media document: the exact path first, then the
+ * path without a WordPress size suffix. A real file can be called `banner-1920x1080.jpg`, so the exact name must
+ * win; only when nothing matches is the suffix assumed to be a thumbnail size. One entry when they are the same.
+ */
+export function candidatePaths(path: string): string[] {
+  const stripped = stripSizeSuffix(path)
+  return stripped === path ? [path] : [path, stripped]
 }
 
 /** True for a value acceptable in `media.legacyPath`: already normalised and relative to the uploads folder. */

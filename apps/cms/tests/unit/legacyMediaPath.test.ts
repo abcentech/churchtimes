@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { altFallback, isValidLegacyPath, legacyPathFromUrl, resolveAlt, stripSizeSuffix } from '../../src/lib/legacyMediaPath'
+import { altFallback, candidatePaths, isValidLegacyPath, legacyPathFromUrl, resolveAlt, stripSizeSuffix } from '../../src/lib/legacyMediaPath'
 
 describe('legacyPathFromUrl', () => {
   it('returns the path after /wp-content/uploads/', () => {
@@ -57,6 +57,18 @@ describe('stripSizeSuffix', () => {
     ]) {
       expect(stripSizeSuffix(keep), keep).toBe(keep)
     }
+  })
+})
+
+describe('candidatePaths', () => {
+  it('lists the exact path first, then the path without a size suffix', () => {
+    expect(candidatePaths('2023/10/banner-1920x1080.jpg')).toEqual(['2023/10/banner-1920x1080.jpg', '2023/10/banner.jpg'])
+    expect(candidatePaths('2023/10/photo-300x200.jpg')).toEqual(['2023/10/photo-300x200.jpg', '2023/10/photo.jpg'])
+  })
+
+  it('has a single entry when there is no suffix to strip', () => {
+    expect(candidatePaths('2023/10/photo.jpg')).toEqual(['2023/10/photo.jpg'])
+    expect(candidatePaths('photo-2020.jpg')).toEqual(['photo-2020.jpg'])
   })
 })
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  BODY_TOO_DEEP_MESSAGE,
   EMBED_REFUSED_MESSAGE,
   YOUTUBE_TITLE_MAX,
   collectYoutubeIds,
@@ -137,10 +138,58 @@ describe('findEmbedProblem', () => {
     expect(findEmbedProblem(body({ type: 'embed' }, youtube({ videoId: 'bad' })))).toBe(EMBED_REFUSED_MESSAGE)
   })
 
-  it('is bounded: a pathologically deep tree does not throw', () => {
+  it('refuses html-like, audio, script and object nodes in any letter case', () => {
+    for (const type of ['html', 'rawhtml', 'RawHTML', 'HTML', 'audio', 'Audio', 'script', 'Script', 'object', 'OBJECT', 'iFrame', 'Video']) {
+      expect(findEmbedProblem(body({ type, html: '<b>x</b>' })), type).toBe(EMBED_REFUSED_MESSAGE)
+    }
+  })
+
+  it('refuses a YouTube block that carries children, URL fields, or unexpected fields', () => {
+    const base = youtube({ videoId: 'dQw4w9WgXcQ' })
+    const withChildren = { ...base, children: [{ type: 'text', text: 'x' }] }
+    const withUrl = { ...base, url: 'https://evil.example.test/x' }
+    const withHref = { ...base, href: 'https://evil.example.test/x' }
+    const withFieldUrl = youtube({ videoId: 'dQw4w9WgXcQ', url: 'https://evil.example.test/x' })
+    const withFieldSrc = youtube({ videoId: 'dQw4w9WgXcQ', src: 'https://evil.example.test/x' })
+    const withObject = youtube({ videoId: 'dQw4w9WgXcQ', extra: { a: 1 } })
+    for (const [label, node] of Object.entries({ withChildren, withUrl, withHref, withFieldUrl, withFieldSrc, withObject })) {
+      expect(findEmbedProblem(body(node)), label).toMatch(/YouTube block must not carry|unexpected fields/)
+    }
+    expect(findEmbedProblem(body({ ...base, children: [] }))).toBeNull()
+  })
+
+  it('is bounded and never throws on a pathologically deep tree', () => {
     let deep: Record<string, unknown> = { type: 'paragraph' }
-    for (let i = 0; i < 500; i++) deep = { type: 'quote', children: [deep] }
+    for (let i = 0; i < 5000; i++) deep = { type: 'quote', children: [deep] }
     expect(() => findEmbedProblem({ root: deep })).not.toThrow()
+    expect(findEmbedProblem({ root: deep })).toBe(BODY_TOO_DEEP_MESSAGE)
+  })
+
+  const nestedLists = (levels: number, leaf: unknown): unknown => {
+    let node: unknown = leaf
+    for (let i = 0; i < levels; i++) {
+      node = { type: 'list', children: [{ type: 'listitem', children: [node] }] }
+    }
+    return node
+  }
+
+  it('REFUSES a body nested past the depth limit instead of skipping the check', () => {
+    const evil = { type: 'embed', embedType: 'iframe', url: 'https://evil.example.test/x' }
+    // within the limit the embed itself is named
+    expect(findEmbedProblem(body(nestedLists(10, evil)))).toBe(EMBED_REFUSED_MESSAGE)
+    expect(findEmbedProblem(body(nestedLists(14, evil)))).toBe(EMBED_REFUSED_MESSAGE)
+    // past it the body is refused (it used to return null for 16+ levels)
+    for (const levels of [16, 17, 20, 40, 100]) {
+      expect(findEmbedProblem(body(nestedLists(levels, evil))), `${levels} levels`).not.toBeNull()
+      expect(findEmbedProblem(body(nestedLists(levels, para('plain')))), `${levels} levels, no embed`).toBe(BODY_TOO_DEEP_MESSAGE)
+    }
+    // a malformed YouTube block deep down cannot hide either
+    expect(findEmbedProblem(body(nestedLists(30, youtube({ videoId: 'bad' }))))).not.toBeNull()
+  })
+
+  it('accepts ordinary nesting well inside the limit', () => {
+    expect(findEmbedProblem(body(nestedLists(5, para('ok'))))).toBeNull()
+    expect(findEmbedProblem(body(nestedLists(8, youtube({ videoId: 'dQw4w9WgXcQ' }))))).toBeNull()
   })
 })
 

@@ -186,15 +186,22 @@ Serialized shape (the `version` of the wrapper is whatever Payload's block featu
   hook next to the body-image check, and is skipped only for trusted seed calls. `400` for: a malformed `youtubeEmbed` block
   (*A YouTube block has an invalid video id ...*, or a title problem), and for **any other embed**: a raw `embed` node (the
   archive importer's old `{ type: 'embed', embedType, url }` shape), an iframe-like node (`iframe`, `video`, `youtube`, `vimeo`,
-  `oembed`, `widget`, ...), an `inlineBlock`, or a `block` whose `blockType` is not `youtubeEmbed` (*Embeds other than YouTube are
-  not accepted.*). Anonymous readers get the block as stored, on published articles only (like all of `content`).
+  `oembed`, `audio`, `html`, `rawhtml`, `script`, `object`, `widget`, matched case-insensitively), an `inlineBlock`, or a `block`
+  whose `blockType` is not `youtubeEmbed` (*Embeds other than YouTube are not accepted.*). A `youtubeEmbed` block must be a leaf:
+  no children, no `url`/`href`/`src` members and no fields beyond `id`, `blockName`, `blockType`, `videoId`, `title` (`400`).
+  A body nested deeper than 64 object/array levels (about 15 nested list levels) is **refused with `400`**
+  (*The article body is nested too deeply ...*): the check never silently skips what it cannot inspect.
+  Anonymous readers get the block as stored, on published articles only (like all of `content`).
 - The importer must write `youtubeEmbed` blocks for YouTube, and for anything else a paragraph with the original link text (when it
   is a safe `https:` link) or nothing, plus a QA report line. It must not write `embed` nodes.
 
 **Tables (C1.4).** The editor registers Lexical's table feature (`EXPERIMENTAL_TableFeature`) on `articles.content`. Stored shape is the
 standard `table` > `tablerow` > `tablecell` (`headerState` 0/1/2, `colSpan`, `rowSpan`), unchanged from what the public renderer
 reads. A real-browser test (`e2e/browser/article-editor.spec.ts`) opens an article with a table and a YouTube block in the admin
-editor, edits it, saves it, and checks nothing is lost. There is no server-side check of table structure beyond Payload's own.
+editor, edits a paragraph and a cell, saves it, and compares the full stored body (row/cell structure, `headerState`, `colSpan`, `rowSpan`,
+`backgroundColor`, text runs and formats, all block fields) with what was created. It runs under desktop-chrome and android-pixel7. An
+image inside a table cell is validated and recorded in `bodyMedia` like any body image. There is no server-side check of table
+structure beyond Payload's own.
 
 **Media `legacyPath` (C1.2).** Optional text field on `media` (additive, indexed, migration `media_legacy_path`): the original WordPress
 upload path after `/wp-content/uploads/`, normalised (`2023/10/photo.jpg`: no leading slash, no `..`, no `?`/`#`/backslash, at most 500
@@ -202,14 +209,22 @@ characters; otherwise `400`). **Staff-only:** readable by `admin`, `editor-in-ch
 `editor-in-chief`; writable by server code (Local API with `overrideAccess`, which is what the importer uses). Anonymous callers,
 reporters and trusted publishers never see it and cannot filter by it (`400`); a value they send is ignored. Existing media privacy,
 ownership and freeze rules are unchanged. Helper functions for the importer live in `src/lib/legacyMediaPath.ts` (`legacyPathFromUrl`,
-`stripSizeSuffix` for `-300x200` suffixes before the extension only, `altFallback`/`resolveAlt`: alt, else caption, else
+`stripSizeSuffix` for `-300x200` suffixes before the extension only, `candidatePaths` = `[exact, stripped]`: callers try the exact path
+first because a real file can be called `banner-1920x1080.jpg`; `altFallback`/`resolveAlt`: alt, else caption, else
 `<title> photo`, at most 300 characters).
 
 **Import helpers (C1.3, C1.5).** Pure, database-free functions in `src/lib/legacyContent.ts` for the later importer task:
-`resolveSlugCollisions` (`-2`, `-3`, returns `{old,new}` pairs, slug rule and 160 characters), `sanitizeLegacyLinks` (keep `http`, `https`,
-`mailto` and root-relative links; rewrite links to the old hosts through the slug map; convert everything else to plain text),
-`stripShortcodes` (removes `[tag ...]` and `[/tag]` and returns the removed tag names; a bare lowercase word in brackets such as `[sic]`
-is kept unless it is a well-known shortcode), `dropTemplateVariableSeo` (Rank Math `%variable%` values become `null` plus a flag).
+`resolveSlugCollisions` (every valid original slug is reserved first, only true duplicates and normalised forms that collide get `-2`, `-3`,
+so a duplicate never takes a slug another post owns, in any order; returns `{old,new}` pairs; slug rule and 160 characters),
+`sanitizeLegacyLinks` (keep `http`, `https`, `mailto` and root-relative links; convert everything else, including a URL in any of
+`fields.url`, `url`, `href`, to plain text; an old-host link is rewritten through the slug map **only** when it is a plain `/<slug>/`
+address with a slug in the map and not a reserved WordPress path; `?p=ID`, `/category/...`, dated permalinks, media and unknown slugs
+stay as written and are listed in `report.unmapped` with a reason; a subtree nested deeper than 64 levels is flattened to text and
+reported), `stripShortcodes` (conservative: removes a closing tag only when paired with a removed opening tag, tags carrying
+attributes, and case-sensitive known names such as `[gallery]`, `[video]`, `[wpforms]`, `penci-*`; keeps `[sic]`, `[co-founder]`,
+`[covid-19]`, `[x1]`, `[Video]`; tidies only the whitespace touching a removal; reports every removal), `dropTemplateVariableSeo`
+(Rank Math `%variable%` values become `null` plus a flag). The public host resolves `?p=ID` through `legacyId`; dated permalinks
+(`/2020/05/slug/`) are not mapped by these helpers.
 
 ## 4. Public endpoints (no credentials)
 
