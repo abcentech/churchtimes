@@ -73,6 +73,7 @@ export interface Config {
     articles: Article;
     submissions: Submission;
     'contact-messages': ContactMessage;
+    subscribers: Subscriber;
     'live-events': LiveEvent;
     'live-updates': LiveUpdate;
     'audit-logs': AuditLog;
@@ -95,6 +96,7 @@ export interface Config {
     articles: ArticlesSelect<false> | ArticlesSelect<true>;
     submissions: SubmissionsSelect<false> | SubmissionsSelect<true>;
     'contact-messages': ContactMessagesSelect<false> | ContactMessagesSelect<true>;
+    subscribers: SubscribersSelect<false> | SubscribersSelect<true>;
     'live-events': LiveEventsSelect<false> | LiveEventsSelect<true>;
     'live-updates': LiveUpdatesSelect<false> | LiveUpdatesSelect<true>;
     'audit-logs': AuditLogsSelect<false> | AuditLogsSelect<true>;
@@ -390,6 +392,35 @@ export interface ContactMessage {
   createdAt: string;
 }
 /**
+ * Newsletter subscribers. Export (admin only): GET /api/subscribers/export?status=confirmed.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "subscribers".
+ */
+export interface Subscriber {
+  id: number;
+  email: string;
+  name?: string | null;
+  /**
+   * Staff may only move a subscriber to unsubscribed or bounced. Confirmation happens through the e-mailed link.
+   */
+  status: 'pending' | 'confirmed' | 'unsubscribed' | 'bounced' | 'erased';
+  source: 'footer' | 'article' | 'home' | 'other';
+  /**
+   * Version of the consent wording shown when the person signed up.
+   */
+  consentTextVersion: string;
+  consentAt: string;
+  confirmedAt?: string | null;
+  unsubscribedAt?: string | null;
+  ipHash?: string | null;
+  importedFrom?: ('web' | 'mailchimp-import') | null;
+  confirmTokenHash?: string | null;
+  confirmTokenExpiresAt?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
  * Read-only record of workflow and moderation actions.
  *
  * This interface was referenced by `Config`'s JSON-Schema
@@ -464,6 +495,10 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'contact-messages';
         value: number | ContactMessage;
+      } | null)
+    | ({
+        relationTo: 'subscribers';
+        value: number | Subscriber;
       } | null)
     | ({
         relationTo: 'live-events';
@@ -684,6 +719,26 @@ export interface ContactMessagesSelect<T extends boolean = true> {
   ipHash?: T;
   userAgent?: T;
   contentHash?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "subscribers_select".
+ */
+export interface SubscribersSelect<T extends boolean = true> {
+  email?: T;
+  name?: T;
+  status?: T;
+  source?: T;
+  consentTextVersion?: T;
+  consentAt?: T;
+  confirmedAt?: T;
+  unsubscribedAt?: T;
+  ipHash?: T;
+  importedFrom?: T;
+  confirmTokenHash?: T;
+  confirmTokenExpiresAt?: T;
   updatedAt?: T;
   createdAt?: T;
 }

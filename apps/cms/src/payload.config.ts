@@ -15,9 +15,11 @@ import { LiveEvents } from './collections/LiveEvents'
 import { LiveUpdates } from './collections/LiveUpdates'
 import { Media } from './collections/Media'
 import { Submissions } from './collections/Submissions'
+import { Subscribers } from './collections/Subscribers'
 import { Users } from './collections/Users'
 import { previewArticleEndpoint } from './endpoints/previewArticle'
 import { publicContactEndpoint, publicContactPreflightEndpoint } from './endpoints/publicContact'
+import { newsletterEndpoints } from './endpoints/publicNewsletter'
 import {
   publicSubmissionsEndpoint,
   publicSubmissionsPreflightEndpoint,
@@ -113,6 +115,7 @@ export default buildConfig({
     Articles,
     Submissions,
     ContactMessages,
+    Subscribers,
     LiveEvents,
     LiveUpdates,
     AuditLogs,
@@ -122,6 +125,7 @@ export default buildConfig({
     publicSubmissionsPreflightEndpoint,
     publicContactEndpoint,
     publicContactPreflightEndpoint,
+    ...newsletterEndpoints,
     previewArticleEndpoint,
   ],
   editor: lexicalEditor(),

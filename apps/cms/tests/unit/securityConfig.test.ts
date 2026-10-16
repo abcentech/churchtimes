@@ -12,6 +12,7 @@ const good = {
   PAYLOAD_SECRET: 'a'.repeat(40),
   PREVIEW_SECRET: 'b'.repeat(40),
   IP_HASH_SALT: 'c'.repeat(20),
+  NEWSLETTER_TOKEN_SECRET: 'd'.repeat(40),
   TURNSTILE_SECRET_KEY: '0x4AAAAAAAreal-looking-secret',
   CMS_PUBLIC_URL: 'https://cms.example.org',
   CMS_CORS_ORIGINS: 'https://www.example.org',
@@ -218,6 +219,27 @@ describe('Turnstile pinning warnings (production: logged, never a startup failur
       PUBLIC_SUBMISSION_ORIGINS: 'http://www.churchtimes.localhost:5173',
     } as NodeJS.ProcessEnv
     expect(validateProductionEnv(staging)).toEqual({ problems: [], warnings: [] })
+  })
+})
+
+describe('NEWSLETTER_TOKEN_SECRET and PUBLIC_SITE_URL (C4)', () => {
+  const without = (key: string): NodeJS.ProcessEnv => {
+    const env = { ...good } as Record<string, string | undefined>
+    delete env[key]
+    return env as NodeJS.ProcessEnv
+  }
+  it('requires a strong NEWSLETTER_TOKEN_SECRET in production, distinct from the other secrets', () => {
+    expect(validateProductionEnv(without('NEWSLETTER_TOKEN_SECRET')).problems.join()).toMatch(/NEWSLETTER_TOKEN_SECRET/)
+    expect(validateProductionEnv({ ...good, NEWSLETTER_TOKEN_SECRET: 'short' }).problems.join()).toMatch(/NEWSLETTER_TOKEN_SECRET/)
+    expect(validateProductionEnv({ ...good, NEWSLETTER_TOKEN_SECRET: good.PAYLOAD_SECRET }).problems.join()).toMatch(/differ/)
+    expect(validateProductionEnv({ ...good, NEWSLETTER_TOKEN_SECRET: good.PREVIEW_SECRET }).problems.join()).toMatch(/differ/)
+    expect(validateProductionEnv(good).problems).toEqual([])
+  })
+  it('accepts only a bare https PUBLIC_SITE_URL in production', () => {
+    expect(validateProductionEnv({ ...good, PUBLIC_SITE_URL: 'https://www.example.org' }).problems).toEqual([])
+    for (const bad of ['http://www.example.org', 'https://www.example.org/news', 'www.example.org', 'https://www.example.org/']) {
+      expect(validateProductionEnv({ ...good, PUBLIC_SITE_URL: bad }).problems.join(), bad).toMatch(/PUBLIC_SITE_URL/)
+    }
   })
 })
 

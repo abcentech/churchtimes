@@ -121,6 +121,10 @@ message listing every problem (missing secrets, http or wildcard origins, dummy 
 | `SUBMISSION_DUPLICATE_WINDOW_HOURS` | no | `72` | Identical email+title+body inside this window is rejected (409). |
 | `CONTACT_RATE_LIMIT` / `CONTACT_RATE_WINDOW_SECONDS` | no | `5` / `900` | Contact messages per IP per window (`POST /api/public/contact`). Per e-mail address the limit is fixed at 3 per hour. |
 | `CONTACT_NOTIFY_TO` | recommended | `desk@example.org,editor@example.org` | Comma list (max 10) of staff addresses e-mailed for each contact message, with `Reply-To` set to the sender. Server-side only: never returned to a browser or written to logs. An invalid entry stops startup in production. Needs SMTP; without either, messages are still stored and show `notifyStatus: not-configured` in CMS > Contact messages. |
+| `PUBLIC_SITE_URL` | for the newsletter | `https://www.example.org` | Public **site** origin that confirmation e-mails link to (`<origin>/newsletter/confirm?token=...`, never an API URL). Bare origin, https only in production (a malformed or http value stops startup). While unset or http in production, `POST /api/public/newsletter/subscribe` answers `503` and stores nothing. |
+| `NEWSLETTER_TOKEN_SECRET` | **yes (production)** | 64 hex chars | HMAC key for unsubscribe links, at least 32 characters, different from `PAYLOAD_SECRET` and `PREVIEW_SECRET`. Startup fails in production without it (the loopback-only disposable staging stack derives a throw-away key instead). Rotating it breaks every unsubscribe link already sent. |
+| `NEWSLETTER_RATE_LIMIT` / `NEWSLETTER_RATE_WINDOW_SECONDS` | no | `5` / `900` | Newsletter sign-ups per IP per window. Per e-mail address the limit is fixed at 3 per hour. |
+| `NEWSLETTER_TOKEN_RATE_LIMIT` | no | `20` | Per-IP limit (same window) for the confirm and unsubscribe endpoints combined. |
 | `AUTH_LOGIN_RATE_LIMIT`, `AUTH_FORGOT_RATE_LIMIT`, `AUTH_RESET_RATE_LIMIT`, `AUTH_RATE_WINDOW_SECONDS` | no | `10`, `5`, `10`, `900` | Per-IP limits for login / forgot-password / reset-password. |
 | `TRUST_PROXY` | **yes (production)** | `true` | The app always runs behind a reverse proxy, so production startup **fails** unless this is exactly `true`. Make sure the app is reachable only through that proxy (it listens on `127.0.0.1`). Without trust every client would share one rate-limit bucket. |
 | `TRUST_PROXY_HOPS` | no | `1` | Number of trusted reverse proxies in front of the app (1 to 10, default 1). The client address is the entry that many places from the **right** of `X-Forwarded-For` (the address your own proxy appended), never the leftmost, which clients can forge. A chain shorter than this fails closed (shared bucket). The §4.4 blocks overwrite the header, so `1`; use `2` only if two proxies each append (for example nginx with `$proxy_add_x_forwarded_for` behind another proxy). |
@@ -440,6 +444,15 @@ Confirm each item before go-live and again after any change to the server:
 - [ ] Contact form (C5): a message from the real site form gets a `201` with a `MSG-` reference, appears in CMS > Contact messages (admin and
       editor-in-chief only), and `CONTACT_NOTIFY_TO` receives the notification with Reply-To set to the sender. With SMTP stopped, a message is
       still stored (`notifyStatus: failed`) and the sender still sees the normal `201`.
+- [ ] Newsletter (C4): `NEWSLETTER_TOKEN_SECRET` and `PUBLIC_SITE_URL` are set; a sign-up from the real site form answers `202`, the confirmation e-mail
+      arrives with a link on the public site, the public confirm page POSTs the token and the row becomes `confirmed` in CMS > Subscribers
+      (admin and editor-in-chief only). With SMTP stopped the form answers `503` and stores nothing. `GET /api/subscribers/export?status=confirmed`
+      works for an `admin` (CSV, audited) and is refused for everyone else.
+- [ ] Mailchimp import (only if the owner supplies an export): keep the CSV **outside** the repository (the command refuses a path inside it), run
+      `npm run import:subscribers -- --file <path>` first (dry run, counts only), check the counts, then add `--apply`. Expected columns, any order:
+      `Email Address` (or `email`), `First Name`, `Last Name`, `OPTIN_TIME`, `CONFIRM_TIME`, `Status`. Only rows whose Status is `subscribed` are imported
+      (as `confirmed`, consent time = `OPTIN_TIME`, else `CONFIRM_TIME`, else the import time). A file with no Status column is refused unless it is
+      Mailchimp's "Subscribed" segment export and `--assume-subscribed` is added. Existing rows and erased addresses are never overwritten or re-created.
 - [ ] Wrong password 5 times locks the account; **Forgot password?** works end to end; after logout the old token no longer works.
 
 ## 12. Status

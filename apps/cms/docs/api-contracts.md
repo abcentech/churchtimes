@@ -365,6 +365,59 @@ fails, the message is still stored, the answer is still the normal `201`, the fa
 `topic`, `message`, `status` (`new`, `read`, `replied`, `spam`), `notifyStatus` (`sent`, `failed`, `not-configured`), `ipHash`,
 `userAgent`, `contentHash`. Only `status` is editable over REST; rows cannot be created over REST; raw IP addresses are never stored.
 
+### Go-live C4: newsletter
+
+The CMS stores consent and subscribers; it does **not** send newsletters. Three anonymous endpoints (same rules as §4.1: `Origin` in
+`PUBLIC_SUBMISSION_ORIGINS` or 403, JSON only or 415, `OPTIONS` preflights, `Access-Control-Expose-Headers: Retry-After`) plus staff tools.
+
+**`POST /api/public/newsletter/subscribe`** (body cap 8 KB, Turnstile action `newsletter-subscribe`, pinned to this endpoint)
+
+```json
+{ "email": "reader@example.test", "name": "Optional name", "consent": true,
+  "source": "footer", "website": "", "turnstileToken": "0.xxxx" }
+```
+- `email` valid, at most 254, lower-cased. `name` optional, 2 to 120; **a missing field, `null` and an empty string all mean "no name"**.
+  `consent` must be literally `true`. `source` is required and one of `footer`, `article`, `home`, `other`.
+- Order: origin, content type, size, **503 check**, per-IP limit, body, honeypot, validation, Turnstile, per-address limit, write.
+  Limits: per IP `NEWSLETTER_RATE_LIMIT` (5) per `NEWSLETTER_RATE_WINDOW_SECONDS` (900); per address 3 per hour, counted for every verified
+  attempt whatever the address's state. Both `429` with `Retry-After`.
+- **Double opt-in.** A new address is stored `pending` with the SHA-256 of a random token (the token is never stored), expiring in 72 h, and the
+  CMS e-mails `${PUBLIC_SITE_URL}/newsletter/confirm?token=...` (a public-site page, never an API URL; `PUBLIC_SITE_URL` is https-only in production).
+  The mail is queued after the answer is built, so response time does not reveal whether the address existed.
+- **Neutral answer.** A new, an already-pending and an already-confirmed address all get the byte-identical
+  `202 { "ok": true, "message": "If this address can be subscribed, we sent a confirmation email." }`. Pending: a fresh link replaces the old one.
+  Confirmed: nothing is sent or changed. **Unsubscribed or bounced: not re-added**; the row keeps its status, the same answer is returned, and a
+  fresh confirmation link is mailed. Opening it is the only way back (it also records fresh consent). A mail failure is logged and still answers `202`.
+- A honeypot hit returns the normal `202` and stores nothing.
+- `503 { "ok": false, "errors": [{ "message": "Sign-up is unavailable." }] }` and nothing stored when, in production, SMTP is not configured or
+  `PUBLIC_SITE_URL` is missing or not https.
+- A person erased earlier who signs up again is a fresh double opt-in (new `pending` row); the erase record stays.
+
+**`POST /api/public/newsletter/confirm`** and **`POST /api/public/newsletter/unsubscribe`**: body `{ "token": "..." }` (cap 2 KB), no Turnstile (the token
+is the proof), per-IP limit `NEWSLETTER_TOKEN_RATE_LIMIT` (20) per window. **POST only: any other method is `405` with `Allow: POST, OPTIONS`**, so mail
+scanners that pre-fetch links change nothing.
+- confirm: single-use random token, valid 72 h, matched by its SHA-256. Sets `confirmed` and `confirmedAt`, clears the token.
+- unsubscribe: HMAC-SHA256-signed token `u1.<subscriber id>.<signature>` (key `NEWSLETTER_TOKEN_SECRET`, constant-time comparison, no expiry so every
+  future newsletter can carry a working link). Sets `unsubscribed` and `unsubscribedAt`. Idempotent; an erased subscriber stays erased.
+- Both answer `200 { "ok": true }`. Any invalid, expired, used, forged or unknown token is the same `400 { "ok": false, "errors": [{ "message": "This link is no longer valid." }] }`.
+
+**Staff data.** `subscribers` (`/api/subscribers`, `admin` and `editor-in-chief` read; never anonymous, never in a public response): `email` (unique,
+lower-cased), `name?`, `status` (`pending`, `confirmed`, `unsubscribed`, `bounced`, `erased`), `source`, `consentTextVersion`, `consentAt`, `confirmedAt?`,
+`unsubscribedAt?`, `ipHash`, `importedFrom?` (`web`, `mailchimp-import`); `confirmTokenHash` and `confirmTokenExpiresAt` exist but are invisible over REST
+and in the admin UI. Nothing can be created or deleted over REST; over REST staff may only move a status to `unsubscribed` or `bounced` (`confirmed` can
+only come from the double opt-in link or the import).
+- **`GET /api/subscribers/export?status=confirmed`**: CSV for `admin` only (401 anonymous, 403 others), `status` one of `pending`, `confirmed`
+  (default), `unsubscribed`, `bounced` (else 400), `Cache-Control: no-store`, audited (`subscriber.export`, count only). Columns: `email,name,status,source,consentAt,confirmedAt,unsubscribedAt,importedFrom`.
+  A cell starting with `=`, `+`, `-`, `@`, tab or CR is prefixed with `'`.
+- **`POST /api/subscribers/:id/erase`** (`admin` only, audited): the address becomes `erased:<HMAC-SHA256 keyed with IP_HASH_SALT>`, the name, IP hash and token
+  are cleared, `status` is `erased`. The row is a suppression record that the importer honours.
+- **Import CLI** `npm run import:subscribers -- --file <csv> [--apply] [--assume-subscribed]` (server-side only, no endpoint). Dry run by default; output is
+  counts only, never an address. The file must be outside the repository. Only rows Mailchimp marks `subscribed` are imported, as `confirmed`,
+  `importedFrom = mailchimp-import`, `consentAt` = `OPTIN_TIME` (else `CONFIRM_TIME`, else the import time). Header names are matched loosely (`Email Address`,
+  `First Name`, `Last Name`, `OPTIN_TIME`, `CONFIRM_TIME`, `Status`). No Status column: refused unless `--assume-subscribed` (the "Subscribed" segment export).
+  Existing rows and erased addresses are skipped, never overwritten. Commenters, form senders and every other source are never imported.
+- Provider sync (Mailchimp API) is **not implemented** and off.
+
 ## 5. Staff authentication and sessions
 
 Built-in Payload auth on the `users` collection plus PostgreSQL. No third-party auth provider.
@@ -587,6 +640,15 @@ proxy) and https-only `CMS_PUBLIC_URL`/CORS/CSRF settings (`docs/security.md`). 
 limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/operations.md` §4).
 
 ## 9. Changelog
+
+### Go-live C4 (newsletter): changelog
+Additive, no breaking change for existing clients. The integrator assigns the version number.
+- New `POST /api/public/newsletter/subscribe`, `/confirm`, `/unsubscribe` (+ preflights, 405 for other methods), staff-only collection `subscribers`,
+  `GET /api/subscribers/export`, `POST /api/subscribers/:id/erase`, CLI `npm run import:subscribers` (see "Go-live C4: newsletter" in §4).
+- New environment variables `PUBLIC_SITE_URL`, `NEWSLETTER_TOKEN_SECRET`, `NEWSLETTER_RATE_LIMIT`, `NEWSLETTER_RATE_WINDOW_SECONDS`, `NEWSLETTER_TOKEN_RATE_LIMIT`.
+  **Operational change:** production startup now also requires `NEWSLETTER_TOKEN_SECRET` (32+ characters, distinct from the other secrets) and rejects a
+  malformed or non-https `PUBLIC_SITE_URL`; the loopback-only disposable staging stack (`CMS_ALLOW_INSECURE_LOCAL_STAGING`) is exempt and derives a throw-away key.
+  `TURNSTILE_EXPECTED_ACTION` must also list `newsletter-subscribe` when set.
 
 ### Go-live C5 (contact): changelog
 Additive, no breaking change. The integrator assigns the version number.
