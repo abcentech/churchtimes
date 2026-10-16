@@ -6,7 +6,8 @@ export function normalizeBasePath(value='/') {
 }
 export const DEFAULT_ARTICLE_PATH_TEMPLATE='/reports/{slug}/';
 export function articlePathTemplate(value) {
-  const template=value ?? (typeof document!=='undefined' ? document.querySelector('meta[name="public-article-path-template"]')?.content : undefined) ?? DEFAULT_ARTICLE_PATH_TEMPLATE;
+  const configured=value ?? (typeof document!=='undefined' ? document.querySelector('meta[name="public-article-path-template"]')?.content : undefined);
+  const template=typeof configured==='string' && configured.trim() ? configured.trim() : DEFAULT_ARTICLE_PATH_TEMPLATE;
   if(!['/{slug}/',DEFAULT_ARTICLE_PATH_TEMPLATE].includes(template))throw new Error('Article path template must be /{slug}/ or /reports/{slug}/');
   return template;
 }

@@ -23,3 +23,8 @@ latest links, sitemap and RSS. This does not prove a real C2 CMS projection: Cla
 into a disposable directory, then exercises both templates in desktop Chrome and Pixel 7. It checks SSR hydration, SEO
 metadata and latest-to-article navigation. CMS responses are **STUBBED**; no real endpoint or data is involved. The dedicated
 Public routing fixtures workflow runs this browser coverage on relevant public code/build changes.
+
+Review follow-up: empty/whitespace-only template settings use the unchanged default, matching the CMS contract. Under
+`/{slug}/`, a reserved article slug is skipped in RSS and the article portion of sitemap output; other valid stories and
+static-page sitemap entries remain available. The import/editor must still resolve the collision before that article can
+have a public root URL. The new reserved-slug coverage remains an explicitly synthetic API fixture.

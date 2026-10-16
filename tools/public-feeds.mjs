@@ -9,7 +9,7 @@ export const xml=value=>String(value ?? '').replace(/[^\u0009\u000a\u000d\u0020-
 const declaration='<?xml version="1.0" encoding="UTF-8"?>';
 export const PUBLIC_STATIC_PAGES=['','latest/','about/','contact/','advertise/'];
 export function createPublicFeeds({cmsUrl,siteUrl,basePath='/',indexable=false,articlePathTemplate,fetchImpl=fetch}={}) {
-  const articlePath=slug=>{const path=reportPath(slug,basePath,articlePathTemplate);if(!path)throw new Error('Article slug collides with a reserved path');return path;};
+  const articlePath=slug=>reportPath(slug,basePath,articlePathTemplate);
   const canonical=path=>siteCanonical(basePath+path,{siteUrl});
   const options={baseUrl:cmsUrl,fetchImpl,timeoutMs:6000};
   const cache=new Map();
@@ -44,14 +44,15 @@ export function createPublicFeeds({cmsUrl,siteUrl,basePath='/',indexable=false,a
     const seen=new Set();
     for(const article of result.articles.slice(0,SITEMAP_PAGE_SIZE)) {
       if(seen.has(article.slug))continue;seen.add(article.slug);
-      urls.push({url:siteCanonical(articlePath(article.slug),{siteUrl}),lastmod:article.updatedAt || article.publishedAt});
+      const path=articlePath(article.slug);if(!path)continue;
+      urls.push({url:siteCanonical(path,{siteUrl}),lastmod:article.updatedAt || article.publishedAt});
     }
     return declaration+'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'+urls.map(item=>`<url><loc>${xml(item.url)}</loc>${item.lastmod?`<lastmod>${xml(item.lastmod)}</lastmod>`:''}</url>`).join('')+'</urlset>';
   }
   async function feed() {
     const {articles}=await fetchPublishedPage({...options,limit:30});
     const seen=new Set();
-    const items=articles.filter(a=>!seen.has(a.slug)&&seen.add(a.slug)).slice(0,30).map(article=>{
+    const items=articles.filter(a=>articlePath(a.slug)&&!seen.has(a.slug)&&seen.add(a.slug)).slice(0,30).map(article=>{
       const link=siteCanonical(articlePath(article.slug),{siteUrl});
       const media=article.featuredImage,image=cmsSources(media);
       const enclosure=media?.fileSize?`<enclosure url="${xml(media.url)}" length="${media.fileSize}" type="${xml(media.mimeType)}"/>`:'';
