@@ -4,9 +4,9 @@ let readerForms;
 const readerFormsReady=(((import.meta.env.VITE_PUBLIC_NEWSLETTER_URL || import.meta.env.VITE_PUBLIC_CONTACT_URL) && import.meta.env.VITE_TURNSTILE_SITE_KEY) || newsletterLink)
   ? import('./forms/reader-forms.js').then(module=>{readerForms=module;}).catch(()=>{}) : Promise.resolve();
 const newsletterMarkup=(...args)=>readerForms?.newsletterMarkup(...args)||'';
-const contactMarkup=(...args)=>readerForms?.contactMarkup(...args)||'';
+const contactMarkup=(...args)=>readerForms?.contactMarkup(...args)||'<section class="container"><h2>Online contact is unavailable</h2><p>Please reload or email the newsroom using the contact details above.</p></section>';
 const newsletterTokenMarkup=(...args)=>readerForms?.newsletterTokenMarkup(...args)||'<h1>Newsletter preferences</h1><p>Online preferences are unavailable. Please try again later.</p>';
-const readerFormConfig=()=>readerForms?.readerFormConfig()||{};
+const readerFormConfig=()=>readerForms?.readerFormConfig()||{contact:import.meta.env.VITE_PUBLIC_CONTACT_URL,siteKey:import.meta.env.VITE_TURNSTILE_SITE_KEY};
 const bindReaderForms=(...args)=>readerForms?.bindReaderForms(...args)||(()=>{});
 import { createAnalytics } from './lib/reader-analytics.js';
 import { hasConsent, subscribeConsent, requestConsent, consentMarkup, bindConsentControls } from './lib/reader-consent.js';
