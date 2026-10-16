@@ -12,13 +12,21 @@ export function createAnalytics({ env = {}, window: win = globalThis.window, doc
     update(consented) {
       if (!config.enabled) return;
       win[`ga-disable-${config.id}`] = !consented;
-      if (!consented || loaded) return;
+      if (!consented) {
+        for(const name of ['_ga', `_ga_${config.id.slice(2)}`]) {
+          doc.cookie=`${name}=; Max-Age=0; path=/; SameSite=Lax`;
+          const parts=win.location.hostname?.split('.')||[];
+          for(let index=0;index<parts.length-1;index++)doc.cookie=`${name}=; Max-Age=0; path=/; domain=.${parts.slice(index).join('.')}; SameSite=Lax`;
+        }
+        return;
+      }
+      if (loaded) return;
       loaded = true;
       win.dataLayer = win.dataLayer || [];
       win.gtag = function() { win.dataLayer.push(arguments); };
       // Never send query strings (newsletter tokens) or automatic history events.
       win.gtag('js', new Date());
-      win.gtag('config', config.id, { send_page_view: false, allow_google_signals: false, allow_ad_personalization_signals: false });
+      win.gtag('config', config.id, { page_location: `${win.location.origin}${win.location.pathname}`, page_referrer: '', send_page_view: false, allow_google_signals: false, allow_ad_personalization_signals: false });
       const script = doc.createElement('script');
       script.async = true; script.referrerPolicy = 'no-referrer';
       script.src = `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(config.id)}`;

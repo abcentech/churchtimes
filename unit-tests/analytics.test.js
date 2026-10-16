@@ -8,3 +8,10 @@ test('GA4 synthetic ID STUB transport: staging, unconfigured and unconsented nev
   const active=createAnalytics({env:{VITE_PUBLIC_INDEXABLE:'true',VITE_PUBLIC_GA4_ID:'G-STUB0000'},window:win,document:doc});
   active.update(false);assert.equal(scripts.length,0);active.update(true);active.update(true);assert.equal(scripts.length,1);active.update(false);assert.equal(win['ga-disable-G-STUB0000'],true);
 });
+test('GA4 automatic event configuration strips query/hash and disables automatic page views',()=>{
+  const win={location:{origin:'https://example.test',pathname:'/newsletter/confirm',search:'?token=STUB',hash:'#private'}};
+  const doc={head:{append(){}},createElement:()=>({addEventListener(){}})};
+  createAnalytics({env:{VITE_PUBLIC_INDEXABLE:'true',VITE_PUBLIC_GA4_ID:'G-STUB0000'},window:win,document:doc}).update(true);
+  const config=Array.from(win.dataLayer.find(item=>item[0]==='config'))[2];
+  assert.equal(config.page_location,'https://example.test/newsletter/confirm');assert.equal(config.page_referrer,'');assert.equal(config.send_page_view,false);
+});
