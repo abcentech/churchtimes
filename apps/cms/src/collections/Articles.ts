@@ -28,6 +28,7 @@ import { deepEqual } from '../lib/deepEqual'
 import { assertExpectedUpdatedAt, captureExpectedUpdatedAt } from '../lib/expectedUpdatedAt'
 import { collectUploadNodes, uploadValueId } from '../lib/lexicalMedia'
 import { assertAttachableImage, isMediaId } from '../lib/mediaChecks'
+import { SEO_DESCRIPTION_MAX, SEO_FIELD_KEYS, SEO_TITLE_MAX, cleanSeoValue, seoFieldValidator } from '../lib/seoFields'
 import {
   ARTICLE_STATUSES,
   type ArticleStatus,
@@ -168,6 +169,23 @@ const autoSlug: CollectionBeforeValidateHook = async ({ data, operation, origina
 const same = deepEqual
 
 /**
+ * `seoTitle` / `seoDescription` (contract C2): strip markup and control characters before field validation so
+ * the length check applies to what is actually stored, and store "empty" as null. A non-string is a 400 rather
+ * than being silently dropped. Not "material" for corrections (see `enforceWorkflow`), but still a content edit
+ * for who-may-edit purposes (CONTENT_KEYS).
+ */
+const normalizeSeoFields: CollectionBeforeValidateHook = async ({ data }) => {
+  if (!data) return data
+  for (const key of SEO_FIELD_KEYS) {
+    if (!(key in data)) continue
+    const cleaned = cleanSeoValue(data[key])
+    if (cleaned === 'invalid') throw new APIError(`${key} must be plain text.`, 400)
+    data[key] = cleaned
+  }
+  return data
+}
+
+/**
  * Every `upload` node of the body must be a real, usable image: relationTo 'media', an integer id in
  * 1..2147483647 (a populated media object is accepted for its id), and media that exists and passes the same
  * rules as a live-update photo (JPEG/PNG/WebP, non-empty alt). Payload itself only checks relationTo and the
@@ -210,7 +228,16 @@ const deriveBodyMedia: CollectionBeforeChangeHook = ({ data }) => {
   return data
 }
 
-const CONTENT_KEYS = ['title', 'slug', 'excerpt', 'content', 'featuredImage', 'bylineName'] as const
+const CONTENT_KEYS = [
+  'title',
+  'slug',
+  'excerpt',
+  'content',
+  'featuredImage',
+  'bylineName',
+  'seoTitle',
+  'seoDescription',
+] as const
 
 const fail = (status: number, message: string): never => {
   throw new APIError(message, status)
@@ -450,7 +477,7 @@ export const Articles: CollectionConfig = {
   },
   hooks: {
     beforeOperation: [clampLimit, markRestore, captureExpectedUpdatedAt],
-    beforeValidate: [autoSlug, validateBodyImages],
+    beforeValidate: [autoSlug, normalizeSeoFields, validateBodyImages],
     beforeChange: [assertExpectedUpdatedAt('articles'), deriveBodyMedia, enforceWorkflow],
     afterChange: [auditChanges],
     afterDelete: [auditDelete],
@@ -473,6 +500,20 @@ export const Articles: CollectionConfig = {
       },
     },
     { name: 'excerpt', type: 'textarea', maxLength: 600 },
+    {
+      name: 'seoTitle',
+      type: 'text',
+      maxLength: SEO_TITLE_MAX,
+      validate: seoFieldValidator('seoTitle'),
+      admin: { description: `Optional search-result title, up to ${SEO_TITLE_MAX} characters. Leave empty to use the headline.` },
+    },
+    {
+      name: 'seoDescription',
+      type: 'textarea',
+      maxLength: SEO_DESCRIPTION_MAX,
+      validate: seoFieldValidator('seoDescription'),
+      admin: { description: `Optional search-result description, up to ${SEO_DESCRIPTION_MAX} characters. Leave empty to use the excerpt.` },
+    },
     { name: 'content', type: 'richText', required: true },
     {
       name: 'category',
