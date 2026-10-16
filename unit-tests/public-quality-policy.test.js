@@ -18,12 +18,19 @@ test('numeric quality policy pins every documented floor and ceiling',async()=>{
   maxFontBytes:192*1024,
  });
 });
-test('both public production workflow events include Vite build configuration',async()=>{
- const workflow=await readFile(new URL('../.github/workflows/public-quality.yml',import.meta.url),'utf8');
+function assertWorkflowFilters(source) {
+ // Git may materialize workflow files with CRLF on Windows checkouts.
+ const workflow=source.replace(/\r\n/g,'\n');
  for(const event of ['push','pull_request']) {
-  const block=workflow.match(new RegExp(`^  ${event}:\\n([\\s\\S]*?)(?=^  [a-z_]+:|^permissions:|$(?![\\s\\S]))`,'m'))?.[1];
+  const block=workflow.split(/(?=^  (?:push|pull_request):|^permissions:)/m).find(part=>part.startsWith(`  ${event}:`));
   assert.ok(block,`${event} event exists`);
   assert.match(block,/^    paths:\n/m,`${event} has a paths filter`);
   assert.match(block,/^      - 'vite\.config\.js'$/m,`${event} runs the quality gate for Vite configuration`);
+  assert.match(block,/^      - 'public\/\*\*'$/m,`${event} runs the quality gate for public assets`);
  }
+}
+test('both quality workflow events cover build config and public assets on LF and CRLF checkouts',async()=>{
+ const workflow=await readFile(new URL('../.github/workflows/public-quality.yml',import.meta.url),'utf8');
+ assertWorkflowFilters(workflow.replace(/\r\n/g,'\n'));
+ assertWorkflowFilters(workflow.replace(/\r?\n/g,'\r\n'));
 });
