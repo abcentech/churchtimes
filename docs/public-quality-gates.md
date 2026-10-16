@@ -49,8 +49,10 @@ and CPU throttling. `tools/public-quality-budgets.json` is the reviewable budget
 ceilings independently from the configurable validator, so weakening the budget
 JSON fails the standard unit-test CI job. A deliberate policy change must update
 this document and the pinned policy in review. Both push and pull-request quality
-workflow filters include `vite.config.js`, ensuring build configuration changes
-run the production budget check.
+workflow filters include `vite.config.js` and `public/**`, ensuring build
+configuration and shipped static asset changes run the production budget check.
+The workflow policy test exercises LF and CRLF file content to support Windows
+checkouts without changing the pinned thresholds.
 
 The LCP ceiling gives CI runner variance room; 2.5 seconds remains the product
 objective. SEO's staging noindex penalty is intentional and does not cause a

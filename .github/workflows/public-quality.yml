@@ -4,6 +4,7 @@ on:
     branches: [feat/newsroom-mvp]
     paths:
       - 'src/**'
+      - 'public/**'
       - 'apps/cms/**'
       - 'cms-integration-tests/**'
       - 'tools/*public-cms*'
@@ -19,6 +20,7 @@ on:
     branches: [feat/newsroom-mvp]
     paths:
       - 'src/**'
+      - 'public/**'
       - 'apps/cms/**'
       - 'cms-integration-tests/**'
       - 'tools/*public-cms*'
