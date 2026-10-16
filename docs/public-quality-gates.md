@@ -64,7 +64,9 @@ Lighthouse files stay in ignored local output; CI uploads only small numeric /
 boolean aggregate files, without DOM dumps, article titles, tokens or personal
 data. Browser test failures additionally use Playwright's GitHub reporter and
 retain test evidence for seven days, making failures reviewable without a log
-archive download.
+archive download. Failed production runs also annotate their fixed validator
+messages and numeric page metrics, making the cause readable if artifact storage
+is unavailable. Raw Lighthouse reports and page URLs are never annotated.
 
 ## Validation boundaries and reproduction
 
