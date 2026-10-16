@@ -1,3 +1,10 @@
+import { copyShareLink } from './lib/share-link.js';
+function bindArticleListen(root){
+  if(!root.querySelector('.article-body') || !window.speechSynthesis || !window.SpeechSynthesisUtterance)return ()=>{};
+  let cancelled=false,dispose;
+  import('./lib/reader-tools.js').then(module=>{if(!cancelled&&root.isConnected)dispose=module.mountListen(root);}).catch(()=>{});
+  return ()=>{cancelled=true;dispose?.();};
+}
 import {bindSkipLink} from './lib/skip-link.js';
 import {publicPageRoute} from './lib/public-page-routes.js';
 import {siteCanonical,socialMetadata} from './lib/public-metadata.js';
@@ -67,12 +74,17 @@ function wordmark(className='') { return `<a class="wordmark ${className}" href=
 function bindPublicForm(kind) {
   const form=document.querySelector('#public-form');
   let cancelled=false,dispose;
+  const fields=form.querySelector('fieldset');
+  const wasDisabled=fields?.disabled;
+  if(fields)fields.disabled=true;
   form.inert=true;
   import('./forms/public-form.js').then(module=>{
     if(cancelled || !form.isConnected)return;
+    if(fields)fields.disabled=wasDisabled;
     dispose=module.bindPublicForm(kind);form.inert=false;
   }).catch(()=>{
     if(cancelled || !form.isConnected)return;
+    if(fields)fields.disabled=wasDisabled;
     form.querySelector('#send-submission').disabled=true;
     form.querySelector('#challenge-status').textContent='Online sending could not load. Please reload or email the newsroom.';
     form.inert=false;
@@ -80,7 +92,9 @@ function bindPublicForm(kind) {
   return ()=>{cancelled=true;dispose?.();};
 }
 let disposePublicForm;
+let disposeListen;
 function shell(content, route='home') {
+  disposeListen?.();
   disposePublicForm?.();
   disposePublicForm=undefined;
   routeController.abort();
@@ -96,9 +110,10 @@ function shell(content, route='home') {
     <dialog id="search-dialog" aria-labelledby="search-title"><div class="dialog-bar"><span class="eyebrow">CHURCH TIMES NIGERIA</span><button class="icon-button" data-close aria-label="Close search">${icon('close')}</button></div><h2 id="search-title">What’s on your mind?</h2><form id="search-form"><label class="sr-only" for="search-input">Search headlines, topics or authors</label><div class="search-input-wrap">${icon('search')}<input id="search-input" type="search" name="query" placeholder="Search stories, topics or writers…" maxlength="120" required autocomplete="off"><button class="button button-dark" type="submit">Search ${icon('arrow',16)}</button></div></form><p class="muted small">Explore ${stories.length} selected stories from the current publication.</p><div class="search-suggestions"><span class="eyebrow">START WITH A TOPIC</span>${['Faith','Business','Education','Gbenga Osinaike'].map(q=>`<button data-query="${q}">${q} ${icon('diagonal',14)}</button>`).join('')}</div></dialog>
     <dialog id="menu-dialog" aria-labelledby="menu-title"><div class="dialog-bar"><h2 id="menu-title">Explore Church Times.</h2><button class="icon-button" data-close aria-label="Close menu">${icon('close')}</button></div><nav class="mobile-sections" aria-label="Mobile sections"><a href="#latest">Latest newsroom reports ${icon('arrow')}</a><a href="#live">Live coverage ${icon('arrow')}</a><a href="#saved">Your reading list ${icon('bookmark')}</a>${sections.map(s=>`<a href="#section/${s.slug}">${s.name} ${icon('arrow')}</a>`).join('')}<a href="#about">Our story ${icon('arrow')}</a><a href="#contact">Contact ${icon('arrow')}</a><a href="#advertise">Advertise ${icon('arrow')}</a><a href="#submit">Submit a story ${icon('arrow')}</a></nav></dialog>
     <dialog id="privacy-dialog" aria-labelledby="privacy-title"><div class="dialog-bar"><span class="eyebrow">YOUR READING EXPERIENCE</span><button class="icon-button" data-close aria-label="Close privacy notice">${icon('close')}</button></div><h2 id="privacy-title">A considered approach<br>to your privacy.</h2><p>Your reading list is saved only in this browser. It is not connected to an account and is not sent to the publisher. Clear it from the reading-list page or your browser’s site storage.</p><p>Public forms send the details you enter to the newsroom only when you submit. They do not save drafts in browser storage. When online sending is enabled, Cloudflare Turnstile loads to help prevent spam and is subject to Cloudflare’s privacy terms. This website has no analytics trackers, payment collection or automatic newsletter signup. Email and telephone links open the services you choose to use. Paid placements are labelled as advertisements. Active campaign images may be served by the publisher or an approved advertiser; advertiser destinations have their own privacy terms. AdSense fallback is disabled pending review. The original publication and external services have their own privacy terms.</p></dialog>
-    <dialog id="share-dialog" aria-labelledby="share-title"><div class="dialog-bar"><h2 id="share-title">Share this story</h2><button class="icon-button" data-close aria-label="Close sharing">${icon('close')}</button></div><p>Copy this link to share the article.</p><label for="share-url">Article link</label><input id="share-url" type="url" readonly><button class="outline-button" id="select-share-url">Select link</button></dialog>
+    <dialog id="share-dialog" aria-labelledby="share-title"><div class="dialog-bar"><h2 id="share-title">Share this story</h2><button class="icon-button" data-close aria-label="Close sharing">${icon('close')}</button></div><p>Copy this link to share the article.</p><label for="share-url">Article link</label><input id="share-url" type="url" readonly><button class="outline-button" id="copy-share-url">Copy link</button><button class="outline-button" id="select-share-url">Select link</button><p id="share-status" role="status"></p></dialog>
     <div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>`;
   bindCommon();
+  disposeListen=bindArticleListen(document.querySelector('#main'));
   mountAdvertisingPlacements(document.querySelector('#main'), advertising, { resolveAsset: asset });
 }
 function card(s, featured=false) {
@@ -154,9 +169,9 @@ function navigateSearch(query){const clean=query.trim().slice(0,120);location.ha
 function persistSaved(){try{localStorage.setItem('ct-reading-list',JSON.stringify([...saved]));}catch{toast('Saved for this visit. Browser storage is unavailable.');}}
 function toast(message){const t=document.querySelector('#toast');if(!t)return;t.textContent=message;t.classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('visible'),3000);}
 function bindSaves(){document.querySelectorAll('[data-save]').forEach(b=>{b.onclick=()=>{const id=Number(b.dataset.save),s=byId(id);if(saved.has(id)){saved.delete(id);toast('Removed from your reading list.');}else{saved.add(id);toast('Saved to your reading list.');}persistSaved();document.querySelectorAll(`[data-save="${id}"]`).forEach(x=>{const active=saved.has(id);x.classList.toggle('is-saved',active);x.setAttribute('aria-pressed',String(active));x.setAttribute('aria-label',`${active?'Remove from':'Save to'} reading list: ${s.title}`);});const count=document.querySelector('#saved-count');count.textContent=saved.size;count.hidden=!saved.size;document.querySelector('.reading-link').setAttribute('aria-label',`Reading list, ${saved.size} saved stories`);if(location.hash==='#saved')savedPage();};});}
-function openShareFallback(url){const d=document.querySelector('#share-dialog');const input=d.querySelector('input');input.value=url;d.showModal();input.focus();input.select();}
+function openShareFallback(url){const d=document.querySelector('#share-dialog');const input=d.querySelector('input');input.value=url;d.querySelector('#share-status').textContent='';d.showModal();input.focus();input.select();}
 function openDialog(id, trigger){const d=document.querySelector(id);trigger?.setAttribute('aria-expanded','true');d.addEventListener('close',()=>trigger?.setAttribute('aria-expanded','false'),{once:true});d.showModal();}
-function bindCommon(){bindSaves();document.querySelector('#select-share-url').addEventListener('click',()=>{const input=document.querySelector('#share-url');input.focus();input.select();});document.querySelector('[data-search]').addEventListener('click',()=>{openDialog('#search-dialog',document.querySelector('[data-search]'));document.querySelector('#search-input').focus();});document.querySelector('[data-menu]').addEventListener('click',()=>openDialog('#menu-dialog',document.querySelector('[data-menu]')));document.querySelector('[data-privacy]').addEventListener('click',()=>document.querySelector('#privacy-dialog').showModal());document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click',()=>b.closest('dialog').close()));document.querySelector('#search-form').addEventListener('submit',e=>{e.preventDefault();document.querySelector('#search-dialog').close();navigateSearch(document.querySelector('#search-input').value);});document.querySelectorAll('[data-query]').forEach(b=>b.addEventListener('click',()=>{document.querySelector('#search-dialog').close();navigateSearch(b.dataset.query);}));document.querySelectorAll('dialog').forEach(d=>d.addEventListener('click',e=>{if(e.target!==d)return;const r=d.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)d.close();}));}
+function bindCommon(){bindSaves();document.querySelector('#copy-share-url').addEventListener('click',()=>copyShareLink(document.querySelector('#share-url'),document.querySelector('#share-status')));document.querySelector('#select-share-url').addEventListener('click',()=>{const input=document.querySelector('#share-url');input.focus();input.select();});document.querySelector('[data-search]').addEventListener('click',()=>{openDialog('#search-dialog',document.querySelector('[data-search]'));document.querySelector('#search-input').focus();});document.querySelector('[data-menu]').addEventListener('click',()=>openDialog('#menu-dialog',document.querySelector('[data-menu]')));document.querySelector('[data-privacy]').addEventListener('click',()=>document.querySelector('#privacy-dialog').showModal());document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click',()=>b.closest('dialog').close()));document.querySelector('#search-form').addEventListener('submit',e=>{e.preventDefault();document.querySelector('#search-dialog').close();navigateSearch(document.querySelector('#search-input').value);});document.querySelectorAll('[data-query]').forEach(b=>b.addEventListener('click',()=>{document.querySelector('#search-dialog').close();navigateSearch(b.dataset.query);}));document.querySelectorAll('dialog').forEach(d=>d.addEventListener('click',e=>{if(e.target!==d)return;const r=d.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)d.close();}));}
 
 const cmsUrl = import.meta.env.VITE_PUBLIC_CMS_URL;
 const publicBase = new URL(document.baseURI).pathname.replace(/index\.html$/,'');
@@ -309,12 +324,14 @@ async function reportPage(slug) {
       target.innerHTML = `<div class="breadcrumbs"><a href="#home">Home</a><span>/</span><a href="#latest">Latest reports</a></div><article><header class="article-header"><span class="eyebrow clay">${escape(article.category || 'Newsroom')}</span><h1>${escape(article.title)}</h1><p class="article-deck">${escape(article.excerpt)}</p><div class="article-meta"><div>${article.bylineName?`<strong class="newsroom-byline">By ${escape(article.bylineName)}</strong>`:''}${reportDate(article)}</div><button class="icon-button" id="share-report" aria-label="Copy article link">${icon('share',19)}</button></div></header>${cmsFigure(article.featuredImage,{eager:true,fallbackAlt:article.title})}<div class="newsroom-article-body article-body">${body || '<p>The full article text is not available yet. Please check back shortly.</p>'}</div>${article.corrections.length?`<section class="newsroom-corrections article-corrections" aria-labelledby="corrections-title"><h2 id="corrections-title">Corrections & updates</h2><ul>${article.corrections.map(c=>`<li>${c.correctedAt?`<time datetime="${escape(c.correctedAt)}">${date({dateGMT:c.correctedAt},true)}</time>`:''}<p>${escape(c.note)}</p></li>`).join('')}</ul></section>`:''}${article.legacyUrl?`<p class="legacy-source"><a href="${escape(article.legacyUrl)}" target="_blank" rel="noopener noreferrer">Original publication ${icon('diagonal',15)}</a></p>`:''}${adMarker('article-inline')}<div class="newsroom-article-end"><a class="text-link" href="#latest">More from the newsroom ${icon('arrow',17)}</a></div></article>`;
       mountAdvertisingPlacements(target, advertising, { resolveAsset: asset });
       bindCMSImages(target);
+      disposeListen=bindArticleListen(target);
       setArticleMetadata(article);
       document.title = `${article.title} — Church Times Nigeria`;
       document.querySelector('meta[name="description"]').content = article.excerpt;
       target.querySelector('#share-report').addEventListener('click',async() => {
-        try { await navigator.clipboard.writeText(location.href); toast('Article link copied.'); }
-        catch { openShareFallback(location.href); }
+        const shareURL=document.querySelector('link[rel="canonical"]')?.href||`${location.origin}${location.pathname}`;
+        try { await navigator.clipboard.writeText(shareURL); toast('Article link copied.'); }
+        catch { openShareFallback(shareURL); }
       });
     } catch(error) {
       if (target.isConnected) feedState(target,'We couldn’t load this report.',cmsErrorMessage(error)||'Please try again. The current edition is still available.',load);
