@@ -11,7 +11,7 @@ export function mountListen(root, { window: win = window } = {}) {
   const reset=()=>{playing=false;button.textContent='Listen';};
   function refreshVoices(){
     try {voices=win.speechSynthesis.getVoices().filter(voice=>voice.localService);} catch {voices=[];}
-    button.hidden=!voices.length;
+    button.hidden=!voices.length;button.style.display=voices.length?'':'none';
     if(!voices.length && playing){win.speechSynthesis.cancel();reset();}
   }
   refreshVoices();win.speechSynthesis.addEventListener?.('voiceschanged',refreshVoices);
@@ -24,7 +24,7 @@ export function mountListen(root, { window: win = window } = {}) {
       readable.querySelectorAll('.advertising-slot,[data-ad-placement],.original-callout,.article-tags,.newsroom-article-end,button,script,style').forEach(node=>node.remove());
       const speech=new win.SpeechSynthesisUtterance(readable.textContent.slice(0,50000));speech.voice=voices.find(v=>v.lang.startsWith('en'))||voices[0];
       speech.onend=reset;speech.onerror=reset;win.speechSynthesis.speak(speech);playing=true;button.textContent='Stop listening';
-    } catch { button.hidden=true; }
+    } catch { button.hidden=true;button.style.display='none'; }
   });
   return ()=>{disposed=true;win.speechSynthesis.removeEventListener?.('voiceschanged',refreshVoices);win.speechSynthesis.cancel();};
 }

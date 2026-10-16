@@ -11,9 +11,10 @@ test('Copy fallback remains accessible and local Listen is available',async({pag
   await page.goto('/');
   const href=await page.locator('.lead-story h1 a').getAttribute('href');await page.goto('/'+href);
   await expect(page.getByRole('button',{name:'Listen',exact:true})).toBeHidden();
+  await page.locator('.article-body').evaluate(body=>{const ad=document.createElement('aside');ad.className='advertising-slot';ad.textContent='Advertisement Synthetic Sponsor';body.append(ad);});
   await page.evaluate(()=>{window.stubVoices=[{localService:true,lang:'en-GB'}];window.speechSynthesis.dispatchEvent(new Event('voiceschanged'));});
   await page.getByRole('button',{name:'Listen',exact:true}).click();
-  const spoken=await page.evaluate(()=>window.spokenText);expect(spoken).not.toContain('CONTINUE READING');expect(spoken).not.toContain('Advertisement');await expect(page.getByRole('button',{name:'Stop listening'})).toBeVisible();
+  const spoken=await page.evaluate(()=>window.spokenText);expect(spoken).not.toContain('CONTINUE READING');expect(spoken).not.toContain('Advertisement');expect(spoken).not.toContain('Synthetic Sponsor');await expect(page.getByRole('button',{name:'Stop listening'})).toBeVisible();
   await page.getByRole('button',{name:'Copy original article link'}).click();
   await expect(page.getByRole('dialog',{name:'Share this story'})).toBeVisible();await page.getByRole('button',{name:'Copy link',exact:true}).click();
   await expect(page.locator('#share-status')).toContainText('link is selected');
