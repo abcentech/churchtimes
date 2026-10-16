@@ -55,8 +55,10 @@ test('synthetic maps reject duplicates, loops, chains, unsupported status, unsaf
   for (const to of unsafe) assert.throws(() => compileRedirectMap(map([row('/from/', to)]), {allowedHosts: ['example.test']}));
   for (const rules of [[row('/same/', '/a/'), row('/same/', '/b/')], [row('/a/', '/a/')], [row('/a/', '/b/'), row('/b/', '/a/')], [row('/a/', '/b/?x=1'), row('/b/', '/c/')], [row('/a/', '/', 308)], [{...row('/a/', '/b/'), source: 'untrusted'}]]) assert.throws(() => compileRedirectMap(map(rules)));
   assert.throws(() => compileRedirectMap(map([row('/a/', 'https://public.example.test/b/'), row('/b/', '/c/')]), {allowedHosts: ['public.example.test'], siteUrl: 'https://public.example.test'}));
-  assert.equal(compileRedirectMap(map([row('/old/', 'https://approved.example.test/new/')]), {allowedHosts: ['approved.example.test']}).get('/old/').to, 'https://approved.example.test/new/');
+  assert.equal(compileRedirectMap(map([row('/old/', 'https://approved.example.test/new/')]), {allowedHosts: ['approved.example.test'],siteUrl:'https://public.example.test'}).get('/old/').to, 'https://approved.example.test/new/');
   assert.equal(compileRedirectMap(map([row('/old/', '/caf\u00e9/')])).get('/old/').to, '/caf%C3%A9/');
+  assert.throws(() => compileRedirectMap(map([row('/old/', 'https://public.example.test/old/')]), {allowedHosts:['public.example.test']}), /PUBLIC_SITE_URL/);
+  assert.throws(() => createPublicRedirects({allowedHosts:['public.example.test'],patterns:{feed:'https://public.example.test/feed/'}}), /PUBLIC_SITE_URL/);
   assert.throws(() => compileRedirectMap({...map(), count: 7}));
   assert.throws(() => compileRedirectMap(map(Array.from({length: MAX_REDIRECT_RULES + 1}, (_, index) => row('/x-' + index, '/new/')))));
   assert.throws(() => compileRedirectMap({...map(), extra: 'x'.repeat(MAX_REDIRECT_BYTES)}));

@@ -58,6 +58,7 @@ function targetPath(to, siteUrl) {
 }
 
 function canonicalDestination(to, {siteUrl, basePath = '/', articlePathTemplate} = {}) {
+  if(!to.startsWith('/') && !siteUrl)throw new Error('PUBLIC_SITE_URL is required for absolute redirect destinations');
   const path = targetPath(to, siteUrl);
   if (path && !path.endsWith('/') && (reportSlug(path, basePath, articlePathTemplate) || publicPageRoute(path, basePath))) throw new Error('Redirect destination would need a canonical-path hop');
 }

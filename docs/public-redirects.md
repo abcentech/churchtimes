@@ -36,7 +36,7 @@ destinations. `Location` comes from the validated rule or an explicit template w
 strictly validated slug/page replacement; arbitrary request text never becomes a
 destination. Protocol-relative URLs, credentials, encoded slashes/backslashes, nested
 percent encodings, control characters and dot segments are rejected. External targets
-must be HTTPS and match the configured allowlist. Internal destinations that are
+must be HTTPS and match the configured allowlist. Absolute targets also require an explicit `PUBLIC_SITE_URL`, so same-origin loops and chains cannot evade validation when the canonical origin is unset. Internal destinations that are
 known public pages or article paths must already have the canonical trailing slash.
 Known exact/pattern chains are rejected or suppressed rather than returning another hop.
 The exporter/owner must still verify that internal targets actually exist; the host
