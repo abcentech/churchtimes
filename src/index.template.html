@@ -8,8 +8,9 @@
       if (!document.querySelector('base')) {
         const base = document.createElement('base');
         const path = location.pathname;
+        const newsletter = path.match(/^(.*\/)newsletter\/(?:confirm|unsubscribe)\/?$/);
         const report = path.match(/^(.*\/)reports\/[^/]+\/?$/);
-        base.href = report ? report[1] : path.endsWith('/') ? path : path.slice(0, path.lastIndexOf('/') + 1);
+        base.href = newsletter ? newsletter[1] : report ? report[1] : path.endsWith('/') ? path : path.slice(0, path.lastIndexOf('/') + 1);
         document.head.prepend(base);
       }
     </script>
