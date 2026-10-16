@@ -1,0 +1,11 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>STUB reader forms contract harness</title></head><body><main><h1>STUB reader forms contract harness</h1><div id="view"></div></main><script type="module">
+import { newsletterMarkup,contactMarkup,newsletterTokenMarkup,bindReaderForms } from '/src/forms/reader-forms.js';
+const config={newsletter:location.origin+'/api/public/newsletter/subscribe',contact:location.origin+'/api/public/contact',siteKey:'synthetic-site-key'};
+const query=new URLSearchParams(location.search),kind=query.get('kind')||'newsletter';
+let consent=false;const listeners=new Set();
+const view=document.querySelector('#view');
+view.innerHTML=kind==='contact'?contactMarkup(config):kind==='confirm'||kind==='unsubscribe'?newsletterTokenMarkup(kind,'synthetic-token',config):newsletterMarkup('footer',query.has('disabled')?{...config,newsletter:''}:config);
+if(kind==='confirm'||kind==='unsubscribe')document.querySelector('main>h1').remove();
+bindReaderForms(view,{config,tokenLink:{action:kind,token:'synthetic-token'},hasConsent:()=>consent,requestConsent:()=>{consent=true;listeners.forEach(fn=>fn());},onConsentChange:callback=>{listeners.add(callback);return()=>listeners.delete(callback);}});
+window.revokeFormsConsent=()=>{consent=false;listeners.forEach(fn=>fn());};
+</script></body></html>
