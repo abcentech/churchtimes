@@ -34,6 +34,7 @@ permissions:
   contents: read
 jobs:
   public-quality:
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -61,6 +62,7 @@ jobs:
       - run: npm ci --prefix apps/cms
       - run: npx playwright install --with-deps chromium
       - run: npm run test:quality
+        timeout-minutes: 8
       - name: Report sanitized quality failure
         if: failure()
         run: |

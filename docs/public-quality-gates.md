@@ -56,7 +56,11 @@ The LCP ceiling gives CI runner variance room; 2.5 seconds remains the product
 objective. SEO's staging noindex penalty is intentional and does not cause a
 false gate failure. Missing audits, failed navigation, missing build entries,
 incomplete/duplicated journey records or missing output fail the check. No
-retry discards a failed score or automatically raises a budget.
+retry discards a failed score or automatically raises a budget. The production
+quality command has an eight-minute CI timeout and its job a fifteen-minute
+timeout, so a stalled browser or CMS cannot occupy a runner indefinitely. A
+timed-out run remains a failure; the normal failure diagnostic and artifact
+steps still attempt to preserve the sanitized evidence.
 
 The wrapper writes an incomplete-run failure record before starting, so a failed
 run cannot leave an old successful aggregate as its current evidence. Raw
