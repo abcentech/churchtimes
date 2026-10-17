@@ -40,7 +40,7 @@ const published = await f.seedArticle({status:'published',publishedAt:new Date()
   content:{root:{...lexical('Published text from real Payload and PostgreSQL.').root,children:[...lexical('Published text from real Payload and PostgreSQL.').root.children,{type:'upload',version:3,relationTo:'media',value:media.id,fields:{}}]}},
   corrections:[{note:'A verified fixture correction.',correctedAt:new Date().toISOString()}],legacyUrl:'https://churchtimesnigeria.net/synthetic-legacy-fixture/',
 })
-const seoFallback=await f.seedArticle({title:runId+' SEO fallback report',slug:runId+'-seo-fallback',status:'published',publishedAt:'2020-01-01T00:00:00.000Z',excerpt:'Synthetic editorial fallback excerpt.'})
+const seoFallback=await f.seedArticle({title:runId+' SEO fallback report',slug:runId+'-seo-fallback',status:'published',publishedAt:'2020-01-01T00:00:00.000Z',excerpt:'Synthetic editorial fallback excerpt.',bylineName:'Synthetic archive contributor',featuredImage:media.id,content:lexical('Synthetic archive body; its publication date belongs to 2020.')})
 // Existing anonymous article contract; this does not execute an import pipeline.
 const legacySamples=[]
 if(process.env.PUBLIC_LEGACY_SAMPLES==='true')for(let i=1;i<=LEGACY_SAMPLE_COUNT;i++) {
