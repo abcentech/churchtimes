@@ -1,4 +1,5 @@
 import { FIELD_LIMITS, validateSubmission, sendPublicSubmission } from '../lib/public-submissions.js';
+import { hasConsent, setConsent, subscribeConsent } from '../lib/reader-consent.js';
 import { mountTurnstile } from '../lib/turnstile.js';
 
 import {publicFormConfig as config} from './public-form-markup.js';
@@ -13,6 +14,7 @@ export function bindPublicForm(kind='story') {
   const button = document.querySelector('#send-submission');
   const challengeStatus = document.querySelector('#challenge-status');
   const restart = document.querySelector('#retry-challenge');
+  const permission = document.querySelector('#allow-submission-verification');
   const abortController = new AbortController();
   let token = '';
   let pending = false;
@@ -25,13 +27,29 @@ export function bindPublicForm(kind='story') {
     challengeStatus.textContent = message;
     restart.hidden = !retry;
   }
-  if (ready) challenge = mountTurnstile(document.querySelector('#turnstile-widget'), {
+  function syncPermission() {
+    if (!ready || disposed || form.hidden) return;
+    permission.disabled=false;
+    const allowed = hasConsent('forms');
+    permission.hidden = allowed;
+    if (!allowed) {
+      token=''; challenge?.dispose(); challenge=undefined;
+      challengeMessage('Allow spam protection before loading the verification challenge.');
+      return;
+    }
+    if (challenge) return;
+    challengeMessage('Loading the verification challenge…');
+    challenge = mountTurnstile(document.querySelector('#turnstile-widget'), {
     siteKey, action,
     onToken(value) { token=value; challengeMessage('Verification complete. You can send your submission.'); },
     onReady() { if (!token) challengeMessage('Complete the verification challenge before sending.'); },
     onExpired() { token=''; challengeMessage('Verification expired. Restart it before sending.',true); },
     onError() { token=''; challengeMessage('Verification could not load. Restart it, or email the newsroom if it stays unavailable.',true); },
   });
+  }
+  const unsubscribeConsent=subscribeConsent(syncPermission);
+  permission.addEventListener('click',()=>setConsent('forms',true),{signal:abortController.signal});
+  syncPermission();
   restart.addEventListener('click',()=> {
     if (pending) return;
     token=''; challengeMessage('Loading a new verification challenge…'); challenge?.reset();
@@ -74,7 +92,7 @@ export function bindPublicForm(kind='story') {
     const values=Object.fromEntries(new FormData(form));
     values.consent=form.elements.consent.checked;
     const errors=validateSubmission(values,kind);
-    if (!token) errors.challenge='Complete the spam-protection challenge before sending.';
+    if (!hasConsent('forms') || !token) errors.challenge='Complete the spam-protection challenge before sending.';
     showErrors(errors);
     if (Object.keys(errors).length) return;
     pending=true;
@@ -131,7 +149,7 @@ export function bindPublicForm(kind='story') {
     }
   });
   return () => {
-    disposed=true; token=''; abortController.abort(); clearInterval(countdown); challenge?.dispose();
+    disposed=true; token=''; unsubscribeConsent(); abortController.abort(); clearInterval(countdown); challenge?.dispose();
     // Release the current form's values on navigation; never persist them.
     form.reset();
   };
