@@ -1,0 +1,28 @@
+# DRAFT reference only: do not install/start without owner-approved D2 hosting.
+[Unit]
+Description=Church Times public Node host (draft reference)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=churchtimes-public
+Group=churchtimes-public
+WorkingDirectory=/opt/churchtimes-public/current
+EnvironmentFile=/etc/churchtimes/public-host.env
+ExecStart=/usr/bin/node tools/public-host.mjs
+ExecReload=/bin/kill -HUP $MAINPID
+KillSignal=SIGTERM
+TimeoutStopSec=20
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadOnlyPaths=/opt/churchtimes-public /etc/churchtimes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

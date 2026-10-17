@@ -1,0 +1,15 @@
+# DRAFT reference only. PUBLIC_HOSTNAME must be owner-approved before use.
+{$PUBLIC_HOSTNAME:public-staging.example.test} {
+    encode zstd gzip
+    header {
+        -Server
+        Referrer-Policy "no-referrer"
+    }
+    reverse_proxy 127.0.0.1:5373 {
+        health_uri /robots.txt
+        health_interval 30s
+        health_timeout 3s
+    }
+    # No request/access log: newsletter URLs can contain private action tokens.
+    # Keep Node's cache headers; never blanket-cache HTML, APIs or errors.
+}
