@@ -1,0 +1,90 @@
+{
+  "provenance": "Synthetic C7 vectors transcribed from CMS PR55 a90183c tests/unit/redirectPaths.test.ts; NFC equivalence and invalid UTF-8 added for review correction. Not an imported CMS fixture or real integration result.",
+  "valid": [
+    {
+      "input": "/old-slug",
+      "path": "/old-slug/"
+    },
+    {
+      "input": "/old-slug/",
+      "path": "/old-slug/"
+    },
+    {
+      "input": "/feed.xml",
+      "path": "/feed.xml"
+    },
+    {
+      "input": "/wp-content/uploads/a.jpg",
+      "path": "/wp-content/uploads/a.jpg"
+    },
+    {
+      "input": "/",
+      "path": "/"
+    },
+    {
+      "input": "  /padded  ",
+      "path": "/padded/"
+    },
+    {
+      "input": "/caf%c3%a9/",
+      "path": "/caf%C3%A9/"
+    },
+    {
+      "input": "/caf%C3%A9",
+      "path": "/caf%C3%A9/"
+    },
+    {
+      "input": "/café/",
+      "path": "/caf%C3%A9/"
+    },
+    {
+      "input": "/cafe%CC%81/",
+      "path": "/caf%C3%A9/"
+    },
+    {
+      "input": "/café/",
+      "path": "/caf%C3%A9/"
+    },
+    {
+      "input": "/%41bc/",
+      "path": "/Abc/"
+    },
+    {
+      "input": "/a%2fb/",
+      "path": "/a%2Fb/"
+    },
+    {
+      "input": "/a%20b/",
+      "path": "/a%20b/"
+    },
+    {
+      "input": "/it's+a(b)/",
+      "path": "/it%27s%2Ba%28b%29/"
+    },
+    {
+      "input": "/Old-Slug/",
+      "path": "/Old-Slug/"
+    }
+  ],
+  "invalid": [
+    "https://example.test/a/",
+    "//example.test/",
+    "javascript:alert(1)",
+    "old-slug/",
+    "",
+    42,
+    "/a\\b/",
+    "/a\r\nSet-Cookie:x",
+    "/a%0D%0Ab/",
+    "/a b/",
+    "/a/?p=1",
+    "/a/#top",
+    "/category/*",
+    "/a/../b/",
+    "/a/%2e%2e/b/",
+    "/a//b/",
+    "/a%zz/",
+    "/a%4/",
+    "/a%FF/"
+  ]
+}
