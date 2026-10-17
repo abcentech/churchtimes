@@ -3,10 +3,14 @@
  * (runs `payload run src/seed/importSubscribers.ts`). Server-side CLI only; there is no endpoint.
  *
  * - DRY RUN by default: reads the file and the database, writes nothing. `--apply` writes.
- * - Output is counts only. No address is printed or logged.
- * - The export is owner-supplied personal data and must stay OUTSIDE the repository; a path inside it is refused.
+ * - Output is counts only. No address is printed or logged, not even in an error: a failure prints only the error class
+ *   and code (a database error message carries the query parameters, i.e. addresses).
+ * - The export is owner-supplied personal data and must stay OUTSIDE the repository; a path inside it (after resolving
+ *   symlinks, case-insensitively on Windows) is refused.
  * - Only rows Mailchimp marks as subscribed are imported (as `confirmed`, importedFrom `mailchimp-import`, consentAt = the
- *   Mailchimp opt-in time when present). Everything else is skipped. See docs/api-contracts.md "Go-live C4: newsletter".
+ *   Mailchimp OPTIN_TIME). A row with no OPTIN_TIME is imported with consentAt null and importedFrom
+ *   `mailchimp-import-no-optin-time` and counted in the report. A file with UNSUB_TIME or CLEAN_TIME columns is refused.
+ *   See docs/api-contracts.md "Go-live C4: newsletter".
  * - `--assume-subscribed`: only for Mailchimp's "Subscribed" segment export, which has no Status column.
  */
 import fs from 'node:fs'
@@ -15,6 +19,8 @@ import path from 'node:path'
 import config from '@payload-config'
 import { getPayload } from 'payload'
 
+import { isPathInside } from '../lib/pathGuard'
+import { CliUsageError, cliFailureMessage } from '../lib/safeLog'
 import { formatImportReport, runSubscriberImport } from '../lib/subscriberImport'
 
 const MAX_BYTES = 50 * 1024 * 1024
@@ -39,14 +45,23 @@ function repoRoot(start: string): string | undefined {
 
 async function main() {
   const file = value('--file')
-  if (!file) throw new Error('Usage: npm run import:subscribers -- --file <path-to-csv> [--apply] [--assume-subscribed]')
-  const abs = path.resolve(file)
-  const root = repoRoot(process.cwd())
-  if (root && (abs === root || abs.startsWith(root + path.sep))) {
-    throw new Error('Refusing to read a file inside the repository. Keep the Mailchimp export outside it (it is personal data).')
+  if (!file) throw new CliUsageError('Usage: npm run import:subscribers -- --file <path-to-csv> [--apply] [--assume-subscribed]')
+  let abs: string
+  try {
+    abs = fs.realpathSync.native(path.resolve(file))
+  } catch {
+    throw new CliUsageError('The file does not exist or cannot be read.')
+  }
+  // Without a .git folder (a deployed copy) the app directory itself is the boundary.
+  const cwd = fs.realpathSync.native(process.cwd())
+  const root = fs.realpathSync.native(repoRoot(cwd) ?? cwd)
+  if (isPathInside(abs, root)) {
+    throw new CliUsageError(
+      'Refusing to read a file inside the repository. Keep the Mailchimp export outside it (it is personal data).',
+    )
   }
   const stat = fs.statSync(abs)
-  if (!stat.isFile() || stat.size > MAX_BYTES) throw new Error('The file must be a regular file of at most 50 MB.')
+  if (!stat.isFile() || stat.size > MAX_BYTES) throw new CliUsageError('The file must be a regular file of at most 50 MB.')
 
   const apply = flag('--apply')
   const payload = await getPayload({ config })
@@ -62,6 +77,6 @@ try {
   await main()
   process.exit(process.exitCode ?? 0)
 } catch (err) {
-  console.error(err instanceof Error ? err.message : 'import failed')
+  console.error(cliFailureMessage(err))
   process.exit(1)
 }

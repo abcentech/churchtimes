@@ -3,7 +3,7 @@ import type { Endpoint, PayloadRequest } from 'payload'
 import { isOriginAllowed } from '../endpoints/publicSubmissions'
 import type { RateLimitResult } from './rateLimit'
 import { getClientIp } from './rateLimit'
-import { verifyTurnstile } from './turnstile'
+import { isTurnstileDummySecret, verifyTurnstile } from './turnstile'
 
 /**
  * Shared mechanics of the NEW anonymous endpoints (contact, newsletter). They follow the same rules
@@ -143,11 +143,14 @@ export async function readJsonBody(
 }
 
 /**
- * Server-side Turnstile check for ONE endpoint action. `verifyTurnstile` already enforces the
- * TURNSTILE_EXPECTED_ACTION allowlist; on top of that this pins the token to this endpoint, so a token
- * minted for the newsletter widget cannot be replayed against the contact form (or the reverse) just
- * because both actions are on the allowlist. A token that reports no action is only accepted while
- * TURNSTILE_EXPECTED_ACTION is unset (same rule as story submissions). Returns the rejecting response, or null.
+ * Server-side Turnstile check for ONE endpoint action. verifyTurnstile is the same check story submissions use and
+ * decides everything it decides there (a missing token, an action missing from TURNSTILE_EXPECTED_ACTION, a token without an
+ * action while that list is set, Cloudflare's dummy test secret). On top of it, and ONLY when that allowlist is set, the
+ * secret is a real one and the token does report an action, the action must be this endpoint's own, so a token minted for
+ * the newsletter widget cannot be replayed against the contact form (or the reverse) because both are on the allowlist.
+ * It is never stricter than the story endpoint where that endpoint is lenient: allowlist unset, no action reported, or a
+ * dummy secret (which reports the fixed action "test") behave exactly as for story submissions. Returns the rejecting
+ * response, or null.
  */
 export async function checkTurnstileForAction(
   req: PayloadRequest,
@@ -167,7 +170,10 @@ export async function checkTurnstileForAction(
       ctx.cors,
     )
   }
-  if (verdict.action !== undefined && verdict.action !== action) {
+  const allowlistSet = (process.env.TURNSTILE_EXPECTED_ACTION ?? '').split(',').some((s) => s.trim() !== '')
+  const secret = process.env.TURNSTILE_SECRET_KEY?.trim()
+  const realSecret = Boolean(secret) && !isTurnstileDummySecret(secret as string)
+  if (allowlistSet && realSecret && verdict.action !== undefined && verdict.action !== action) {
     req.payload.logger.warn({ got: verdict.action, expected: action }, '[turnstile] action does not match this endpoint.')
     return json(
       { ok: false, errors: [{ field: 'turnstileToken', message: 'Verification failed. Please try again.' }] },

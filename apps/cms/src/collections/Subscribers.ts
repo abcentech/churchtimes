@@ -92,19 +92,29 @@ export const Subscribers: CollectionConfig = {
       admin: { readOnly: true, description: 'Version of the consent wording shown when the person signed up.' },
       access: noClientWrite,
     },
-    { name: 'consentAt', type: 'date', required: true, admin: { readOnly: true }, access: noClientWrite },
+    {
+      // Null for a Mailchimp import row that carried no OPTIN_TIME (importedFrom says so): the import time is NOT consent time.
+      name: 'consentAt',
+      type: 'date',
+      admin: { readOnly: true },
+      access: noClientWrite,
+    },
     { name: 'confirmedAt', type: 'date', admin: { readOnly: true }, access: noClientWrite },
     { name: 'unsubscribedAt', type: 'date', admin: { readOnly: true }, access: noClientWrite },
     { name: 'ipHash', type: 'text', admin: { readOnly: true }, access: noClientWrite },
     {
       name: 'importedFrom',
       type: 'select',
-      options: ['web', 'mailchimp-import'].map((v) => ({ label: v, value: v })),
+      options: ['web', 'mailchimp-import', 'mailchimp-import-no-optin-time'].map((v) => ({ label: v, value: v })),
       admin: { readOnly: true },
       access: noClientWrite,
     },
     // SHA-256 of the one-time confirmation token. The token itself is never stored. Invisible over REST and in the UI.
     { name: 'confirmTokenHash', type: 'text', index: true, admin: { hidden: true }, access: internalOnly },
     { name: 'confirmTokenExpiresAt', type: 'date', admin: { hidden: true }, access: internalOnly },
+    // Anti mail-bombing bookkeeping for confirmation e-mails (resend cooldown and daily cap). Internal only.
+    { name: 'lastConfirmMailAt', type: 'date', admin: { hidden: true }, access: internalOnly },
+    { name: 'confirmMailsDayStart', type: 'date', admin: { hidden: true }, access: internalOnly },
+    { name: 'confirmMailsInDay', type: 'number', admin: { hidden: true }, access: internalOnly },
   ],
 }

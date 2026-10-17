@@ -125,6 +125,8 @@ message listing every problem (missing secrets, http or wildcard origins, dummy 
 | `NEWSLETTER_TOKEN_SECRET` | **yes (production)** | 64 hex chars | HMAC key for unsubscribe links, at least 32 characters, different from `PAYLOAD_SECRET` and `PREVIEW_SECRET`. Startup fails in production without it (the loopback-only disposable staging stack derives a throw-away key instead). Rotating it breaks every unsubscribe link already sent. |
 | `NEWSLETTER_RATE_LIMIT` / `NEWSLETTER_RATE_WINDOW_SECONDS` | no | `5` / `900` | Newsletter sign-ups per IP per window. Per e-mail address the limit is fixed at 3 per hour. |
 | `NEWSLETTER_TOKEN_RATE_LIMIT` | no | `20` | Per-IP limit (same window) for the confirm and unsubscribe endpoints combined. |
+| `NEWSLETTER_RESEND_COOLDOWN_SECONDS` | no | `600` | If a confirmation e-mail went to an address within this many seconds, a new sign-up gets the same neutral `202` and nothing is sent (`0` disables). |
+| `NEWSLETTER_MAX_CONFIRM_MAILS_PER_DAY` | no | `5` | Daily cap (rolling 24 h) of confirmation e-mails per address; beyond it, same neutral `202`, nothing sent. `bounced` addresses are never mailed automatically. |
 | `AUTH_LOGIN_RATE_LIMIT`, `AUTH_FORGOT_RATE_LIMIT`, `AUTH_RESET_RATE_LIMIT`, `AUTH_RATE_WINDOW_SECONDS` | no | `10`, `5`, `10`, `900` | Per-IP limits for login / forgot-password / reset-password. |
 | `TRUST_PROXY` | **yes (production)** | `true` | The app always runs behind a reverse proxy, so production startup **fails** unless this is exactly `true`. Make sure the app is reachable only through that proxy (it listens on `127.0.0.1`). Without trust every client would share one rate-limit bucket. |
 | `TRUST_PROXY_HOPS` | no | `1` | Number of trusted reverse proxies in front of the app (1 to 10, default 1). The client address is the entry that many places from the **right** of `X-Forwarded-For` (the address your own proxy appended), never the leftmost, which clients can forge. A chain shorter than this fails closed (shared bucket). The §4.4 blocks overwrite the header, so `1`; use `2` only if two proxies each append (for example nginx with `$proxy_add_x_forwarded_for` behind another proxy). |
@@ -453,6 +455,12 @@ Confirm each item before go-live and again after any change to the server:
       `Email Address` (or `email`), `First Name`, `Last Name`, `OPTIN_TIME`, `CONFIRM_TIME`, `Status`. Only rows whose Status is `subscribed` are imported
       (as `confirmed`, consent time = `OPTIN_TIME`, else `CONFIRM_TIME`, else the import time). A file with no Status column is refused unless it is
       Mailchimp's "Subscribed" segment export and `--assume-subscribed` is added. Existing rows and erased addresses are never overwritten or re-created.
+- [ ] Privacy notes (contact and newsletter): erasing a subscriber does **not** touch `contact-messages` from the same address (an admin deletes those by
+      hand); rotating `IP_HASH_SALT` changes every erase hash, so earlier erasures stop suppressing re-imports (keep the salt stable); `PUBLIC_SITE_URL` is a
+      bare origin, so the public site must be served at the root of its domain (confirmation links are `<origin>/newsletter/confirm`). Logs for these
+      endpoints carry only error class and code, never an address, name or message; SMTP timeouts are 10 s connect, 10 s greeting, 20 s socket.
+- [ ] `TURNSTILE_EXPECTED_ACTION`, when set, lists `contact-message` and `newsletter-subscribe`; startup prints a `[security]` warning if either is missing
+      (that form would answer 403 to everyone).
 - [ ] Wrong password 5 times locks the account; **Forgot password?** works end to end; after logout the old token no longer works.
 
 ## 12. Status

@@ -5,9 +5,12 @@ import {
   waitForPendingNewsletterMail,
 } from '../../src/endpoints/publicNewsletter'
 import { hashSubscriberEmail, hashToken, signUnsubscribeToken } from '../../src/lib/newsletter'
+import { cliFailureMessage } from '../../src/lib/safeLog'
 import { formatImportReport, runSubscriberImport } from '../../src/lib/subscriberImport'
 import { api, newRunId, setupFixtures, type Fixtures } from './helpers'
 import {
+  captureLogs,
+  drizzleLikeError,
   installActionTurnstileStub,
   installMailCapture,
   removeActionTurnstileStub,
@@ -36,6 +39,8 @@ beforeAll(async () => {
   env.NEWSLETTER_RATE_LIMIT = '5'
   env.NEWSLETTER_RATE_WINDOW_SECONDS = '900'
   env.NEWSLETTER_TOKEN_RATE_LIMIT = '6'
+  env.NEWSLETTER_RESEND_COOLDOWN_SECONDS = '0' // off here so resend behaviour can be tested; the cooldown has its own tests
+  env.NEWSLETTER_MAX_CONFIRM_MAILS_PER_DAY = '5'
   resetNewsletterLimiters()
   installActionTurnstileStub()
   f = await setupFixtures(runId)
@@ -50,7 +55,7 @@ afterAll(async () => {
     .delete({ collection: 'audit-logs', where: { collection: { equals: 'subscribers' } }, overrideAccess: true })
     .catch(() => undefined)
   await f?.cleanup()
-  for (const k of ['SMTP_HOST', 'PUBLIC_SITE_URL', 'NEWSLETTER_TOKEN_SECRET', 'NEWSLETTER_RATE_LIMIT', 'NEWSLETTER_RATE_WINDOW_SECONDS', 'NEWSLETTER_TOKEN_RATE_LIMIT']) {
+  for (const k of ['SMTP_HOST', 'PUBLIC_SITE_URL', 'NEWSLETTER_TOKEN_SECRET', 'NEWSLETTER_RATE_LIMIT', 'NEWSLETTER_RATE_WINDOW_SECONDS', 'NEWSLETTER_TOKEN_RATE_LIMIT', 'NEWSLETTER_RESEND_COOLDOWN_SECONDS', 'NEWSLETTER_MAX_CONFIRM_MAILS_PER_DAY']) {
     if (saved[k] === undefined) delete env[k]
     else env[k] = saved[k]
   }
@@ -304,7 +309,19 @@ describe('POST /api/public/newsletter/subscribe: validation and abuse paths', ()
     const bad = body({ turnstileToken: TS_BAD })
     expect((await subscribe(bad)).status).toBe(403)
     const wrong = body({ turnstileToken: tsToken('contact-message') })
-    expect((await subscribe(wrong)).status).toBe(403)
+    const keySaved = env.TURNSTILE_SECRET_KEY
+    const listSaved = env.TURNSTILE_EXPECTED_ACTION
+    try {
+      // the per-endpoint pin applies when the allowlist is set and the secret is a real one (both actions are allowlisted here)
+      env.TURNSTILE_EXPECTED_ACTION = 'submit-story,contact-message,newsletter-subscribe'
+      env.TURNSTILE_SECRET_KEY = 'real-looking-test-secret-not-a-dummy'
+      expect((await subscribe(wrong)).status).toBe(403)
+    } finally {
+      if (keySaved === undefined) delete env.TURNSTILE_SECRET_KEY
+      else env.TURNSTILE_SECRET_KEY = keySaved
+      if (listSaved === undefined) delete env.TURNSTILE_EXPECTED_ACTION
+      else env.TURNSTILE_EXPECTED_ACTION = listSaved
+    }
     expect(await row(bad.email)).toBeUndefined()
     expect(await row(wrong.email)).toBeUndefined()
     const saved = env.TURNSTILE_EXPECTED_ACTION
@@ -381,6 +398,205 @@ describe('POST /api/public/newsletter/subscribe: validation and abuse paths', ()
       expect(pre.headers.get('access-control-allow-origin')).toBe(ALLOWED)
     }
     expect((await api('GET', '/api/public/newsletter/subscribe')).status).toBe(405)
+  })
+})
+
+describe('confirm is single use even under concurrency', () => {
+  it('two simultaneous confirms of one link: exactly one 200, one 400, one audit row', async () => {
+    for (let round = 0; round < 3; round++) {
+      const payload = body()
+      await subscribe(payload)
+      const token = tokenFromMail(lastMail())
+      const doc = (await row(payload.email))!
+      const results = await Promise.all([confirm(token), confirm(token), confirm(token)])
+      const statuses = results.map((r) => r.status).sort()
+      expect(statuses, `round ${round}`).toEqual([200, 400, 400])
+      for (const r of results.filter((x) => x.status === 400)) {
+        expect(r.json.errors[0].message).toBe('This link is no longer valid.')
+      }
+      const audit = await f.payload.find({
+        collection: 'audit-logs',
+        where: { and: [{ action: { equals: 'subscriber.confirm' } }, { docId: { equals: String(doc.id) } }] },
+        overrideAccess: true,
+      })
+      expect(audit.docs).toHaveLength(1)
+      const after = (await row(payload.email))!
+      expect(after.status).toBe('confirmed')
+      expect(after.confirmTokenHash ?? null).toBeNull()
+    }
+  })
+
+  it('a link for an address that went unsubscribed after the link was issued no longer matches the observed state', async () => {
+    const payload = body()
+    await subscribe(payload)
+    const token = tokenFromMail(lastMail())
+    expect((await confirm(token)).status).toBe(200)
+    expect((await confirm(token)).status).toBe(400)
+  })
+})
+
+describe('mail-bombing limits on confirmation e-mails', () => {
+  const withEnv = async (patch: Record<string, string>, fn: () => Promise<void>) => {
+    const saved = Object.fromEntries(Object.keys(patch).map((k) => [k, env[k]]))
+    Object.assign(env, patch)
+    try {
+      await fn()
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete env[k]
+        else env[k] = v
+      }
+    }
+  }
+
+  it('sends nothing inside the resend cooldown and answers the identical neutral 202; the first link keeps working', async () => {
+    await withEnv({ NEWSLETTER_RESEND_COOLDOWN_SECONDS: '600' }, async () => {
+      const payload = body()
+      const first = await subscribe(payload)
+      const token1 = tokenFromMail(lastMail())
+      const sentAfterFirst = mail.sent.length
+      const again = await subscribe(payload)
+      expect(mail.sent.length).toBe(sentAfterFirst) // cooldown: nothing sent
+      expect(again.status).toBe(202)
+      expect(again.text).toBe(first.text)
+      expect((await row(payload.email))!.confirmTokenHash).toBe(hashToken(token1)) // token not replaced
+      expect((await confirm(token1)).status).toBe(200)
+
+      // once the cooldown has passed (simulated by ageing the stamp) a fresh link is sent again
+      const other = body()
+      await subscribe(other)
+      const doc = (await row(other.email))!
+      await f.payload.update({
+        collection: 'subscribers',
+        id: doc.id,
+        data: { lastConfirmMailAt: new Date(Date.now() - 601 * 1000).toISOString() } as never,
+        overrideAccess: true,
+        context: { subscriberSystemWrite: true },
+      })
+      const before = mail.sent.length
+      await subscribe(other)
+      expect(mail.sent.length).toBe(before + 1)
+    })
+  })
+
+  it('caps confirmation e-mails per address per day (NEWSLETTER_MAX_CONFIRM_MAILS_PER_DAY)', async () => {
+    await withEnv({ NEWSLETTER_RESEND_COOLDOWN_SECONDS: '0', NEWSLETTER_MAX_CONFIRM_MAILS_PER_DAY: '2' }, async () => {
+      const payload = body()
+      const before = mail.sent.length
+      const answers = []
+      for (let i = 0; i < 3; i++) answers.push(await subscribe(payload)) // 3 per hour is the per-address request limit
+      expect(mail.sent.length).toBe(before + 2) // 2 sent, the third held back by the daily cap
+      for (const a of answers) {
+        expect(a.status).toBe(202)
+        expect(a.text).toBe(answers[0]!.text)
+      }
+      const doc = (await row(payload.email))!
+      expect(doc.confirmMailsInDay).toBe(2)
+      const sentBefore = mail.sent.length
+      // a row already at the cap inside its 24 h window (the window rollover itself is covered by the unit tests)
+      const fresh = await seed('pending', {
+        lastConfirmMailAt: new Date(Date.now() - 3600 * 1000).toISOString(),
+        confirmMailsDayStart: new Date(Date.now() - 3600 * 1000).toISOString(),
+        confirmMailsInDay: 2,
+      })
+      await subscribe(body({ email: fresh.email }))
+      expect(mail.sent.length).toBe(sentBefore) // still capped inside the window
+      expect((await row(fresh.email))!.confirmMailsInDay).toBe(2)
+    })
+  })
+
+  it('never mails a bounced address automatically: same neutral 202, no mail, status unchanged', async () => {
+    const s = await seed('bounced')
+    const before = mail.sent.length
+    const first = await subscribe(body())
+    const res = await subscribe(body({ email: s.email }))
+    expect(res.status).toBe(202)
+    expect(res.text).toBe(first.text)
+    expect(mail.sent.length).toBe(before + 1) // only the new address was mailed
+    const doc = (await row(s.email))!
+    expect(doc.status).toBe('bounced')
+    expect(doc.confirmTokenHash ?? null).toBeNull()
+  })
+
+  it('does not expose the bookkeeping fields over REST', async () => {
+    const payload = body()
+    await subscribe(payload)
+    const doc = (await row(payload.email))!
+    const one = await api('GET', `/api/subscribers/${doc.id}`, { token: f.tokens.admin })
+    expect(one.status).toBe(200)
+    for (const field of ['lastConfirmMailAt', 'confirmMailsDayStart', 'confirmMailsInDay', 'confirmTokenHash']) {
+      expect(one.text).not.toContain(field)
+    }
+  })
+})
+
+describe('no personal data in logs when the database fails', () => {
+  it('a failed sign-up write logs only the error class and code and still answers the neutral 202', async () => {
+    const logs = captureLogs(f.payload)
+    const originalCreate = f.payload.create.bind(f.payload)
+    const p = body({ email: `secret.pii.reader-${runId}@example.test`, name: 'Zed Personname' })
+    try {
+      ;(f.payload as any).create = async (args: any) => {
+        if (args.collection === 'subscribers') throw drizzleLikeError([p.email, 'Zed Personname'])
+        return originalCreate(args)
+      }
+      const res = await subscribe(p)
+      expect(res.status).toBe(202)
+      expect(res.json).toEqual(NEUTRAL)
+      expect(res.text).not.toMatch(/secret\.pii|Zed|Failed query/)
+    } finally {
+      ;(f.payload as any).create = originalCreate
+      logs.restore()
+    }
+    const text = logs.text()
+    expect(text).toContain('DrizzleQueryError')
+    expect(text).toContain('23505')
+    expect(text).not.toMatch(/secret\.pii|Zed|Failed query|@example\.test/)
+    expect(await row(p.email)).toBeUndefined()
+  })
+
+  it('a failed confirm lookup and a failed staff export log nothing but class and code', async () => {
+    const logs = captureLogs(f.payload)
+    const originalFind = f.payload.find.bind(f.payload)
+    try {
+      ;(f.payload as any).find = async (args: any) => {
+        if (args.collection === 'subscribers') throw drizzleLikeError(['secret.pii.reader@example.test', 'Zed Personname'])
+        return originalFind(args)
+      }
+      const res = await confirm('A'.repeat(43))
+      expect(res.status).toBe(500)
+      expect(res.text).not.toMatch(/secret\.pii|Zed|Failed query/)
+      const exp = await api('GET', '/api/subscribers/export?status=confirmed', { token: f.tokens.admin })
+      expect(exp.status).toBe(500)
+      expect(exp.text).not.toMatch(/secret\.pii|Zed|Failed query/)
+    } finally {
+      ;(f.payload as any).find = originalFind
+      logs.restore()
+    }
+    const text = logs.text()
+    expect(text).toContain('DrizzleQueryError')
+    expect(text).not.toMatch(/secret\.pii|Zed|Failed query|@example\.test/)
+  })
+
+  it('an import that fails in the database surfaces only class and code to the CLI', async () => {
+    const originalCreate = f.payload.create.bind(f.payload)
+    const csv = `Email Address,First Name,Status\nsecret.pii.import-${runId}@example.test,Zed,subscribed`
+    let thrown: unknown
+    try {
+      ;(f.payload as any).create = async (args: any) => {
+        if (args.collection === 'subscribers') throw drizzleLikeError(['secret.pii.import@example.test', 'Zed'])
+        return originalCreate(args)
+      }
+      await runSubscriberImport(f.payload, csv, { apply: true })
+    } catch (err) {
+      thrown = err
+    } finally {
+      ;(f.payload as any).create = originalCreate
+    }
+    expect(thrown).toBeTruthy()
+    const printed = cliFailureMessage(thrown)
+    expect(printed).toContain('DrizzleQueryError (23505)')
+    expect(printed).not.toMatch(/secret\.pii|Zed|Failed query|@/)
   })
 })
 
@@ -602,6 +818,7 @@ describe('Mailchimp import CLI logic (SYNTHETIC data)', () => {
       skippedAlreadyPresent: 1,
       skippedErasedOrSuppressed: 1,
       wouldCreate: 2,
+      importedWithoutOptinTime: 1,
       created: 0,
     })
     expect(await row(mk('a'))).toBeUndefined()
@@ -615,7 +832,13 @@ describe('Mailchimp import CLI logic (SYNTHETIC data)', () => {
     expect(a).toMatchObject({ status: 'confirmed', importedFrom: 'mailchimp-import', name: 'Ada Obi', consentTextVersion: 'mailchimp-import-v1' })
     expect(new Date(a.consentAt).toISOString()).toBe('2024-03-01T09:30:00.000Z')
     expect(new Date(a.confirmedAt).toISOString()).toBe('2024-03-01T09:31:00.000Z')
-    expect((await row(mk('b')))!.status).toBe('confirmed')
+    // no OPTIN_TIME: consent time is unknown, so it is null (the import time is NOT consent time) and the marker says why
+    const b = (await row(mk('b')))!
+    expect(b.status).toBe('confirmed')
+    expect(b.consentAt ?? null).toBeNull()
+    expect(b.importedFrom).toBe('mailchimp-import-no-optin-time')
+    expect(new Date(b.confirmedAt).toISOString()).toBe('2024-04-02T10:00:00.000Z')
+    expect(formatImportReport(applied, true)).toContain('without an opt-in time:  1')
     expect(await row(mk('unsub'))).toBeUndefined()
     expect(await row(mk('cleaned'))).toBeUndefined()
     expect(await row(mk('pending'))).toBeUndefined()
@@ -625,6 +848,20 @@ describe('Mailchimp import CLI logic (SYNTHETIC data)', () => {
     const rerun = await runSubscriberImport(f.payload, csv, { apply: true })
     expect(rerun.created).toBe(0)
     expect(rerun.skippedAlreadyPresent).toBe(3)
+  })
+
+  it('refuses Mailchimp unsubscribed and cleaned exports (UNSUB_TIME or CLEAN_TIME) even with --assume-subscribed', async () => {
+    for (const col of ['UNSUB_TIME', 'CLEAN_TIME']) {
+      const csv = `Email Address,First Name,${col}
+${mk('uc')},A,2024-01-01 00:00:00`
+      for (const assumeSubscribed of [false, true]) {
+        const res = await runSubscriberImport(f.payload, csv, { apply: true, assumeSubscribed })
+        expect(res.refused).toBe('unsubscribed-or-cleaned-export')
+        expect(res.created).toBe(0)
+        expect(formatImportReport(res, true)).toContain('UNSUB_TIME or CLEAN_TIME')
+      }
+      expect(await row(mk('uc'))).toBeUndefined()
+    }
   })
 
   it('refuses a file without a status column unless it is declared the Subscribed export', async () => {

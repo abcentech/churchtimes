@@ -410,13 +410,16 @@ export interface Subscriber {
    * Version of the consent wording shown when the person signed up.
    */
   consentTextVersion: string;
-  consentAt: string;
+  consentAt?: string | null;
   confirmedAt?: string | null;
   unsubscribedAt?: string | null;
   ipHash?: string | null;
-  importedFrom?: ('web' | 'mailchimp-import') | null;
+  importedFrom?: ('web' | 'mailchimp-import' | 'mailchimp-import-no-optin-time') | null;
   confirmTokenHash?: string | null;
   confirmTokenExpiresAt?: string | null;
+  lastConfirmMailAt?: string | null;
+  confirmMailsDayStart?: string | null;
+  confirmMailsInDay?: number | null;
   updatedAt: string;
   createdAt: string;
 }
@@ -739,6 +742,9 @@ export interface SubscribersSelect<T extends boolean = true> {
   importedFrom?: T;
   confirmTokenHash?: T;
   confirmTokenExpiresAt?: T;
+  lastConfirmMailAt?: T;
+  confirmMailsDayStart?: T;
+  confirmMailsInDay?: T;
   updatedAt?: T;
   createdAt?: T;
 }

@@ -69,6 +69,8 @@ const HEADERS = {
   status: ['status', 'memberstatus'],
   optin: ['optintime', 'optin'],
   confirm: ['confirmtime'],
+  // Present only in Mailchimp's unsubscribed / cleaned exports: such a file is refused outright.
+  unsubscribedOrCleaned: ['unsubtime', 'unsubscribetime', 'cleantime', 'cleanedtime'],
 } as const
 
 const findColumn = (headers: string[], names: readonly string[]): number =>
@@ -84,7 +86,8 @@ export function parseMailchimpTime(value: string | undefined, now: Date): string
   return d.toISOString()
 }
 
-export type ImportCandidate = { email: string; name?: string; consentAt: string; confirmedAt: string }
+/** consentAt is the Mailchimp OPTIN_TIME only. Missing means unknown: it is stored as null, never replaced by the import time. */
+export type ImportCandidate = { email: string; name?: string; consentAt?: string; confirmedAt?: string }
 
 export type ImportCounts = {
   rowsRead: number
@@ -94,7 +97,9 @@ export type ImportCounts = {
   skippedInvalidEmail: number
   skippedDuplicateInFile: number
   /** Whole file refused: no email column, or no status column without --assume-subscribed. */
-  refused?: 'no-email-column' | 'no-status-column'
+  refused?: 'no-email-column' | 'no-status-column' | 'unsubscribed-or-cleaned-export'
+  /** Candidates with no OPTIN_TIME: imported with consentAt null and importedFrom "mailchimp-import-no-optin-time". */
+  importedWithoutOptinTime: number
   // Filled by applySubscriberImport:
   skippedAlreadyPresent: number
   skippedErasedOrSuppressed: number
@@ -108,6 +113,7 @@ const emptyCounts = (): ImportCounts => ({
   skippedNotSubscribed: 0,
   skippedInvalidEmail: 0,
   skippedDuplicateInFile: 0,
+  importedWithoutOptinTime: 0,
   skippedAlreadyPresent: 0,
   skippedErasedOrSuppressed: 0,
   wouldCreate: 0,
@@ -133,6 +139,10 @@ export function planMailchimpImport(
     status: findColumn(header, HEADERS.status),
     optin: findColumn(header, HEADERS.optin),
     confirm: findColumn(header, HEADERS.confirm),
+    unsubOrClean: findColumn(header, HEADERS.unsubscribedOrCleaned),
+  }
+  if (col.unsubOrClean >= 0) {
+    return { counts: { ...counts, refused: 'unsubscribed-or-cleaned-export' }, candidates: [] }
   }
   if (col.email < 0) return { counts: { ...counts, refused: 'no-email-column' }, candidates: [] }
   // Without Mailchimp's own marker we cannot tell subscribed rows from the rest, so nothing is imported unless the
@@ -165,15 +175,16 @@ export function planMailchimpImport(
     )
     const optin = parseMailchimpTime(cell(col.optin), now)
     const confirm = parseMailchimpTime(cell(col.confirm), now)
-    const consentAt = optin ?? confirm ?? now.toISOString()
+    const confirmedAt = confirm ?? optin
     candidates.push({
       email,
       ...(fullName.length >= 2 && fullName.length <= 120 ? { name: fullName } : {}),
-      consentAt,
-      confirmedAt: confirm ?? consentAt,
+      ...(optin ? { consentAt: optin } : {}),
+      ...(confirmedAt ? { confirmedAt } : {}),
     })
   }
   counts.candidates = candidates.length
+  counts.importedWithoutOptinTime = candidates.filter((c) => !c.consentAt).length
   return { counts, candidates }
 }
 
@@ -236,6 +247,7 @@ export async function applySubscriberImport(
     return true
   })
   counts.wouldCreate = toCreate.length
+  counts.importedWithoutOptinTime = toCreate.filter((c) => !c.consentAt).length
 
   if (options.apply) {
     for (const c of toCreate) {
@@ -247,9 +259,9 @@ export async function applySubscriberImport(
           status: 'confirmed',
           source: 'other',
           consentTextVersion: MAILCHIMP_CONSENT_VERSION,
-          consentAt: c.consentAt,
-          confirmedAt: c.confirmedAt,
-          importedFrom: 'mailchimp-import',
+          ...(c.consentAt ? { consentAt: c.consentAt } : {}),
+          ...(c.confirmedAt ? { confirmedAt: c.confirmedAt } : {}),
+          importedFrom: c.consentAt ? 'mailchimp-import' : 'mailchimp-import-no-optin-time',
         } as never,
         overrideAccess: true,
         context: { subscriberSystemWrite: true },
@@ -274,6 +286,11 @@ export async function runSubscriberImport(
 export function formatImportReport(counts: ImportCounts, apply: boolean): string {
   const lines = [apply ? 'APPLY: subscribers were written.' : 'DRY RUN: nothing was written. Re-run with --apply to import.']
   if (counts.refused === 'no-email-column') lines.push('REFUSED: no email column (expected "Email Address" or "email").')
+  if (counts.refused === 'unsubscribed-or-cleaned-export') {
+    lines.push(
+      'REFUSED: the file has UNSUB_TIME or CLEAN_TIME columns, so it is a Mailchimp unsubscribed or cleaned export. Nothing is imported from it, even with --assume-subscribed.',
+    )
+  }
   if (counts.refused === 'no-status-column') {
     lines.push(
       'REFUSED: no Status column, so subscribed rows cannot be told apart. Use Mailchimp\'s full audience export, or pass ' +
@@ -290,6 +307,7 @@ export function formatImportReport(counts: ImportCounts, apply: boolean): string
     `skipped, erased (suppressed):    ${counts.skippedErasedOrSuppressed}`,
     `would create:                    ${counts.wouldCreate}`,
     `created:                         ${counts.created}`,
+    `of which without an opt-in time:  ${counts.importedWithoutOptinTime} (consentAt stored as null)`,
   )
   return lines.join('\n')
 }

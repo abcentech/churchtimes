@@ -357,7 +357,8 @@ Responses:
 
 Notification: one e-mail to `CONTACT_NOTIFY_TO` (comma list, server-side, validated at startup in production, **never returned
 to a client or written to logs**), `Reply-To` = the sender's address, plain-text body. CR, LF and other control characters are removed
-from every header-bound value. The message is stored **before** any mail is attempted: if SMTP or `CONTACT_NOTIFY_TO` is missing, or sending
+from every header-bound value. The mail is queued **after** the `201` (a hanging SMTP server never delays the answer, so a retry cannot hit a false `409`;
+SMTP timeouts are 10 s connect, 10 s greeting, 20 s socket) and `notifyStatus` is updated when it finishes. The message is stored **before** any mail is attempted: if SMTP or `CONTACT_NOTIFY_TO` is missing, or sending
 fails, the message is still stored, the answer is still the normal `201`, the failure is logged (reference only) and the row shows
 `notifyStatus` = `failed` or `not-configured` to staff.
 
@@ -388,6 +389,11 @@ The CMS stores consent and subscribers; it does **not** send newsletters. Three 
   `202 { "ok": true, "message": "If this address can be subscribed, we sent a confirmation email." }`. Pending: a fresh link replaces the old one.
   Confirmed: nothing is sent or changed. **Unsubscribed or bounced: not re-added**; the row keeps its status, the same answer is returned, and a
   fresh confirmation link is mailed. Opening it is the only way back (it also records fresh consent). A mail failure is logged and still answers `202`.
+- **Mail-bombing guards.** Beyond the 3 per hour per address: a resend cooldown `NEWSLETTER_RESEND_COOLDOWN_SECONDS` (600; inside it nothing is sent and the
+  earlier link stays valid), a daily cap `NEWSLETTER_MAX_CONFIRM_MAILS_PER_DAY` (5 per rolling 24 h), and `bounced` addresses are never mailed automatically.
+  Every refused case returns the same neutral `202`. Timestamps and counters live on the subscriber row (internal, never in a response).
+- Timing note: response bodies are byte-identical for every state, but database work still differs slightly by subscriber state; the mail is queued after
+  the answer so SMTP time does not leak.
 - A honeypot hit returns the normal `202` and stores nothing.
 - `503 { "ok": false, "errors": [{ "message": "Sign-up is unavailable." }] }` and nothing stored when, in production, SMTP is not configured or
   `PUBLIC_SITE_URL` is missing or not https.
@@ -396,7 +402,8 @@ The CMS stores consent and subscribers; it does **not** send newsletters. Three 
 **`POST /api/public/newsletter/confirm`** and **`POST /api/public/newsletter/unsubscribe`**: body `{ "token": "..." }` (cap 2 KB), no Turnstile (the token
 is the proof), per-IP limit `NEWSLETTER_TOKEN_RATE_LIMIT` (20) per window. **POST only: any other method is `405` with `Allow: POST, OPTIONS`**, so mail
 scanners that pre-fetch links change nothing.
-- confirm: single-use random token, valid 72 h, matched by its SHA-256. Sets `confirmed` and `confirmedAt`, clears the token.
+- confirm: single-use random token, valid 72 h, matched by its SHA-256. One conditional `UPDATE` (id, token hash, observed status and expiry in the
+  `WHERE`, token cleared in the same statement) sets `confirmed` and `confirmedAt`; of simultaneous confirms exactly one wins and writes the one audit row.
 - unsubscribe: HMAC-SHA256-signed token `u1.<subscriber id>.<signature>` (key `NEWSLETTER_TOKEN_SECRET`, constant-time comparison, no expiry so every
   future newsletter can carry a working link). Sets `unsubscribed` and `unsubscribedAt`. Idempotent; an erased subscriber stays erased.
 - Both answer `200 { "ok": true }`. Any invalid, expired, used, forged or unknown token is the same `400 { "ok": false, "errors": [{ "message": "This link is no longer valid." }] }`.
@@ -410,11 +417,15 @@ only come from the double opt-in link or the import).
   (default), `unsubscribed`, `bounced` (else 400), `Cache-Control: no-store`, audited (`subscriber.export`, count only). Columns: `email,name,status,source,consentAt,confirmedAt,unsubscribedAt,importedFrom`.
   A cell starting with `=`, `+`, `-`, `@`, tab or CR is prefixed with `'`.
 - **`POST /api/subscribers/:id/erase`** (`admin` only, audited): the address becomes `erased:<HMAC-SHA256 keyed with IP_HASH_SALT>`, the name, IP hash and token
-  are cleared, `status` is `erased`. The row is a suppression record that the importer honours.
+  are cleared, `status` is `erased`. The row is a suppression record that the importer honours. Erasure does **not** touch `contact-messages` from the same
+  address (an admin deletes those manually), and rotating `IP_HASH_SALT` breaks the suppression match.
 - **Import CLI** `npm run import:subscribers -- --file <csv> [--apply] [--assume-subscribed]` (server-side only, no endpoint). Dry run by default; output is
   counts only, never an address. The file must be outside the repository. Only rows Mailchimp marks `subscribed` are imported, as `confirmed`,
   `importedFrom = mailchimp-import`, `consentAt` = `OPTIN_TIME` (else `CONFIRM_TIME`, else the import time). Header names are matched loosely (`Email Address`,
   `First Name`, `Last Name`, `OPTIN_TIME`, `CONFIRM_TIME`, `Status`). No Status column: refused unless `--assume-subscribed` (the "Subscribed" segment export).
+  A file with `UNSUB_TIME` or `CLEAN_TIME` columns (unsubscribed or cleaned export) is refused, even with `--assume-subscribed`. A row with no `OPTIN_TIME` is
+  imported with `consentAt` null and `importedFrom = mailchimp-import-no-optin-time`, and counted in the report (the import time is never used as consent
+  time). A path inside the repository is refused (real paths, case-insensitive on Windows). Errors print only class and code.
   Existing rows and erased addresses are skipped, never overwritten. Commenters, form senders and every other source are never imported.
 - Provider sync (Mailchimp API) is **not implemented** and off.
 

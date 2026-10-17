@@ -192,3 +192,70 @@ export function toCsv(rows: Array<Record<string, unknown>>): string {
   for (const row of rows) lines.push(EXPORT_COLUMNS.map((c) => csvCell(row[c])).join(','))
   return `${lines.join('\r\n')}\r\n`
 }
+
+// ---- Anti mail-bombing for confirmation e-mails ----
+
+const nonNegativeInt = (value: string | undefined, fallback: number): number => {
+  const n = Number.parseInt(value ?? '', 10)
+  return Number.isFinite(n) && n >= 0 ? n : fallback
+}
+
+export type ConfirmMailState = {
+  status: SubscriberStatus
+  lastConfirmMailAt?: string | Date | null
+  confirmMailsDayStart?: string | Date | null
+  confirmMailsInDay?: number | null
+}
+
+export type ConfirmMailCounters = { lastConfirmMailAt: string; confirmMailsDayStart: string; confirmMailsInDay: number }
+
+export type ConfirmMailDecision =
+  | { send: false; reason: 'bounced' | 'cooldown' | 'daily-cap' }
+  | { send: true; counters: ConfirmMailCounters }
+
+const time = (v: string | Date | null | undefined): number | null => {
+  if (!v) return null
+  const t = v instanceof Date ? v.getTime() : new Date(v).getTime()
+  return Number.isNaN(t) ? null : t
+}
+
+/**
+ * Should a confirmation e-mail go to this existing subscriber now? Besides the 3 per hour per address limiter:
+ * - `bounced` addresses are never mailed automatically (staff can reset the status);
+ * - resend cooldown NEWSLETTER_RESEND_COOLDOWN_SECONDS (default 600; 0 turns it off);
+ * - daily cap NEWSLETTER_MAX_CONFIRM_MAILS_PER_DAY (default 5) within a rolling 24 h window that starts at the first mail.
+ * In every refused case the caller still answers the same neutral 202.
+ */
+export function decideConfirmMail(
+  row: ConfirmMailState,
+  now: Date = new Date(),
+  env: NodeJS.ProcessEnv = process.env,
+): ConfirmMailDecision {
+  if (row.status === 'bounced') return { send: false, reason: 'bounced' }
+  const t = now.getTime()
+  const cooldownMs = nonNegativeInt(env.NEWSLETTER_RESEND_COOLDOWN_SECONDS, 600) * 1000
+  const last = time(row.lastConfirmMailAt)
+  if (cooldownMs > 0 && last !== null && t - last < cooldownMs) return { send: false, reason: 'cooldown' }
+
+  const cap = Math.max(1, nonNegativeInt(env.NEWSLETTER_MAX_CONFIRM_MAILS_PER_DAY, 5))
+  const dayStart = time(row.confirmMailsDayStart)
+  const inWindow = dayStart !== null && t - dayStart < 24 * 3600 * 1000
+  const used = inWindow ? Math.max(0, row.confirmMailsInDay ?? 0) : 0
+  if (used >= cap) return { send: false, reason: 'daily-cap' }
+
+  return {
+    send: true,
+    counters: {
+      lastConfirmMailAt: now.toISOString(),
+      confirmMailsDayStart: inWindow ? new Date(dayStart as number).toISOString() : now.toISOString(),
+      confirmMailsInDay: used + 1,
+    },
+  }
+}
+
+/** Counters stamped on a brand-new row whose first confirmation mail is being queued. */
+export const firstConfirmMailCounters = (now: Date = new Date()): ConfirmMailCounters => ({
+  lastConfirmMailAt: now.toISOString(),
+  confirmMailsDayStart: now.toISOString(),
+  confirmMailsInDay: 1,
+})

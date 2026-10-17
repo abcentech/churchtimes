@@ -1,4 +1,4 @@
-import type { Endpoint, PayloadRequest } from 'payload'
+import type { Endpoint, Payload, PayloadRequest } from 'payload'
 
 import { writeAuditLog } from '../lib/audit'
 import {
@@ -20,6 +20,7 @@ import {
 } from '../lib/publicEndpoint'
 import { createRateLimiter, hashIp } from '../lib/rateLimit'
 import { cleanText } from '../lib/sanitize'
+import { safeErrorFields } from '../lib/safeLog'
 
 /**
  * POST /api/public/contact (go-live contract C5). Processing order (each step can end the request):
@@ -91,7 +92,7 @@ export const publicContactEndpoint: Endpoint = {
       })
       if (dup.docs.length > 0) return ctx.fail(409, 'We already received this message.')
     } catch (err) {
-      req.payload.logger.error({ err }, 'contact duplicate check failed')
+      req.payload.logger.error(safeErrorFields(err), 'contact duplicate check failed')
       return ctx.fail(500, 'Could not save your message. Please try again.')
     }
 
@@ -105,7 +106,7 @@ export const publicContactEndpoint: Endpoint = {
     try {
       ipHash = hashIp(ctx.ip)
     } catch (err) {
-      req.payload.logger.error({ err }, 'IP_HASH_SALT misconfigured')
+      req.payload.logger.error(safeErrorFields(err), 'IP_HASH_SALT misconfigured')
       return ctx.fail(500, 'Messages are temporarily unavailable.')
     }
     const userAgent = cleanText(req.headers.get('user-agent'), { max: 300 })
@@ -127,34 +128,56 @@ export const publicContactEndpoint: Endpoint = {
         summary: `Public contact message ${reference}`,
       })
     } catch (err) {
-      req.payload.logger.error({ err }, 'public contact message failed')
+      req.payload.logger.error(safeErrorFields(err), 'public contact message failed')
       return ctx.fail(500, 'Could not save your message. Please try again.')
     }
 
-    // The message is safe in the database. Notification is best effort: never leaks, never fails the request.
-    const notifyStatus = await notifyStaff(req, { ...result.data, reference })
+    // The message is safe in the database. The staff notification is queued AFTER the answer (never awaited): a slow or
+    // hanging SMTP server must not make the reader wait, time out and retry into a 409. It never leaks and never fails the request.
+    queueStaffNotification(req.payload, docId, { ...result.data, reference })
+
+    return ctx.ok(okBody, 201)
+  },
+}
+
+// Notification jobs run after the response. The set lets tests wait for them to settle.
+const pendingMail = new Set<Promise<unknown>>()
+export async function waitForPendingContactMail(): Promise<void> {
+  await Promise.allSettled([...pendingMail])
+}
+
+function queueStaffNotification(
+  payload: Payload,
+  docId: number | string,
+  msg: Parameters<typeof buildContactNotification>[0],
+): void {
+  const job = (async () => {
+    const notifyStatus = await notifyStaff(payload, msg)
     try {
-      await req.payload.update({
+      await payload.update({
         collection: 'contact-messages',
         id: docId,
         data: { notifyStatus } as never,
         overrideAccess: true,
       })
     } catch (err) {
-      req.payload.logger.error({ err, reference }, 'could not record contact notification status')
+      payload.logger.error({ reference: msg.reference, ...safeErrorFields(err) }, 'could not record contact notification status')
     }
-
-    return ctx.ok(okBody, 201)
-  },
+  })()
+    .catch((err: unknown) => {
+      payload.logger.error({ reference: msg.reference, ...safeErrorFields(err) }, 'contact notification job failed')
+    })
+    .finally(() => pendingMail.delete(job))
+  pendingMail.add(job)
 }
 
 async function notifyStaff(
-  req: PayloadRequest,
+  payload: Payload,
   msg: Parameters<typeof buildContactNotification>[0],
 ): Promise<'sent' | 'failed' | 'not-configured'> {
   const { valid } = parseRecipientList(process.env.CONTACT_NOTIFY_TO)
   if (valid.length === 0 || !isMailConfigured()) {
-    req.payload.logger.warn(
+    payload.logger.warn(
       { reference: msg.reference },
       'contact message stored but no notification sent: CONTACT_NOTIFY_TO or SMTP is not configured',
     )
@@ -162,12 +185,12 @@ async function notifyStaff(
   }
   try {
     const mail = buildContactNotification(msg)
-    await sendPlainMail(req.payload, { to: valid, subject: mail.subject, text: mail.text, replyTo: mail.replyTo })
+    await sendPlainMail(payload, { to: valid, subject: mail.subject, text: mail.text, replyTo: mail.replyTo })
     return 'sent'
   } catch (err) {
-    // Log the failure for operators (reference only: no recipient, no message text) and carry on.
-    req.payload.logger.error(
-      { reference: msg.reference, reason: err instanceof Error ? err.name : 'error' },
+    // Log the failure for operators (reference, error class and code only: no recipient, no message text) and carry on.
+    payload.logger.error(
+      { reference: msg.reference, ...safeErrorFields(err) },
       'contact notification email failed; the message is stored',
     )
     return 'failed'

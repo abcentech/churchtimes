@@ -3,9 +3,22 @@ import type { Endpoint, PayloadRequest } from 'payload'
 import { isAdmin, type UserLike } from '../access/roles'
 import { writeAuditLog } from '../lib/audit'
 import { hashSubscriberEmail, toCsv } from '../lib/newsletter'
+import { safeErrorFields } from '../lib/safeLog'
 
 const err = (status: number, message: string) =>
   Response.json({ ok: false, errors: [{ message }] }, { status, headers: { 'Cache-Control': 'no-store' } })
+
+/** Database failures here would otherwise reach Payload's own error logging, whose message can carry the query parameters (addresses). */
+const guarded =
+  (name: string, fn: (req: PayloadRequest) => Promise<Response>): Endpoint['handler'] =>
+  async (req) => {
+    try {
+      return await fn(req)
+    } catch (e) {
+      req.payload.logger.error(safeErrorFields(e), `${name} failed`)
+      return err(500, 'Something went wrong. Please try again.')
+    }
+  }
 
 /** Statuses an export may ask for. `erased` rows hold only a hash and are never exported. */
 const EXPORTABLE = ['pending', 'confirmed', 'unsubscribed', 'bounced'] as const
@@ -17,7 +30,7 @@ const EXPORTABLE = ['pending', 'confirmed', 'unsubscribed', 'bounced'] as const
 export const exportSubscribersEndpoint: Endpoint = {
   path: '/export',
   method: 'get',
-  handler: async (req: PayloadRequest) => {
+  handler: guarded('subscriber export', async (req: PayloadRequest) => {
     const user = req.user as UserLike | null
     if (!user) return err(401, 'Authentication required.')
     if (!isAdmin(user)) return err(403, 'Only an admin can export subscribers.')
@@ -61,7 +74,7 @@ export const exportSubscribersEndpoint: Endpoint = {
         'X-Content-Type-Options': 'nosniff',
       },
     })
-  },
+  }),
 }
 
 /**
@@ -72,7 +85,7 @@ export const exportSubscribersEndpoint: Endpoint = {
 export const eraseSubscriberEndpoint: Endpoint = {
   path: '/:id/erase',
   method: 'post',
-  handler: async (req: PayloadRequest) => {
+  handler: guarded('subscriber erase', async (req: PayloadRequest) => {
     const user = req.user as UserLike | null
     if (!user) return err(401, 'Authentication required.')
     if (!isAdmin(user)) return err(403, 'Only an admin can erase a subscriber.')
@@ -125,5 +138,5 @@ export const eraseSubscriberEndpoint: Endpoint = {
       summary: `Subscriber ${doc.id} erased`,
     })
     return Response.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } })
-  },
+  }),
 }

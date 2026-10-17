@@ -29,6 +29,7 @@ import {
   checkOriginList,
   csv,
   normaliseOrigin,
+  turnstileActionWarnings,
   validateProductionEnv,
 } from './lib/securityConfig'
 
@@ -70,6 +71,10 @@ if (isProd && !isBuildPhase) {
   }
 }
 
+if (!isTest && !isBuildPhase) {
+  for (const warning of turnstileActionWarnings(process.env)) console.warn(`[security] ${warning}`)
+}
+
 // CMS_PUBLIC_URL is the origin the admin UI is served from. Payload adds serverURL to the CSRF
 // allowlist itself; we also normalise it (no trailing slash) so the Origin comparison matches.
 const serverURL = process.env.CMS_PUBLIC_URL ? normaliseOrigin(process.env.CMS_PUBLIC_URL) : undefined
@@ -86,6 +91,10 @@ const email = smtpHost
         port: Number.parseInt(process.env.SMTP_PORT ?? '', 10) || 587,
         secure: process.env.SMTP_SECURE === 'true',
         requireTLS: process.env.SMTP_SECURE !== 'true' && isProd,
+        // nodemailer defaults are 2 min (connect) and 10 min (socket): a hanging SMTP server must not pin requests or jobs.
+        connectionTimeout: 10_000,
+        greetingTimeout: 10_000,
+        socketTimeout: 20_000,
         ...(process.env.SMTP_USER
           ? { auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS ?? '' } }
           : {}),

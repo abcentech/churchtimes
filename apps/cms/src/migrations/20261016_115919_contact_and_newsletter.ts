@@ -7,7 +7,7 @@ export async function up({ db, payload, req }: MigrateUpArgs): Promise<void> {
   CREATE TYPE "public"."enum_contact_messages_notify_status" AS ENUM('sent', 'failed', 'not-configured');
   CREATE TYPE "public"."enum_subscribers_status" AS ENUM('pending', 'confirmed', 'unsubscribed', 'bounced', 'erased');
   CREATE TYPE "public"."enum_subscribers_source" AS ENUM('footer', 'article', 'home', 'other');
-  CREATE TYPE "public"."enum_subscribers_imported_from" AS ENUM('web', 'mailchimp-import');
+  CREATE TYPE "public"."enum_subscribers_imported_from" AS ENUM('web', 'mailchimp-import', 'mailchimp-import-no-optin-time');
   CREATE TABLE "contact_messages" (
   	"id" serial PRIMARY KEY NOT NULL,
   	"reference" varchar NOT NULL,
@@ -31,13 +31,16 @@ export async function up({ db, payload, req }: MigrateUpArgs): Promise<void> {
   	"status" "enum_subscribers_status" DEFAULT 'pending' NOT NULL,
   	"source" "enum_subscribers_source" NOT NULL,
   	"consent_text_version" varchar NOT NULL,
-  	"consent_at" timestamp(3) with time zone NOT NULL,
+  	"consent_at" timestamp(3) with time zone,
   	"confirmed_at" timestamp(3) with time zone,
   	"unsubscribed_at" timestamp(3) with time zone,
   	"ip_hash" varchar,
   	"imported_from" "enum_subscribers_imported_from",
   	"confirm_token_hash" varchar,
   	"confirm_token_expires_at" timestamp(3) with time zone,
+  	"last_confirm_mail_at" timestamp(3) with time zone,
+  	"confirm_mails_day_start" timestamp(3) with time zone,
+  	"confirm_mails_in_day" numeric,
   	"updated_at" timestamp(3) with time zone DEFAULT now() NOT NULL,
   	"created_at" timestamp(3) with time zone DEFAULT now() NOT NULL
   );

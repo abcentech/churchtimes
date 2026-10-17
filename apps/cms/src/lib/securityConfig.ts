@@ -123,6 +123,25 @@ const UNSAFE_IP_HEADERS = new Set([
   'content-length',
 ])
 
+/** Actions the contact and newsletter forms send. A TURNSTILE_EXPECTED_ACTION list that lacks one rejects that whole form. */
+export const NEW_FORM_TURNSTILE_ACTIONS = ['contact-message', 'newsletter-subscribe'] as const
+
+/**
+ * One-line startup warnings (never a startup failure): TURNSTILE_EXPECTED_ACTION is set but does not list the action of
+ * the contact or newsletter form, so every request to that form would be answered 403. Unset is fine (and is covered by
+ * the separate "not set" warning in validateProductionEnv).
+ */
+export function turnstileActionWarnings(env: NodeJS.ProcessEnv): string[] {
+  const list = csv(env.TURNSTILE_EXPECTED_ACTION)
+  if (list.length === 0) return []
+  const missing = NEW_FORM_TURNSTILE_ACTIONS.filter((a) => !list.includes(a))
+  return missing.length === 0
+    ? []
+    : [
+        `TURNSTILE_EXPECTED_ACTION is set but does not include ${missing.join(' and ')}: every request to the matching form is rejected with 403 until it is added.`,
+      ]
+}
+
 export type ProductionEnvCheck = {
   /** Startup fails when non-empty. */
   problems: string[]

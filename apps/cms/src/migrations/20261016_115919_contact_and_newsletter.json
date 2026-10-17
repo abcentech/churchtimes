@@ -2437,7 +2437,7 @@
           "name": "consent_at",
           "type": "timestamp(3) with time zone",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "confirmed_at": {
           "name": "confirmed_at",
@@ -2473,6 +2473,24 @@
         "confirm_token_expires_at": {
           "name": "confirm_token_expires_at",
           "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_confirm_mail_at": {
+          "name": "last_confirm_mail_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "confirm_mails_day_start": {
+          "name": "confirm_mails_day_start",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "confirm_mails_in_day": {
+          "name": "confirm_mails_in_day",
+          "type": "numeric",
           "primaryKey": false,
           "notNull": false
         },
@@ -4233,7 +4251,8 @@
       "schema": "public",
       "values": [
         "web",
-        "mailchimp-import"
+        "mailchimp-import",
+        "mailchimp-import-no-optin-time"
       ]
     },
     "public.enum_live_events_status": {
@@ -4265,6 +4284,6 @@
     "tables": {},
     "columns": {}
   },
-  "id": "48d1da0a-4c98-47ad-a6c9-35025dee6436",
+  "id": "5d6bb891-e5e7-4d5c-9af5-9b6f5fd5c22f",
   "prevId": "00000000-0000-0000-0000-000000000000"
 }

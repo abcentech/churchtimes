@@ -47,6 +47,8 @@ export type MailCapture = {
   sent: CapturedMail[]
   /** Make the next send throw an error whose message contains the recipient (it must never reach a client). */
   failNext: () => void
+  /** Make the next send hang until the returned function is called (a stuck SMTP server). */
+  hangNext: () => () => void
   /** Put the real mailer back. */
   restore: () => void
 }
@@ -55,7 +57,13 @@ export function installMailCapture(payload: Payload): MailCapture {
   const original = payload.sendEmail
   const sent: CapturedMail[] = []
   let failing = false
+  let hang: Promise<void> | undefined
   payload.sendEmail = (async (message: CapturedMail) => {
+    if (hang) {
+      const wait = hang
+      hang = undefined
+      await wait
+    }
     if (failing) {
       failing = false
       throw new Error(`stub SMTP failure while sending to ${String(message.to)}`)
@@ -68,8 +76,47 @@ export function installMailCapture(payload: Payload): MailCapture {
     failNext: () => {
       failing = true
     },
+    hangNext: () => {
+      let release!: () => void
+      hang = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return release
+    },
     restore: () => {
       payload.sendEmail = original
     },
   }
+}
+
+/**
+ * Captures what the CMS logs through payload.logger (STUB logger) so tests can assert nothing personal is written.
+ */
+export type LogCapture = { lines: string[]; text: () => string; restore: () => void }
+
+export function captureLogs(payload: Payload): LogCapture {
+  const original = payload.logger
+  const lines: string[] = []
+  const record = (level: string) => (...args: unknown[]) => {
+    lines.push(JSON.stringify({ level, args }, (_k, v) => (v instanceof Error ? { name: v.name, message: v.message, stack: v.stack } : v)))
+  }
+  const stub: Record<string, unknown> = {}
+  for (const level of ['trace', 'debug', 'info', 'warn', 'error', 'fatal']) stub[level] = record(level)
+  stub.child = () => stub
+  payload.logger = stub as never
+  return {
+    lines,
+    text: () => lines.join('\n'),
+    restore: () => {
+      payload.logger = original
+    },
+  }
+}
+
+/** An error shaped like drizzle's DrizzleQueryError: the message carries the SQL and every parameter (personal data). */
+export function drizzleLikeError(params: string[]): Error {
+  const err = new Error(`Failed query: insert into "t" values ($1) params: ${params.join(',')}`)
+  err.name = 'DrizzleQueryError'
+  ;(err as { cause?: unknown }).cause = Object.assign(new Error(`duplicate key value (${params.join(',')})`), { code: '23505' })
+  return err
 }

@@ -199,7 +199,7 @@ describe('planMailchimpImport (synthetic data)', () => {
     ])
   })
 
-  it('uses the Mailchimp opt-in time as consentAt, then the confirm time, then now', () => {
+  it('uses the Mailchimp OPTIN_TIME as consentAt and stores nothing when it is missing (never the import time)', () => {
     const { candidates } = planMailchimpImport(file, { now: NOW })
     const by = Object.fromEntries(candidates.map((c) => [c.email, c]))
     expect(by['ada@example.test']).toMatchObject({
@@ -207,10 +207,15 @@ describe('planMailchimpImport (synthetic data)', () => {
       consentAt: '2024-03-01T09:30:00.000Z',
       confirmedAt: '2024-03-01T09:31:00.000Z',
     })
-    expect(by['bola@example.test']).toMatchObject({ name: 'Bola', consentAt: '2024-04-02T10:00:00.000Z' })
-    expect(by['chi@example.test']).toMatchObject({ consentAt: NOW.toISOString(), confirmedAt: NOW.toISOString() })
+    // confirm time only: confirmedAt is known, consent time is not
+    expect(by['bola@example.test']).toMatchObject({ name: 'Bola', confirmedAt: '2024-04-02T10:00:00.000Z' })
+    expect('consentAt' in by['bola@example.test']!).toBe(false)
+    // neither time: nothing is invented
+    expect('consentAt' in by['chi@example.test']!).toBe(false)
+    expect('confirmedAt' in by['chi@example.test']!).toBe(false)
     expect('name' in by['chi@example.test']!).toBe(false)
-    expect(by['future@example.test']!.consentAt).toBe(NOW.toISOString()) // future opt-in time is ignored
+    expect('consentAt' in by['future@example.test']!).toBe(false) // a future opt-in time is ignored, not replaced by now
+    expect(planMailchimpImport(file, { now: NOW }).counts.importedWithoutOptinTime).toBe(3)
   })
 
   it('tolerates other Mailchimp header spellings', () => {

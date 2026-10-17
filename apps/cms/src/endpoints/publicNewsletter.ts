@@ -1,10 +1,13 @@
 import type { Endpoint, Payload, PayloadRequest } from 'payload'
 
 import { writeAuditLog } from '../lib/audit'
+import { claimSubscriberConfirmation } from '../lib/dbTransaction'
 import { isMailConfigured, sendPlainMail } from '../lib/mailer'
 import {
   buildConfirmUrl,
   CONFIRM_TOKEN_TTL_MS,
+  decideConfirmMail,
+  firstConfirmMailCounters,
   generateConfirmToken,
   hashToken,
   INVALID_LINK_MESSAGE,
@@ -29,6 +32,7 @@ import {
   readJsonBody,
 } from '../lib/publicEndpoint'
 import { createRateLimiter, hashIp } from '../lib/rateLimit'
+import { safeErrorFields } from '../lib/safeLog'
 
 /**
  * Newsletter endpoints (go-live contract C4). Double opt-in: subscribe stores a `pending` row with the SHA-256 of a
@@ -40,6 +44,9 @@ type SubscriberDoc = {
   id: number
   email: string
   status: 'pending' | 'confirmed' | 'unsubscribed' | 'bounced' | 'erased'
+  lastConfirmMailAt?: string | null
+  confirmMailsDayStart?: string | null
+  confirmMailsInDay?: number | null
 }
 
 let ipLimiter: ReturnType<typeof createRateLimiter> | undefined
@@ -110,7 +117,7 @@ function queueConfirmationMail(payload: Payload, email: string, token: string): 
   })
     .catch((err: unknown) => {
       // Never leaks to the client: the answer is already the neutral one. Log the failure only (no address, no link).
-      payload.logger.error({ reason: err instanceof Error ? err.name : 'error' }, 'newsletter confirmation email failed')
+      payload.logger.error(safeErrorFields(err), 'newsletter confirmation email failed')
     })
     .finally(() => pendingMail.delete(job))
   pendingMail.add(job)
@@ -138,6 +145,7 @@ async function subscribe(req: PayloadRequest, data: ValidSubscribe, ipHash: stri
         ipHash,
         importedFrom: 'web',
         ...tokenFields,
+        ...firstConfirmMailCounters(),
       } as never,
       overrideAccess: true,
       context: internal,
@@ -158,12 +166,15 @@ async function subscribe(req: PayloadRequest, data: ValidSubscribe, ipHash: stri
 
   if (existing.status === 'erased') return // cannot happen for a real address (the row holds a hash); defensive
 
-  // pending: a fresh link replaces the old one. unsubscribed or bounced: NOT re-added; the status stays as it is
-  // until the person opens a fresh confirmation link (the only way back).
+  // pending: a fresh link replaces the old one. unsubscribed: NOT re-added; the status stays as it is until the person opens
+  // a fresh confirmation link (the only way back). bounced: never mailed automatically. Every case is also held back by the
+  // resend cooldown and the daily cap, and the answer is the same neutral 202 whether or not a mail goes out.
+  const decision = decideConfirmMail(existing)
+  if (!decision.send) return
   await payload.update({
     collection: 'subscribers',
     id: existing.id,
-    data: tokenFields as never,
+    data: { ...tokenFields, ...decision.counters } as never,
     overrideAccess: true,
     context: internal,
   })
@@ -211,7 +222,7 @@ export const publicNewsletterSubscribeEndpoint: Endpoint = {
     try {
       ipHash = hashIp(ctx.ip)
     } catch (err) {
-      req.payload.logger.error({ err }, 'IP_HASH_SALT misconfigured')
+      req.payload.logger.error(safeErrorFields(err), 'IP_HASH_SALT misconfigured')
       return ctx.fail(500, 'Sign-up is temporarily unavailable.')
     }
 
@@ -219,7 +230,7 @@ export const publicNewsletterSubscribeEndpoint: Endpoint = {
       await subscribe(req, result.data, ipHash)
     } catch (err) {
       // A concurrent sign-up for the same address loses the unique-index race: it is not an error for the reader.
-      req.payload.logger.error({ reason: err instanceof Error ? err.name : 'error' }, 'newsletter sign-up could not be stored')
+      req.payload.logger.error(safeErrorFields(err), 'newsletter sign-up could not be stored')
     }
     return ctx.ok(neutral, 202)
   },
@@ -247,7 +258,8 @@ export const publicNewsletterConfirmEndpoint: Endpoint = {
     const read = await readToken(req, ctx)
     if ('response' in read) return read.response
 
-    const found = await req.payload.find({
+    const found = await req.payload
+      .find({
       collection: 'subscribers',
       where: {
         and: [
@@ -259,28 +271,25 @@ export const publicNewsletterConfirmEndpoint: Endpoint = {
       limit: 1,
       depth: 0,
       overrideAccess: true,
-    })
+      })
+      .catch((err: unknown) => {
+        req.payload.logger.error(safeErrorFields(err), 'newsletter confirm lookup failed')
+        return null
+      })
+    if (!found) return ctx.fail(500, 'Could not confirm. Please try again.')
     const doc = found.docs[0] as unknown as SubscriberDoc | undefined
     if (!doc) return ctx.fail(400, INVALID_LINK_MESSAGE)
 
-    const now = new Date().toISOString()
     try {
-      await req.payload.update({
-        collection: 'subscribers',
+      // ONE conditional UPDATE (status, token hash and expiry in the WHERE, token cleared in the same statement): of two
+      // simultaneous confirms exactly one wins; the other matches no row and gets the same "no longer valid" answer.
+      const won = await claimSubscriberConfirmation(req, {
         id: doc.id,
-        data: {
-          status: 'confirmed',
-          confirmedAt: now,
-          // Coming back from unsubscribed: the earlier unsubscribe no longer applies.
-          unsubscribedAt: null,
-          // Returning from unsubscribed or bounced: this click is the fresh consent.
-          ...(doc.status !== 'pending' ? { consentAt: now, consentTextVersion: NEWSLETTER_CONSENT_VERSION } : {}),
-          confirmTokenHash: null, // single use
-          confirmTokenExpiresAt: null,
-        } as never,
-        overrideAccess: true,
-        context: internal,
+        tokenHash: hashToken(read.token),
+        fromStatus: doc.status,
+        consentTextVersion: NEWSLETTER_CONSENT_VERSION,
       })
+      if (!won) return ctx.fail(400, INVALID_LINK_MESSAGE)
       await writeAuditLog(req, {
         action: 'subscriber.confirm',
         collection: 'subscribers',
@@ -291,7 +300,7 @@ export const publicNewsletterConfirmEndpoint: Endpoint = {
         summary: `Subscriber ${doc.id} confirmed`,
       })
     } catch (err) {
-      req.payload.logger.error({ reason: err instanceof Error ? err.name : 'error' }, 'newsletter confirm failed')
+      req.payload.logger.error(safeErrorFields(err), 'newsletter confirm failed')
       return ctx.fail(500, 'Could not confirm. Please try again.')
     }
     return ctx.ok({ ok: true }, 200)
@@ -341,7 +350,7 @@ export const publicNewsletterUnsubscribeEndpoint: Endpoint = {
           summary: `Subscriber ${doc.id} unsubscribed`,
         })
       } catch (err) {
-        req.payload.logger.error({ reason: err instanceof Error ? err.name : 'error' }, 'newsletter unsubscribe failed')
+        req.payload.logger.error(safeErrorFields(err), 'newsletter unsubscribe failed')
         return ctx.fail(500, 'Could not unsubscribe. Please try again.')
       }
     }
