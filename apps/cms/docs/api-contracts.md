@@ -1,4 +1,4 @@
-# Church Times CMS — API contracts (v1.8)
+# Church Times CMS — API contracts (v1.10)
 
 Status: implemented on `agent/payload-core`. v1.1 added Turnstile, duplicate detection, staff auth/session
 contract and security hardening; v1.2 closes the verified security-review findings: media ownership, version
@@ -596,6 +596,75 @@ and the per-IP `login` / `forgot-password` / `reset-password` limits (`lib/authR
 Not rate limited, so no 429: the anonymous live feed `GET /api/live-events/:slug/updates` (cheap, read-only, answered with
 `Cache-Control: public, max-age=10` so a CDN absorbs polling) and all other reads. A locked staff account is a `401`, not a `429`.
 
+### Go-live C7: redirects
+
+Implements `go-live-contracts.md` C7 (exact-match redirects for the old WordPress addresses). Pattern rules (`/category/*`, `/tag/*`,
+`/page/N/`, `/feed/`, AMP variants, `/?p=ID`) stay with the public host.
+
+**The single normalisation contract** (`src/lib/redirectPaths.ts`: `normalizePath` for stored values, `normalizeRequestPath` for a raw
+request target). The CMS applies it to every `from`, `to` and `legacyUrl`, to the addresses in `check:redirects`, and the public host must
+apply the same function to the request path (query string and fragment removed first) before its exact lookup. Test vectors for both
+sides: `apps/cms/tests/fixtures/redirect-normalisation.json` (`normalize`, `reject`, `request`). The canonical form: leading `/`; trailing
+`/` unless the last segment has a file extension; each segment decoded from UTF-8 (raw characters and percent escapes alike),
+Unicode **NFC**-normalised and re-encoded, so every character except `A-Z a-z 0-9 - . _ ~` is UTF-8 percent-encoded with **upper-case** hex
+(`/café/`, `/cafe%CC%81/`, `/caf%c3%a9/` are one key; `'` becomes `%27`; `%41` becomes `A`); case preserved. Rejected (never repaired), which
+is exactly what the public host treats as junk: scheme or host, `//` prefix, backslash, raw whitespace, control characters raw or encoded
+(C0, DEL, C1, U+2028, U+2029), the encoded characters `%2F` `%5C` `%25` `%23`, bytes that are not valid UTF-8 (`/%C3/`), a segment that starts
+like a scheme (`tel:`, `mailto:`, `javascript:`, `data:`, `http(s):`, and any `name:` first segment), `?`, `#`, `*`, dot segments, empty
+segments, more than 300 characters. A request path that fails normalisation has no rule (404).
+
+**`redirects` collection** (`/api/redirects`): read, create, update and delete = `admin` and `editor-in-chief` only (anonymous and every
+other role 403). Every write is audited (`redirect.create`, `redirect.update`, `redirect.delete`; a bulk import writes one `redirect.import`).
+Fields: `from` (canonical, unique, not `/`), `to` (canonical path, or `https://` URL whose host is in `REDIRECT_ALLOWED_HOSTS`; absent for
+410), `status` (301 default, 302, 410), `source` (`manual` default, `rank-math`, `legacy-url`), `note`. Writes (serialised by an advisory
+lock) are refused with 400 naming the conflicting rule for: a loop; a duplicate address; a `manual` row that chains (either direction),
+that points at a gone (410) address, or whose absolute target path is itself a rule; and any address that is the current public address of a
+published article. A **manual row overrides** the rule an article derives for the same address; other sources may not. `rank-math` and
+`legacy-url` rows may chain (flattened, or made 410, at generation).
+
+**Derived rules**: each **published** article with a `legacyUrl` yields `from` = path of `legacyUrl`, `to` = the article path from
+`PUBLIC_ARTICLE_PATH_TEMPLATE` (`/reports/{slug}/` default, or `/{slug}/`; any other value stops startup). Nothing is emitted when `from`
+equals `to`, the article is not published, the `legacyUrl` has a query string or is the root, or its host is not in `LEGACY_SITE_HOSTS`
+(default `churchtimesnigeria.net,www.churchtimesnigeria.net`; a bare path is accepted). Existing rules and the write hook compare canonical paths
+over all published articles (no substring search, no limit).
+
+**`GET /api/public/redirects`** (anonymous; GET and HEAD):
+
+```json
+{ "version": "sha256:…", "generatedAt": "2026-10-16T00:00:00Z", "count": 2, "rules": [
+  { "from": "/old-slug/", "to": "/reports/new-slug/", "status": 301, "source": "legacy-url" },
+  { "from": "/retired/", "to": null, "status": 410, "source": "manual" } ] }
+```
+
+Sorted by `from`; `version` = sha256 of the canonical JSON of `rules`; a `410` has `"to": null`. Headers: `ETag: "<version>"`,
+`Cache-Control: public, max-age=300`, `Vary: Origin`; `If-None-Match` (strong, weak, list or `*`) answers `304`. `Origin`, when sent, must be in
+`PUBLIC_SUBMISSION_ORIGINS` (403); allowlisted origins get an exact `Access-Control-Allow-Origin` echo and `Access-Control-Expose-Headers: ETag`.
+No staff data and nothing from an unpublished article. Rebuilt at most once per 10 s per process.
+**Data never causes a 500.** At generation: a staff row beats a derived rule for the same address (counted); the lowest article id wins a
+duplicate `legacyUrl`; an invalid stored row, a loop (every rule on it and every chain into it), or an absolute target that is another rule's
+address is dropped; a chain is flattened; a rule whose target is a gone address becomes a 410 itself (status 302 if any hop is 302). The result
+satisfies the public host's rule: no emitted `to` equals another emitted `from`. Counts only go to the server log. **500 only** for a bad
+configuration (`PUBLIC_ARTICLE_PATH_TEMPLATE`, `REDIRECT_ALLOWED_HOSTS`, `LEGACY_SITE_HOSTS`) or when **20,000 rules** or **5 MB** is exceeded
+(never truncated); the log carries an error code, never an address.
+
+**Commands** (from `apps/cms`; they print counts and error codes only, never an address or rule label):
+
+- `npm run export:redirects -- --out <file> [--detail-file <path>]` writes exactly the JSON the endpoint serves (generated artifact, never committed).
+- `npm run check:redirects -- --urls <file> [--detail-file <path>]` reads old addresses (one per line, `#` comments; at most 5 MB and 100,000
+  lines), looks each up with the normalisation contract above, and prints counts: resolved (301 / 302 / 410 / live article) and unresolved
+  (no rule / query-only / invalid). Exit 1 if anything is unresolved, 2 for a usage or file error. On failure it prints `error=<code>`
+  (`config`, `too-many-rules`, `too-large`, `internal-error`) only.
+- `--detail-file` writes the rule labels (which are old addresses) of dropped or overridden items, or the error message, to a path that must be
+  **outside the repository** (otherwise exit 2).
+- `npm run import:redirects -- --file <csv> [--apply]`: header `from,to,status` (`status` optional, default 301; `to` empty for 410; at most
+  20,000 rows). Dry run unless `--apply`; rows get `source = rank-math`. Skipped and counted: invalid from/to/status, `*` patterns, duplicates,
+  already stored, address owned by an article rule or live article, loops, absolute target that is a rule. A row whose target is a gone
+  address is written as a 410 (counted).
+
+Environment: `PUBLIC_ARTICLE_PATH_TEMPLATE`, `REDIRECT_ALLOWED_HOSTS` (**must equal the public host's `PUBLIC_REDIRECT_ALLOWED_HOSTS`; the
+host also needs `PUBLIC_SITE_URL`**), `LEGACY_SITE_HOSTS` (`docs/operations.md`). Migration `20261017_095306_redirects` (table `redirects`,
+enum `enum_redirects_source`, locked-documents relation column), reversible (down then up is tested).
+
 ## 8. Environment variables
 
 See `apps/cms/.env.example` (annotated) and `docs/operations.md` §4. Secrets (`PAYLOAD_SECRET`, `PREVIEW_SECRET`,
@@ -607,7 +676,15 @@ limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/op
 
 ## 9. Changelog
 
-### Go-live C1 (unreleased, the integrator assigns the version)
+### v1.10: Go-live C7 redirects
+Go-live contract C7 (redirects). Additive.
+- New staff collection `redirects` (§ "Go-live C7: redirects"), new anonymous `GET /api/public/redirects` (ETag, 304, `max-age=300`),
+  pure canonical-path module shared with the public host, derived rules from `legacyUrl`, and the commands `export:redirects`,
+  `check:redirects`, `import:redirects`.
+- New environment values `PUBLIC_ARTICLE_PATH_TEMPLATE`, `REDIRECT_ALLOWED_HOSTS` and `LEGACY_SITE_HOSTS`; an invalid value stops startup.
+- Migration `20261017_095306_redirects`; no existing endpoint or field changed.
+
+### v1.9: Go-live C1
 Legacy content shapes (CMS side), see "Go-live C1: legacy content shapes" in §3. Additive: `youtubeEmbed` block and table feature on
 `articles.content`; any other embed is `400`; staff-only `media.legacyPath` (migration `20261016_110618_media_legacy_path`: one nullable
 indexed column, reversible); pure importer helpers. The archive importer (#19) is not changed here and must switch from raw `embed`
