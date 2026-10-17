@@ -4,18 +4,29 @@ export function normalizeBasePath(value='/') {
   if(!/^\/(?:[a-zA-Z0-9_-]+\/)*$/.test(value)) throw new Error('Base path must use directory segments and a trailing slash');
   return value;
 }
-export const reportPath = (slug, base='/') => {
+export const DEFAULT_ARTICLE_PATH_TEMPLATE='/reports/{slug}/';
+export function articlePathTemplate(value) {
+  const configured=value ?? (typeof document!=='undefined' ? document.querySelector('meta[name="public-article-path-template"]')?.content : undefined);
+  const template=typeof configured==='string' && configured.trim() ? configured.trim() : DEFAULT_ARTICLE_PATH_TEMPLATE;
+  if(!['/{slug}/',DEFAULT_ARTICLE_PATH_TEMPLATE].includes(template))throw new Error('Article path template must be /{slug}/ or /reports/{slug}/');
+  return template;
+}
+const reservedSlugs=new Set(['latest','about','contact','advertise','category','assets','site','api','reports','index']);
+export const reportPath = (slug, base='/', template) => {
   if(!validReportSlug(slug)) return '';
-  return `${normalizeBasePath(base)}reports/${slug}/`;
+  const pattern=articlePathTemplate(template);
+  if(pattern==='/{slug}/' && reservedSlugs.has(slug))return '';
+  return normalizeBasePath(base)+pattern.slice(1).replace('{slug}',slug);
 };
-export function reportSlug(path,base='/') {
-  const prefix=normalizeBasePath(base)+'reports/';
+export function reportSlug(path,base='/',template) {
+  const pattern=articlePathTemplate(template);
+  const prefix=normalizeBasePath(base)+(pattern==='/{slug}/'?'':'reports/');
   if(!path.startsWith(prefix)) return null;
   const value=path.slice(prefix.length).replace(/\/$/,'');
-  return validReportSlug(value) ? value : null;
+  return validReportSlug(value) && reportPath(value,base,pattern) ? value : null;
 }
-export function articleCanonical(slug,{siteUrl,basePath='/'}={}) {
-  const path=reportPath(slug,basePath);
+export function articleCanonical(slug,{siteUrl,basePath='/',articlePathTemplate:template}={}) {
+  const path=reportPath(slug,basePath,template);
   if(!path) return '';
   try {
     const url=new URL(siteUrl);
@@ -25,7 +36,7 @@ export function articleCanonical(slug,{siteUrl,basePath='/'}={}) {
 }
 export function articleSchema(article,canonical) {
   const image=cmsSources(article.featuredImage);
-  return {'@context':'https://schema.org','@type':'NewsArticle',headline:article.title,description:article.excerpt,
+  return {'@context':'https://schema.org','@type':'NewsArticle',headline:article.title,description:article.seoDescription || article.excerpt,
     ...(canonical ? {url:canonical,mainEntityOfPage:canonical} : {}),
     ...(article.publishedAt ? {datePublished:article.publishedAt} : {}),
     ...(article.bylineName ? {author:{'@type':'Person',name:article.bylineName}} : {}),

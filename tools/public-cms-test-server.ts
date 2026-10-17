@@ -35,10 +35,12 @@ const media = await f.payload.create({collection:'media',overrideAccess:true,
   file:{data:bytes,name:runId+'-fixture.png',mimetype:'image/png',size:bytes.length},
 })
 const published = await f.seedArticle({status:'published',publishedAt:new Date().toISOString(),
+  seoTitle:'Synthetic search title & public reporting',seoDescription:'Synthetic search description for public reporting & community life.',
   bylineName:'CMS integration byline',featuredImage:media.id,excerpt:'Faith & public life: a published report from the community.',
   content:{root:{...lexical('Published text from real Payload and PostgreSQL.').root,children:[...lexical('Published text from real Payload and PostgreSQL.').root.children,{type:'upload',version:3,relationTo:'media',value:media.id,fields:{}}]}},
   corrections:[{note:'A verified fixture correction.',correctedAt:new Date().toISOString()}],legacyUrl:'https://churchtimesnigeria.net/synthetic-legacy-fixture/',
 })
+const seoFallback=await f.seedArticle({title:runId+' SEO fallback report',slug:runId+'-seo-fallback',status:'published',publishedAt:'2020-01-01T00:00:00.000Z',excerpt:'Synthetic editorial fallback excerpt.'})
 // Existing anonymous article contract; this does not execute an import pipeline.
 const legacySamples=[]
 if(process.env.PUBLIC_LEGACY_SAMPLES==='true')for(let i=1;i<=LEGACY_SAMPLE_COUNT;i++) {
@@ -77,7 +79,7 @@ async function submission(reference: string) {
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url || '/', 'http://127.0.0.1:'+port)
-    if (url.pathname === '/__test/fixtures') return reply(res,{runId,legacySamples,publishedSlug:published.slug,draftSlug:reporterDraft.json.doc.slug,siteverifyCalls,liveSlug:live.slug,liveTitle:live.title,draftLiveSlug:draftLive.slug,endedLiveSlug:endedLive.slug})
+    if (url.pathname === '/__test/fixtures') return reply(res,{runId,legacySamples,publishedSlug:published.slug,seoFallbackSlug:seoFallback.slug,draftSlug:reporterDraft.json.doc.slug,siteverifyCalls,liveSlug:live.slug,liveTitle:live.title,draftLiveSlug:draftLive.slug,endedLiveSlug:endedLive.slug})
     if(url.pathname==='/__test/live-stage' && req.method==='POST') {
       if(url.searchParams.get('stage')==='start'){await f.payload.update({collection:'live-events',id:live.id,overrideAccess:true,data:{status:'live'}});await f.payload.update({collection:'live-updates',id:delayed.id,overrideAccess:true,data:{status:'pending',publishSequence:null,approvedAt:null}})}
       else if(url.searchParams.get('stage')==='approve'){const result=await api('PATCH',`/api/live-updates/${delayed.id}`,{token:f.tokens.eic,body:{status:'approved'}});if(result.status!==200)return reply(res,{status:result.status},500)}
