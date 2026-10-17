@@ -32,6 +32,8 @@ jobs:
           VITE_PUBLIC_CONTACT_URL: ${{ matrix.optional == 'synthetic' && 'https://cms.example.test/api/public/contact' || '' }}
           VITE_TURNSTILE_SITE_KEY: synthetic-stub-site-key
           VITE_PUBLIC_GA4_ID: ${{ matrix.optional == 'synthetic' && 'G-STUB0000' || '' }}
+          VITE_PUBLIC_COMMENTS_URL: ${{ matrix.optional == 'synthetic' && 'https://cms.example.test/api/legacy-comments' || '' }}
+          VITE_PUBLIC_ONESIGNAL_APP_ID: ${{ matrix.optional == 'synthetic' && '11111111-1111-4111-8111-111111111111' || '' }}
           VITE_PUBLIC_INDEXABLE: 'true'
       - run: npm run check:reader-budget
       - run: node --test unit-tests/reader-budget.test.js
