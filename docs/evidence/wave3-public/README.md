@@ -2,10 +2,11 @@
 
 Recorded locally on 2026-10-17 using production Vite output served by
 `tools/serve-public.mjs`, real anonymous Payload REST and disposable PostgreSQL.
-The audited source is unpublished local integration `17e7900075be134da65c973048352b9198b994da`;
+The audited source is integration `17e7900075be134da65c973048352b9198b994da`;
 the earlier comparison is `9615d1f194916469a35b6e4e028bea402a39f0cd`.
 The branch combines the review fixes and public feature PRs; neither source was
-merged into `feat/newsroom-mvp` or `main`. The final local test integration
+merged into `feat/newsroom-mvp` or `main`. The source history is available on the
+review-only `agent/wave3-validation` branch; it has no merge PR. The final test integration
 `7827cdc81c7333988a87cc8e12914f5ac958e405` additionally contains only host startup
 review fixes and documentation/evidence updates; its browser source is identical
 to the final audit. CI on this evidence-only PR does **not** reproduce the
