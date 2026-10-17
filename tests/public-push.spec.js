@@ -20,7 +20,7 @@ test('push is inert without configuration, consent and an explicit reader click'
   await panel(page,'');expect(await page.locator('#push-test-panel').textContent()).toBe('');expect(requests).toEqual([]);
   await panel(page);await page.evaluate(()=>window.pushSet(true));expect(requests).toEqual([]);
   await page.evaluate(()=>window.pushSet(false));await page.getByRole('button',{name:'Enable notifications',exact:true}).click();
-  await expect(page.getByRole('status')).toContainText('Choose optional push consent');expect(requests).toEqual([]);
+  await expect(page.locator('#push-test-panel [role="status"]')).toContainText('Choose optional push consent');expect(requests).toEqual([]);
   expect(await page.evaluate(()=>window.pushTrace)).toContain('request-consent');
 });
 test('keyboard push activation uses one STUB SDK, withdrawal opts out and unregisters only its worker',async({page})=>{
