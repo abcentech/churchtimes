@@ -1,3 +1,4 @@
+import {checkPublicPushWorkerExport} from './public-push-worker.mjs';
 import { readFile, readdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
@@ -13,4 +14,5 @@ async function compare(source, target) {
 if (!(await readFile(join(root, 'dist/index.html'))).equals(await readFile(join(root, 'index.html')))) throw new Error('Stale index.html export. Run npm run export:pages before committing.');
 await compare(join(root, 'dist/site'), join(root, 'site'));
 await compare(join(root,'dist/newsletter'),join(root,'newsletter'));
+await checkPublicPushWorkerExport({sourceDirectory:join(root,'dist'),targetDirectory:root});
 console.log('The committed Pages export matches the current build.');

@@ -1,0 +1,22 @@
+name: Public reader shell integration stubs
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'reader-integration-tests/**'
+      - 'playwright.reader-integration.config.js'
+      - 'package*.json'
+      - '.github/workflows/public-reader-integration.yml'
+  workflow_dispatch:
+jobs:
+  reader-shell-stubs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test --config playwright.reader-integration.config.js --reporter=list,github

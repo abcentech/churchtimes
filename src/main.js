@@ -5,7 +5,7 @@ function bindArticleListen(root){
   import('./lib/reader-tools.js').then(module=>{if(!cancelled&&root.isConnected)dispose=module.mountListen(root);}).catch(()=>{});
   return ()=>{cancelled=true;dispose?.();};
 }
-import { captureNewsletterLink } from './lib/reader-form-contracts.js';
+import { captureNewsletterLink } from './lib/reader-newsletter-link.js';
 const newsletterLink=captureNewsletterLink(location,history,new URL(document.baseURI).pathname);
 let readerForms;
 const readerFormsReady=(((import.meta.env.VITE_PUBLIC_NEWSLETTER_URL || import.meta.env.VITE_PUBLIC_CONTACT_URL) && import.meta.env.VITE_TURNSTILE_SITE_KEY) || newsletterLink)
@@ -42,6 +42,7 @@ import { renderArticleContent } from './lib/article-content.js';
 import './fonts.css';
 import './style.css';
 import './public-quality.css';
+import './reader-features.css';
 import './article-content.css';
 import edition from './data/stories.json';
 import imageSizes from './data/image-sizes.json';
@@ -115,9 +116,24 @@ function bindPublicForm(kind) {
 }
 let disposePublicForm;
 let disposeListen;
+let disposePush;
+let disposeComments;
+function mountReaderComments(root,articleId){
+  if(!root || !import.meta.env.VITE_PUBLIC_COMMENTS_URL)return ()=>{};
+  let cancelled=false,dispose;
+  void import('./comments/public-comments.js').then(module=>{if(!cancelled&&root.isConnected){root.innerHTML=module.commentsMarkup(articleId);dispose=module.bindPublicComments(root);}}).catch(()=>{if(!cancelled&&root.isConnected)root.textContent='Archived comments are unavailable. Please try again later.';});
+  return ()=>{cancelled=true;dispose?.();};
+}
+function mountReaderPush(dialog){
+  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(import.meta.env.VITE_PUBLIC_ONESIGNAL_APP_ID||'') || dialog.querySelector('[data-public-push]'))return;
+  const root=document.createElement('div');root.dataset.publicPush='';dialog.append(root);
+  void import('./lib/public-push.js').then(module=>{if(root.isConnected)disposePush=module.mountPublicPush({root,appId:import.meta.env.VITE_PUBLIC_ONESIGNAL_APP_ID,hasConsent,subscribeConsent,requestConsent:()=>dialog.querySelector('[data-consent="push"]')?.focus()});root.querySelector('button')?.classList.add('outline-button');}).catch(()=>{if(root.isConnected)root.textContent='Notification settings are unavailable. Please try again later.';});
+}
 let disposeReaderForms,disposeArticleForms;
 function bindReaderFeatures(){disposeReaderForms?.();disposeReaderForms=bindReaderForms(document,{hasConsent:()=>hasConsent('forms'),requestConsent,onConsentChange:subscribeConsent,tokenLink:newsletterLink});}
 function shell(content, route='home') {
+  disposeComments?.();
+  disposePush?.();
   disposeListen?.();
   disposeArticleForms?.();
   disposeReaderForms?.();
@@ -199,7 +215,7 @@ function toast(message){const t=document.querySelector('#toast');if(!t)return;t.
 function bindSaves(){document.querySelectorAll('[data-save]').forEach(b=>{b.onclick=()=>{const id=Number(b.dataset.save),s=byId(id);if(saved.has(id)){saved.delete(id);toast('Removed from your reading list.');}else{saved.add(id);toast('Saved to your reading list.');}persistSaved();document.querySelectorAll(`[data-save="${id}"]`).forEach(x=>{const active=saved.has(id);x.classList.toggle('is-saved',active);x.setAttribute('aria-pressed',String(active));x.setAttribute('aria-label',`${active?'Remove from':'Save to'} reading list: ${s.title}`);});const count=document.querySelector('#saved-count');count.textContent=saved.size;count.hidden=!saved.size;document.querySelector('.reading-link').setAttribute('aria-label',`Reading list, ${saved.size} saved stories`);if(location.hash==='#saved')savedPage();};});}
 function openShareFallback(url){const d=document.querySelector('#share-dialog');const input=d.querySelector('input');input.value=url;d.querySelector('#share-status').textContent='';d.showModal();input.focus();input.select();}
 function openDialog(id, trigger){const d=document.querySelector(id);trigger?.setAttribute('aria-expanded','true');d.addEventListener('close',()=>trigger?.setAttribute('aria-expanded','false'),{once:true});d.showModal();}
-function bindCommon(){bindSaves();document.querySelector('#copy-share-url').addEventListener('click',()=>copyShareLink(document.querySelector('#share-url'),document.querySelector('#share-status')));document.querySelector('#select-share-url').addEventListener('click',()=>{const input=document.querySelector('#share-url');input.focus();input.select();});document.querySelector('[data-search]').addEventListener('click',()=>{openDialog('#search-dialog',document.querySelector('[data-search]'));document.querySelector('#search-input').focus();});document.querySelector('[data-menu]').addEventListener('click',()=>openDialog('#menu-dialog',document.querySelector('[data-menu]')));document.querySelector('[data-privacy]').addEventListener('click',()=>document.querySelector('#privacy-dialog').showModal());document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click',()=>b.closest('dialog').close()));document.querySelector('#search-form').addEventListener('submit',e=>{e.preventDefault();document.querySelector('#search-dialog').close();navigateSearch(document.querySelector('#search-input').value);});document.querySelectorAll('[data-query]').forEach(b=>b.addEventListener('click',()=>{document.querySelector('#search-dialog').close();navigateSearch(b.dataset.query);}));document.querySelectorAll('dialog').forEach(d=>d.addEventListener('click',e=>{if(e.target!==d)return;const r=d.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)d.close();}));}
+function bindCommon(){bindSaves();document.querySelector('#copy-share-url').addEventListener('click',()=>copyShareLink(document.querySelector('#share-url'),document.querySelector('#share-status')));document.querySelector('#select-share-url').addEventListener('click',()=>{const input=document.querySelector('#share-url');input.focus();input.select();});document.querySelector('[data-search]').addEventListener('click',()=>{openDialog('#search-dialog',document.querySelector('[data-search]'));document.querySelector('#search-input').focus();});document.querySelector('[data-menu]').addEventListener('click',()=>openDialog('#menu-dialog',document.querySelector('[data-menu]')));document.querySelector('[data-privacy]').addEventListener('click',()=>{const dialog=document.querySelector('#privacy-dialog');dialog.showModal();mountReaderPush(dialog);});document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click',()=>b.closest('dialog').close()));document.querySelector('#search-form').addEventListener('submit',e=>{e.preventDefault();document.querySelector('#search-dialog').close();navigateSearch(document.querySelector('#search-input').value);});document.querySelectorAll('[data-query]').forEach(b=>b.addEventListener('click',()=>{document.querySelector('#search-dialog').close();navigateSearch(b.dataset.query);}));document.querySelectorAll('dialog').forEach(d=>d.addEventListener('click',e=>{if(e.target!==d)return;const r=d.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)d.close();}));}
 
 const cmsUrl = import.meta.env.VITE_PUBLIC_CMS_URL;
 const publicBase = new URL(document.baseURI).pathname.replace(/index\.html$/,'');
@@ -349,10 +365,11 @@ async function reportPage(slug) {
         return;
       }
       const body = renderArticleContent(article.content,{baseUrl:cmsUrl});
-      target.innerHTML = `<div class="breadcrumbs"><a href="#home">Home</a><span>/</span><a href="#latest">Latest reports</a></div><article><header class="article-header"><span class="eyebrow clay">${escape(article.category || 'Newsroom')}</span><h1>${escape(article.title)}</h1><p class="article-deck">${escape(article.excerpt)}</p><div class="article-meta"><div>${article.bylineName?`<strong class="newsroom-byline">By ${escape(article.bylineName)}</strong>`:''}${reportDate(article)}</div><button class="icon-button" id="share-report" aria-label="Copy article link">${icon('share',19)}</button></div></header>${cmsFigure(article.featuredImage,{eager:true,fallbackAlt:article.title})}<div class="newsroom-article-body article-body">${body || '<p>The full article text is not available yet. Please check back shortly.</p>'}</div>${article.corrections.length?`<section class="newsroom-corrections article-corrections" aria-labelledby="corrections-title"><h2 id="corrections-title">Corrections & updates</h2><ul>${article.corrections.map(c=>`<li>${c.correctedAt?`<time datetime="${escape(c.correctedAt)}">${date({dateGMT:c.correctedAt},true)}</time>`:''}<p>${escape(c.note)}</p></li>`).join('')}</ul></section>`:''}${article.legacyUrl?`<p class="legacy-source"><a href="${escape(article.legacyUrl)}" target="_blank" rel="noopener noreferrer">Original publication ${icon('diagonal',15)}</a></p>`:''}${adMarker('article-inline')}${newsletterMarkup('article')}<div class="newsroom-article-end"><a class="text-link" href="#latest">More from the newsroom ${icon('arrow',17)}</a></div></article>`;
+      target.innerHTML = `<div class="breadcrumbs"><a href="#home">Home</a><span>/</span><a href="#latest">Latest reports</a></div><article><header class="article-header"><span class="eyebrow clay">${escape(article.category || 'Newsroom')}</span><h1>${escape(article.title)}</h1><p class="article-deck">${escape(article.excerpt)}</p><div class="article-meta"><div>${article.bylineName?`<strong class="newsroom-byline">By ${escape(article.bylineName)}</strong>`:''}${reportDate(article)}</div><button class="icon-button" id="share-report" aria-label="Copy article link">${icon('share',19)}</button></div></header>${cmsFigure(article.featuredImage,{eager:true,fallbackAlt:article.title})}<div class="newsroom-article-body article-body">${body || '<p>The full article text is not available yet. Please check back shortly.</p>'}</div>${article.corrections.length?`<section class="newsroom-corrections article-corrections" aria-labelledby="corrections-title"><h2 id="corrections-title">Corrections & updates</h2><ul>${article.corrections.map(c=>`<li>${c.correctedAt?`<time datetime="${escape(c.correctedAt)}">${date({dateGMT:c.correctedAt},true)}</time>`:''}<p>${escape(c.note)}</p></li>`).join('')}</ul></section>`:''}${article.legacyUrl?`<p class="legacy-source"><a href="${escape(article.legacyUrl)}" target="_blank" rel="noopener noreferrer">Original publication ${icon('diagonal',15)}</a></p>`:''}${import.meta.env.VITE_PUBLIC_COMMENTS_URL?'<div data-public-comments></div>':''}${adMarker('article-inline')}${newsletterMarkup('article')}<div class="newsroom-article-end"><a class="text-link" href="#latest">More from the newsroom ${icon('arrow',17)}</a></div></article>`;
       mountPublicAdvertising(target);
       bindCMSImages(target);
       disposeArticleForms=bindReaderForms(target,{hasConsent:()=>hasConsent('forms'),requestConsent,onConsentChange:subscribeConsent});
+      disposeComments=mountReaderComments(target.querySelector('[data-public-comments]'),article.id);
       disposeListen=bindArticleListen(target);
       setArticleMetadata(article);
       document.title = `${article.seoTitle || article.title} — Church Times Nigeria`;
