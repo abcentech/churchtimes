@@ -1,3 +1,4 @@
+import {reportPath} from '../src/lib/public-routes.js';
 // Reproducible mobile audits of compiled frontend + anonymous real CMS fixtures.
 // Invoked by run-public-cms-tests.mjs while its disposable database is alive.
 import {mkdir,writeFile,readdir,rename,readFile} from 'node:fs/promises';
@@ -22,7 +23,7 @@ export async function auditPublic({cmsUrl,dist,output,port,sourceRoot}) {
   const chromePath=process.env.CHROMIUM_PATH || (existsSync('/usr/bin/chromium')?'/usr/bin/chromium':chromium.executablePath());
   const chrome=await launch({chromePath,chromeFlags:['--headless','--no-sandbox','--disable-dev-shm-usage']});
   const results=[];
-  const pages=[['home','/'],['latest','/#latest'],['article','/reports/'+fixture.publishedSlug+'/'],['live','/#live']];
+  const pages=[['home','/'],['latest','/#latest'],['article',reportPath(fixture.publishedSlug,'/',process.env.PUBLIC_ARTICLE_PATH_TEMPLATE)],['live','/#live']];
   try {
     if(process.env.PUBLIC_QUALITY_GATE==='true') {
       const {checkPublicJourneys}=await import('./public-quality-journeys.mjs');
