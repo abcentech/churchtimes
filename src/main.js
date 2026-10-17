@@ -42,6 +42,7 @@ import { renderArticleContent } from './lib/article-content.js';
 import './fonts.css';
 import './style.css';
 import './public-quality.css';
+import './reader-features.css';
 import './article-content.css';
 import edition from './data/stories.json';
 import imageSizes from './data/image-sizes.json';
@@ -126,7 +127,7 @@ function mountReaderComments(root,articleId){
 function mountReaderPush(dialog){
   if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(import.meta.env.VITE_PUBLIC_ONESIGNAL_APP_ID||'') || dialog.querySelector('[data-public-push]'))return;
   const root=document.createElement('div');root.dataset.publicPush='';dialog.append(root);
-  void import('./lib/public-push.js').then(module=>{if(root.isConnected)disposePush=module.mountPublicPush({root,appId:import.meta.env.VITE_PUBLIC_ONESIGNAL_APP_ID,hasConsent,subscribeConsent,requestConsent:()=>dialog.querySelector('[data-consent="push"]')?.focus()});}).catch(()=>{if(root.isConnected)root.textContent='Notification settings are unavailable. Please try again later.';});
+  void import('./lib/public-push.js').then(module=>{if(root.isConnected)disposePush=module.mountPublicPush({root,appId:import.meta.env.VITE_PUBLIC_ONESIGNAL_APP_ID,hasConsent,subscribeConsent,requestConsent:()=>dialog.querySelector('[data-consent="push"]')?.focus()});root.querySelector('button')?.classList.add('outline-button');}).catch(()=>{if(root.isConnected)root.textContent='Notification settings are unavailable. Please try again later.';});
 }
 let disposeReaderForms,disposeArticleForms;
 function bindReaderFeatures(){disposeReaderForms?.();disposeReaderForms=bindReaderForms(document,{hasConsent:()=>hasConsent('forms'),requestConsent,onConsentChange:subscribeConsent,tokenLink:newsletterLink});}
