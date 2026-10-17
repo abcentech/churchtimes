@@ -435,6 +435,10 @@ Confirm each item before go-live and again after any change to the server:
 - [ ] A public submission from a disallowed origin gets `403`. Verify with `curl -H "Origin: https://evil.example"`.
 - [ ] A reporter account cannot approve or publish an article. Verify in the admin UI and API.
 - [ ] A submission without a valid `turnstileToken` is refused (§4.1 step 6) and one from the real site form is accepted.
+- [ ] Article editor (go-live C1): open an article in the admin, insert a table and a **YouTube video** block (11-character id), save, reload. The
+      editor features (blocks, table) are registered on `articles.content` only, so `npx payload generate:importmap` must be re-run and
+      committed when they change. Any embed other than a valid YouTube block is refused by the API (`400`). Deploying this change runs
+      migration `media_legacy_path` (one nullable indexed column on `media`; reversible).
 - [ ] Wrong password 5 times locks the account; **Forgot password?** works end to end; after logout the old token no longer works.
 
 ## 12. Status

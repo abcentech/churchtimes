@@ -11,9 +11,10 @@ import type {
   Where,
 } from 'payload'
 
-import { editorInChiefOnly, idOf, isEditorRole, isStaff, staffOnly, type UserLike } from '../access/roles'
+import { editorInChiefOnly, idOf, isEditorInChief, isEditorRole, isStaff, staffOnly, type UserLike } from '../access/roles'
 import { writeAuditLog } from '../lib/audit'
 import { clampLimit } from '../lib/clampLimit'
+import { LEGACY_PATH_MAX, isValidLegacyPath } from '../lib/legacyMediaPath'
 import { verifyPreviewToken } from '../lib/previewToken'
 import { nextCounter } from './LiveUpdates'
 
@@ -390,6 +391,28 @@ export const Media: CollectionConfig = {
       index: true,
       admin: { readOnly: true, position: 'sidebar' },
       access: { read: staffRead, create: never, update: never },
+    },
+    {
+      // Go-live C1.2: the original WordPress upload path (`2023/10/photo.jpg`), kept so old /wp-content/uploads
+      // addresses can be mapped. Additive and optional. Staff-only: readable by editor roles (admin, editor-in-chief,
+      // section-editor), writable by admin / editor-in-chief through the API and by server code (Local API, which
+      // skips field access). Anonymous callers and reporters can neither read nor filter on it.
+      name: 'legacyPath',
+      type: 'text',
+      index: true,
+      maxLength: LEGACY_PATH_MAX,
+      validate: (value: unknown) => {
+        if (value === undefined || value === null || value === '') return true
+        return isValidLegacyPath(value)
+          ? true
+          : 'Use the path after /wp-content/uploads/ without a leading slash, for example 2023/10/photo.jpg.'
+      },
+      access: {
+        read: ({ req }) => isEditorRole(asUser(req.user)),
+        create: ({ req }) => isEditorInChief(asUser(req.user)),
+        update: ({ req }) => isEditorInChief(asUser(req.user)),
+      },
+      admin: { position: 'sidebar', description: 'Original WordPress upload path. Set by the import; staff only.' },
     },
     // Virtual (no column, no migration) reverse relations used ONLY by `readAccess` to decide public visibility.
     // Field read access is denied for everyone so they never appear in a response unless a caller reads with
