@@ -21,9 +21,9 @@ const tableExists = async (name: string): Promise<boolean> => {
   return res.rows[0].t !== null
 }
 
-describe('C7 migration 20261016_111035_redirects is reversible', () => {
+describe('C7 migration 20261017_095306_redirects is reversible', () => {
   it('runs down and then up again on the test database, leaving a working redirects table', async () => {
-    const entry = migrations.find((m) => m.name === '20261016_111035_redirects')
+    const entry = migrations.find((m) => m.name === '20261017_095306_redirects')
     expect(entry).toBeTruthy()
     const args = { db: (f.payload.db as any).drizzle, payload: f.payload, req: {} } as never
 

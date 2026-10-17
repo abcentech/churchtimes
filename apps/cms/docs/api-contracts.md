@@ -1,4 +1,4 @@
-# Church Times CMS — API contracts (v1.8)
+# Church Times CMS — API contracts (v1.10)
 
 Status: implemented on `agent/payload-core`. v1.1 added Turnstile, duplicate detection, staff auth/session
 contract and security hardening; v1.2 closes the verified security-review findings: media ownership, version
@@ -167,6 +167,64 @@ anonymously. Never published automatically: only `POST /api/submissions/:id/conv
 
 ### AuditLog (`/api/audit-logs`) — read: `admin`, `editor-in-chief` only. Immutable via API.
 `{ id, action, collection, docId, actor?, actorRole?, fromStatus?, toStatus?, summary?, createdAt }`
+
+### Go-live C1: legacy content shapes
+
+Implements go-live contract C1 (CMS side) from `go-live-contracts.md`. Additive; the integrator will renumber this heading.
+
+**YouTube block (C1.1).** The admin editor for `articles.content` has Lexical's blocks feature with one block, `youtubeEmbed`.
+Serialized shape (the `version` of the wrapper is whatever Payload's block feature writes; the contract fixes the three fields):
+
+```json
+{ "type": "block", "version": 2, "format": "",
+  "fields": { "id": "<block id>", "blockName": "", "blockType": "youtubeEmbed", "videoId": "dQw4w9WgXcQ", "title": "Optional short title" } }
+```
+
+- `videoId`: required, exactly 11 characters from `[A-Za-z0-9_-]`. `title`: optional plain text, at most 120 characters, no markup.
+  A URL is never stored; the public renderer builds the player address from the id.
+- **Server validation** runs on every write that carries `content` (create, update, restore through update), as a `beforeValidate`
+  hook next to the body-image check, and is skipped only for trusted seed calls. `400` for: a malformed `youtubeEmbed` block
+  (*A YouTube block has an invalid video id ...*, or a title problem), and for **any other embed**: a raw `embed` node (the
+  archive importer's old `{ type: 'embed', embedType, url }` shape), an iframe-like node (`iframe`, `video`, `youtube`, `vimeo`,
+  `oembed`, `audio`, `html`, `rawhtml`, `script`, `object`, `widget`, matched case-insensitively), an `inlineBlock`, or a `block`
+  whose `blockType` is not `youtubeEmbed` (*Embeds other than YouTube are not accepted.*). A `youtubeEmbed` block must be a leaf:
+  no children, no `url`/`href`/`src` members and no fields beyond `id`, `blockName`, `blockType`, `videoId`, `title` (`400`).
+  A body nested deeper than 64 object/array levels (about 15 nested list levels) is **refused with `400`**
+  (*The article body is nested too deeply ...*): the check never silently skips what it cannot inspect.
+  Anonymous readers get the block as stored, on published articles only (like all of `content`).
+- The importer must write `youtubeEmbed` blocks for YouTube, and for anything else a paragraph with the original link text (when it
+  is a safe `https:` link) or nothing, plus a QA report line. It must not write `embed` nodes.
+
+**Tables (C1.4).** The editor registers Lexical's table feature (`EXPERIMENTAL_TableFeature`) on `articles.content`. Stored shape is the
+standard `table` > `tablerow` > `tablecell` (`headerState` 0/1/2, `colSpan`, `rowSpan`), unchanged from what the public renderer
+reads. A real-browser test (`e2e/browser/article-editor.spec.ts`) opens an article with a table and a YouTube block in the admin
+editor, edits a paragraph and a cell, saves it, and compares the full stored body (row/cell structure, `headerState`, `colSpan`, `rowSpan`,
+`backgroundColor`, text runs and formats, all block fields) with what was created. It runs under desktop-chrome and android-pixel7. An
+image inside a table cell is validated and recorded in `bodyMedia` like any body image. There is no server-side check of table
+structure beyond Payload's own.
+
+**Media `legacyPath` (C1.2).** Optional text field on `media` (additive, indexed, migration `media_legacy_path`): the original WordPress
+upload path after `/wp-content/uploads/`, normalised (`2023/10/photo.jpg`: no leading slash, no `..`, no `?`/`#`/backslash, at most 500
+characters; otherwise `400`). **Staff-only:** readable by `admin`, `editor-in-chief` and `section-editor`; writable (API) by `admin` and
+`editor-in-chief`; writable by server code (Local API with `overrideAccess`, which is what the importer uses). Anonymous callers,
+reporters and trusted publishers never see it and cannot filter by it (`400`); a value they send is ignored. Existing media privacy,
+ownership and freeze rules are unchanged. Helper functions for the importer live in `src/lib/legacyMediaPath.ts` (`legacyPathFromUrl`,
+`stripSizeSuffix` for `-300x200` suffixes before the extension only, `candidatePaths` = `[exact, stripped]`: callers try the exact path
+first because a real file can be called `banner-1920x1080.jpg`; `altFallback`/`resolveAlt`: alt, else caption, else
+`<title> photo`, at most 300 characters).
+
+**Import helpers (C1.3, C1.5).** Pure, database-free functions in `src/lib/legacyContent.ts` for the later importer task:
+`resolveSlugCollisions` (every valid original slug is reserved first, only true duplicates and normalised forms that collide get `-2`, `-3`,
+so a duplicate never takes a slug another post owns, in any order; returns `{old,new}` pairs; slug rule and 160 characters),
+`sanitizeLegacyLinks` (keep `http`, `https`, `mailto` and root-relative links; convert everything else, including a URL in any of
+`fields.url`, `url`, `href`, to plain text; an old-host link is rewritten through the slug map **only** when it is a plain `/<slug>/`
+address with a slug in the map and not a reserved WordPress path; `?p=ID`, `/category/...`, dated permalinks, media and unknown slugs
+stay as written and are listed in `report.unmapped` with a reason; a subtree nested deeper than 64 levels is flattened to text and
+reported), `stripShortcodes` (conservative: removes a closing tag only when paired with a removed opening tag, tags carrying
+attributes, and case-sensitive known names such as `[gallery]`, `[video]`, `[wpforms]`, `penci-*`; keeps `[sic]`, `[co-founder]`,
+`[covid-19]`, `[x1]`, `[Video]`; tidies only the whitespace touching a removal; reports every removal), `dropTemplateVariableSeo`
+(Rank Math `%variable%` values become `null` plus a flag). The public host resolves `?p=ID` through `legacyId`; dated permalinks
+(`/2020/05/slug/`) are not mapped by these helpers.
 
 ## 4. Public endpoints (no credentials)
 
@@ -604,7 +662,7 @@ configuration (`PUBLIC_ARTICLE_PATH_TEMPLATE`, `REDIRECT_ALLOWED_HOSTS`, `LEGACY
   address is written as a 410 (counted).
 
 Environment: `PUBLIC_ARTICLE_PATH_TEMPLATE`, `REDIRECT_ALLOWED_HOSTS` (**must equal the public host's `PUBLIC_REDIRECT_ALLOWED_HOSTS`; the
-host also needs `PUBLIC_SITE_URL`**), `LEGACY_SITE_HOSTS` (`docs/operations.md`). Migration `20261016_111035_redirects` (table `redirects`,
+host also needs `PUBLIC_SITE_URL`**), `LEGACY_SITE_HOSTS` (`docs/operations.md`). Migration `20261017_095306_redirects` (table `redirects`,
 enum `enum_redirects_source`, locked-documents relation column), reversible (down then up is tested).
 
 ## 8. Environment variables
@@ -618,13 +676,19 @@ limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/op
 
 ## 9. Changelog
 
-### Go-live C7: redirects
-Additive (the integrator assigns the version number).
+### v1.10: Go-live C7 redirects
+Go-live contract C7 (redirects). Additive.
 - New staff collection `redirects` (§ "Go-live C7: redirects"), new anonymous `GET /api/public/redirects` (ETag, 304, `max-age=300`),
   pure canonical-path module shared with the public host, derived rules from `legacyUrl`, and the commands `export:redirects`,
   `check:redirects`, `import:redirects`.
-- New environment values `PUBLIC_ARTICLE_PATH_TEMPLATE` and `REDIRECT_ALLOWED_HOSTS`; an invalid value stops startup.
-- Migration `20261016_111035_redirects`; no existing endpoint or field changed.
+- New environment values `PUBLIC_ARTICLE_PATH_TEMPLATE`, `REDIRECT_ALLOWED_HOSTS` and `LEGACY_SITE_HOSTS`; an invalid value stops startup.
+- Migration `20261017_095306_redirects`; no existing endpoint or field changed.
+
+### v1.9: Go-live C1
+Legacy content shapes (CMS side), see "Go-live C1: legacy content shapes" in §3. Additive: `youtubeEmbed` block and table feature on
+`articles.content`; any other embed is `400`; staff-only `media.legacyPath` (migration `20261016_110618_media_legacy_path`: one nullable
+indexed column, reversible); pure importer helpers. The archive importer (#19) is not changed here and must switch from raw `embed`
+nodes to `youtubeEmbed` blocks before it can write to this CMS.
 
 ### v1.8
 Go-live contract C2 (SEO fields). Additive, no breaking change.

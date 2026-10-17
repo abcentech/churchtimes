@@ -494,6 +494,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "legacy_path": {
+          "name": "legacy_path",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
         "updated_at": {
           "name": "updated_at",
           "type": "timestamp(3) with time zone",
@@ -677,6 +683,21 @@
           "columns": [
             {
               "expression": "uploaded_by_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "media_legacy_path_idx": {
+          "name": "media_legacy_path_idx",
+          "columns": [
+            {
+              "expression": "legacy_path",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -3935,6 +3956,6 @@
     "tables": {},
     "columns": {}
   },
-  "id": "e75d60a4-06d4-4999-8880-e4543befc395",
+  "id": "9b49e6e8-4017-4c26-9d74-1a3b5a336801",
   "prevId": "00000000-0000-0000-0000-000000000000"
 }
