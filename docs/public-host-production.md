@@ -9,7 +9,20 @@ policy from PR #57. It does not run the CMS or newsroom.
 ## Runtime and build
 
 Use the repository's pinned Node major (`.nvmrc`, currently 24). Build from the
-reviewed source with `npm ci` and `npm run build`; serve `dist`, not a mixture
+reviewed source with `npm ci`, then supply the reviewed **public build-time**
+configuration before `npm run build`:
+
+```sh
+VITE_PUBLIC_CMS_URL="$approved_cms_origin" VITE_PUBLIC_SITE_URL="$approved_public_origin" npm run build
+```
+
+These explicit operator inputs must match the runtime `PUBLIC_CMS_URL` and
+`PUBLIC_SITE_URL`. Runtime variables cannot configure an already compiled
+browser bundle. An unconfigured build intentionally shows unavailable states,
+even when the server can render an article. Use synthetic loopback origins for
+local rehearsals; never place credentials in `VITE_*` settings. The existing
+real-CMS production hydration tests exercise this configured build path.
+Serve `dist`, not a mixture
 of stale committed bundles and new source. The existing source validator checks
 that the actual compiled assets are local and present. The final committed
 Pages export remains a separate dedicated rebuild PR.
@@ -17,7 +30,8 @@ Pages export remains a separate dedicated rebuild PR.
 `tools/public-host.mjs` is the runtime entry point. It requires an explicit
 `PUBLIC_SITE_URL`, binds only to loopback, defaults to staging noindex, validates
 the compiled build, pins the resolved immutable build path for the life of the process, waits for
-the initial redirect generation, and provides a
+a validated initial redirect generation when a source is configured (failed initial
+loads refuse startup), and provides a
 bounded graceful stop. It rejects a configured private redirect file inside the public build. It never
 installs a service or changes the network.
 The proposed file layout is:
