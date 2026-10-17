@@ -41,6 +41,15 @@ test('documented env-file startup serves staging health, ads and headers; SIGHUP
  const envFile=join(directory,'synthetic.env');
  await writeFile(envFile,[`HOST=127.0.0.1`,`PORT=0`,`PUBLIC_DIST=${selectedBuild}`,`PUBLIC_SITE_URL=${origin}`,`PUBLIC_CMS_URL=http://127.0.0.1:${cms.address().port}`,`PUBLIC_INDEXABLE=false`,`PUBLIC_ARTICLE_PATH_TEMPLATE=/reports/{slug}/`,`PUBLIC_REDIRECTS_FILE=${privateMap}`,`PUBLIC_ADS_TXT_LINE=example.test, synthetic-publisher, DIRECT`,`PUBLIC_HOST_SHUTDOWN_MS=1000`].join('\n')+'\n',{mode:0o600});
  const env={...process.env};for(const key of Object.keys(env))if(key.startsWith('PUBLIC_')||['PORT','HOST','REDIRECT_ALLOWED_HOSTS'].includes(key))delete env[key];
+ // STUB failures must prevent readiness before any listener is opened.
+ for(const broken of [{PUBLIC_REDIRECTS_FILE:privateMap},{PUBLIC_REDIRECTS_FILE:'',PUBLIC_REDIRECTS_URL:`http://127.0.0.1:${cms.address().port}/api/public/redirects`}]) {
+  await writeFile(privateMap,'{invalid synthetic JSON');
+  const refused=spawn(process.execPath,['--env-file='+envFile,'tools/public-host.mjs'],{cwd:root,env:{...env,...broken},stdio:['ignore','pipe','pipe']});
+  let refusedOutput='';refused.stdout.on('data',chunk=>refusedOutput+=chunk);refused.stderr.resume();
+  assert.equal((await once(refused,'exit'))[0],1,'invalid first generation refuses startup');
+  assert.doesNotMatch(refusedOutput,/public_host_listening/);
+ }
+ cmsCalls=0;await writeFile(privateMap,map('/about/'));
  child=spawn(process.execPath,['--env-file='+envFile,'tools/public-host.mjs'],{cwd:root,env,stdio:['ignore','pipe','pipe']});
  let output='',errors='';child.stdout.on('data',chunk=>output+=chunk);child.stderr.on('data',chunk=>errors+=chunk);
  const exited=once(child,'exit');let earlyExit=false;exited.then(()=>earlyExit=true);
