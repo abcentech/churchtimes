@@ -22,7 +22,7 @@ const map=to=>JSON.stringify({version:'sha256:syntheticmap',generatedAt:'2026-10
 const waitFor=async predicate=>{for(let n=0;n<200;n++){if(await predicate())return;await new Promise(done=>setTimeout(done,50));}throw new Error('Expected local smoke event did not occur.');};
 test('draft runtime rejects unsafe host/origin/private-map configuration and preserves staging defaults',()=>{
  const config=publicHostConfig({PUBLIC_SITE_URL:origin});assert.equal(config.host,'127.0.0.1');assert.equal(config.options.indexable,false);assert.equal(config.options.articlePathTemplate,'/reports/{slug}/');
- for(const env of [{HOST:'0.0.0.0'},{PORT:'not-a-port'},{PUBLIC_SITE_URL:'https://synthetic.example.test/path/'},{PUBLIC_SITE_URL:'http://outside.example.test'},{PUBLIC_REDIRECTS_FILE:'relative-private-map.json'},{PUBLIC_HOST_SHUTDOWN_MS:'0'}])assert.throws(()=>publicHostConfig({PUBLIC_SITE_URL:origin,...env}));
+ for(const env of [{HOST:'0.0.0.0'},{PORT:'not-a-port'},{PUBLIC_SITE_URL:'https://synthetic.example.test/path/'},{PUBLIC_SITE_URL:'http://outside.example.test'},{PUBLIC_REDIRECTS_FILE:'relative-private-map.json'},{PUBLIC_DIST:'/tmp/synthetic-build',PUBLIC_REDIRECTS_FILE:'/tmp/synthetic-build/private-map.json'},{PUBLIC_HOST_SHUTDOWN_MS:'0'}])assert.throws(()=>publicHostConfig({PUBLIC_SITE_URL:origin,...env}));
 });
 test('documented env-file startup serves staging health, ads and headers; SIGHUP keeps last good rules and SIGTERM stops cleanly',{skip:process.platform==='win32'?'This draft Linux host kit requires POSIX signals.':false},async t=>{
  const directory=await mkdtemp(join(tmpdir(),'public-host-kit-'));let child;

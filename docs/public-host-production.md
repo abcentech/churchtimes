@@ -18,7 +18,8 @@ Pages export remains a separate dedicated rebuild PR.
 `PUBLIC_SITE_URL`, binds only to loopback, defaults to staging noindex, validates
 the compiled build, pins the resolved immutable build path for the life of the process, waits for
 the initial redirect generation, and provides a
-bounded graceful stop. It never installs a service or changes the network.
+bounded graceful stop. It rejects a configured private redirect file inside the public build. It never
+installs a service or changes the network.
 The proposed file layout is:
 
 | Path | Purpose |

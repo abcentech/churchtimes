@@ -1,5 +1,5 @@
 // Draft runtime entry point. This starts only the public Node process, never a service.
-import {resolve,isAbsolute} from 'node:path';
+import {resolve,isAbsolute,sep} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {stat,realpath} from 'node:fs/promises';
 import {createPublicServer} from './serve-public.mjs';
@@ -14,10 +14,12 @@ export function publicHostConfig(env=process.env) {
   if(!siteUrl||new URL(env.PUBLIC_SITE_URL).pathname!=='/'||new URL(env.PUBLIC_SITE_URL).search||new URL(env.PUBLIC_SITE_URL).hash)throw new Error('PUBLIC_SITE_URL must be an explicit safe origin.');
   if(env.PUBLIC_CMS_URL&&!publicOrigin(env.PUBLIC_CMS_URL))throw new Error('PUBLIC_CMS_URL must be HTTPS or loopback HTTP without credentials.');
   if(env.PUBLIC_REDIRECTS_FILE&&!isAbsolute(env.PUBLIC_REDIRECTS_FILE))throw new Error('PUBLIC_REDIRECTS_FILE must be an absolute private filesystem path.');
+  const dist=resolve(env.PUBLIC_DIST||'dist');
+  if(env.PUBLIC_REDIRECTS_FILE&&(resolve(env.PUBLIC_REDIRECTS_FILE)===dist||resolve(env.PUBLIC_REDIRECTS_FILE).startsWith(dist+sep)))throw new Error('Private redirects must be outside the public build.');
   const shutdownMs=Number(env.PUBLIC_HOST_SHUTDOWN_MS??10000);
   if(!Number.isInteger(shutdownMs)||shutdownMs<1000||shutdownMs>60000)throw new Error('Public host shutdown deadline must be between 1000 and 60000 ms.');
   return {host,port,shutdownMs,options:{
-    dist:resolve(env.PUBLIC_DIST||'dist'),siteUrl,cmsUrl:env.PUBLIC_CMS_URL||undefined,
+    dist,siteUrl,cmsUrl:env.PUBLIC_CMS_URL||undefined,
     basePath:env.PUBLIC_BASE_PATH||'/',indexable:env.PUBLIC_INDEXABLE==='true',
     articlePathTemplate:env.PUBLIC_ARTICLE_PATH_TEMPLATE||'/reports/{slug}/',
     adsTxtLine:env.PUBLIC_ADS_TXT_LINE||'',searchVerification:env.PUBLIC_SEARCH_CONSOLE_VERIFICATION||'',
@@ -33,6 +35,8 @@ export async function startPublicHost({env=process.env,signals=process,log=recor
   config.options.dist=await realpath(config.options.dist);
   await checkPublicSource(config.options.dist);
   if(config.options.redirectsFile) {
+    const privatePath=await realpath(config.options.redirectsFile);
+    if(privatePath===config.options.dist||privatePath.startsWith(config.options.dist+sep))throw new Error('Private redirects must be outside the public build.');
     const info=await stat(config.options.redirectsFile);
     if(!info.isFile())throw new Error('The private redirects path must be a regular file.');
   }
