@@ -543,27 +543,34 @@ Not rate limited, so no 429: the anonymous live feed `GET /api/live-events/:slug
 Implements `go-live-contracts.md` C7 (exact-match redirects for the old WordPress addresses). Pattern rules (`/category/*`, `/tag/*`,
 `/page/N/`, `/feed/`, AMP variants, `/?p=ID`) stay with the public host.
 
-**Canonical path form** (`src/lib/redirectPaths.ts`, `normalizePath`; the public host applies the same function to the request path,
-query string and fragment removed first, before the lookup): leading `/`; trailing `/` unless the last segment has a file extension;
-every character except `A-Z a-z 0-9 - . _ ~` and the `/` separator percent-encoded as UTF-8 with **upper-case** hex (so `/café/`,
-`/caf%c3%a9/` and `/caf%C3%A9/` are one key, `%41` becomes `A`, `%2F` stays an encoded slash); case preserved. Rejected, not repaired:
-scheme or host, `//` prefix, backslash, control characters (also encoded: `%0D`, `%00`), inner whitespace, query string, fragment,
-`*`, dot segments, empty segments, more than 300 characters. A request path that fails normalisation has no rule (answer 404).
+**The single normalisation contract** (`src/lib/redirectPaths.ts`: `normalizePath` for stored values, `normalizeRequestPath` for a raw
+request target). The CMS applies it to every `from`, `to` and `legacyUrl`, to the addresses in `check:redirects`, and the public host must
+apply the same function to the request path (query string and fragment removed first) before its exact lookup. Test vectors for both
+sides: `apps/cms/tests/fixtures/redirect-normalisation.json` (`normalize`, `reject`, `request`). The canonical form: leading `/`; trailing
+`/` unless the last segment has a file extension; each segment decoded from UTF-8 (raw characters and percent escapes alike),
+Unicode **NFC**-normalised and re-encoded, so every character except `A-Z a-z 0-9 - . _ ~` is UTF-8 percent-encoded with **upper-case** hex
+(`/café/`, `/cafe%CC%81/`, `/caf%c3%a9/` are one key; `'` becomes `%27`; `%41` becomes `A`); case preserved. Rejected (never repaired), which
+is exactly what the public host treats as junk: scheme or host, `//` prefix, backslash, raw whitespace, control characters raw or encoded
+(C0, DEL, C1, U+2028, U+2029), the encoded characters `%2F` `%5C` `%25` `%23`, bytes that are not valid UTF-8 (`/%C3/`), a segment that starts
+like a scheme (`tel:`, `mailto:`, `javascript:`, `data:`, `http(s):`, and any `name:` first segment), `?`, `#`, `*`, dot segments, empty
+segments, more than 300 characters. A request path that fails normalisation has no rule (404).
 
-**`redirects` collection** (`/api/redirects`): read = any staff role, create / update / delete = `admin` and `editor-in-chief`, anonymous
-403, every write audited (`redirect.create`, `redirect.update`, `redirect.delete`; a bulk import writes one `redirect.import`).
+**`redirects` collection** (`/api/redirects`): read, create, update and delete = `admin` and `editor-in-chief` only (anonymous and every
+other role 403). Every write is audited (`redirect.create`, `redirect.update`, `redirect.delete`; a bulk import writes one `redirect.import`).
 Fields: `from` (canonical, unique, not `/`), `to` (canonical path, or `https://` URL whose host is in `REDIRECT_ALLOWED_HOSTS`; absent for
-410), `status` (301 default, 302, 410), `source` (`manual` default, `rank-math`, `legacy-url`), `note` (plain text, 500). Writes are refused
-with 400 naming the conflicting rule for: a loop (always), a duplicate address (also against a rule an article derives), a `manual`
-row that chains (either direction), and any address that is the current public address of a published article.
-`rank-math` and `legacy-url` rows may chain; they are flattened when the list is generated.
+410), `status` (301 default, 302, 410), `source` (`manual` default, `rank-math`, `legacy-url`), `note`. Writes (serialised by an advisory
+lock) are refused with 400 naming the conflicting rule for: a loop; a duplicate address; a `manual` row that chains (either direction),
+that points at a gone (410) address, or whose absolute target path is itself a rule; and any address that is the current public address of a
+published article. A **manual row overrides** the rule an article derives for the same address; other sources may not. `rank-math` and
+`legacy-url` rows may chain (flattened, or made 410, at generation).
 
 **Derived rules**: each **published** article with a `legacyUrl` yields `from` = path of `legacyUrl`, `to` = the article path from
-`PUBLIC_ARTICLE_PATH_TEMPLATE` (`/reports/{slug}/` default, or `/{slug}/`; any other value stops startup). Nothing is emitted when
-`from` equals `to`, when the article is not published, or when the `legacyUrl` has a query string (e.g. `/?p=12`, which belongs to the
-public host) or is the root.
+`PUBLIC_ARTICLE_PATH_TEMPLATE` (`/reports/{slug}/` default, or `/{slug}/`; any other value stops startup). Nothing is emitted when `from`
+equals `to`, the article is not published, the `legacyUrl` has a query string or is the root, or its host is not in `LEGACY_SITE_HOSTS`
+(default `churchtimesnigeria.net,www.churchtimesnigeria.net`; a bare path is accepted). Existing rules and the write hook compare canonical paths
+over all published articles (no substring search, no limit).
 
-**`GET /api/public/redirects`** (anonymous, GET/HEAD only):
+**`GET /api/public/redirects`** (anonymous; GET and HEAD):
 
 ```json
 { "version": "sha256:…", "generatedAt": "2026-10-16T00:00:00Z", "count": 2, "rules": [
@@ -571,30 +578,34 @@ public host) or is the root.
   { "from": "/retired/", "to": null, "status": 410, "source": "manual" } ] }
 ```
 
-Sorted by `from` (plain code-unit order); `version` = sha256 of the canonical JSON of `rules` (independent of `generatedAt` and input
-order); a `410` rule has `"to": null`. Headers: `ETag: "<version>"`, `Cache-Control: public, max-age=300`, `Vary: Origin`;
-`If-None-Match` (strong, weak, list or `*`) answers `304` with no body. `Origin`, when sent, must be in `PUBLIC_SUBMISSION_ORIGINS`
-(403); allowlisted origins get an exact `Access-Control-Allow-Origin` echo and `Access-Control-Expose-Headers: ETag`; no credentials.
-No staff data, ids or notes, and nothing derived from an unpublished article. The list is rebuilt at most once per 10 s per process.
-Generation **refuses** (HTTP 500 `{ ok:false, errors:[{ message }] }`, `Cache-Control: no-store`, the reason with the rule names in the
-server log; the public host keeps its last good list) when: two rules share an address (both named), there is a loop, a stored row is not
-canonical, the template is invalid, there are more than **20,000 rules** or the body exceeds **5 MB** (never truncated). Chains are
-flattened to the final target (status becomes 302 if any hop is 302); a rule pointing at a 410 address is left as it is and counted
-(`pointsToGone`), never flattened through.
+Sorted by `from`; `version` = sha256 of the canonical JSON of `rules`; a `410` has `"to": null`. Headers: `ETag: "<version>"`,
+`Cache-Control: public, max-age=300`, `Vary: Origin`; `If-None-Match` (strong, weak, list or `*`) answers `304`. `Origin`, when sent, must be in
+`PUBLIC_SUBMISSION_ORIGINS` (403); allowlisted origins get an exact `Access-Control-Allow-Origin` echo and `Access-Control-Expose-Headers: ETag`.
+No staff data and nothing from an unpublished article. Rebuilt at most once per 10 s per process.
+**Data never causes a 500.** At generation: a staff row beats a derived rule for the same address (counted); the lowest article id wins a
+duplicate `legacyUrl`; an invalid stored row, a loop (every rule on it and every chain into it), or an absolute target that is another rule's
+address is dropped; a chain is flattened; a rule whose target is a gone address becomes a 410 itself (status 302 if any hop is 302). The result
+satisfies the public host's rule: no emitted `to` equals another emitted `from`. Counts only go to the server log. **500 only** for a bad
+configuration (`PUBLIC_ARTICLE_PATH_TEMPLATE`, `REDIRECT_ALLOWED_HOSTS`, `LEGACY_SITE_HOSTS`) or when **20,000 rules** or **5 MB** is exceeded
+(never truncated); the log carries an error code, never an address.
 
-**Commands** (run from `apps/cms`; output never contains an address from an input file):
+**Commands** (from `apps/cms`; they print counts and error codes only, never an address or rule label):
 
-- `npm run export:redirects -- --out <file>` writes exactly the JSON the endpoint serves. The file is a generated artifact, never committed.
-- `npm run check:redirects -- --urls <file>` reads old addresses (one per line, `#` comments, absolute URLs or paths, query strings
-  ignored) and prints counts: resolved (by 301 / 302 / 410 / live article), unresolved (by no rule / query-only / invalid). Exit code 1
-  if anything is unresolved (the go-live gate is zero), 2 for a usage or file error.
-- `npm run import:redirects -- --file <csv> [--apply]`: CSV header `from,to,status` (`status` optional, default 301; `to` empty for 410;
-  RFC 4180 quoting). Dry run unless `--apply`. Rows are written with `source = rank-math`. Skipped and counted by reason: invalid
-  `from`/`to`/status, patterns containing `*`, duplicate in the file, already stored, address owned by an article rule, live article
-  address, loop. Chains are accepted (flattened later).
+- `npm run export:redirects -- --out <file> [--detail-file <path>]` writes exactly the JSON the endpoint serves (generated artifact, never committed).
+- `npm run check:redirects -- --urls <file> [--detail-file <path>]` reads old addresses (one per line, `#` comments; at most 5 MB and 100,000
+  lines), looks each up with the normalisation contract above, and prints counts: resolved (301 / 302 / 410 / live article) and unresolved
+  (no rule / query-only / invalid). Exit 1 if anything is unresolved, 2 for a usage or file error. On failure it prints `error=<code>`
+  (`config`, `too-many-rules`, `too-large`, `internal-error`) only.
+- `--detail-file` writes the rule labels (which are old addresses) of dropped or overridden items, or the error message, to a path that must be
+  **outside the repository** (otherwise exit 2).
+- `npm run import:redirects -- --file <csv> [--apply]`: header `from,to,status` (`status` optional, default 301; `to` empty for 410; at most
+  20,000 rows). Dry run unless `--apply`; rows get `source = rank-math`. Skipped and counted: invalid from/to/status, `*` patterns, duplicates,
+  already stored, address owned by an article rule or live article, loops, absolute target that is a rule. A row whose target is a gone
+  address is written as a 410 (counted).
 
-Environment: `PUBLIC_ARTICLE_PATH_TEMPLATE`, `REDIRECT_ALLOWED_HOSTS` (`docs/operations.md`). Migration `20261016_111035_redirects`
-(new table `redirects`, enum `enum_redirects_source`, locked-documents relation column), reversible.
+Environment: `PUBLIC_ARTICLE_PATH_TEMPLATE`, `REDIRECT_ALLOWED_HOSTS` (**must equal the public host's `PUBLIC_REDIRECT_ALLOWED_HOSTS`; the
+host also needs `PUBLIC_SITE_URL`**), `LEGACY_SITE_HOSTS` (`docs/operations.md`). Migration `20261016_111035_redirects` (table `redirects`,
+enum `enum_redirects_source`, locked-documents relation column), reversible (down then up is tested).
 
 ## 8. Environment variables
 

@@ -1,20 +1,24 @@
 /**
- * Canonical redirect paths (go-live contract C7.1).
+ * Canonical redirect paths (go-live contract C7.1). THE single normalisation contract for the redirect list.
  *
- * Pure, dependency-free and deliberately small so that the CMS and the public host can apply the SAME
- * normalisation (the public host copies or imports this function and runs it on the request path, query string
- * removed, before the lookup). The canonical form of a path is:
+ * Pure, dependency-free and deliberately small so that the CMS and the public host apply the SAME function (the public
+ * host copies or imports it and runs `normalizeRequestPath` on the raw request target before the lookup). Test vectors
+ * for both sides are in `tests/fixtures/redirect-normalisation.json`. The canonical form of a path is:
  *
  * - a leading `/`, and a trailing `/` for directory-style paths (last segment without a file extension);
- * - every character other than the RFC 3986 "unreserved" set (`A-Z a-z 0-9 - . _ ~`) and the `/` separator is
- *   percent-encoded as UTF-8 bytes with UPPER-case hex (so `/café/`, `/caf%c3%a9/` and `/caf%C3%A9/` are one key;
- *   `%41` is decoded to `A`; `%2F` stays an encoded slash and is NOT a separator);
+ * - each segment is decoded from UTF-8 (percent escapes and raw characters alike), Unicode NFC-normalised, and
+ *   re-encoded: every character other than the RFC 3986 "unreserved" set (`A-Z a-z 0-9 - . _ ~`) and the `/`
+ *   separator becomes UTF-8 percent-encoding with UPPER-case hex. So `/café/`, `/cafe%CC%81/`, `/caf%c3%a9/` and
+ *   `/caf%C3%A9/` are one key, and `%41` becomes `A`;
  * - no dot segments, no empty segments (`//`), no query string, no fragment;
  * - case is preserved (paths are case-sensitive keys).
  *
- * Rejected, never repaired: a scheme or host in a `from`, a `//` prefix, backslashes, control characters
- * (including CR, LF and encoded ones such as `%0D`), whitespace inside the value, `*` (wildcards are pattern rules
- * owned by the public host), and anything that is longer than {@link PATH_MAX} once canonical.
+ * Rejected, never repaired (these are exactly the addresses the public host treats as junk, so no rule can be emitted
+ * that the host would reject): a scheme or host, a `//` prefix, backslash, raw whitespace, control characters (raw or
+ * encoded, including the C1 range and U+2028/U+2029), the encoded characters `%2F` `%5C` `%25` `%23`, bytes that are not
+ * valid UTF-8 (`/%C3/`), a segment that starts with a scheme-like prefix (`tel:`, `mailto:`, `javascript:`, `data:`,
+ * `http(s):`, and any `name:` first segment), `*` (wildcards are pattern rules of the public host), `?` and `#`, and a
+ * canonical path longer than {@link PATH_MAX}.
  */
 
 export type EnvLike = Readonly<Record<string, string | undefined>>
@@ -39,10 +43,16 @@ const isUnreservedByte = (b: number): boolean =>
 const encodeByte = (b: number): string =>
   isUnreservedByte(b) ? String.fromCharCode(b) : `%${b.toString(16).toUpperCase().padStart(2, '0')}`
 
+// Line and paragraph separators are written as code units so that no tool can turn them into a literal line break.
+const LS_PS = String.fromCharCode(0x2028, 0x2029)
 // eslint-disable-next-line no-control-regex
-const CONTROL = /[\u0000-\u001f\u007f-\u009f]/
+const CONTROL = new RegExp(`[\\u0000-\\u001f\\u007f-\\u009f${LS_PS}]`)
+const DECODED_CONTROL = new RegExp(`[\\u0080-\\u009f${LS_PS}]`)
 const EXTENSION = /\.[A-Za-z0-9]{1,10}$/
 const SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/
+const JUNK_SCHEME = /^(?:tel|mailto|javascript|data|https?):/i
+// encoded "/" "\" "%" "#"
+const FORBIDDEN_ENCODED = new Set([0x2f, 0x5c, 0x25, 0x23])
 
 /** Normalise a path to the canonical form, or say why it cannot be. */
 export function normalizePath(input: unknown): PathResult {
@@ -61,27 +71,47 @@ export function normalizePath(input: unknown): PathResult {
   if (raw.includes('*')) return fail('must not contain "*" (wildcards are pattern rules of the public host)')
 
   const encoder = new TextEncoder()
-  const segments: string[] = ['']
+  const decoder = new TextDecoder('utf-8', { fatal: true })
+  // One byte array per segment (raw characters as UTF-8, percent escapes as the byte they name).
+  const byteSegments: number[][] = [[]]
   const chars = Array.from(raw)
   for (let i = 0; i < chars.length; i++) {
     const ch = chars[i]
     if (ch === '/') {
-      segments.push('')
+      byteSegments.push([])
       continue
     }
-    const current = segments.length - 1
+    const current = byteSegments[byteSegments.length - 1]
     if (ch === '%') {
       const hex = `${chars[i + 1] ?? ''}${chars[i + 2] ?? ''}`
       if (!HEX.test(hex)) return fail('contains a "%" that is not followed by two hex digits')
       const byte = Number.parseInt(hex, 16)
       if (byte < 0x20 || byte === 0x7f) return fail('contains an encoded control character')
-      segments[current] += encodeByte(byte)
+      if (FORBIDDEN_ENCODED.has(byte)) return fail('contains an encoded "/", "\\", "%" or "#"')
+      current.push(byte)
       i += 2
       continue
     }
     const code = ch.codePointAt(0) ?? 0
     if (code >= 0xd800 && code <= 0xdfff) return fail('contains an invalid character')
-    for (const byte of encoder.encode(ch)) segments[current] += encodeByte(byte)
+    current.push(...encoder.encode(ch))
+  }
+
+  const segments: string[] = []
+  for (let s = 0; s < byteSegments.length; s++) {
+    let text: string
+    try {
+      text = decoder.decode(Uint8Array.from(byteSegments[s])).normalize('NFC')
+    } catch {
+      return fail('contains bytes that are not valid UTF-8')
+    }
+    if (DECODED_CONTROL.test(text)) return fail('contains an encoded control character')
+    if (text !== '' && (JUNK_SCHEME.test(text) || (s === 1 && SCHEME.test(text)))) {
+      return fail('has a segment that starts like a URL scheme (for example "tel:" or "data:")')
+    }
+    let encoded = ''
+    for (const byte of encoder.encode(text)) encoded += encodeByte(byte)
+    segments.push(encoded)
   }
 
   const trailing = segments[segments.length - 1] === ''
@@ -140,6 +170,26 @@ export function parseAllowedHosts(env: EnvLike = process.env): string[] {
   return [...new Set(hosts)]
 }
 
+export const DEFAULT_LEGACY_HOSTS = ['churchtimesnigeria.net', 'www.churchtimesnigeria.net'] as const
+
+/**
+ * `LEGACY_SITE_HOSTS`: comma list of the host names the old WordPress addresses (`legacyUrl`) may carry. A `legacyUrl`
+ * on any other host is skipped (and counted), never turned into a rule. Unset or empty means the default list.
+ */
+export function parseLegacyHosts(env: EnvLike = process.env): string[] {
+  const configured = (env.LEGACY_SITE_HOSTS ?? '')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean)
+  if (configured.length === 0) return [...DEFAULT_LEGACY_HOSTS]
+  for (const host of configured) {
+    if (!HOST_RE.test(host) || host.length > 253) {
+      throw new RedirectConfigError('LEGACY_SITE_HOSTS must be a comma list of bare host names (no scheme, port or path).')
+    }
+  }
+  return [...new Set(configured)]
+}
+
 export type TargetResult = { ok: true; to: string; external: boolean } | { ok: false; reason: string }
 
 /**
@@ -168,6 +218,16 @@ export function normalizeTarget(input: unknown, allowedHosts: readonly string[])
   if (!path.ok) return path
   const to = `https://${host}${path.path}`
   return to.length > INPUT_MAX ? fail('is too long') : { ok: true, to, external: true }
+}
+
+/**
+ * The path a canonical target points at: the target itself for an internal path, the path after the host for an absolute
+ * URL. The public host treats an absolute target on its own origin as that path, so chain checks use this for both.
+ */
+export function targetPathOf(to: string): string {
+  if (to.startsWith('/')) return to
+  const rest = /^https:\/\/[^/]+(\/.*)$/.exec(to)
+  return rest ? rest[1] : '/'
 }
 
 /** True for an internal (path) target. External targets are never the `from` of another rule. */

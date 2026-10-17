@@ -7,9 +7,10 @@ import type {
   CollectionConfig,
 } from 'payload'
 
-import { editorInChiefOnly, staffOnly } from '../access/roles'
+import { editorInChiefOnly } from '../access/roles'
 import { writeAuditLog } from '../lib/audit'
 import { clampLimit } from '../lib/clampLimit'
+import { advisoryTransactionLock } from '../lib/dbTransaction'
 import { databaseRuleLookup } from '../lib/redirectData'
 import {
   REDIRECT_SOURCES,
@@ -24,13 +25,14 @@ import {
   normalizePath,
   normalizeTarget,
   parseAllowedHosts,
+  parseLegacyHosts,
   resolveArticlePathTemplate,
 } from '../lib/redirectPaths'
 import { cleanText } from '../lib/sanitize'
 
 /**
- * Staff-managed exact-match redirects (go-live contract C7.1). Admin and editor-in-chief write; every staff role reads
- * (never anonymous: the public list is `GET /api/public/redirects`, which carries no staff data). Every write is audited.
+ * Staff-managed exact-match redirects (go-live contract C7.1). Admin and editor-in-chief read and write; no other role
+ * and never anonymous (the public list is `GET /api/public/redirects`, which carries no staff data). Every write is audited.
  *
  * `from` and `to` are stored in canonical form (lib/redirectPaths.ts), so the unique index on `from` is a unique index
  * on the normalised address. A `410` row has no `to`.
@@ -112,7 +114,11 @@ const refuseLoopsAndChains: CollectionBeforeChangeHook = async ({ data, original
   if (!isRedirectStatus(status) || !isRedirectSource(source)) return data
 
   const template = configGuard(() => resolveArticlePathTemplate())
-  const lookup = databaseRuleLookup(req.payload, req, template, orig.id as number | undefined)
+  const legacyHosts = configGuard(() => parseLegacyHosts())
+  // One redirect write at a time (released when the request's transaction ends), so two concurrent writes cannot each
+  // pass the loop and chain check and together create a loop. Generation tolerates loops anyway (it drops them).
+  await advisoryTransactionLock(req, 'redirects:write')
+  const lookup = databaseRuleLookup(req.payload, req, template, orig.id as number | undefined, legacyHosts)
   const conflict = await findWriteConflict({ from, to, status, source }, lookup)
   if (conflict) return badRequest(conflict)
   return data
@@ -164,7 +170,7 @@ export const Redirects: CollectionConfig = {
   },
   timestamps: true,
   access: {
-    read: staffOnly,
+    read: editorInChiefOnly,
     create: editorInChiefOnly,
     update: editorInChiefOnly,
     delete: editorInChiefOnly,

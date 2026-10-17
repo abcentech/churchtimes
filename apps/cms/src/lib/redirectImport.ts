@@ -1,5 +1,5 @@
 import { type RedirectRule, type RedirectStatus, type StoredRow, isRedirectStatus } from './redirectMap'
-import { isInternalTarget, normalizePath, normalizeTarget } from './redirectPaths'
+import { isInternalTarget, normalizePath, normalizeTarget, targetPathOf } from './redirectPaths'
 
 /**
  * Import of a Rank Math redirects export (go-live contract C7.1), pure part: CSV parsing and the plan.
@@ -18,7 +18,8 @@ import { isInternalTarget, normalizePath, normalizeTarget } from './redirectPath
  */
 
 export const IMPORT_MAX_BYTES = 5 * 1024 * 1024
-export const IMPORT_MAX_ROWS = 50_000
+/** Same as the list cap: a file with more rows could never be served whole. */
+export const IMPORT_MAX_ROWS = 20_000
 
 export type CsvRow = Record<string, string>
 
@@ -90,6 +91,10 @@ export type ImportCounts = {
   conflictsWithDerived: number
   shadowsArticle: number
   loops: number
+  /** Accepted rows whose target is a gone address: written as 410 (still counted in `accepted`). */
+  convertedToGone: number
+  /** Skipped: an absolute target whose path is itself the address of another rule. */
+  absoluteChain: number
 }
 
 export type ImportRow = { from: string; to: string | null; status: RedirectStatus }
@@ -111,6 +116,8 @@ export function planRedirectImport(input: {
     conflictsWithDerived: 0,
     shadowsArticle: 0,
     loops: 0,
+    convertedToGone: 0,
+    absoluteChain: 0,
   }
   // Working map of every address that already answers, for loop detection (410 answers are terminal).
   const working = new Map<string, string | null>()
@@ -167,12 +174,18 @@ export function planRedirectImport(input: {
       counts.shadowsArticle++
       continue
     }
+    let finalStatus: RedirectStatus = status
     if (to !== null && isInternalTarget(to)) {
       let at: string | null = to
       let loop = to === from.path
+      let gone = false
       for (let hop = 0; !loop && at !== null && isInternalTarget(at) && hop < 1000; hop++) {
         if (!working.has(at)) break
         const next: string | null = working.get(at) ?? null
+        if (next === null) {
+          gone = true // the target is a gone (410) address: the list would flatten this row to a 410 anyway
+          break
+        }
         if (next === from.path) loop = true
         at = next
       }
@@ -180,9 +193,18 @@ export function planRedirectImport(input: {
         counts.loops++
         continue
       }
+      if (gone) {
+        finalStatus = 410
+        to = null
+        counts.convertedToGone++
+      }
+    } else if (to !== null && working.has(targetPathOf(to))) {
+      // an absolute target whose path is itself a rule's address would be a chain on the public host
+      counts.absoluteChain++
+      continue
     }
     working.set(from.path, to)
-    accepted.push({ from: from.path, to, status })
+    accepted.push({ from: from.path, to, status: finalStatus })
     counts.accepted++
   }
   return { accepted, counts }

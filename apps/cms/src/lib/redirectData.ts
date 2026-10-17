@@ -3,17 +3,18 @@ import type { Payload, PayloadRequest } from 'payload'
 import {
   type ArticleInput,
   type BuildResult,
+  type RedirectRule,
   type RuleLookup,
   type StoredRow,
   buildRedirectMap,
   deriveRule,
-  legacyPathOf,
 } from './redirectMap'
 import {
   type ArticlePathTemplate,
   type EnvLike,
   articlePath,
   parseAllowedHosts,
+  parseLegacyHosts,
   resolveArticlePathTemplate,
   slugFromArticlePath,
 } from './redirectPaths'
@@ -106,8 +107,9 @@ export async function generateRedirectMap(
   const env = options.env ?? process.env
   const template = resolveArticlePathTemplate(env)
   const allowedHosts = parseAllowedHosts(env)
+  const legacyHosts = parseLegacyHosts(env)
   const [rows, articles] = await Promise.all([loadStoredRows(payload), loadPublishedLegacyArticles(payload)])
-  return buildRedirectMap({ articles, rows, template, allowedHosts, now: options.now ?? new Date() })
+  return buildRedirectMap({ articles, rows, template, allowedHosts, legacyHosts, now: options.now ?? new Date() })
 }
 
 /** Current public paths of all published articles (plus the home page), for `check:redirects`. */
@@ -129,7 +131,9 @@ export function databaseRuleLookup(
   req: PayloadRequest | undefined,
   template: ArticlePathTemplate,
   excludeId?: number | string,
+  legacyHosts: readonly string[] = parseLegacyHosts(),
 ): RuleLookup {
+  let derived: Map<string, RedirectRule & { label: string }> | undefined
   const reqOpt = req ? { req } : {}
   const notSelf = excludeId !== undefined ? [{ id: { not_equals: excludeId } }] : []
   const toRow = (d: Record<string, unknown>): StoredRow => ({
@@ -154,8 +158,8 @@ export function databaseRuleLookup(
     async storedTo(path) {
       const res = await payload.find({
         collection: 'redirects',
-        where: { and: [{ to: { equals: path } }, ...notSelf] },
-        limit: 50,
+        where: { and: [{ to: { equals: path } }, { source: { equals: 'manual' } }, ...notSelf] },
+        limit: 1,
         depth: 0,
         overrideAccess: true,
         ...reqOpt,
@@ -163,31 +167,22 @@ export function databaseRuleLookup(
       return (res.docs as unknown as Record<string, unknown>[]).map(toRow)
     },
     async derivedFrom(path) {
-      // `legacyUrl` holds the old absolute address; narrow with a substring match, then compare exactly.
-      const res = await payload.find({
-        collection: 'articles',
-        where: {
-          and: [{ status: { equals: 'published' } }, { legacyUrl: { contains: path } }],
-        },
-        limit: 20,
-        depth: 0,
-        overrideAccess: true,
-        select: { slug: true, status: true, legacyUrl: true },
-        ...reqOpt,
-      })
-      for (const doc of res.docs as unknown as Record<string, unknown>[]) {
-        const legacy = typeof doc.legacyUrl === 'string' ? doc.legacyUrl : ''
-        const from = legacyPathOf(legacy)
-        if (!from.ok || from.path !== path) continue
-        const derived = deriveRule(
-          { id: doc.id as number, slug: String(doc.slug), status: 'published', legacyUrl: legacy },
-          template,
-        )
-        if ('rule' in derived) {
-          return { ...derived.rule, label: `derived rule from article "${String(doc.slug)}" ${derived.rule.from} -> ${derived.rule.to}` }
+      // Compare CANONICAL paths over every published article with a legacyUrl (no substring search and no truncating
+      // limit: raw Unicode, a missing slash and upper/lower-case percent-encoding all reach the same key). Loaded once.
+      if (!derived) {
+        derived = new Map()
+        const articles = (await loadPublishedLegacyArticles(payload, req)).sort((a, b) => Number(a.id) - Number(b.id))
+        for (const article of articles) {
+          const d = deriveRule(article, template, legacyHosts)
+          if ('rule' in d && !derived.has(d.rule.from)) {
+            derived.set(d.rule.from, {
+              ...d.rule,
+              label: `derived rule from article "${article.slug}" ${d.rule.from} -> ${d.rule.to}`,
+            })
+          }
         }
       }
-      return null
+      return derived.get(path) ?? null
     },
     async articleAt(path) {
       const slug = slugFromArticlePath(template, path)

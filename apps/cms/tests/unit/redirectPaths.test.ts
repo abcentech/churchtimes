@@ -43,7 +43,7 @@ describe('normalizePath (C7.1 canonical form)', () => {
 
   it('decodes unreserved characters, keeps an encoded slash encoded, and encodes everything else', () => {
     expect(path('/%41bc/')).toBe('/Abc/')
-    expect(path('/a%2fb/')).toBe('/a%2Fb/')
+    expect(reason('/a%2fb/')).toMatch(/encoded/) // an encoded slash is rejected, never kept
     expect(path('/a b/'.replace(' ', '%20'))).toBe('/a%20b/')
     expect(path("/it's+a(b)/")).toBe('/it%27s%2Ba%28b%29/')
   })
@@ -88,7 +88,7 @@ describe('normalizePath (C7.1 canonical form)', () => {
   })
 
   it('is idempotent', () => {
-    for (const input of ['/Caf%c3%a9', '/a%2fb', '/x/y.html', '/a+b', '/ünï/cödé']) {
+    for (const input of ['/Caf%c3%a9', '/x/y.html', '/a+b', '/ünï/cödé']) {
       const once = path(input)
       expect(path(once)).toBe(once)
     }

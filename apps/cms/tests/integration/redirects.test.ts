@@ -2,11 +2,14 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
+import config from '@payload-config'
+import { REST_GET } from '@payloadcms/next/routes'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { resetRedirectsCache } from '../../src/endpoints/publicRedirects'
 import { runCheck, runExport, runImport } from '../../src/lib/redirectCli'
-import { api, newRunId, setupFixtures, type Fixtures } from './helpers'
+import { compileRedirectMap } from '../fixtures/publicHostValidator.mjs'
+import { ORIGIN, api, newRunId, setupFixtures, type Fixtures } from './helpers'
 
 /**
  * Go-live C7. Everything below goes through the real REST route handlers and a real PostgreSQL (embedded), with the
@@ -23,10 +26,12 @@ const env = process.env
 const saved = {
   hosts: env.REDIRECT_ALLOWED_HOSTS,
   template: env.PUBLIC_ARTICLE_PATH_TEMPLATE,
+  legacy: env.LEGACY_SITE_HOSTS,
 }
 
 beforeAll(async () => {
   env.REDIRECT_ALLOWED_HOSTS = 'www.example.test'
+  env.LEGACY_SITE_HOSTS = 'old.example.test'
   delete env.PUBLIC_ARTICLE_PATH_TEMPLATE
   f = await setupFixtures(runId)
   tmp = mkdtempSync(path.join(tmpdir(), 'ct-redirects-'))
@@ -42,6 +47,7 @@ afterAll(async () => {
   if (tmp) rmSync(tmp, { recursive: true, force: true })
   for (const [key, value] of [
     ['REDIRECT_ALLOWED_HOSTS', saved.hosts],
+    ['LEGACY_SITE_HOSTS', saved.legacy],
     ['PUBLIC_ARTICLE_PATH_TEMPLATE', saved.template],
   ] as const) {
     if (value === undefined) delete env[key]
@@ -66,6 +72,14 @@ async function rule(from: string, to: string | null, extra: Record<string, unkno
 }
 
 const getList = (headers: Record<string, string> = {}) => api('GET', '/api/public/redirects', { headers })
+/** What Next does for HEAD on a route that exports only GET: the GET handler receives the HEAD request. */
+const headHandler = REST_GET(config)
+async function headList(headers: Record<string, string> = {}) {
+  const res = await headHandler(new Request(new URL('/api/public/redirects', ORIGIN), { method: 'HEAD', headers }), {
+    params: Promise.resolve({ slug: ['public', 'redirects'] }),
+  })
+  return { status: res.status, headers: res.headers, text: await res.text() }
+}
 const mine = (rules: any[]) => rules.filter((r) => String(r.from).includes(runId) || String(r.to ?? '').includes(runId))
 
 describe('C7 redirects collection: access', () => {
@@ -78,13 +92,15 @@ describe('C7 redirects collection: access', () => {
     expect((await api('DELETE', `/api/redirects/${id}`)).status).toBe(403)
   })
 
-  it('every staff role can read; only admin and editor-in-chief can write', async () => {
+  it('only admin and editor-in-chief can read or write; reporters, trusted publishers and section editors get 403', async () => {
     const id = await rule(p('staff'), '/')
-    for (const role of ['reporter', 'sectionEditor', 'trusted', 'eic', 'admin'] as const) {
-      const res = await api('GET', `/api/redirects/${id}`, { token: f.tokens[role] })
-      expect(res.status, role).toBe(200)
+    for (const role of ['eic', 'admin'] as const) {
+      expect((await api('GET', `/api/redirects/${id}`, { token: f.tokens[role] })).status, role).toBe(200)
+      expect((await api('GET', '/api/redirects?limit=5', { token: f.tokens[role] })).status, `list ${role}`).toBe(200)
     }
     for (const role of ['reporter', 'reporter2', 'sectionEditor', 'trusted'] as const) {
+      expect((await api('GET', `/api/redirects/${id}`, { token: f.tokens[role] })).status, `read ${role}`).toBe(403)
+      expect((await api('GET', '/api/redirects?limit=5', { token: f.tokens[role] })).status, `list ${role}`).toBe(403)
       expect((await post(f.tokens[role], { from: p(`no-${role}`), to: '/' })).status, `create ${role}`).toBe(403)
       expect((await patch(f.tokens[role], id, { note: 'x' })).status, `update ${role}`).toBe(403)
       expect((await api('DELETE', `/api/redirects/${id}`, { token: f.tokens[role] })).status, `delete ${role}`).toBe(403)
@@ -185,17 +201,58 @@ describe('C7 redirects collection: loops and chains are refused at write time, n
     expect(messages(loop)).toMatch(/Loop/)
   })
 
-  it('refuses a rule at the live address of a published article, and a duplicate of a derived rule', async () => {
-    const live = await f.seedArticle({ status: 'published', legacyUrl: `https://old.example.test/${runId}-wl/` })
+  it('refuses a rule at the live address of a published article', async () => {
+    const live = await f.seedArticle({ status: 'published', legacyUrl: `https://old.example.test/${runId}-wl-live/` })
     const hide = await post(f.tokens.eic, { from: `/reports/${live.slug}/`, to: '/x/' })
     expect(hide.status).toBe(400)
     expect(messages(hide)).toContain(live.slug)
-    const dup = await post(f.tokens.eic, { from: p('wl'), to: '/x/' })
-    expect(dup.status).toBe(400)
-    expect(messages(dup)).toContain(`article \\"${live.slug}\\"`)
+  })
+
+  it('compares canonical paths with article legacy addresses: a missing trailing slash and raw Unicode do not slip past', async () => {
+    const bare = await f.seedArticle({ status: 'published', legacyUrl: `https://old.example.test/${runId}-wl` }) // no slash
+    const accent = await f.seedArticle({ status: 'published', legacyUrl: `https://old.example.test/${runId}-café` }) // raw Unicode
+    const dupBare = await post(f.tokens.eic, { from: p('wl'), to: '/x/', source: 'rank-math' })
+    expect(dupBare.status).toBe(400)
+    expect(messages(dupBare)).toContain(bare.slug)
+    const dupAccent = await post(f.tokens.eic, { from: `/${runId}-caf%c3%a9`, to: '/x/', source: 'rank-math' })
+    expect(dupAccent.status).toBe(400)
+    expect(messages(dupAccent)).toContain(accent.slug)
     const chainIntoDerived = await post(f.tokens.eic, { from: p('wl-in'), to: p('wl') })
     expect(chainIntoDerived.status).toBe(400)
     expect(messages(chainIntoDerived)).toMatch(/Chain/)
+  })
+
+  it('many articles do not hide the exact match (no truncating search limit)', async () => {
+    for (let i = 0; i < 25; i++) {
+      await f.seedArticle({ status: 'published', legacyUrl: `https://old.example.test/${runId}-many-${i}-x/` })
+    }
+    const target = await f.seedArticle({ status: 'published', legacyUrl: `https://old.example.test/${runId}-many-1/` })
+    const dup = await post(f.tokens.eic, { from: p('many-1'), to: '/x/', source: 'rank-math' })
+    expect(dup.status).toBe(400)
+    expect(messages(dup)).toContain(target.slug)
+  })
+
+  it('a manual row may override the rule an article derives for the same address (explicit beats automatic)', async () => {
+    const art = await f.seedArticle({ status: 'published', legacyUrl: `https://old.example.test/${runId}-ovr/` })
+    const res = await post(f.tokens.eic, { from: p('ovr'), to: '/chosen/' })
+    expect(res.status, messages(res)).toBe(201)
+    resetRedirectsCache()
+    const rules = (await getList()).json.rules
+    expect(rules.filter((r: any) => r.from === p('ovr'))).toEqual([{ from: p('ovr'), to: '/chosen/', status: 301, source: 'manual' }])
+    expect(rules.some((r: any) => r.to === `/reports/${art.slug}/` && r.from === p('ovr'))).toBe(false)
+  })
+
+  it('treats a gone (410) target as a chain: refuses a manual row, accepts an imported row (served as a 410)', async () => {
+    await rule(p('g410'), null, { status: 410 })
+    const toGone = await post(f.tokens.eic, { from: p('to-g'), to: p('g410') })
+    expect(toGone.status).toBe(400)
+    expect(messages(toGone)).toMatch(/gone/)
+    await rule(p('ptg'), p('ptg-dest'))
+    const goneUnderManual = await post(f.tokens.eic, { from: p('ptg-dest'), status: 410 })
+    expect(goneUnderManual.status).toBe(400)
+    expect(messages(goneUnderManual)).toMatch(/Chain/)
+    const imported = await post(f.tokens.eic, { from: p('rm-to-g'), to: p('g410'), source: 'rank-math' })
+    expect(imported.status, messages(imported)).toBe(201)
   })
 })
 
@@ -337,18 +394,66 @@ describe('C7.3 GET /api/public/redirects', () => {
     }
   })
 
-  it('refuses (500, never a partial list) when two articles claim one legacy address', async () => {
+  it('never 500s because of data: the lowest article id wins a duplicate legacy address', async () => {
     const one = await f.seedArticle({ status: 'published', legacyUrl: `https://old.example.test/${runId}-clash/` })
     const two = await f.seedArticle({ status: 'published', legacyUrl: `https://old.example.test/${runId}-clash` })
     resetRedirectsCache()
     const res = await getList()
-    expect(res.status).toBe(500)
-    expect(res.headers.get('cache-control')).toBe('no-store')
-    expect(res.text).not.toContain(one.slug)
-    expect(res.json).toEqual({ ok: false, errors: [{ message: 'The redirect list is temporarily unavailable.' }] })
-    await f.payload.update({ collection: 'articles', id: two.id, data: { status: 'draft' } as never, overrideAccess: true, context: { seed: true } })
+    expect(res.status).toBe(200)
+    const rules = res.json.rules.filter((r: any) => r.from === p('clash'))
+    expect(rules).toEqual([{ from: p('clash'), to: `/reports/${one.slug}/`, status: 301, source: 'legacy-url' }])
+    expect(res.text).not.toContain(two.slug)
+  })
+
+  it('never 500s because of data: a staff row beats a derived rule, loops and bad rows are dropped, the rest is served', async () => {
+    const art = await f.seedArticle({ status: 'published', legacyUrl: `https://old.example.test/${runId}-shadow/` })
+    // rows that the write hook would refuse, inserted as an import does (trusted server context)
+    const make = (data: Record<string, unknown>) =>
+      f.payload.create({ collection: 'redirects', data: data as never, overrideAccess: true, context: { redirectImport: true } })
+    await make({ from: p('shadow'), to: '/staff-wins/', status: 301, source: 'rank-math' })
+    await make({ from: p('dloop-a'), to: p('dloop-b'), status: 301, source: 'manual' })
+    await make({ from: p('dloop-b'), to: p('dloop-a'), status: 301, source: 'manual' })
+    await make({ from: p('dloop-in'), to: p('dloop-a'), status: 301, source: 'rank-math' })
     resetRedirectsCache()
-    expect((await getList()).status).toBe(200)
+    const res = await getList()
+    expect(res.status).toBe(200)
+    const rules = res.json.rules
+    expect(rules.find((r: any) => r.from === p('shadow'))).toMatchObject({ to: '/staff-wins/', source: 'rank-math' })
+    expect(rules.some((r: any) => r.to === `/reports/${art.slug}/` && r.from === p('shadow'))).toBe(false)
+    for (const gone of ['dloop-a', 'dloop-b', 'dloop-in']) expect(rules.some((r: any) => r.from === p(gone))).toBe(false)
+    expect(rules.find((r: any) => r.from === p('pub-manual'))).toBeTruthy() // the rest is still served
+    await f.payload.delete({ collection: 'redirects', where: { from: { like: `${runId}-dloop` } }, overrideAccess: true })
+  })
+
+  it('a rule whose target is a gone address is served as a 410, and the list has no chain', async () => {
+    resetRedirectsCache()
+    const rules = (await getList()).json.rules
+    expect(rules.find((r: any) => r.from === p('rm-to-g'))).toEqual({ from: p('rm-to-g'), to: null, status: 410, source: 'rank-math' })
+    const froms = new Set(rules.map((r: any) => r.from))
+    for (const r of rules) if (r.to) expect(froms.has(r.to), `${r.from} -> ${r.to}`).toBe(false)
+  })
+
+  it('the whole served list passes the public host own validator (every rule, not a sample)', async () => {
+    resetRedirectsCache()
+    const res = await getList()
+    expect(res.status).toBe(200)
+    const compiled = compileRedirectMap(res.json, { allowedHosts: ['www.example.test'], siteUrl: 'https://www.example.test' } as never)
+    expect(compiled.size).toBe(res.json.count)
+    expect(res.json.count).toBeGreaterThan(10)
+  })
+
+  it('answers HEAD (as Next does for a GET route: the GET handler with a HEAD request) with the headers and no body', async () => {
+    resetRedirectsCache()
+    const get = await getList()
+    const res = await headList()
+    expect(res.status).toBe(200)
+    expect(res.text).toBe('')
+    expect(res.headers.get('etag')).toBe(get.headers.get('etag'))
+    expect(res.headers.get('cache-control')).toBe('public, max-age=300')
+    expect(res.headers.get('content-type')).toMatch(/application\/json/)
+    const cached = await headList({ 'if-none-match': get.headers.get('etag')! })
+    expect(cached.status).toBe(304)
+    expect((await headList({ origin: 'http://not-allowed.test' })).status).toBe(403)
   })
 
   it('is GET only for anonymous callers, and follows the shared Origin and CORS rules', async () => {
@@ -399,6 +504,66 @@ describe('C7.3 commands (called as functions against the real database)', () => 
     expect(await runExport(f.payload, [], capture().log)).toBe(2) // --out is required
   })
 
+  it('--detail-file must be outside the repository; the details name addresses, the log never does', async () => {
+    await f.payload.create({
+      collection: 'redirects',
+      data: { from: p('det-a'), to: p('det-b'), status: 301, source: 'manual' } as never,
+      overrideAccess: true,
+      context: { redirectImport: true },
+    })
+    await f.payload.create({
+      collection: 'redirects',
+      data: { from: p('det-b'), to: p('det-a'), status: 301, source: 'manual' } as never,
+      overrideAccess: true,
+      context: { redirectImport: true },
+    })
+    const inside = capture()
+    expect(await runExport(f.payload, ['--out', path.join(tmp, 'x.json'), '--detail-file', path.join(process.cwd(), 'details.txt')], inside.log)).toBe(2)
+    expect(inside.lines.join('\n')).toMatch(/outside the repository/)
+    const outside = capture()
+    const detailFile = path.join(tmp, 'details.txt')
+    expect(await runExport(f.payload, ['--out', path.join(tmp, 'x.json'), '--detail-file', detailFile], outside.log)).toBe(0)
+    const logText = outside.lines.join('\n')
+    expect(logText).toMatch(/dropped={[^}]*"loops":2/)
+    expect(logText).not.toContain(runId)
+    expect(readFileSync(detailFile, 'utf8')).toContain(p('det-a'))
+    await f.payload.delete({ collection: 'redirects', where: { from: { like: `${runId}-det-` } }, overrideAccess: true })
+  })
+
+  it('check:redirects error path prints a code only, never a rule label or message; details go to the detail file', async () => {
+    const urls = path.join(tmp, 'urls-err.txt')
+    writeFileSync(urls, '/anything/\n')
+    env.PUBLIC_ARTICLE_PATH_TEMPLATE = '/news/{slug}/'
+    try {
+      const cap = capture()
+      const detailFile = path.join(tmp, 'err-details.txt')
+      expect(await runCheck(f.payload, ['--urls', urls, '--detail-file', detailFile], cap.log)).toBe(1)
+      const text = cap.lines.join('\n')
+      expect(text).toMatch(/check:redirects failed\. error=config/)
+      expect(text).not.toMatch(/news|PUBLIC_ARTICLE_PATH_TEMPLATE/) // not even the configuration message
+      expect(readFileSync(detailFile, 'utf8')).toMatch(/PUBLIC_ARTICLE_PATH_TEMPLATE/)
+    } finally {
+      delete env.PUBLIC_ARTICLE_PATH_TEMPLATE
+    }
+  })
+
+  it('check:redirects refuses a --urls file over 5 MB or 100,000 lines, and a detail file inside the repo', async () => {
+    const big = path.join(tmp, 'big.txt')
+    writeFileSync(big, 'a'.repeat(5 * 1024 * 1024 + 1))
+    const tooBig = capture()
+    expect(await runCheck(f.payload, ['--urls', big], tooBig.log)).toBe(2)
+    expect(tooBig.lines.join('\n')).toMatch(/larger than 5242880 bytes/)
+    const many = path.join(tmp, 'many.txt')
+    writeFileSync(many, '/a\n'.repeat(100_001))
+    const tooMany = capture()
+    expect(await runCheck(f.payload, ['--urls', many], tooMany.log)).toBe(2)
+    expect(tooMany.lines.join('\n')).toMatch(/more than 100000 lines/)
+    const small = path.join(tmp, 'small.txt')
+    writeFileSync(small, '/a\n')
+    const inside = capture()
+    expect(await runCheck(f.payload, ['--urls', small, '--detail-file', path.join(process.cwd(), 'd.txt')], inside.log)).toBe(2)
+  })
+
   it('check:redirects prints counts only and exits non-zero while anything is unresolved', async () => {
     const live = await f.seedArticle({ status: 'published', legacyUrl: `https://old.example.test/${runId}-chk-old/` })
     await rule(p('chk-moved'), '/')
@@ -447,20 +612,21 @@ describe('C7.3 commands (called as functions against the real database)', () => 
         `/${runId}-imp-dup/,/y/,301`,
         `/${runId}-imp-gone,,410`,
         `/${runId}-imp-ext,https://www.example.test/landing,302`,
+        `/${runId}-imp-togone,${p('pub-gone')},301`, // the target is a gone address: written as a 410
       ].join('\n'),
     )
     const before = (await f.payload.count({ collection: 'redirects', where: { from: { like: `${runId}-imp-` } }, overrideAccess: true })).totalDocs
     const dry = capture()
     expect(await runImport(f.payload, ['--file', csv], dry.log)).toBe(0)
     const dryText = dry.lines.join('\n')
-    expect(dryText).toMatch(/Dry run: 11 rows, 6 would be created/)
+    expect(dryText).toMatch(/Dry run: 12 rows, 7 would be created/)
     expect(dryText).toMatch(/invalid-to=1 .*pattern=1 duplicate-in-file=1 already-stored=1 .*loops=1/)
     expect(dryText).toMatch(/Nothing was written/)
     expect((await f.payload.count({ collection: 'redirects', where: { from: { like: `${runId}-imp-` } }, overrideAccess: true })).totalDocs).toBe(before)
 
     const applied = capture()
     expect(await runImport(f.payload, ['--file', csv, '--apply'], applied.log)).toBe(0)
-    expect(applied.lines.join('\n')).toMatch(/Created 6 rows\. Source is rank-math/)
+    expect(applied.lines.join('\n')).toMatch(/Created 7 rows\. Source is rank-math/)
     for (const text of [dryText, applied.lines.join('\n')]) {
       for (const needle of [runId, 'evil.example', 'imp-']) expect(text, needle).not.toContain(needle)
     }
@@ -470,9 +636,11 @@ describe('C7.3 commands (called as functions against the real database)', () => 
       limit: 50,
       overrideAccess: true,
     })
-    expect(rows.totalDocs).toBe(6)
+    expect(rows.totalDocs).toBe(7)
     expect(rows.docs.find((r: any) => r.from === p('imp-gone'))).toMatchObject({ status: 410, to: null })
     expect(rows.docs.find((r: any) => r.from === p('imp-ext'))).toMatchObject({ status: 302, to: 'https://www.example.test/landing/' })
+    expect(rows.docs.find((r: any) => r.from === p('imp-togone'))).toMatchObject({ status: 410, to: null })
+    expect(dryText).toMatch(/\(1 of them written as 410/)
     const audit = await f.payload.find({ collection: 'audit-logs', where: { action: { equals: 'redirect.import' } }, limit: 5, overrideAccess: true })
     expect(audit.totalDocs).toBeGreaterThanOrEqual(1)
 

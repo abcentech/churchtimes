@@ -87,6 +87,33 @@ describe('planRedirectImport', () => {
   })
 })
 
+describe('planRedirectImport: gone targets, absolute targets and the row cap', () => {
+  const plan = (csv: string, extra: Partial<typeof base> = {}) => planRedirectImport({ ...base, ...extra, rows: rows(csv) })
+  const existing: StoredRow[] = [{ id: 1, from: '/gone/', to: null, status: 410, source: 'manual' }]
+
+  it('writes a row whose target is a gone address as a 410 (a 301 into a 410 would make the host reject the list)', () => {
+    const p = plan('from,to\n/a,/gone/\n/b,/a/\n/c,/free/', { existing })
+    expect(p.accepted).toEqual([
+      { from: '/a/', to: null, status: 410 },
+      { from: '/b/', to: null, status: 410 }, // follows the converted row
+      { from: '/c/', to: '/free/', status: 301 },
+    ])
+    expect(p.counts.convertedToGone).toBe(2)
+    expect(p.counts.accepted).toBe(3)
+  })
+
+  it('skips an absolute target whose path is another rule address', () => {
+    const p = plan('from,to\n/a,https://www.example.test/gone/\n/b,https://www.example.test/free/', { existing })
+    expect(p.accepted.map((r) => r.from)).toEqual(['/b/'])
+    expect(p.counts.absoluteChain).toBe(1)
+  })
+
+  it('caps the file at the list cap of 20,000 rows', async () => {
+    const m = await import('../../src/lib/redirectImport')
+    expect(m.IMPORT_MAX_ROWS).toBe(20_000)
+  })
+})
+
 describe('parseFlags', () => {
   it('reads --flag value, --flag=value and bare flags', () => {
     expect(parseFlags(['--', '--out', 'f.json', '--apply', '--file=x.csv'])).toEqual({ out: 'f.json', apply: true, file: 'x.csv' })

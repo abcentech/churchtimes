@@ -1,7 +1,7 @@
 import type { Endpoint, Payload, PayloadRequest } from 'payload'
 
 import { generateRedirectMap } from '../lib/redirectData'
-import type { BuildResult } from '../lib/redirectMap'
+import { type BuildResult, errorCode, hasDataWarnings } from '../lib/redirectMap'
 import { isOriginAllowed } from './publicSubmissions'
 
 /**
@@ -11,6 +11,10 @@ import { isOriginAllowed } from './publicSubmissions'
  * Caching: the response carries `ETag` (the content `version`) and `Cache-Control: public, max-age=300`, and answers
  * `If-None-Match` with 304. The list is rebuilt from the database at most once per `CACHE_MS` per process (concurrent
  * requests share one build), so an anonymous caller cannot make the database scan the articles on every request.
+ *
+ * Data problems never make this endpoint fail: bad, looping or colliding rows are dropped and COUNTED in the log (counts
+ * only, never addresses). It answers 500 only for a bad configuration or when a size cap (20,000 rules, 5 MB) is exceeded.
+ * HEAD is registered explicitly (same headers, no body), because Next hands a HEAD request to the GET route handler.
  */
 
 const CACHE_MS = 10_000
@@ -61,30 +65,45 @@ const matches = (header: string | null, etag: string): boolean => {
 const errorResponse = (status: number, message: string, extra: Record<string, string> = {}) =>
   Response.json({ ok: false, errors: [{ message }] }, { status, headers: { 'Cache-Control': 'no-store', Vary: 'Origin', ...extra } })
 
+async function respond(req: PayloadRequest, withBody: boolean): Promise<Response> {
+  const origin = req.headers.get('origin')
+  if (!isOriginAllowed(origin)) return errorResponse(403, 'Origin not allowed.')
+  const cors = corsHeaders(origin)
+
+  const outcome = await build(req.payload)
+  if (!outcome.ok) {
+    // A code only: a configuration problem or a size cap. Nothing from a request or from a rule.
+    req.payload.logger.error(
+      `redirect list refused (error=${errorCode(outcome.error)}): the public list is NOT served until this is fixed`,
+    )
+    return errorResponse(500, 'The redirect list is temporarily unavailable.', cors)
+  }
+
+  const { map, body, stats } = outcome.result
+  if (hasDataWarnings(stats)) {
+    req.payload.logger.warn(
+      `redirect list served with data problems (counts only): overridden-derived=${stats.overriddenDerived} dropped=${JSON.stringify(stats.dropped)}`,
+    )
+  }
+  const etag = etagOf(map.version)
+  const headers = { ...cors, ETag: etag, 'Cache-Control': CACHE_CONTROL, Vary: 'Origin' }
+  if (matches(req.headers.get('if-none-match'), etag)) return new Response(null, { status: 304, headers })
+  return new Response(withBody ? body : null, {
+    status: 200,
+    headers: { ...headers, 'Content-Type': 'application/json; charset=utf-8' },
+  })
+}
+
 export const publicRedirectsEndpoint: Endpoint = {
   path: '/public/redirects',
   method: 'get',
-  handler: async (req: PayloadRequest) => {
-    const origin = req.headers.get('origin')
-    if (!isOriginAllowed(origin)) return errorResponse(403, 'Origin not allowed.')
-    const cors = corsHeaders(origin)
+  handler: (req: PayloadRequest) => respond(req, true),
+}
 
-    const outcome = await build(req.payload)
-    if (!outcome.ok) {
-      // Counts and rule names only; no request data. The public host keeps serving its last good list on a 5xx.
-      req.payload.logger.error(
-        { err: outcome.error },
-        'redirect list refused: the public list is NOT served until this is fixed',
-      )
-      return errorResponse(500, 'The redirect list is temporarily unavailable.', cors)
-    }
-
-    const { map, body } = outcome.result
-    const etag = etagOf(map.version)
-    const headers = { ...cors, ETag: etag, 'Cache-Control': CACHE_CONTROL, Vary: 'Origin' }
-    if (matches(req.headers.get('if-none-match'), etag)) return new Response(null, { status: 304, headers })
-    return new Response(body, { status: 200, headers: { ...headers, 'Content-Type': 'application/json; charset=utf-8' } })
-  },
+export const publicRedirectsHeadEndpoint: Endpoint = {
+  path: '/public/redirects',
+  method: 'head',
+  handler: (req: PayloadRequest) => respond(req, false),
 }
 
 export const publicRedirectsPreflightEndpoint: Endpoint = {

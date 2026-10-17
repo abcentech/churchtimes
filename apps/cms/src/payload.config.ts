@@ -17,12 +17,16 @@ import { Redirects } from './collections/Redirects'
 import { Submissions } from './collections/Submissions'
 import { Users } from './collections/Users'
 import { previewArticleEndpoint } from './endpoints/previewArticle'
-import { publicRedirectsEndpoint, publicRedirectsPreflightEndpoint } from './endpoints/publicRedirects'
+import {
+  publicRedirectsEndpoint,
+  publicRedirectsHeadEndpoint,
+  publicRedirectsPreflightEndpoint,
+} from './endpoints/publicRedirects'
 import {
   publicSubmissionsEndpoint,
   publicSubmissionsPreflightEndpoint,
 } from './endpoints/publicSubmissions'
-import { parseAllowedHosts, resolveArticlePathTemplate } from './lib/redirectPaths'
+import { parseAllowedHosts, parseLegacyHosts, resolveArticlePathTemplate } from './lib/redirectPaths'
 import { startScheduler } from './lib/scheduler'
 import {
   checkOriginList,
@@ -49,6 +53,7 @@ if (!isTest && (!secret || secret.length < 32)) {
 // into wrong redirects. Unset values are fine (default template, no absolute redirect hosts).
 resolveArticlePathTemplate(process.env)
 parseAllowedHosts(process.env)
+parseLegacyHosts(process.env)
 
 const corsOrigins = csv(process.env.CMS_CORS_ORIGINS).map(normaliseOrigin)
 const csrfOrigins = csv(process.env.CMS_CSRF_ORIGINS).map(normaliseOrigin)
@@ -117,6 +122,7 @@ export default buildConfig({
     publicSubmissionsEndpoint,
     publicSubmissionsPreflightEndpoint,
     publicRedirectsEndpoint,
+    publicRedirectsHeadEndpoint,
     publicRedirectsPreflightEndpoint,
     previewArticleEndpoint,
   ],
