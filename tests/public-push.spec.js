@@ -49,3 +49,34 @@ test('withdrawing consent during SDK loading prevents initialization and browser
   await expect(page.locator('#push-test-panel [role="status"]')).toContainText('Push consent is off');
   expect(await page.evaluate(()=>window.pushTrace)).not.toContain('forbidden-init');expect(await page.evaluate(()=>window.pushTrace)).not.toContain('forbidden-permission');
 });
+test('new privacy panels after navigation reuse the initialized STUB SDK',async({page})=>{
+  let requests=0;
+  await page.route('https://cdn.onesignal.com/**',route=>{
+    requests++;return route.fulfill({contentType:'application/javascript',headers:{'Access-Control-Allow-Origin':'*'},body:`(async()=>{const provider={init:async()=>window.pushTrace.push('init'),Notifications:{permission:true,requestPermission:async()=>window.pushTrace.push('permission')},User:{PushSubscription:{optOut:async()=>{}}}};for(const callback of window.OneSignalDeferred||[])await callback(provider);})();`});
+  });
+  await panel(page);await page.evaluate(()=>{window.pushSet(true);window.disposePush=window.mountPush();});
+  await page.getByRole('button',{name:'Enable notifications',exact:true}).click();await expect(page.locator('#push-test-panel [role="status"]')).toContainText('Notifications are enabled');
+  await page.evaluate(async()=>{
+    window.disposePush();document.querySelector('#push-test-panel').remove();
+    const root=document.createElement('section');root.id='push-test-panel';document.querySelector('main').append(root);
+    const module=await import('/src/lib/public-push.js');module.mountPublicPush({root,appId:'11111111-1111-4111-8111-111111111111',hasConsent:()=>window.pushConsent,subscribeConsent:()=>()=>{},requestConsent:()=>{}});
+  });
+  await page.getByRole('button',{name:'Enable notifications',exact:true}).click();await expect(page.locator('#push-test-panel [role="status"]')).toContainText('Notifications are enabled');
+  expect(requests).toBe(1);expect(await page.evaluate(()=>window.pushTrace.filter(value=>value==='init').length)).toBe(1);
+});
+test('a STUB provider arriving after the SDK deadline cannot initialize',async({page})=>{
+  await page.route('https://cdn.onesignal.com/**',route=>route.fulfill({contentType:'application/javascript',headers:{'Access-Control-Allow-Origin':'*'},body:'// STUB delayed SDK.'}));
+  await panel(page);await page.clock.install();await page.evaluate(()=>window.pushSet(true));
+  await page.getByRole('button',{name:'Enable notifications',exact:true}).click();await page.clock.fastForward(10001);
+  await expect(page.locator('#push-test-panel [role="status"]')).toContainText('could not be enabled');
+  await page.evaluate(async()=>{await window.OneSignalDeferred[0]({init:async()=>window.pushTrace.push('forbidden-init'),Notifications:{requestPermission:async()=>window.pushTrace.push('forbidden-permission')}});});
+  expect(await page.evaluate(()=>window.pushTrace)).not.toContain('forbidden-init');expect(await page.evaluate(()=>window.pushTrace)).not.toContain('forbidden-permission');
+});
+test('withdrawal during STUB initialization cleans up and never asks browser permission',async({page})=>{
+  await page.route('https://cdn.onesignal.com/**',route=>route.fulfill({contentType:'application/javascript',headers:{'Access-Control-Allow-Origin':'*'},body:`(async()=>{const provider={init:()=>new Promise(resolve=>window.finishPushInit=resolve),Notifications:{requestPermission:async()=>window.pushTrace.push('forbidden-permission')},User:{PushSubscription:{optOut:async()=>window.pushTrace.push('opt-out')}}};for(const callback of window.OneSignalDeferred||[])await callback(provider);})();`}));
+  await panel(page);await page.evaluate(()=>window.pushSet(true));await page.getByRole('button',{name:'Enable notifications',exact:true}).click();
+  await expect.poll(()=>page.evaluate(()=>typeof window.finishPushInit)).toBe('function');
+  await page.evaluate(()=>{window.pushSet(false);window.finishPushInit();});
+  await expect.poll(()=>page.evaluate(()=>window.pushTrace.includes('opt-out'))).toBe(true);
+  expect(await page.evaluate(()=>window.pushTrace)).not.toContain('forbidden-permission');
+});

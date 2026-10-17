@@ -9,7 +9,9 @@ No provider script has been activated, and this PR does not approve activation.
 for a configured application, then mounts it in the privacy dialog. The shared consent category is `push`;
 it starts false. A checkbox alone does not load the provider: the reader must also select **Enable notifications**.
 Unsupported/insecure browsers get a local explanation. Browser refusal stays off; failures offer a reload instead
-of creating repeated SDK loads. Repeated mounting on the same panel does not add duplicate controls or listeners.
+of creating repeated SDK loads. Repeated mounting on the same panel does not add duplicate controls or listeners. A shared promise per browser/app
+prevents duplicate SDK downloads and initialization when navigation replaces the privacy panel. Late SDK arrivals
+after the ten-second deadline remain inert; late initialization completion triggers withdrawal cleanup.
 
 The build helper `writePublicPushWorker({directory, appId})` in `tools/public-push-worker.mjs` generates the
 root worker only for a validated owner-supplied public UUID. An unset configuration removes stale output.
