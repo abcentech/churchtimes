@@ -5,6 +5,7 @@ export function validPushAppId(value) {
   return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value) ? value : '';
 }
 const controllers = new WeakMap();
+const browserStates = new WeakMap();
 export function mountPublicPush({root,appId,hasConsent,subscribeConsent,requestConsent,window:win=window,document:doc=document}) {
   appId=validPushAppId(appId);
   if(!root || !appId)return ()=>{};
@@ -12,14 +13,16 @@ export function mountPublicPush({root,appId,hasConsent,subscribeConsent,requestC
   const button=doc.createElement('button');button.type='button';button.textContent='Enable notifications';
   const status=doc.createElement('p');status.setAttribute('role','status');status.setAttribute('aria-live','polite');
   root.append(button,status);
-  let loading,provider,disposed=false,generation=0;
+  let apps=browserStates.get(win);if(!apps){apps=new Map();browserStates.set(win,apps);}
+  let state=apps.get(appId);if(!state){state={};apps.set(appId,state);}
+  let disposed=false,generation=0;
   const allowed=()=>!disposed&&hasConsent('push')===true;
   const available=()=>win.isSecureContext&&'serviceWorker' in win.navigator&&'Notification' in win;
   const update=()=>{button.disabled=!available();status.textContent=available()?'Notifications are optional. Enable them here after choosing push consent.':'Notifications are unavailable in this browser.';};
   update();
   async function revoke() {
     generation++;
-    try {await provider?.User?.PushSubscription?.optOut();}catch{}
+    try {await state.provider?.User?.PushSubscription?.optOut();}catch{}
     // Do not disturb a different application's root worker.
     try {for(const registration of await win.navigator.serviceWorker.getRegistrations()) {
       const worker=registration.active||registration.waiting||registration.installing;
@@ -28,25 +31,31 @@ export function mountPublicPush({root,appId,hasConsent,subscribeConsent,requestC
   }
   const unsubscribe=subscribeConsent(()=>{if(!allowed()){void revoke();status.textContent='Push consent is off. New notification requests have stopped.';}});
   async function sdk() {
-    if(loading)return loading;
-    loading=new Promise((resolve,reject)=>{
-      const timer=win.setTimeout(()=>reject(Error('unavailable')),10000);
+    // The shell replaces panels on navigation; reuse one sticky SDK promise per browser/app.
+    state.allowed=allowed;
+    if(state.loading)return state.loading;
+    state.loading=new Promise((resolve,reject)=>{
+      let settled=false;
       const script=doc.createElement('script');script.src=PUSH_SDK_URL;script.async=true;script.crossOrigin='anonymous';
-      script.onerror=()=>{win.clearTimeout(timer);script.remove();reject(Error('unavailable'));};
+      const fail=error=>{if(settled)return;settled=true;win.clearTimeout(timer);script.remove();reject(error);};
+      const timer=win.setTimeout(()=>fail(Error('unavailable')),10000);
+      script.onerror=()=>fail(Error('unavailable'));
       win.OneSignalDeferred=win.OneSignalDeferred||[];
       win.OneSignalDeferred.push(async OneSignal=>{
+        if(settled)return; // A late provider response after failure must stay inert.
         try {
-          if(!allowed())throw Error('consent');
+          if(!state.allowed())throw Error('consent');
           await OneSignal.init({appId,serviceWorkerPath:PUSH_WORKER_PATH,serviceWorkerParam:{scope:'/'},autoResubscribe:false,notifyButton:{enable:false},promptOptions:{slidedown:{prompts:[]}}});
-          provider=OneSignal;win.clearTimeout(timer);
-          if(!allowed()){await revoke();throw Error('consent');}
-          resolve(OneSignal);
-        }catch(error){win.clearTimeout(timer);reject(error);}
+          state.provider=OneSignal;
+          if(!state.allowed()){await revoke();throw Error('consent');}
+          if(settled){await revoke();return;}
+          settled=true;win.clearTimeout(timer);resolve(OneSignal);
+        }catch(error){fail(error);}
       });
       doc.head.append(script);
     });
-    // Keep failure sticky: no duplicate script/init on repeated clicks. Reload permits a fresh attempt.
-    return loading;
+    // Keep failure sticky: no duplicate script/init on repeated clicks or navigation.
+    return state.loading;
   }
   button.addEventListener('click',async()=>{
     if(!available())return;
