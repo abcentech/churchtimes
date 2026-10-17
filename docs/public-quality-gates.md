@@ -45,11 +45,22 @@ and CPU throttling. `tools/public-quality-budgets.json` is the reviewable budget
 | Initial CSS, gzip | at most 12 KiB |
 | All shipped WOFF/WOFF2 fonts | at most 192 KiB |
 
+`unit-tests/public-quality-policy.test.js` pins these exact numeric floors and
+ceilings independently from the configurable validator, so weakening the budget
+JSON fails the standard unit-test CI job. A deliberate policy change must update
+this document and the pinned policy in review. Both push and pull-request quality
+workflow filters include `vite.config.js`, ensuring build configuration changes
+run the production budget check.
+
 The LCP ceiling gives CI runner variance room; 2.5 seconds remains the product
 objective. SEO's staging noindex penalty is intentional and does not cause a
 false gate failure. Missing audits, failed navigation, missing build entries,
 incomplete/duplicated journey records or missing output fail the check. No
-retry discards a failed score or automatically raises a budget.
+retry discards a failed score or automatically raises a budget. The production
+quality command has an eight-minute CI timeout and its job a fifteen-minute
+timeout, so a stalled browser or CMS cannot occupy a runner indefinitely. A
+timed-out run remains a failure; the normal failure diagnostic and artifact
+steps still attempt to preserve the sanitized evidence.
 
 The wrapper writes an incomplete-run failure record before starting, so a failed
 run cannot leave an old successful aggregate as its current evidence. Raw
@@ -57,7 +68,9 @@ Lighthouse files stay in ignored local output; CI uploads only small numeric /
 boolean aggregate files, without DOM dumps, article titles, tokens or personal
 data. Browser test failures additionally use Playwright's GitHub reporter and
 retain test evidence for seven days, making failures reviewable without a log
-archive download.
+archive download. Failed production runs also annotate their fixed validator
+messages and numeric page metrics, making the cause readable if artifact storage
+is unavailable. Raw Lighthouse reports and page URLs are never annotated.
 
 ## Validation boundaries and reproduction
 
