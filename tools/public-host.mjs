@@ -43,7 +43,7 @@ export async function startPublicHost({env=process.env,signals=process,log=recor
   const server=createPublicServer(config.options);
   if((config.options.redirectsFile||config.options.redirectsUrl)&&typeof server.publicReloadRedirects!=='function')throw new Error('Redirect runtime requires the reviewed public reload hook.');
   await server.publicReady;
-  if((config.options.redirectsFile||config.options.redirectsUrl)&&server.publicRedirectStatus?.().loaded!==true) {
+  if((config.options.redirectsFile||config.options.redirectsUrl)&&server.publicRedirectDiagnostics?.().loaded!==true) {
     server.close();
     throw new Error('Configured redirects require a validated initial generation.');
   }
