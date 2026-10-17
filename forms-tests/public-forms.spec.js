@@ -71,7 +71,7 @@ test('mocked success sends one anonymous request, clears text and promises revie
   await expect(page.locator('#form-result')).toBeFocused();
   expect(await page.locator('#public-message').inputValue()).toBe('');
   expect(await page.evaluate(()=>Object.keys(localStorage).concat(Object.keys(sessionStorage)))).toEqual(['ct-optional-consent-v1']);
-  expect(await page.evaluate(()=>JSON.parse(localStorage.getItem('ct-optional-consent-v1')))).toEqual({analytics:false,forms:true});
+  expect(await page.evaluate(()=>JSON.parse(localStorage.getItem('ct-optional-consent-v1')))).toEqual({analytics:false,forms:true,push:false});
   await noOverflow(page);
 });
 
@@ -165,7 +165,7 @@ test('navigation removes widgets and releases form data without storage',async({
   await expect(page.getByLabel('Your name')).toHaveValue('');
   await expect(page.locator('#public-message')).toHaveValue('');
   expect(await page.evaluate(()=>Object.keys(localStorage).concat(Object.keys(sessionStorage)))).toEqual(['ct-optional-consent-v1']);
-  expect(await page.evaluate(()=>JSON.parse(localStorage.getItem('ct-optional-consent-v1')))).toEqual({analytics:false,forms:true});
+  expect(await page.evaluate(()=>JSON.parse(localStorage.getItem('ct-optional-consent-v1')))).toEqual({analytics:false,forms:true,push:false});
 });
 
 test('narrow screens use compact verification and resizing discards the old token',async({page})=>{

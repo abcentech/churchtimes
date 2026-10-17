@@ -38,7 +38,6 @@ function mountPublicAdvertising(root) {
 }
 import { publicFormMarkup } from './forms/public-form-markup.js';
 import { fetchPublishedPage, fetchPublishedArticle, fetchPublicCategory, fetchPublicCategories, cmsErrorMessage } from './lib/published-articles.js';
-import { renderArticleContent } from './lib/article-content.js';
 import './fonts.css';
 import './style.css';
 import './public-quality.css';
@@ -364,6 +363,8 @@ async function reportPage(slug) {
         document.title = 'Article unavailable — Church Times Nigeria';
         return;
       }
+      const {renderArticleContent}=await import('./lib/article-content.js');
+      if(!target.isConnected || routeController.signal.aborted)return;
       const body = renderArticleContent(article.content,{baseUrl:cmsUrl});
       target.innerHTML = `<div class="breadcrumbs"><a href="#home">Home</a><span>/</span><a href="#latest">Latest reports</a></div><article><header class="article-header"><span class="eyebrow clay">${escape(article.category || 'Newsroom')}</span><h1>${escape(article.title)}</h1><p class="article-deck">${escape(article.excerpt)}</p><div class="article-meta"><div>${article.bylineName?`<strong class="newsroom-byline">By ${escape(article.bylineName)}</strong>`:''}${reportDate(article)}</div><button class="icon-button" id="share-report" aria-label="Copy article link">${icon('share',19)}</button></div></header>${cmsFigure(article.featuredImage,{eager:true,fallbackAlt:article.title})}<div class="newsroom-article-body article-body">${body || '<p>The full article text is not available yet. Please check back shortly.</p>'}</div>${article.corrections.length?`<section class="newsroom-corrections article-corrections" aria-labelledby="corrections-title"><h2 id="corrections-title">Corrections & updates</h2><ul>${article.corrections.map(c=>`<li>${c.correctedAt?`<time datetime="${escape(c.correctedAt)}">${date({dateGMT:c.correctedAt},true)}</time>`:''}<p>${escape(c.note)}</p></li>`).join('')}</ul></section>`:''}${article.legacyUrl?`<p class="legacy-source"><a href="${escape(article.legacyUrl)}" target="_blank" rel="noopener noreferrer">Original publication ${icon('diagonal',15)}</a></p>`:''}${import.meta.env.VITE_PUBLIC_COMMENTS_URL?'<div data-public-comments></div>':''}${adMarker('article-inline')}${newsletterMarkup('article')}<div class="newsroom-article-end"><a class="text-link" href="#latest">More from the newsroom ${icon('arrow',17)}</a></div></article>`;
       mountPublicAdvertising(target);
