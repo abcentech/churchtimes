@@ -27,7 +27,7 @@ test('anonymous GET requests exact C6 relation, sort, depth and bounded paginati
 });
 test('empty published archive is distinct from malformed/unapproved responses (STUB)',async()=>{
   assert.deepEqual(await fetchPublicComments({endpoint,articleId:1,fetchImpl:stub(page([]))}),{comments:[],nextPage:null,truncated:false,incomplete:false});
-  for(const body of [{docs:[]},page([{}]),page([{...comment,status:'hidden'}]),page([],true,1),page([],true,3),page(Array.from({length:101},()=>comment))])await assert.rejects(fetchPublicComments({endpoint,articleId:1,fetchImpl:stub(body)}),e=>e.type==='response');
+  for(const body of [{docs:[]},page([{}]),page([{...comment,status:'hidden'}]),page([],true,1),page([],true,2),page([],true,3),page(Array.from({length:101},()=>comment))])await assert.rejects(fetchPublicComments({endpoint,articleId:1,fetchImpl:stub(body)}),e=>e.type==='response');
 });
 test('pagination cannot loop or exceed twenty explicit pages (STUB)',async()=>{
   const result=await fetchPublicComments({endpoint,articleId:1,page:COMMENTS_MAX_PAGES,fetchImpl:stub(page([comment],true,COMMENTS_MAX_PAGES+1))});assert.equal(result.nextPage,null);assert.equal(result.truncated,true);

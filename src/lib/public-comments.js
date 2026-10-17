@@ -77,7 +77,7 @@ export async function fetchPublicComments({endpoint, articleId, page = 1, signal
     if (!Array.isArray(payload?.docs) || payload.docs.length > COMMENTS_PAGE_SIZE || typeof payload.hasNextPage !== 'boolean') throw new CommentsReadError('response');
     const comments = payload.docs.map(normalizePublicComment).filter(Boolean);
     if (payload.docs.length && !comments.length) throw new CommentsReadError('response');
-    if (payload.hasNextPage && (!Number.isSafeInteger(payload.nextPage) || payload.nextPage !== page + 1)) throw new CommentsReadError('response');
+    if (payload.hasNextPage && (!payload.docs.length || !Number.isSafeInteger(payload.nextPage) || payload.nextPage !== page + 1)) throw new CommentsReadError('response');
     const truncated = payload.hasNextPage && page === COMMENTS_MAX_PAGES;
     return { comments, nextPage: payload.hasNextPage && !truncated ? payload.nextPage : null, truncated, incomplete: comments.length !== payload.docs.length };
   } catch (error) {
