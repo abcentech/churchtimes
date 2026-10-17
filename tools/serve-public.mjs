@@ -83,7 +83,7 @@ export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(file
   server.publicReady=redirects.ready;
   // Local process lifecycle hook only; no HTTP reload/admin endpoint.
   server.publicReloadRedirects=redirects.refresh;
-  server.publicRedirectStatus=redirects.diagnostics;
+  server.publicRedirectDiagnostics=redirects.diagnostics;
   server.on('close',()=>redirects.close());
   return server;
 }
