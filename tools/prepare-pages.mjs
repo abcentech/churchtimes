@@ -1,3 +1,5 @@
+import {writePublicPushWorker} from './public-push-worker.mjs';
+import {exportReaderPages} from './public-reader-export.mjs';
 import { mkdir, readdir, rename, readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
@@ -11,4 +13,6 @@ for (const file of await readdir(dist)) {
 const entry = join(dist, 'index.html');
 const html = await readFile(entry, 'utf8');
 await writeFile(entry, html.replace(/(src|href)="\.\//g, '$1="./site/'));
+await exportReaderPages(dist);
+await writePublicPushWorker({directory:dist});
 console.log('Prepared a static Pages root with compiled assets under site/.');

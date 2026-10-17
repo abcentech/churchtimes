@@ -1,3 +1,4 @@
+import {reportPath} from '../src/lib/public-routes.js';
 import {chromium,devices,expect} from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import {writeFile} from 'node:fs/promises';
@@ -8,7 +9,7 @@ export async function checkPublicJourneys({origin,fixture,output,chromePath,cmsU
   try {
     for(const [device,settings] of [['desktop',{viewport:{width:1440,height:1000}}],['mobile',devices['Pixel 7']]]) {
       const context=await browser.newContext(settings);
-      for(const [name,path] of [['home','/'],['latest','/#latest'],['article','/reports/'+fixture.publishedSlug+'/'],['live','/#live']]) {
+      for(const [name,path] of [['home','/'],['latest','/#latest'],['article',reportPath(fixture.publishedSlug,'/',process.env.PUBLIC_ARTICLE_PATH_TEMPLATE)],['live','/#live']]) {
         const page=await context.newPage(),faults=[];
         const allowed=new Set([new URL(origin).origin,new URL(cmsUrl).origin]);
         page.on('request',request=>{if(!allowed.has(new URL(request.url()).origin))faults.push('unexpected-origin');});

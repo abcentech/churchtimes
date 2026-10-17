@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+// All API replies and external Cloudflare transport in this file are STUBS.
 const SCRIPT='https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
 const widgetScript=`
 window.__widgetResets=0;window.__widgetRemovals=0;
@@ -23,6 +24,8 @@ async function fill(page,kind='story'){
   if(kind==='story') await page.getByLabel('Section (required)',{exact:true}).selectOption('News');
   await page.getByLabel(kind==='story'?'Your story or tip':'Your message').fill('The key facts and source links for the newsroom.');
   await page.getByLabel('I agree that the newsroom').check();
+  const permission=page.getByRole('button',{name:'Allow spam protection',exact:true});
+  if(await permission.isVisible())await permission.click();
 }
 const submit=page=>page.getByRole('button',{name:'Submit for editorial review',exact:true});
 async function noOverflow(page){ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy(); }
@@ -64,7 +67,8 @@ test('mocked success sends one anonymous request, clears text and promises revie
   await expect(page.locator('#form-result')).toContainText('MOCK-ONLY-123');
   await expect(page.locator('#form-result')).toBeFocused();
   expect(await page.locator('#public-message').inputValue()).toBe('');
-  expect(await page.evaluate(()=>Object.keys(localStorage).concat(Object.keys(sessionStorage)))).toEqual([]);
+  expect(await page.evaluate(()=>Object.keys(localStorage).concat(Object.keys(sessionStorage)))).toEqual(['ct-optional-consent-v1']);
+  expect(await page.evaluate(()=>JSON.parse(localStorage.getItem('ct-optional-consent-v1')))).toEqual({analytics:false,forms:true,push:false});
   await noOverflow(page);
 });
 
@@ -134,17 +138,19 @@ test('widget script failures can be retried without bypassing verification',asyn
   await submit(page).click();await expect(page.locator('#form-result')).toBeVisible();expect(loads).toBe(2);
 });
 
-test('contact form uses its separate configured endpoint and subject/message fields',async({page})=>{
-  await widget(page);
+test('contact C5 contract uses topic/message with explicit spam-protection permission (STUB)',async({page})=>{
+  await widget(page);let calls=0;
   await page.route('**/api/public/contact',route=>{
-    const body=route.request().postDataJSON();expect(body.subject).toBe('A story from the community');
-    expect(body.message).toContain('key facts');expect(body.title).toBeUndefined();expect(body.body).toBeUndefined();
-    return route.fulfill({status:201,json:{ok:true,reference:'MOCK-ONLY-CONTACT'}});
+    calls++;const body=route.request().postDataJSON();expect(body.topic).toBe('corrections');
+    expect(body.message).toContain('Synthetic correction');expect(body.subject).toBeUndefined();expect(body.phone).toBeUndefined();expect(body.title).toBeUndefined();expect(body.body).toBeUndefined();
+    return route.fulfill({status:201,json:{ok:true,reference:'MSG-7KQ2M9XA'}});
   });
-  await page.goto('/#contact');await fill(page,'contact');await complete(page);
+  await page.goto('/#contact');await page.getByLabel('Name',{exact:true}).fill('Synthetic Reader');await page.getByLabel('Email address').fill('reader@example.test');
+  await page.getByLabel('Topic',{exact:true}).selectOption('corrections');await page.getByLabel('Message (20 to 5,000 characters)').fill('Synthetic correction for a contract fixture article.');
+  await page.getByRole('button',{name:'Allow spam protection',exact:true}).click();
+  await page.getByRole('checkbox',{name:/Allow Cloudflare spam protection/}).check();await page.getByRole('button',{name:'Close privacy notice'}).click();await complete(page);
   await page.getByRole('button',{name:'Send message',exact:true}).click();
-  await expect(page.getByRole('heading',{name:'Your message has been received.'})).toBeVisible();
-  await noOverflow(page);
+  await expect(page.locator('[data-reader-status]')).toContainText('MSG-7KQ2M9XA');expect(calls).toBe(1);await noOverflow(page);
 });
 
 test('navigation removes widgets and releases form data without storage',async({page})=>{
@@ -155,7 +161,8 @@ test('navigation removes widgets and releases form data without storage',async({
   await page.goto('/#submit');
   await expect(page.getByLabel('Your name')).toHaveValue('');
   await expect(page.locator('#public-message')).toHaveValue('');
-  expect(await page.evaluate(()=>Object.keys(localStorage).concat(Object.keys(sessionStorage)))).toEqual([]);
+  expect(await page.evaluate(()=>Object.keys(localStorage).concat(Object.keys(sessionStorage)))).toEqual(['ct-optional-consent-v1']);
+  expect(await page.evaluate(()=>JSON.parse(localStorage.getItem('ct-optional-consent-v1')))).toEqual({analytics:false,forms:true,push:false});
 });
 
 test('narrow screens use compact verification and resizing discards the old token',async({page})=>{
@@ -173,14 +180,14 @@ test('late widget load after navigation does not mount into a detached page',asy
   let release;
   const gate=new Promise(resolve=>release=resolve);
   await page.route(SCRIPT,async route=>{await gate;await route.fulfill({contentType:'application/javascript',body:widgetScript});});
-  await page.goto('/#submit',{waitUntil:'domcontentloaded'});await expect(page.locator('#challenge-status')).toContainText('Loading');
+  await page.goto('/#submit',{waitUntil:'domcontentloaded'});await page.getByRole('button',{name:'Allow spam protection',exact:true}).click();await expect(page.locator('#challenge-status')).toContainText('Loading');
   await page.locator('.home-link').click();release();
   await expect(page.locator('.lead-story h1')).toBeVisible();
   await expect.poll(()=>page.evaluate(()=>Boolean(window.turnstile))).toBe(true);
   expect(await page.evaluate(()=>window.__widgetOptions)).toBeUndefined();
 });
 
-for (const kind of ['story','contact']) {
+for (const kind of ['story']) {
   test(`${kind} form requires, validates and sends a phone number`,async({page})=>{
     await widget(page);
     let calls=0;
@@ -209,7 +216,7 @@ for (const kind of ['story','contact']) {
   });
 }
 
-test('real CMS success maps location/categorySuggestion and uses only the returned reference',async({page})=>{
+test('CMS contract STUB success maps location/categorySuggestion and uses only the returned reference',async({page})=>{
  await widget(page);let calls=0;
  await page.route('**/api/public/submissions',route=>{
   calls++;const data=route.request().postDataJSON();expect(data.categorySuggestion).toBe('News');expect(data.location).toBe('Lagos');expect(data.website).toBe('');expect(data.category).toBeUndefined();expect(data.consent).toBeUndefined();
@@ -230,4 +237,19 @@ test('CMS minimum story length prevents invalid sending before verification is c
  await widget(page);let calls=0;await page.route('**/api/public/submissions',route=>{calls++;return route.fulfill({json:{ok:true,reference:'SHOULD-NOT-SEND'}});});
  await page.goto('/#submit');await fill(page);await page.getByLabel('Your story or tip').fill('Too short.');await complete(page);await submit(page).click();
  await expect(page.locator('#error-message')).toContainText('at least 30 characters');expect(calls).toBe(0);
+});
+
+// External Turnstile transport is STUBBED; this test proves consent gating, not verification.
+test('configured story form makes no Turnstile request until explicit permission',async({page})=>{
+  let scripts=0;await page.route(SCRIPT,route=>{scripts++;return route.fulfill({contentType:'application/javascript',body:widgetScript});});
+  await page.goto('/#submit');await expect(page.getByRole('button',{name:'Allow spam protection',exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Allow spam protection',exact:true})).toBeEnabled();
+  await expect(page.locator('#challenge-status')).toContainText('Allow spam protection');
+  await expect(page.locator('script[src*="challenges.cloudflare.com"]')).toHaveCount(0);expect(scripts).toBe(0);
+  await page.getByRole('button',{name:'Allow spam protection',exact:true}).click();await expect(page.getByRole('button',{name:'Complete test verification',exact:true})).toBeVisible();expect(scripts).toBe(1);
+  expect(await page.evaluate(()=>window.__widgetOptions.action)).toBe('submit-story');
+  // The same shared module backs the privacy controls in dependent B1 PR #46.
+  await page.evaluate(async()=>{const {setConsent}=await import('/src/lib/reader-consent.js');setConsent('forms',false);});
+  await expect(page.getByRole('button',{name:'Allow spam protection',exact:true})).toBeVisible();expect(await page.evaluate(()=>window.__widgetRemovals)).toBe(1);
+  await submit(page).click();await expect(page.locator('#form-errors')).toContainText('Complete the spam-protection challenge');
 });
