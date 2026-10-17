@@ -5,7 +5,7 @@ function bindArticleListen(root){
   import('./lib/reader-tools.js').then(module=>{if(!cancelled&&root.isConnected)dispose=module.mountListen(root);}).catch(()=>{});
   return ()=>{cancelled=true;dispose?.();};
 }
-import { captureNewsletterLink } from './lib/reader-form-contracts.js';
+import { captureNewsletterLink } from './lib/reader-newsletter-link.js';
 const newsletterLink=captureNewsletterLink(location,history,new URL(document.baseURI).pathname);
 let readerForms;
 const readerFormsReady=(((import.meta.env.VITE_PUBLIC_NEWSLETTER_URL || import.meta.env.VITE_PUBLIC_CONTACT_URL) && import.meta.env.VITE_TURNSTILE_SITE_KEY) || newsletterLink)
