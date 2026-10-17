@@ -17,6 +17,7 @@
     "migrate:create": "payload migrate:create",
     "seed": "payload run src/seed/index.ts",
     "admin:set-password": "payload run src/seed/setPassword.ts",
+    "import:subscribers": "payload run src/seed/importSubscribers.ts",
     "db:local": "node scripts/local-db.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
