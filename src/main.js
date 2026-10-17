@@ -116,6 +116,13 @@ function bindPublicForm(kind) {
 let disposePublicForm;
 let disposeListen;
 let disposePush;
+let disposeComments;
+function mountReaderComments(root,articleId){
+  if(!root || !import.meta.env.VITE_PUBLIC_COMMENTS_URL)return ()=>{};
+  let cancelled=false,dispose;
+  void import('./comments/public-comments.js').then(module=>{if(!cancelled&&root.isConnected){root.innerHTML=module.commentsMarkup(articleId);dispose=module.bindPublicComments(root);}}).catch(()=>{if(!cancelled&&root.isConnected)root.textContent='Archived comments are unavailable. Please try again later.';});
+  return ()=>{cancelled=true;dispose?.();};
+}
 function mountReaderPush(dialog){
   if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(import.meta.env.VITE_PUBLIC_ONESIGNAL_APP_ID||'') || dialog.querySelector('[data-public-push]'))return;
   const root=document.createElement('div');root.dataset.publicPush='';dialog.append(root);
@@ -124,6 +131,7 @@ function mountReaderPush(dialog){
 let disposeReaderForms,disposeArticleForms;
 function bindReaderFeatures(){disposeReaderForms?.();disposeReaderForms=bindReaderForms(document,{hasConsent:()=>hasConsent('forms'),requestConsent,onConsentChange:subscribeConsent,tokenLink:newsletterLink});}
 function shell(content, route='home') {
+  disposeComments?.();
   disposePush?.();
   disposeListen?.();
   disposeArticleForms?.();
@@ -356,10 +364,11 @@ async function reportPage(slug) {
         return;
       }
       const body = renderArticleContent(article.content,{baseUrl:cmsUrl});
-      target.innerHTML = `<div class="breadcrumbs"><a href="#home">Home</a><span>/</span><a href="#latest">Latest reports</a></div><article><header class="article-header"><span class="eyebrow clay">${escape(article.category || 'Newsroom')}</span><h1>${escape(article.title)}</h1><p class="article-deck">${escape(article.excerpt)}</p><div class="article-meta"><div>${article.bylineName?`<strong class="newsroom-byline">By ${escape(article.bylineName)}</strong>`:''}${reportDate(article)}</div><button class="icon-button" id="share-report" aria-label="Copy article link">${icon('share',19)}</button></div></header>${cmsFigure(article.featuredImage,{eager:true,fallbackAlt:article.title})}<div class="newsroom-article-body article-body">${body || '<p>The full article text is not available yet. Please check back shortly.</p>'}</div>${article.corrections.length?`<section class="newsroom-corrections article-corrections" aria-labelledby="corrections-title"><h2 id="corrections-title">Corrections & updates</h2><ul>${article.corrections.map(c=>`<li>${c.correctedAt?`<time datetime="${escape(c.correctedAt)}">${date({dateGMT:c.correctedAt},true)}</time>`:''}<p>${escape(c.note)}</p></li>`).join('')}</ul></section>`:''}${article.legacyUrl?`<p class="legacy-source"><a href="${escape(article.legacyUrl)}" target="_blank" rel="noopener noreferrer">Original publication ${icon('diagonal',15)}</a></p>`:''}${adMarker('article-inline')}${newsletterMarkup('article')}<div class="newsroom-article-end"><a class="text-link" href="#latest">More from the newsroom ${icon('arrow',17)}</a></div></article>`;
+      target.innerHTML = `<div class="breadcrumbs"><a href="#home">Home</a><span>/</span><a href="#latest">Latest reports</a></div><article><header class="article-header"><span class="eyebrow clay">${escape(article.category || 'Newsroom')}</span><h1>${escape(article.title)}</h1><p class="article-deck">${escape(article.excerpt)}</p><div class="article-meta"><div>${article.bylineName?`<strong class="newsroom-byline">By ${escape(article.bylineName)}</strong>`:''}${reportDate(article)}</div><button class="icon-button" id="share-report" aria-label="Copy article link">${icon('share',19)}</button></div></header>${cmsFigure(article.featuredImage,{eager:true,fallbackAlt:article.title})}<div class="newsroom-article-body article-body">${body || '<p>The full article text is not available yet. Please check back shortly.</p>'}</div>${article.corrections.length?`<section class="newsroom-corrections article-corrections" aria-labelledby="corrections-title"><h2 id="corrections-title">Corrections & updates</h2><ul>${article.corrections.map(c=>`<li>${c.correctedAt?`<time datetime="${escape(c.correctedAt)}">${date({dateGMT:c.correctedAt},true)}</time>`:''}<p>${escape(c.note)}</p></li>`).join('')}</ul></section>`:''}${article.legacyUrl?`<p class="legacy-source"><a href="${escape(article.legacyUrl)}" target="_blank" rel="noopener noreferrer">Original publication ${icon('diagonal',15)}</a></p>`:''}${import.meta.env.VITE_PUBLIC_COMMENTS_URL?'<div data-public-comments></div>':''}${adMarker('article-inline')}${newsletterMarkup('article')}<div class="newsroom-article-end"><a class="text-link" href="#latest">More from the newsroom ${icon('arrow',17)}</a></div></article>`;
       mountPublicAdvertising(target);
       bindCMSImages(target);
       disposeArticleForms=bindReaderForms(target,{hasConsent:()=>hasConsent('forms'),requestConsent,onConsentChange:subscribeConsent});
+      disposeComments=mountReaderComments(target.querySelector('[data-public-comments]'),article.id);
       disposeListen=bindArticleListen(target);
       setArticleMetadata(article);
       document.title = `${article.seoTitle || article.title} — Church Times Nigeria`;
