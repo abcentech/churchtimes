@@ -121,6 +121,49 @@ describe('wxr report (counts only)', () => {
     expect(isInsideRepo(file)).toBe(false)
   })
 
+  it('refuses UNC and device paths and paths reached through a link into the repo', async () => {
+    for (const p of ['\\\\localhost\\c$\\x\\export.xml', '\\\\127.0.0.1\\c$\\x\\export.xml', '\\\\?\\UNC\\localhost\\c$\\x\\e.xml', '//localhost/c$/x/e.xml', '\\\\.\\C:\\x\\e.xml']) {
+      expect(isInsideRepo(p)).toBe(true)
+      expect(await run(['--file', p])).toMatchObject({ code: 2, err: 'REPORT_FILE_INSIDE_REPO' })
+      expect(await run(['--file', file, '--detail-file', p])).toMatchObject({ code: 2, err: 'REPORT_DETAIL_INSIDE_REPO' })
+    }
+    const link = path.join(dir, 'link-into-repo')
+    try {
+      fs.symlinkSync(process.cwd(), link, process.platform === 'win32' ? 'junction' : 'dir')
+    } catch {
+      return // links not permitted here
+    }
+    expect(isInsideRepo(path.join(link, 'new-file.jsonl'))).toBe(true)
+    expect(await run(['--file', file, '--detail-file', path.join(link, 'rows.jsonl')])).toMatchObject({ err: 'REPORT_DETAIL_INSIDE_REPO' })
+  })
+
+  it('answers a short code when the detail file cannot be created', async () => {
+    const r = await run(['--file', file, '--detail-file', path.join(dir, 'no-such-dir', 'rows.jsonl')])
+    expect(r).toEqual({ code: 1, out: '', err: 'REPORT_DETAIL_FAILED' })
+  })
+
+  it('stays fast on hostile iframe text and does not report bracketed names as shortcodes', async () => {
+    const hostile = path.join(dir, 'hostile.xml')
+    fs.writeFileSync(
+      hostile,
+      wxr([
+        { id: 1, content: '<iframe '.repeat(80_000) },
+        { id: 2, content: '<p>As [John Smith] and [Smith 2020] said [sic] [laughs] [Jane Doe x=1]</p>' },
+        { id: 3, status: 'publish', comments: [{ id: 1, approved: 'a'.repeat(500), type: 'T'.repeat(500) }] },
+      ]),
+    )
+    const t = Date.now()
+    const r = await run(['--file', hostile])
+    expect(Date.now() - t).toBeLessThan(1000)
+    expect(r.code).toBe(0)
+    expect(r.out).toContain('published posts with iframes: 0')
+    expect(r.out).toContain('published posts with shortcode-like tags: 1')
+    expect(r.out).toContain('(other): 1')
+    for (const leak of ['John', 'Smith', 'Jane', 'laughs']) expect(r.out).not.toContain(leak)
+    expect(r.out).not.toContain('a'.repeat(21))
+    expect(r.out).not.toContain('T'.repeat(21))
+  })
+
   it('exits non-zero with a short code only on parse errors', async () => {
     const bad = path.join(dir, 'bomb.xml')
     fs.writeFileSync(bad, BILLION_LAUGHS)

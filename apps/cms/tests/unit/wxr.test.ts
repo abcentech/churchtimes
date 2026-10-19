@@ -250,11 +250,84 @@ describe('security', () => {
 
   it('rejects a DOCTYPE or ENTITY after the root, but allows the text inside CDATA', async () => {
     const after = wxr([]).replace('</channel>', '<!DOCTYPE x></channel>')
-    expect(['WXR_DOCTYPE', 'WXR_MALFORMED']).toContain(await codeOf(collect(after)))
-    const ent = wxr([]).replace('</channel>', '<!ENTITY x "y"></channel>')
-    expect(['WXR_DOCTYPE', 'WXR_MALFORMED', 'WXR_TRUNCATED']).toContain(await codeOf(collect(ent)))
+    expect(await codeOf(collect(after))).toBe('WXR_DOCTYPE')
+    // An unquoted ENTITY declaration after the root: only parser.onsgmldeclaration catches this.
+    const ent = wxr([]).replace('</channel>', '<!ENTITY x></channel>')
+    expect(await codeOf(collect(ent))).toBe('WXR_DOCTYPE')
+    expect(await codeOf(collect(ent, {}, 1_000_000))).toBe('WXR_DOCTYPE')
+    // A quoted one is still refused (the parser never expands it).
+    const quoted = wxr([]).replace('</channel>', '<!ENTITY x "y"></channel>')
+    expect(await codeOf(collect(quoted))).not.toBe('no error')
     const inCdata = items(await collect(wxr([{ id: 1, content: '<!DOCTYPE html><p>x</p>' }])))
     expect(inCdata[0].contentHtml).toContain('<!DOCTYPE html>')
+  })
+
+  it('does not let a comment hide a DOCTYPE from the pre-root scan (one large chunk)', async () => {
+    const xml = `<!-- <a --><!DOCTYPE r [<!ENTITY x "y">]><rss><channel></channel></rss>`
+    expect(await codeOf(collect(xml, {}, 1_000_000))).toBe('WXR_DOCTYPE')
+    expect(await codeOf(collect(xml, {}, 5))).toBe('WXR_DOCTYPE')
+    // linear time on a comment bomb
+    const t = Date.now()
+    await codeOf(collect('<!--'.repeat(250_000), {}, 1_000_000))
+    expect(Date.now() - t).toBeLessThan(2000)
+  })
+
+  it('rejects attribute floods fast, on item, channel and root tags', async () => {
+    const attrs = (n: number) => Array.from({ length: n }, (_, i) => ` a${i}="${'x'.repeat(1024)}"`).join('')
+    const t = Date.now()
+    const onItem = wxr([]).replace('</channel>', `<item${attrs(50_000)}></item></channel>`)
+    expect(await codeOf(collect(onItem, {}, 65536))).toBe('WXR_ITEM_TOO_LARGE')
+    const onChannelRecord = wxr([]).replace('</channel>', `<wp:category${attrs(50_000)}></wp:category></channel>`)
+    expect(await codeOf(collect(onChannelRecord, {}, 65536))).toBe('WXR_ITEM_TOO_LARGE')
+    const inItem = wxr([]).replace('</channel>', `<item><wp:post_id${attrs(50_000)}>1</wp:post_id></item></channel>`)
+    expect(await codeOf(collect(inItem, {}, 65536))).toBe('WXR_ITEM_TOO_LARGE')
+    const root = `<rss${attrs(50_000)}><channel></channel></rss>`
+    expect(await codeOf(collect(root, {}, 65536))).toBe('WXR_ITEM_TOO_LARGE')
+    expect(Date.now() - t).toBeLessThan(5000)
+    // a normal number of attributes is fine, and attribute bytes count against the item size
+    expect(items(await collect(wxr([{ id: 1 }])))).toHaveLength(1)
+    const few = wxr([]).replace('</channel>', `<item><wp:post_id a="${'x'.repeat(3000)}">1</wp:post_id></item></channel>`)
+    expect(await codeOf(collect(few, { maxItemBytes: 1000 }))).toBe('WXR_ITEM_TOO_LARGE')
+  })
+
+  it('caps the channel record size', async () => {
+    const bigCat = wxr([]).replace('</channel>', `<wp:category><wp:cat_name>${'x'.repeat(100_000)}</wp:cat_name></wp:category></channel>`)
+    expect(await codeOf(collect(bigCat, {}, 65536))).toBe('WXR_ITEM_TOO_LARGE')
+  })
+
+  it('drops an over-long meta value instead of truncating it, and keeps the item', async () => {
+    const [it] = items(await collect(wxr([{ id: 1, meta: { rank_math_description: 'y'.repeat(40_000), rank_math_title: 'Fine' } }]), {}, 4096))
+    expect(it.seo.rankMathDescription).toBeNull()
+    expect(it.seo.rankMathTitle).toBe('Fine')
+  })
+
+  it('refuses an export with no root element within the first megabyte', async () => {
+    expect(await codeOf(collect(' '.repeat(1_200_000), {}, 65536))).toBe('WXR_NOT_WXR')
+  })
+
+  it('refuses encodings other than UTF-8', async () => {
+    const xml = wxr([{ id: 1 }])
+    for (const enc of ['utf16le', 'latin1'] as const) {
+      const bytes = Buffer.from(enc === 'utf16le' ? `﻿${xml}` : xml.replace('UTF-8', 'ISO-8859-1'), enc)
+      const run = async () => {
+        for await (const r of parseWxrStream((async function* () { yield bytes })())) void r
+      }
+      expect(await codeOf(run())).toBe('WXR_ENCODING')
+    }
+    // UTF-16 without a BOM, one byte at a time
+    const noBom = Buffer.from(xml, 'utf16le')
+    const tiny = async () => {
+      for await (const r of parseWxrStream((async function* () { for (const b of noBom) yield Uint8Array.of(b) })())) void r
+    }
+    expect(await codeOf(tiny())).toBe('WXR_ENCODING')
+    expect(await codeOf(collect(xml.replace('UTF-8', 'utf8')))).toBe('no error')
+  })
+
+  it('does not keep the password text', async () => {
+    const [it] = items(await collect(wxr([{ id: 1, password: 'hunter2' }, { id: 2 }]), {}, 3))
+    expect(it.hasPassword).toBe(true)
+    expect(JSON.stringify(it)).not.toContain('hunter2')
+    expect(items(await collect(wxr([{ id: 2 }])))[0].hasPassword).toBe(false)
   })
 
   it('rejects an oversized single item', async () => {

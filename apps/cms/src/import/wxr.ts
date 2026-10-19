@@ -23,6 +23,7 @@ export type WxrErrorCode =
   | 'WXR_MALFORMED'
   | 'WXR_TRUNCATED'
   | 'WXR_NOT_WXR'
+  | 'WXR_ENCODING'
 
 export class WxrError extends Error {
   readonly code: WxrErrorCode
@@ -178,6 +179,11 @@ const META_KEYS = new Set([
 const META_VALUE_CAP = 16 * 1024
 const CHANNEL_RECORD_CAP = 64 * 1024
 const PREFIX_CAP = 1024 * 1024
+const MAX_ATTRS_PER_TAG = 64
+const MAX_ATTR_BYTES_PER_TAG = 64 * 1024
+const MAX_COMMENTS_PER_ITEM = 50_000
+/** Fixed cost charged per element so that tag spam is bounded by the item size limit. */
+const ELEMENT_OVERHEAD = 16
 
 const ITEM_FIELDS: Record<string, string> = {
   title: 'title',
@@ -194,7 +200,6 @@ const ITEM_FIELDS: Record<string, string> = {
   'wp:status': 'status',
   'wp:post_type': 'postType',
   'wp:post_parent': 'parent',
-  'wp:post_password': 'password',
   'wp:attachment_url': 'attachmentUrl',
 }
 const COMMENT_FIELDS: Record<string, string> = {
@@ -300,6 +305,20 @@ function finalizeItem(d: ItemDraft): WxrItem {
   }
 }
 
+/** Remove complete `<!-- ... -->` comments in linear time; an unterminated comment drops the rest of the text. */
+function stripComments(s: string): string {
+  let out = ''
+  let i = 0
+  for (;;) {
+    const open = s.indexOf('<!--', i)
+    if (open < 0) return out + s.slice(i)
+    out += s.slice(i, open)
+    const close = s.indexOf('-->', open + 4)
+    if (close < 0) return out
+    i = close + 3
+  }
+}
+
 /**
  * Parse a WXR byte or string stream. Yields site header, channel categories and authors, and items in file order.
  * Throws `WxrError` (code only) on any violation; records already yielded stay valid.
@@ -343,12 +362,23 @@ export async function* parseWxrStream(
     buf = []
     bufBytes = 0
     bufCap = cap
+    bufDropped = false
   }
+  let bufDropped = false
+  let pwActive = false
+  let pwSet = false
+  let attrCount = 0
+  let attrBytes = 0
   const onText = (t: string) => {
     if (item || chanCat || chanAuthor) addSize(t.length)
-    if (buf !== null && bufBytes < bufCap) {
-      bufBytes += t.length
-      buf.push(t)
+    if (pwActive && t.length > 0) pwSet = true // the password text itself is never buffered
+    if (buf !== null) {
+      if (bufBytes < bufCap) {
+        bufBytes += t.length
+        buf.push(t)
+      } else if (t.length > 0) {
+        bufDropped = true
+      }
     }
   }
 
@@ -362,9 +392,19 @@ export async function* parseWxrStream(
   parser.onsgmldeclaration = () => fail('WXR_DOCTYPE')
   parser.ontext = onText
   parser.oncdata = onText
+  // Attributes are counted against a per-tag cap everywhere, and against the record size inside items and channel records.
+  parser.onattribute = (a) => {
+    const n = a.name.length + a.value.length + ELEMENT_OVERHEAD
+    attrCount += 1
+    attrBytes += n
+    if (attrCount > MAX_ATTRS_PER_TAG || attrBytes > MAX_ATTR_BYTES_PER_TAG) fail('WXR_ITEM_TOO_LARGE')
+    addSize(n)
+  }
 
   parser.onopentag = (tag) => {
     const name = tag.name
+    attrCount = 0
+    attrBytes = 0
     stack.push(name)
     const depth = stack.length
     if (depth > limits.maxDepth) fail('WXR_TOO_DEEP')
@@ -375,7 +415,7 @@ export async function* parseWxrStream(
       return
     }
     if (depth === 2 && name !== 'channel') return
-    if (item || chanCat || chanAuthor) addSize(name.length + 2)
+    if (item || chanCat || chanAuthor) addSize(name.length + ELEMENT_OVERHEAD)
     const parent = stack[depth - 2]
 
     if (depth === 3 && stack[1] === 'channel') {
@@ -399,8 +439,13 @@ export async function* parseWxrStream(
       return
     }
     if (depth === 4 && item && parent === 'item') {
-      if (name === 'wp:comment') comment = {}
-      else if (name === 'wp:postmeta') meta = { key: '', value: '' }
+      if (name === 'wp:comment') {
+        if (item.comments.length >= MAX_COMMENTS_PER_ITEM) fail('WXR_ITEM_TOO_LARGE')
+        comment = {}
+      } else if (name === 'wp:post_password') {
+        pwActive = true
+        pwSet = false
+      } else if (name === 'wp:postmeta') meta = { key: '', value: '' }
       else if (name === 'category') {
         term = { domain: tag.attributes.domain ?? '', nicename: tag.attributes.nicename ?? '' }
         capture(1024)
@@ -419,8 +464,17 @@ export async function* parseWxrStream(
   parser.onclosetag = (name) => {
     const depth = stack.length
     const parent = depth >= 2 ? stack[depth - 2] : ''
-    const value = buf === null ? null : (buf as string[]).join('')
+    let value = buf === null ? null : (buf as string[]).join('')
+    if (value !== null && Number.isFinite(bufCap)) {
+      const over = bufDropped || value.length > bufCap
+      // A meta value over its cap is dropped (a truncated SEO text would be wrong); other capped fields are cut.
+      if (over) value = name === 'wp:meta_value' ? '' : value.slice(0, bufCap)
+    }
     buf = null
+    if (name === 'wp:post_password' && depth === 4 && item) {
+      item.f.password = pwSet ? '1' : ''
+      pwActive = false
+    }
 
     if (depth === 5 && comment && parent === 'wp:comment' && value !== null && COMMENT_FIELDS[name]) {
       comment[COMMENT_FIELDS[name]] = value
@@ -503,9 +557,25 @@ export async function* parseWxrStream(
   let prefixLen = 0
   let bytes = 0
   let first = true
+  let headBytes: Buffer = Buffer.alloc(0)
+  let head = ''
+  let declChecked = false
   const feed = (text: string) => {
+    if (!declChecked) {
+      // Only UTF-8 is accepted: refuse a declared encoding other than UTF-8 (the stream is decoded as UTF-8).
+      head += text
+      const end = head.indexOf('?>')
+      if (end >= 0 || head.length >= 512) {
+        declChecked = true
+        const m = /^\s*<\?xml[^>]*?\sencoding\s*=\s*["']([^"']*)["']/i.exec(head.slice(0, end >= 0 ? end + 2 : 512))
+        if (m && !/^utf-?8$/i.test(m[1].trim())) fail('WXR_ENCODING')
+        head = ''
+      }
+    }
     if (!rootSeen) {
-      const combined = carry + text
+      if (text.includes('\u0000')) fail('WXR_ENCODING')
+      // Complete comments are removed first, so `<!-- <a --><!DOCTYPE r>` cannot hide a DOCTYPE behind a fake tag.
+      const combined = stripComments(carry + text)
       prefixLen += text.length
       const idx = combined.search(/<[A-Za-z_]/)
       const region = idx < 0 ? combined : combined.slice(0, idx)
@@ -530,7 +600,14 @@ export async function* parseWxrStream(
       text = decoder.decode(chunk, { stream: true })
     }
     if (bytes > limits.maxFileBytes) fail('WXR_FILE_TOO_LARGE')
-    if (first && typeof chunk === 'string') text = text.replace(/^﻿/, '')
+    if (typeof chunk !== 'string' && headBytes.length < 4) {
+      headBytes = Buffer.concat([headBytes, Buffer.from(chunk.subarray(0, 4 - headBytes.length))])
+      // UTF-16 / UTF-32 byte order marks (FF FE, FE FF): refuse rather than decode garbage.
+      if (headBytes.length >= 2 && ((headBytes[0] === 0xff && headBytes[1] === 0xfe) || (headBytes[0] === 0xfe && headBytes[1] === 0xff))) {
+        fail('WXR_ENCODING')
+      }
+    }
+    if (first && typeof chunk === 'string' && text.charCodeAt(0) === 0xfeff) text = text.slice(1)
     first = false
     if (text.length > 0) feed(text)
     while (queue.length > 0) yield queue.shift() as WxrRecord

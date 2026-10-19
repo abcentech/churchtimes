@@ -11,6 +11,7 @@ declare module 'sax' {
     onopentag: ((tag: SaxTag) => void) | null
     onclosetag: ((name: string) => void) | null
     ondoctype: ((doctype: string) => void) | null
+    onattribute: ((attr: { name: string; value: string }) => void) | null
     onsgmldeclaration: ((decl: string) => void) | null
     write(chunk: string): SaxParser
     close(): SaxParser

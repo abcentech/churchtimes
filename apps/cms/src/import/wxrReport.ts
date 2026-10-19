@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
+import { stripShortcodes } from '../lib/legacyContent'
 import { hasTemplateVariable } from '../lib/seoFields'
 import { isInsideRepo } from './safePaths'
 import { readWxrFile, WxrError, type WxrItem, type WxrRecord } from './wxr'
@@ -19,9 +20,11 @@ const bump = (m: Tally, key: string, n = 1) => m.set(key, (m.get(key) ?? 0) + n)
 const top = (m: Tally, n: number) =>
   [...m.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).slice(0, n)
 
-// `[tag ...]` or `[/tag]`: candidate shortcodes. Names are capped so prose in brackets cannot leak far.
-const SHORTCODE_RE = /\[\/?([A-Za-z][A-Za-z0-9_-]{0,31})(?:\s[^\[\]]*)?\/?\]/g
-const IFRAME_SRC_RE = /<iframe\b[^>]*?\ssrc\s*=\s*["']?([^"'\s>]+)/gi
+// (shortcodes are found with stripShortcodes from lib/legacyContent: conservative rules, so [John Smith] is not one)
+// Bounded so that hostile input (for example 640 KB of "<iframe ") cannot make it quadratic.
+const IFRAME_SRC_RE = /<iframe\b[^<>]{0,4096}?\ssrc\s*=\s*["']?([^"'\s>]{1,2048})/gi
+/** Tally keys that come from the file are capped so a hostile export cannot flood the output. */
+const key20 = (s: string) => s.slice(0, 20)
 const YOUTUBE_RE = /youtube\.com|youtu\.be|youtube-nocookie\.com/i
 
 function hostOf(src: string): string {
@@ -96,7 +99,7 @@ export async function buildWxrReport(
     if (it.kind === 'post') bump(r.status, it.status || '(none)')
     if (it.dateIssue === 'missing') r.noDate += 1
     for (const c of it.comments) {
-      bump(r.commentKinds, `approved=${c.approved || '(none)'} type=${c.type}`)
+      bump(r.commentKinds, `approved=${key20(c.approved) || '(none)'} type=${key20(c.type)}`)
       r.comments += 1
       if (it.kind === 'post' && it.status === 'publish' && c.approved === '1' && c.type === 'comment') r.approvedOnPublished += 1
     }
@@ -119,9 +122,10 @@ export async function buildWxrReport(
 
       const html = it.contentHtml
       let sc = 0
-      for (const m of html.matchAll(SHORTCODE_RE)) {
+      for (const rem of stripShortcodes(html).removals) {
         sc += 1
-        bump(r.shortcodeTags, m[1])
+        // Real shortcode names are lowercase identifiers; anything else is bucketed so names cannot leak.
+        bump(r.shortcodeTags, /^[a-z][a-z0-9_-]{0,31}$/.test(rem.tag) ? rem.tag : '(other)')
       }
       if (sc) r.shortcodePosts += 1
       let ifr = 0
@@ -254,12 +258,21 @@ export async function runWxrReportCli(argv: readonly string[], io: CliIo, cwd: s
       return 2
     }
   }
-  const fd = detailAbs ? fs.openSync(detailAbs, 'wx') : undefined
+  let fd: number | undefined
   try {
+    if (detailAbs) {
+      try {
+        fd = fs.openSync(detailAbs, 'wx', 0o600)
+      } catch {
+        io.err('REPORT_DETAIL_FAILED')
+        return 1
+      }
+    }
+    const out = fd
     const rep = await buildWxrReport(readWxrFile(abs), (it, flags) => {
-      if (fd === undefined) return
+      if (out === undefined) return
       fs.writeSync(
-        fd,
+        out,
         JSON.stringify({
           wpId: it.wpId, kind: it.kind, status: it.status, slug: it.slug, title: it.title, dateGmt: it.dateGmt,
           dateIssue: it.dateIssue, categories: it.categories.map((c) => c.nicename), comments: it.comments.length,
