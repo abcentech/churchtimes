@@ -77,6 +77,8 @@ export interface Config {
     'live-events': LiveEvent;
     'live-updates': LiveUpdate;
     redirects: Redirect;
+    advertisers: Advertiser;
+    'ad-campaigns': AdCampaign;
     'audit-logs': AuditLog;
     'payload-kv': PayloadKv;
     'payload-locked-documents': PayloadLockedDocument;
@@ -88,6 +90,7 @@ export interface Config {
       publishedAsFeatured: 'articles';
       publishedInBody: 'articles';
       liveUpdateImages: 'live-updates';
+      adCampaignCreatives: 'ad-campaigns';
     };
   };
   collectionsSelect: {
@@ -101,6 +104,8 @@ export interface Config {
     'live-events': LiveEventsSelect<false> | LiveEventsSelect<true>;
     'live-updates': LiveUpdatesSelect<false> | LiveUpdatesSelect<true>;
     redirects: RedirectsSelect<false> | RedirectsSelect<true>;
+    advertisers: AdvertisersSelect<false> | AdvertisersSelect<true>;
+    'ad-campaigns': AdCampaignsSelect<false> | AdCampaignsSelect<true>;
     'audit-logs': AuditLogsSelect<false> | AuditLogsSelect<true>;
     'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
     'payload-locked-documents': PayloadLockedDocumentsSelect<false> | PayloadLockedDocumentsSelect<true>;
@@ -215,6 +220,11 @@ export interface Media {
   };
   liveUpdateImages?: {
     docs?: (number | LiveUpdate)[];
+    hasNextPage?: boolean;
+    totalDocs?: number;
+  };
+  adCampaignCreatives?: {
+    docs?: (number | AdCampaign)[];
     hasNextPage?: boolean;
     totalDocs?: number;
   };
@@ -347,6 +357,89 @@ export interface LiveEvent {
   category: number | Category;
   startedAt?: string | null;
   endedAt?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Paid placements. Admin and editor-in-chief only. A campaign is delivered only when approved, paid (or waived) and inside its dates.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "ad-campaigns".
+ */
+export interface AdCampaign {
+  id: number;
+  advertiser: number | Advertiser;
+  /**
+   * Public display name.
+   */
+  sponsor: string;
+  /**
+   * Describe the creative and the offer (public).
+   */
+  alt: string;
+  /**
+   * Absolute https address, no credentials.
+   */
+  destinationUrl: string;
+  placements: ('homepage-billboard' | 'article-inline' | 'mobile-banner')[];
+  creatives?: {
+    homepageBillboard?: {
+      /**
+       * desktop creative, exactly 970x250, JPEG/PNG/WebP, at most 500 KB, not animated.
+       */
+      desktop?: (number | null) | Media;
+      /**
+       * mobile creative, exactly 320x100, JPEG/PNG/WebP, at most 500 KB, not animated.
+       */
+      mobile?: (number | null) | Media;
+    };
+    articleInline?: {
+      /**
+       * desktop creative, exactly 728x90, JPEG/PNG/WebP, at most 500 KB, not animated.
+       */
+      desktop?: (number | null) | Media;
+      /**
+       * mobile creative, exactly 320x100, JPEG/PNG/WebP, at most 500 KB, not animated.
+       */
+      mobile?: (number | null) | Media;
+    };
+    mobileBanner?: {
+      /**
+       * mobile creative, exactly 320x50, JPEG/PNG/WebP, at most 500 KB, not animated.
+       */
+      mobile?: (number | null) | Media;
+    };
+  };
+  startsAt: string;
+  endsAt: string;
+  priority: number;
+  status: 'draft' | 'pending_approval' | 'approved' | 'paused' | 'cancelled';
+  /**
+   * A person has checked the creative rights and the advertiser authorisation.
+   */
+  rightsConfirmed?: boolean | null;
+  /**
+   * Staff only, never public. Only an admin can set waived.
+   */
+  paymentStatus: 'unpaid' | 'invoiced' | 'paid' | 'waived';
+  approvedBy?: (number | null) | User;
+  approvedAt?: string | null;
+  creativeMedia?: (number | Media)[] | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Who is advertising. Admin and editor-in-chief only. Never shown publicly. Do not store card or bank details.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "advertisers".
+ */
+export interface Advertiser {
+  id: number;
+  name: string;
+  contactName?: string | null;
+  contactEmail?: string | null;
+  notes?: string | null;
   updatedAt: string;
   createdAt: string;
 }
@@ -550,6 +643,14 @@ export interface PayloadLockedDocument {
         value: number | Redirect;
       } | null)
     | ({
+        relationTo: 'advertisers';
+        value: number | Advertiser;
+      } | null)
+    | ({
+        relationTo: 'ad-campaigns';
+        value: number | AdCampaign;
+      } | null)
+    | ({
         relationTo: 'audit-logs';
         value: number | AuditLog;
       } | null);
@@ -646,6 +747,7 @@ export interface MediaSelect<T extends boolean = true> {
   publishedAsFeatured?: T;
   publishedInBody?: T;
   liveUpdateImages?: T;
+  adCampaignCreatives?: T;
   updatedAt?: T;
   createdAt?: T;
   url?: T;
@@ -830,6 +932,61 @@ export interface RedirectsSelect<T extends boolean = true> {
   status?: T;
   source?: T;
   note?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "advertisers_select".
+ */
+export interface AdvertisersSelect<T extends boolean = true> {
+  name?: T;
+  contactName?: T;
+  contactEmail?: T;
+  notes?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "ad-campaigns_select".
+ */
+export interface AdCampaignsSelect<T extends boolean = true> {
+  advertiser?: T;
+  sponsor?: T;
+  alt?: T;
+  destinationUrl?: T;
+  placements?: T;
+  creatives?:
+    | T
+    | {
+        homepageBillboard?:
+          | T
+          | {
+              desktop?: T;
+              mobile?: T;
+            };
+        articleInline?:
+          | T
+          | {
+              desktop?: T;
+              mobile?: T;
+            };
+        mobileBanner?:
+          | T
+          | {
+              mobile?: T;
+            };
+      };
+  startsAt?: T;
+  endsAt?: T;
+  priority?: T;
+  status?: T;
+  rightsConfirmed?: T;
+  paymentStatus?: T;
+  approvedBy?: T;
+  approvedAt?: T;
+  creativeMedia?: T;
   updatedAt?: T;
   createdAt?: T;
 }

@@ -1,4 +1,4 @@
-# Church Times CMS — API contracts (v1.12)
+# Church Times CMS — API contracts (v1.13)
 
 Status: implemented on `agent/payload-core`. v1.1 added Turnstile, duplicate detection, staff auth/session
 contract and security hardening; v1.2 closes the verified security-review findings: media ownership, version
@@ -768,6 +768,57 @@ Environment: `PUBLIC_ARTICLE_PATH_TEMPLATE`, `REDIRECT_ALLOWED_HOSTS` (**must eq
 host also needs `PUBLIC_SITE_URL`**), `LEGACY_SITE_HOSTS` (`docs/operations.md`). Migration `20261017_095306_redirects` (table `redirects`,
 enum `enum_redirects_source`, locked-documents relation column), reversible (down then up is tested).
 
+### Go-live C3: advertising
+
+Implements `go-live-contracts.md` C3 (delivery side of the public advertising contract).
+
+**Staff collections** (`admin` and `editor-in-chief` only; no other role, never anonymous; every write audited):
+
+- `advertisers` (`/api/advertisers`): `name`, `contactName?`, `contactEmail?`, `notes?`. Never public. Audit rows carry the name only. An advertiser that
+  still has campaigns cannot be deleted (`409`).
+- `ad-campaigns` (`/api/ad-campaigns`): `advertiser` (required), `sponsor` (1 to 100), `alt` (1 to 240), `destinationUrl` (absolute `https:`, no credentials,
+  at most 500), `placements` (`homepage-billboard`, `article-inline`, `mobile-banner`), `creatives` (group `homepageBillboard`/`articleInline`/`mobileBanner`, each
+  with `desktop`/`mobile` media; `mobileBanner` has `mobile` only), `startsAt`/`endsAt` (timezone required, `endsAt` after `startsAt`), `priority` (integer 0 to 100),
+  `status` (`draft`, `pending_approval`, `approved`, `paused`, `cancelled`), `rightsConfirmed`, `paymentStatus` (`unpaid`, `invoiced`, `paid`, `waived`).
+  Server-owned (client values ignored): `approvedBy`, `approvedAt`, `creativeMedia` (media ids of the selected placements' creatives). `sponsor` and `alt` are
+  stripped of markup; over-long values are `400`, not truncated.
+- **Creative checks** (on create/update that touches `creatives` or `placements`, and on approval): JPEG, PNG or WebP; exactly 970x250 / 320x100 (billboard),
+  728x90 / 320x100 (article-inline), 320x50 (mobile-banner, no desktop); file at most 500 KB (512,000 bytes); animated PNG and WebP are `400`. The sizes are read
+  from the media document.
+- **Approval gate** (`400` listing every problem): `rightsConfirmed = true`, at least one placement, a creative for every required slot of every selected
+  placement, `startsAt`/`endsAt` set, and, while `ADS_REQUIRE_PAYMENT` is not `false`, `paymentStatus` of `paid` or `waived`. `waived` can only be set by `admin`
+  (`403` otherwise; an editor-in-chief may still edit other fields of a campaign an admin waived). On approval `approvedBy`/`approvedAt` are set from the caller.
+- **Re-approval:** an `approved` campaign that stays `approved` in a request that changes a public field (`sponsor`, `alt`, `destinationUrl`, `placements`,
+  `creatives`, `startsAt`, `endsAt`, `priority`), or after which the gate no longer holds (payment lapsed, rights unticked), becomes `pending_approval`
+  (`approvedBy`/`approvedAt` cleared). It must be approved again in a separate request. Changing `advertiser`, `status` to `paused`/`cancelled`, etc. does not.
+- **Audit** (`audit-logs`): `ad-campaign.create`, `ad-campaign.status` (`fromStatus`, `toStatus`, `details.reason` when the server moved it back to pending),
+  `ad-campaign.update` (names of the changed fields only, never values), `ad-campaign.delete`; `advertiser.create|update|delete`. An `approved` campaign cannot be
+  deleted (`409`: pause or cancel it first).
+- **Media freeze:** the media of an `approved` campaign cannot be edited or replaced by a non-editor (`403`), like the media of a published article.
+
+**`GET /api/public/advertising`** (anonymous, `credentials: 'omit'`, read-only; HEAD and OPTIONS also answered). Body exactly:
+`{ "campaigns": [ { id: "ac_<id>", status: "active", sponsor, alt, destinationUrl, startsAt, endsAt, priority, placements, creatives } ], "adsense": { enabled, reviewed } }`
+with `creatives[placement].desktop|mobile = { src, width, height }`. `src` is `<CMS_PUBLIC_URL, else the request origin>/api/media/file/<filename>`; times are ISO UTC.
+
+- **Delivered** only when `status = approved`, `rightsConfirmed`, `paymentStatus` paid/waived (while `ADS_REQUIRE_PAYMENT`) and `startsAt <= now < endsAt`
+  (start inclusive, end exclusive, evaluated on the server's clock). Highest `priority` first, then oldest id; at most 100. The object is built from a whitelist:
+  advertiser, payment status, approval data, rights flag, notes and contact data are never in the response. A campaign missing a required creative is skipped.
+- `adsense.enabled` / `adsense.reviewed` come from `PUBLIC_ADSENSE_ENABLED` / `PUBLIC_ADSENSE_REVIEWED` (only `true`, any case, is true). The CMS never
+  serves a publisher id or script.
+- **Caching:** `Cache-Control: public, max-age=N`, `N = min(60, whole seconds, rounded down, to the next start or end of an approved, paid campaign)`; 60 when
+  there is none. A paused or cancelled campaign can be shown for up to 60 s more (plus CDN delay). `ETag` (content hash) is sent and a forwarded
+  `If-None-Match` gets `304`, for CDNs only: the CORS headers expose no response header and allow no request header, so browsers rely on `max-age`.
+  No rate limit, no `429`, no tracking.
+- **Origin:** when `Origin` is sent it must be in `PUBLIC_SUBMISSION_ORIGINS` (`403`, `Cache-Control: no-store`); allowlisted origins get an exact
+  `Access-Control-Allow-Origin` echo and `Vary: Origin`. No credentials are ever allowed for this route.
+- **Media privacy (extends §3 Media read access):** a creative file and its media document are readable anonymously only while a campaign using it is delivered
+  (same predicate as above, evaluated per request in SQL through the `ad-campaigns.creativeMedia` relation, so no cache to invalidate). Draft, pending,
+  paused, cancelled, not-yet-started, ended and unpaid campaigns keep their creatives private (`403` on the file, `404` on the document). Only the creatives of the
+  **selected** placements count.
+
+Environment: `ADS_REQUIRE_PAYMENT`, `PUBLIC_ADSENSE_ENABLED`, `PUBLIC_ADSENSE_REVIEWED`. Migration `20261019_220151_ad_campaigns` (tables `advertisers`, `ad_campaigns`,
+`ad_campaigns_placements`, `ad_campaigns_rels`, three enums, locked-documents columns); reversible and repeatable (tested).
+
 ## 8. Environment variables
 
 See `apps/cms/.env.example` (annotated) and `docs/operations.md` §4. Secrets (`PAYLOAD_SECRET`, `PREVIEW_SECRET`,
@@ -795,6 +846,13 @@ Additive, no breaking change.
   now also list `contact-message` when it is set.
 - New shared helper `src/lib/publicEndpoint.ts` (origin, CORS, body cap, error shape, per-endpoint Turnstile action pin) for new public endpoints;
   `POST /api/public/submissions` is unchanged.
+
+### v1.13: Go-live C3 advertising
+Go-live contract C3 (advertising). Additive.
+- New staff collections `advertisers` and `ad-campaigns` (admin and editor-in-chief only) with the approval and payment gate, creative checks and audit rows
+  (§ "Go-live C3: advertising"); new anonymous `GET /api/public/advertising` (`max-age = min(60, seconds to next boundary)`, ETag for CDNs, Origin allowlist).
+- Media read access (§3) gains one more public case: the creative of a delivered campaign. Media freeze (§6.3) covers creatives of approved campaigns.
+- New environment values `ADS_REQUIRE_PAYMENT`, `PUBLIC_ADSENSE_ENABLED`, `PUBLIC_ADSENSE_REVIEWED`. Migration `20261019_220151_ad_campaigns`.
 
 ### v1.10: Go-live C7 redirects
 Go-live contract C7 (redirects). Additive.

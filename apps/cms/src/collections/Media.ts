@@ -14,6 +14,7 @@ import type {
 import { editorInChiefOnly, idOf, isEditorInChief, isEditorRole, isStaff, staffOnly, type UserLike } from '../access/roles'
 import { writeAuditLog } from '../lib/audit'
 import { clampLimit } from '../lib/clampLimit'
+import { liveCampaignClauses, requirePayment } from '../lib/advertising'
 import { LEGACY_PATH_MAX, isValidLegacyPath } from '../lib/legacyMediaPath'
 import { verifyPreviewToken } from '../lib/previewToken'
 import { nextCounter } from './LiveUpdates'
@@ -162,6 +163,9 @@ const readAccess: Access = ({ req }) => {
           { 'liveUpdateImages.event.status': { in: ['live', 'ended'] } },
         ],
       },
+      // Go-live C3: the creative of a campaign that is delivered right now (approved, paid or waived, inside its dates).
+      // Same clauses as GET /api/public/advertising, so a file is public exactly while its campaign is served.
+      { and: liveCampaignClauses('adCampaignCreatives.', Date.now(), requirePayment()) },
     ],
   } as Where
 }
@@ -203,6 +207,20 @@ async function assertMediaNotFrozen(req: PayloadRequest, mediaId: number | strin
       replacing
         ? 'This image is used by a published or scheduled article; ask an editor to replace the file.'
         : 'This image is used by a published or scheduled article; ask an editor to change its details.',
+      403,
+    )
+  }
+  const usedAd = await req.payload.count({
+    collection: 'ad-campaigns',
+    where: { and: [{ creativeMedia: { equals: mediaId } }, { status: { equals: 'approved' } }] },
+    overrideAccess: true,
+    req,
+  })
+  if (usedAd.totalDocs > 0) {
+    throw new APIError(
+      replacing
+        ? 'This image is the creative of an approved ad campaign; ask an editor to replace the file.'
+        : 'This image is the creative of an approved ad campaign; ask an editor to change its details.',
       403,
     )
   }
@@ -439,6 +457,14 @@ export const Media: CollectionConfig = {
       type: 'join',
       collection: 'live-updates',
       on: 'image',
+      access: { read: never },
+      admin: { hidden: true },
+    },
+    {
+      name: 'adCampaignCreatives',
+      type: 'join',
+      collection: 'ad-campaigns',
+      on: 'creativeMedia',
       access: { read: never },
       admin: { hidden: true },
     },
