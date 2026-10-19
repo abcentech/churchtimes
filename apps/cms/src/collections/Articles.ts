@@ -21,10 +21,12 @@ import {
   staffOnly,
   userSectionIds,
 } from '../access/roles'
+import { articleContentEditor } from './articleEditor'
 import { articlePreviewTokenEndpoint } from '../endpoints/articlePreviewToken'
 import { writeAuditLog } from '../lib/audit'
 import { clampLimit } from '../lib/clampLimit'
 import { deepEqual } from '../lib/deepEqual'
+import { findEmbedProblem } from '../lib/lexicalEmbeds'
 import { assertExpectedUpdatedAt, captureExpectedUpdatedAt } from '../lib/expectedUpdatedAt'
 import { collectUploadNodes, uploadValueId } from '../lib/lexicalMedia'
 import { assertAttachableImage, isMediaId } from '../lib/mediaChecks'
@@ -182,6 +184,20 @@ const normalizeSeoFields: CollectionBeforeValidateHook = async ({ data }) => {
     if (cleaned === 'invalid') throw new APIError(`${key} must be plain text.`, 400)
     data[key] = cleaned
   }
+  return data
+}
+
+/**
+ * The only embed a body may hold is the registered `youtubeEmbed` block with a well-formed 11-character video id
+ * (contract C1.1). A malformed block, a raw `embed` node (the archive importer's old shape), an iframe-like node
+ * or an unknown block is a 400 ("Embeds other than YouTube are not accepted"). Runs on every write that carries
+ * `content`; skipped for trusted seed/system calls, exactly like `validateBodyImages`.
+ */
+const validateEmbeds: CollectionBeforeValidateHook = ({ data, req }) => {
+  const ctx = (req.context ?? {}) as { seed?: boolean }
+  if (ctx.seed === true || !data || data.content === undefined) return data
+  const problem = findEmbedProblem(data.content)
+  if (problem) throw new APIError(problem, 400)
   return data
 }
 
@@ -477,7 +493,7 @@ export const Articles: CollectionConfig = {
   },
   hooks: {
     beforeOperation: [clampLimit, markRestore, captureExpectedUpdatedAt],
-    beforeValidate: [autoSlug, normalizeSeoFields, validateBodyImages],
+    beforeValidate: [autoSlug, normalizeSeoFields, validateEmbeds, validateBodyImages],
     beforeChange: [assertExpectedUpdatedAt('articles'), deriveBodyMedia, enforceWorkflow],
     afterChange: [auditChanges],
     afterDelete: [auditDelete],
@@ -514,7 +530,7 @@ export const Articles: CollectionConfig = {
       validate: seoFieldValidator('seoDescription'),
       admin: { description: `Optional search-result description, up to ${SEO_DESCRIPTION_MAX} characters. Leave empty to use the excerpt.` },
     },
-    { name: 'content', type: 'richText', required: true },
+    { name: 'content', type: 'richText', required: true, editor: articleContentEditor },
     {
       name: 'category',
       type: 'relationship',

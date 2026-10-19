@@ -127,6 +127,9 @@ message listing every problem (missing secrets, http or wildcard origins, dummy 
 | `NEWSLETTER_TOKEN_RATE_LIMIT` | no | `20` | Per-IP limit (same window) for the confirm and unsubscribe endpoints combined. |
 | `NEWSLETTER_RESEND_COOLDOWN_SECONDS` | no | `600` | If a confirmation e-mail went to an address within this many seconds, a new sign-up gets the same neutral `202` and nothing is sent (`0` disables). |
 | `NEWSLETTER_MAX_CONFIRM_MAILS_PER_DAY` | no | `5` | Daily cap (rolling 24 h) of confirmation e-mails per address; beyond it, same neutral `202`, nothing sent. `bounced` addresses are never mailed automatically. |
+| `PUBLIC_ARTICLE_PATH_TEMPLATE` | no | `/reports/{slug}/` | Current public path of an article, used to derive redirects from `legacyUrl` (C7). Exactly `/reports/{slug}/` (default) or `/{slug}/`; anything else stops startup. Must equal the value the public host reads. |
+| `REDIRECT_ALLOWED_HOSTS` | no | `www.example.org` | Comma list of bare host names a redirect target may use as an absolute https URL (C7). Unset: internal paths only. A malformed entry stops startup. **Must equal the public host's `PUBLIC_REDIRECT_ALLOWED_HOSTS`** (the host also needs `PUBLIC_SITE_URL`): one disagreement makes the host reject the whole list. |
+| `LEGACY_SITE_HOSTS` | no | `churchtimesnigeria.net,www.churchtimesnigeria.net` (default) | Comma list of host names an article's `legacyUrl` may carry. A `legacyUrl` on another host derives no rule (counted). A malformed entry stops startup. |
 | `AUTH_LOGIN_RATE_LIMIT`, `AUTH_FORGOT_RATE_LIMIT`, `AUTH_RESET_RATE_LIMIT`, `AUTH_RATE_WINDOW_SECONDS` | no | `10`, `5`, `10`, `900` | Per-IP limits for login / forgot-password / reset-password. |
 | `TRUST_PROXY` | **yes (production)** | `true` | The app always runs behind a reverse proxy, so production startup **fails** unless this is exactly `true`. Make sure the app is reachable only through that proxy (it listens on `127.0.0.1`). Without trust every client would share one rate-limit bucket. |
 | `TRUST_PROXY_HOPS` | no | `1` | Number of trusted reverse proxies in front of the app (1 to 10, default 1). The client address is the entry that many places from the **right** of `X-Forwarded-For` (the address your own proxy appended), never the leftmost, which clients can forge. A chain shorter than this fails closed (shared bucket). The §4.4 blocks overwrite the header, so `1`; use `2` only if two proxies each append (for example nginx with `$proxy_add_x_forwarded_for` behind another proxy). |
@@ -453,14 +456,17 @@ Confirm each item before go-live and again after any change to the server:
 - [ ] Mailchimp import (only if the owner supplies an export): keep the CSV **outside** the repository (the command refuses a path inside it), run
       `npm run import:subscribers -- --file <path>` first (dry run, counts only), check the counts, then add `--apply`. Expected columns, any order:
       `Email Address` (or `email`), `First Name`, `Last Name`, `OPTIN_TIME`, `CONFIRM_TIME`, `Status`. Only rows whose Status is `subscribed` are imported
-      (as `confirmed`, consent time = `OPTIN_TIME`, else `CONFIRM_TIME`, else the import time). A file with no Status column is refused unless it is
-      Mailchimp's "Subscribed" segment export and `--assume-subscribed` is added. Existing rows and erased addresses are never overwritten or re-created.
+      (as `confirmed`, consent time = `OPTIN_TIME`; a row without it is stored with `consentAt` null and counted). A file with `UNSUB_TIME` or `CLEAN_TIME` columns is refused; a file with no Status column is refused unless it is Mailchimp's "Subscribed" segment export and `--assume-subscribed` is added. Existing rows and erased addresses are never overwritten or re-created.
 - [ ] Privacy notes (contact and newsletter): erasing a subscriber does **not** touch `contact-messages` from the same address (an admin deletes those by
       hand); rotating `IP_HASH_SALT` changes every erase hash, so earlier erasures stop suppressing re-imports (keep the salt stable); `PUBLIC_SITE_URL` is a
       bare origin, so the public site must be served at the root of its domain (confirmation links are `<origin>/newsletter/confirm`). Logs for these
       endpoints carry only error class and code, never an address, name or message; SMTP timeouts are 10 s connect, 10 s greeting, 20 s socket.
 - [ ] `TURNSTILE_EXPECTED_ACTION`, when set, lists `contact-message` and `newsletter-subscribe`; startup prints a `[security]` warning if either is missing
       (that form would answer 403 to everyone).
+- [ ] Article editor (go-live C1): open an article in the admin, insert a table and a **YouTube video** block (11-character id), save, reload. The
+      editor features (blocks, table) are registered on `articles.content` only, so `npx payload generate:importmap` must be re-run and
+      committed when they change. Any embed other than a valid YouTube block is refused by the API (`400`). Deploying this change runs
+      migration `media_legacy_path` (one nullable indexed column on `media`; reversible).
 - [ ] Wrong password 5 times locks the account; **Forgot password?** works end to end; after logout the old token no longer works.
 
 ## 12. Status

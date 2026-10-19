@@ -1,4 +1,4 @@
-# Church Times CMS — API contracts (v1.8)
+# Church Times CMS — API contracts (v1.12)
 
 Status: implemented on `agent/payload-core`. v1.1 added Turnstile, duplicate detection, staff auth/session
 contract and security hardening; v1.2 closes the verified security-review findings: media ownership, version
@@ -167,6 +167,64 @@ anonymously. Never published automatically: only `POST /api/submissions/:id/conv
 
 ### AuditLog (`/api/audit-logs`) — read: `admin`, `editor-in-chief` only. Immutable via API.
 `{ id, action, collection, docId, actor?, actorRole?, fromStatus?, toStatus?, summary?, createdAt }`
+
+### Go-live C1: legacy content shapes
+
+Implements go-live contract C1 (CMS side) from `go-live-contracts.md`. Additive; the integrator will renumber this heading.
+
+**YouTube block (C1.1).** The admin editor for `articles.content` has Lexical's blocks feature with one block, `youtubeEmbed`.
+Serialized shape (the `version` of the wrapper is whatever Payload's block feature writes; the contract fixes the three fields):
+
+```json
+{ "type": "block", "version": 2, "format": "",
+  "fields": { "id": "<block id>", "blockName": "", "blockType": "youtubeEmbed", "videoId": "dQw4w9WgXcQ", "title": "Optional short title" } }
+```
+
+- `videoId`: required, exactly 11 characters from `[A-Za-z0-9_-]`. `title`: optional plain text, at most 120 characters, no markup.
+  A URL is never stored; the public renderer builds the player address from the id.
+- **Server validation** runs on every write that carries `content` (create, update, restore through update), as a `beforeValidate`
+  hook next to the body-image check, and is skipped only for trusted seed calls. `400` for: a malformed `youtubeEmbed` block
+  (*A YouTube block has an invalid video id ...*, or a title problem), and for **any other embed**: a raw `embed` node (the
+  archive importer's old `{ type: 'embed', embedType, url }` shape), an iframe-like node (`iframe`, `video`, `youtube`, `vimeo`,
+  `oembed`, `audio`, `html`, `rawhtml`, `script`, `object`, `widget`, matched case-insensitively), an `inlineBlock`, or a `block`
+  whose `blockType` is not `youtubeEmbed` (*Embeds other than YouTube are not accepted.*). A `youtubeEmbed` block must be a leaf:
+  no children, no `url`/`href`/`src` members and no fields beyond `id`, `blockName`, `blockType`, `videoId`, `title` (`400`).
+  A body nested deeper than 64 object/array levels (about 15 nested list levels) is **refused with `400`**
+  (*The article body is nested too deeply ...*): the check never silently skips what it cannot inspect.
+  Anonymous readers get the block as stored, on published articles only (like all of `content`).
+- The importer must write `youtubeEmbed` blocks for YouTube, and for anything else a paragraph with the original link text (when it
+  is a safe `https:` link) or nothing, plus a QA report line. It must not write `embed` nodes.
+
+**Tables (C1.4).** The editor registers Lexical's table feature (`EXPERIMENTAL_TableFeature`) on `articles.content`. Stored shape is the
+standard `table` > `tablerow` > `tablecell` (`headerState` 0/1/2, `colSpan`, `rowSpan`), unchanged from what the public renderer
+reads. A real-browser test (`e2e/browser/article-editor.spec.ts`) opens an article with a table and a YouTube block in the admin
+editor, edits a paragraph and a cell, saves it, and compares the full stored body (row/cell structure, `headerState`, `colSpan`, `rowSpan`,
+`backgroundColor`, text runs and formats, all block fields) with what was created. It runs under desktop-chrome and android-pixel7. An
+image inside a table cell is validated and recorded in `bodyMedia` like any body image. There is no server-side check of table
+structure beyond Payload's own.
+
+**Media `legacyPath` (C1.2).** Optional text field on `media` (additive, indexed, migration `media_legacy_path`): the original WordPress
+upload path after `/wp-content/uploads/`, normalised (`2023/10/photo.jpg`: no leading slash, no `..`, no `?`/`#`/backslash, at most 500
+characters; otherwise `400`). **Staff-only:** readable by `admin`, `editor-in-chief` and `section-editor`; writable (API) by `admin` and
+`editor-in-chief`; writable by server code (Local API with `overrideAccess`, which is what the importer uses). Anonymous callers,
+reporters and trusted publishers never see it and cannot filter by it (`400`); a value they send is ignored. Existing media privacy,
+ownership and freeze rules are unchanged. Helper functions for the importer live in `src/lib/legacyMediaPath.ts` (`legacyPathFromUrl`,
+`stripSizeSuffix` for `-300x200` suffixes before the extension only, `candidatePaths` = `[exact, stripped]`: callers try the exact path
+first because a real file can be called `banner-1920x1080.jpg`; `altFallback`/`resolveAlt`: alt, else caption, else
+`<title> photo`, at most 300 characters).
+
+**Import helpers (C1.3, C1.5).** Pure, database-free functions in `src/lib/legacyContent.ts` for the later importer task:
+`resolveSlugCollisions` (every valid original slug is reserved first, only true duplicates and normalised forms that collide get `-2`, `-3`,
+so a duplicate never takes a slug another post owns, in any order; returns `{old,new}` pairs; slug rule and 160 characters),
+`sanitizeLegacyLinks` (keep `http`, `https`, `mailto` and root-relative links; convert everything else, including a URL in any of
+`fields.url`, `url`, `href`, to plain text; an old-host link is rewritten through the slug map **only** when it is a plain `/<slug>/`
+address with a slug in the map and not a reserved WordPress path; `?p=ID`, `/category/...`, dated permalinks, media and unknown slugs
+stay as written and are listed in `report.unmapped` with a reason; a subtree nested deeper than 64 levels is flattened to text and
+reported), `stripShortcodes` (conservative: removes a closing tag only when paired with a removed opening tag, tags carrying
+attributes, and case-sensitive known names such as `[gallery]`, `[video]`, `[wpforms]`, `penci-*`; keeps `[sic]`, `[co-founder]`,
+`[covid-19]`, `[x1]`, `[Video]`; tidies only the whitespace touching a removal; reports every removal), `dropTemplateVariableSeo`
+(Rank Math `%variable%` values become `null` plus a flag). The public host resolves `?p=ID` through `legacyId`; dated permalinks
+(`/2020/05/slug/`) are not mapped by these helpers.
 
 ## 4. Public endpoints (no credentials)
 
@@ -641,6 +699,75 @@ and the per-IP `login` / `forgot-password` / `reset-password` limits (`lib/authR
 Not rate limited, so no 429: the anonymous live feed `GET /api/live-events/:slug/updates` (cheap, read-only, answered with
 `Cache-Control: public, max-age=10` so a CDN absorbs polling) and all other reads. A locked staff account is a `401`, not a `429`.
 
+### Go-live C7: redirects
+
+Implements `go-live-contracts.md` C7 (exact-match redirects for the old WordPress addresses). Pattern rules (`/category/*`, `/tag/*`,
+`/page/N/`, `/feed/`, AMP variants, `/?p=ID`) stay with the public host.
+
+**The single normalisation contract** (`src/lib/redirectPaths.ts`: `normalizePath` for stored values, `normalizeRequestPath` for a raw
+request target). The CMS applies it to every `from`, `to` and `legacyUrl`, to the addresses in `check:redirects`, and the public host must
+apply the same function to the request path (query string and fragment removed first) before its exact lookup. Test vectors for both
+sides: `apps/cms/tests/fixtures/redirect-normalisation.json` (`normalize`, `reject`, `request`). The canonical form: leading `/`; trailing
+`/` unless the last segment has a file extension; each segment decoded from UTF-8 (raw characters and percent escapes alike),
+Unicode **NFC**-normalised and re-encoded, so every character except `A-Z a-z 0-9 - . _ ~` is UTF-8 percent-encoded with **upper-case** hex
+(`/café/`, `/cafe%CC%81/`, `/caf%c3%a9/` are one key; `'` becomes `%27`; `%41` becomes `A`); case preserved. Rejected (never repaired), which
+is exactly what the public host treats as junk: scheme or host, `//` prefix, backslash, raw whitespace, control characters raw or encoded
+(C0, DEL, C1, U+2028, U+2029), the encoded characters `%2F` `%5C` `%25` `%23`, bytes that are not valid UTF-8 (`/%C3/`), a segment that starts
+like a scheme (`tel:`, `mailto:`, `javascript:`, `data:`, `http(s):`, and any `name:` first segment), `?`, `#`, `*`, dot segments, empty
+segments, more than 300 characters. A request path that fails normalisation has no rule (404).
+
+**`redirects` collection** (`/api/redirects`): read, create, update and delete = `admin` and `editor-in-chief` only (anonymous and every
+other role 403). Every write is audited (`redirect.create`, `redirect.update`, `redirect.delete`; a bulk import writes one `redirect.import`).
+Fields: `from` (canonical, unique, not `/`), `to` (canonical path, or `https://` URL whose host is in `REDIRECT_ALLOWED_HOSTS`; absent for
+410), `status` (301 default, 302, 410), `source` (`manual` default, `rank-math`, `legacy-url`), `note`. Writes (serialised by an advisory
+lock) are refused with 400 naming the conflicting rule for: a loop; a duplicate address; a `manual` row that chains (either direction),
+that points at a gone (410) address, or whose absolute target path is itself a rule; and any address that is the current public address of a
+published article. A **manual row overrides** the rule an article derives for the same address; other sources may not. `rank-math` and
+`legacy-url` rows may chain (flattened, or made 410, at generation).
+
+**Derived rules**: each **published** article with a `legacyUrl` yields `from` = path of `legacyUrl`, `to` = the article path from
+`PUBLIC_ARTICLE_PATH_TEMPLATE` (`/reports/{slug}/` default, or `/{slug}/`; any other value stops startup). Nothing is emitted when `from`
+equals `to`, the article is not published, the `legacyUrl` has a query string or is the root, or its host is not in `LEGACY_SITE_HOSTS`
+(default `churchtimesnigeria.net,www.churchtimesnigeria.net`; a bare path is accepted). Existing rules and the write hook compare canonical paths
+over all published articles (no substring search, no limit).
+
+**`GET /api/public/redirects`** (anonymous; GET and HEAD):
+
+```json
+{ "version": "sha256:…", "generatedAt": "2026-10-16T00:00:00Z", "count": 2, "rules": [
+  { "from": "/old-slug/", "to": "/reports/new-slug/", "status": 301, "source": "legacy-url" },
+  { "from": "/retired/", "to": null, "status": 410, "source": "manual" } ] }
+```
+
+Sorted by `from`; `version` = sha256 of the canonical JSON of `rules`; a `410` has `"to": null`. Headers: `ETag: "<version>"`,
+`Cache-Control: public, max-age=300`, `Vary: Origin`; `If-None-Match` (strong, weak, list or `*`) answers `304`. `Origin`, when sent, must be in
+`PUBLIC_SUBMISSION_ORIGINS` (403); allowlisted origins get an exact `Access-Control-Allow-Origin` echo and `Access-Control-Expose-Headers: ETag`.
+No staff data and nothing from an unpublished article. Rebuilt at most once per 10 s per process.
+**Data never causes a 500.** At generation: a staff row beats a derived rule for the same address (counted); the lowest article id wins a
+duplicate `legacyUrl`; an invalid stored row, a loop (every rule on it and every chain into it), or an absolute target that is another rule's
+address is dropped; a chain is flattened; a rule whose target is a gone address becomes a 410 itself (status 302 if any hop is 302). The result
+satisfies the public host's rule: no emitted `to` equals another emitted `from`. Counts only go to the server log. **500 only** for a bad
+configuration (`PUBLIC_ARTICLE_PATH_TEMPLATE`, `REDIRECT_ALLOWED_HOSTS`, `LEGACY_SITE_HOSTS`) or when **20,000 rules** or **5 MB** is exceeded
+(never truncated); the log carries an error code, never an address.
+
+**Commands** (from `apps/cms`; they print counts and error codes only, never an address or rule label):
+
+- `npm run export:redirects -- --out <file> [--detail-file <path>]` writes exactly the JSON the endpoint serves (generated artifact, never committed).
+- `npm run check:redirects -- --urls <file> [--detail-file <path>]` reads old addresses (one per line, `#` comments; at most 5 MB and 100,000
+  lines), looks each up with the normalisation contract above, and prints counts: resolved (301 / 302 / 410 / live article) and unresolved
+  (no rule / query-only / invalid). Exit 1 if anything is unresolved, 2 for a usage or file error. On failure it prints `error=<code>`
+  (`config`, `too-many-rules`, `too-large`, `internal-error`) only.
+- `--detail-file` writes the rule labels (which are old addresses) of dropped or overridden items, or the error message, to a path that must be
+  **outside the repository** (otherwise exit 2).
+- `npm run import:redirects -- --file <csv> [--apply]`: header `from,to,status` (`status` optional, default 301; `to` empty for 410; at most
+  20,000 rows). Dry run unless `--apply`; rows get `source = rank-math`. Skipped and counted: invalid from/to/status, `*` patterns, duplicates,
+  already stored, address owned by an article rule or live article, loops, absolute target that is a rule. A row whose target is a gone
+  address is written as a 410 (counted).
+
+Environment: `PUBLIC_ARTICLE_PATH_TEMPLATE`, `REDIRECT_ALLOWED_HOSTS` (**must equal the public host's `PUBLIC_REDIRECT_ALLOWED_HOSTS`; the
+host also needs `PUBLIC_SITE_URL`**), `LEGACY_SITE_HOSTS` (`docs/operations.md`). Migration `20261017_095306_redirects` (table `redirects`,
+enum `enum_redirects_source`, locked-documents relation column), reversible (down then up is tested).
+
 ## 8. Environment variables
 
 See `apps/cms/.env.example` (annotated) and `docs/operations.md` §4. Secrets (`PAYLOAD_SECRET`, `PREVIEW_SECRET`,
@@ -652,8 +779,8 @@ limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/op
 
 ## 9. Changelog
 
-### Go-live C4 (newsletter): changelog
-Additive, no breaking change for existing clients. The integrator assigns the version number.
+### v1.12: Go-live C4 newsletter
+Additive, no breaking change for existing clients. 
 - New `POST /api/public/newsletter/subscribe`, `/confirm`, `/unsubscribe` (+ preflights, 405 for other methods), staff-only collection `subscribers`,
   `GET /api/subscribers/export`, `POST /api/subscribers/:id/erase`, CLI `npm run import:subscribers` (see "Go-live C4: newsletter" in §4).
 - New environment variables `PUBLIC_SITE_URL`, `NEWSLETTER_TOKEN_SECRET`, `NEWSLETTER_RATE_LIMIT`, `NEWSLETTER_RATE_WINDOW_SECONDS`, `NEWSLETTER_TOKEN_RATE_LIMIT`.
@@ -661,13 +788,27 @@ Additive, no breaking change for existing clients. The integrator assigns the ve
   malformed or non-https `PUBLIC_SITE_URL`; the loopback-only disposable staging stack (`CMS_ALLOW_INSECURE_LOCAL_STAGING`) is exempt and derives a throw-away key.
   `TURNSTILE_EXPECTED_ACTION` must also list `newsletter-subscribe` when set.
 
-### Go-live C5 (contact): changelog
-Additive, no breaking change. The integrator assigns the version number.
+### v1.11: Go-live C5 contact
+Additive, no breaking change. 
 - New `POST /api/public/contact` and `OPTIONS` preflight (see "Go-live C5: contact" in §4). New staff-only collection `contact-messages`.
 - New environment variables `CONTACT_RATE_LIMIT`, `CONTACT_RATE_WINDOW_SECONDS`, `CONTACT_NOTIFY_TO`. `TURNSTILE_EXPECTED_ACTION` must
   now also list `contact-message` when it is set.
 - New shared helper `src/lib/publicEndpoint.ts` (origin, CORS, body cap, error shape, per-endpoint Turnstile action pin) for new public endpoints;
   `POST /api/public/submissions` is unchanged.
+
+### v1.10: Go-live C7 redirects
+Go-live contract C7 (redirects). Additive.
+- New staff collection `redirects` (§ "Go-live C7: redirects"), new anonymous `GET /api/public/redirects` (ETag, 304, `max-age=300`),
+  pure canonical-path module shared with the public host, derived rules from `legacyUrl`, and the commands `export:redirects`,
+  `check:redirects`, `import:redirects`.
+- New environment values `PUBLIC_ARTICLE_PATH_TEMPLATE`, `REDIRECT_ALLOWED_HOSTS` and `LEGACY_SITE_HOSTS`; an invalid value stops startup.
+- Migration `20261017_095306_redirects`; no existing endpoint or field changed.
+
+### v1.9: Go-live C1
+Legacy content shapes (CMS side), see "Go-live C1: legacy content shapes" in §3. Additive: `youtubeEmbed` block and table feature on
+`articles.content`; any other embed is `400`; staff-only `media.legacyPath` (migration `20261016_110618_media_legacy_path`: one nullable
+indexed column, reversible); pure importer helpers. The archive importer (#19) is not changed here and must switch from raw `embed`
+nodes to `youtubeEmbed` blocks before it can write to this CMS.
 
 ### v1.8
 Go-live contract C2 (SEO fields). Additive, no breaking change.

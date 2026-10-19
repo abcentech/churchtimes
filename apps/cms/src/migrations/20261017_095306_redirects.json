@@ -494,6 +494,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "legacy_path": {
+          "name": "legacy_path",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
         "updated_at": {
           "name": "updated_at",
           "type": "timestamp(3) with time zone",
@@ -677,6 +683,21 @@
           "columns": [
             {
               "expression": "uploaded_by_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "media_legacy_path_idx": {
+          "name": "media_legacy_path_idx",
+          "columns": [
+            {
+              "expression": "legacy_path",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -2187,412 +2208,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.contact_messages": {
-      "name": "contact_messages",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "serial",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "reference": {
-          "name": "reference",
-          "type": "varchar",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "name": {
-          "name": "name",
-          "type": "varchar",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "email": {
-          "name": "email",
-          "type": "varchar",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "topic": {
-          "name": "topic",
-          "type": "enum_contact_messages_topic",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "message": {
-          "name": "message",
-          "type": "varchar",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "enum_contact_messages_status",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'new'"
-        },
-        "notify_status": {
-          "name": "notify_status",
-          "type": "enum_contact_messages_notify_status",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "ip_hash": {
-          "name": "ip_hash",
-          "type": "varchar",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "user_agent": {
-          "name": "user_agent",
-          "type": "varchar",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "content_hash": {
-          "name": "content_hash",
-          "type": "varchar",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp(3) with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp(3) with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "contact_messages_reference_idx": {
-          "name": "contact_messages_reference_idx",
-          "columns": [
-            {
-              "expression": "reference",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "contact_messages_email_idx": {
-          "name": "contact_messages_email_idx",
-          "columns": [
-            {
-              "expression": "email",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "contact_messages_topic_idx": {
-          "name": "contact_messages_topic_idx",
-          "columns": [
-            {
-              "expression": "topic",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "contact_messages_status_idx": {
-          "name": "contact_messages_status_idx",
-          "columns": [
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "contact_messages_content_hash_idx": {
-          "name": "contact_messages_content_hash_idx",
-          "columns": [
-            {
-              "expression": "content_hash",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "contact_messages_updated_at_idx": {
-          "name": "contact_messages_updated_at_idx",
-          "columns": [
-            {
-              "expression": "updated_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "contact_messages_created_at_idx": {
-          "name": "contact_messages_created_at_idx",
-          "columns": [
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.subscribers": {
-      "name": "subscribers",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "serial",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "email": {
-          "name": "email",
-          "type": "varchar",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "name": {
-          "name": "name",
-          "type": "varchar",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "status": {
-          "name": "status",
-          "type": "enum_subscribers_status",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'pending'"
-        },
-        "source": {
-          "name": "source",
-          "type": "enum_subscribers_source",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "consent_text_version": {
-          "name": "consent_text_version",
-          "type": "varchar",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "consent_at": {
-          "name": "consent_at",
-          "type": "timestamp(3) with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "confirmed_at": {
-          "name": "confirmed_at",
-          "type": "timestamp(3) with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "unsubscribed_at": {
-          "name": "unsubscribed_at",
-          "type": "timestamp(3) with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "ip_hash": {
-          "name": "ip_hash",
-          "type": "varchar",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "imported_from": {
-          "name": "imported_from",
-          "type": "enum_subscribers_imported_from",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "confirm_token_hash": {
-          "name": "confirm_token_hash",
-          "type": "varchar",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "confirm_token_expires_at": {
-          "name": "confirm_token_expires_at",
-          "type": "timestamp(3) with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "last_confirm_mail_at": {
-          "name": "last_confirm_mail_at",
-          "type": "timestamp(3) with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "confirm_mails_day_start": {
-          "name": "confirm_mails_day_start",
-          "type": "timestamp(3) with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "confirm_mails_in_day": {
-          "name": "confirm_mails_in_day",
-          "type": "numeric",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp(3) with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp(3) with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "subscribers_email_idx": {
-          "name": "subscribers_email_idx",
-          "columns": [
-            {
-              "expression": "email",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "subscribers_status_idx": {
-          "name": "subscribers_status_idx",
-          "columns": [
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "subscribers_confirm_token_hash_idx": {
-          "name": "subscribers_confirm_token_hash_idx",
-          "columns": [
-            {
-              "expression": "confirm_token_hash",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "subscribers_updated_at_idx": {
-          "name": "subscribers_updated_at_idx",
-          "columns": [
-            {
-              "expression": "updated_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "subscribers_created_at_idx": {
-          "name": "subscribers_created_at_idx",
-          "columns": [
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {},
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.live_events": {
       "name": "live_events",
       "schema": "",
@@ -3086,6 +2701,148 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.redirects": {
+      "name": "redirects",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "from": {
+          "name": "from",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "to": {
+          "name": "to",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 301
+        },
+        "source": {
+          "name": "source",
+          "type": "enum_redirects_source",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'manual'"
+        },
+        "note": {
+          "name": "note",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "redirects_from_idx": {
+          "name": "redirects_from_idx",
+          "columns": [
+            {
+              "expression": "from",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "redirects_status_idx": {
+          "name": "redirects_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "redirects_source_idx": {
+          "name": "redirects_source_idx",
+          "columns": [
+            {
+              "expression": "source",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "redirects_updated_at_idx": {
+          "name": "redirects_updated_at_idx",
+          "columns": [
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "redirects_created_at_idx": {
+          "name": "redirects_created_at_idx",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.audit_logs": {
       "name": "audit_logs",
       "schema": "",
@@ -3468,18 +3225,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "contact_messages_id": {
-          "name": "contact_messages_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "subscribers_id": {
-          "name": "subscribers_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
         "live_events_id": {
           "name": "live_events_id",
           "type": "integer",
@@ -3488,6 +3233,12 @@
         },
         "live_updates_id": {
           "name": "live_updates_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "redirects_id": {
+          "name": "redirects_id",
           "type": "integer",
           "primaryKey": false,
           "notNull": false
@@ -3620,36 +3371,6 @@
           "method": "btree",
           "with": {}
         },
-        "payload_locked_documents_rels_contact_messages_id_idx": {
-          "name": "payload_locked_documents_rels_contact_messages_id_idx",
-          "columns": [
-            {
-              "expression": "contact_messages_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "payload_locked_documents_rels_subscribers_id_idx": {
-          "name": "payload_locked_documents_rels_subscribers_id_idx",
-          "columns": [
-            {
-              "expression": "subscribers_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "payload_locked_documents_rels_live_events_id_idx": {
           "name": "payload_locked_documents_rels_live_events_id_idx",
           "columns": [
@@ -3670,6 +3391,21 @@
           "columns": [
             {
               "expression": "live_updates_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "payload_locked_documents_rels_redirects_id_idx": {
+          "name": "payload_locked_documents_rels_redirects_id_idx",
+          "columns": [
+            {
+              "expression": "redirects_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -3775,32 +3511,6 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
-        "payload_locked_documents_rels_contact_messages_fk": {
-          "name": "payload_locked_documents_rels_contact_messages_fk",
-          "tableFrom": "payload_locked_documents_rels",
-          "tableTo": "contact_messages",
-          "columnsFrom": [
-            "contact_messages_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "payload_locked_documents_rels_subscribers_fk": {
-          "name": "payload_locked_documents_rels_subscribers_fk",
-          "tableFrom": "payload_locked_documents_rels",
-          "tableTo": "subscribers",
-          "columnsFrom": [
-            "subscribers_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
         "payload_locked_documents_rels_live_events_fk": {
           "name": "payload_locked_documents_rels_live_events_fk",
           "tableFrom": "payload_locked_documents_rels",
@@ -3820,6 +3530,19 @@
           "tableTo": "live_updates",
           "columnsFrom": [
             "live_updates_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "payload_locked_documents_rels_redirects_fk": {
+          "name": "payload_locked_documents_rels_redirects_fk",
+          "tableFrom": "payload_locked_documents_rels",
+          "tableTo": "redirects",
+          "columnsFrom": [
+            "redirects_id"
           ],
           "columnsTo": [
             "id"
@@ -4195,66 +3918,6 @@
         "converted"
       ]
     },
-    "public.enum_contact_messages_topic": {
-      "name": "enum_contact_messages_topic",
-      "schema": "public",
-      "values": [
-        "general",
-        "advertising",
-        "corrections",
-        "tips",
-        "other"
-      ]
-    },
-    "public.enum_contact_messages_status": {
-      "name": "enum_contact_messages_status",
-      "schema": "public",
-      "values": [
-        "new",
-        "read",
-        "replied",
-        "spam"
-      ]
-    },
-    "public.enum_contact_messages_notify_status": {
-      "name": "enum_contact_messages_notify_status",
-      "schema": "public",
-      "values": [
-        "sent",
-        "failed",
-        "not-configured"
-      ]
-    },
-    "public.enum_subscribers_status": {
-      "name": "enum_subscribers_status",
-      "schema": "public",
-      "values": [
-        "pending",
-        "confirmed",
-        "unsubscribed",
-        "bounced",
-        "erased"
-      ]
-    },
-    "public.enum_subscribers_source": {
-      "name": "enum_subscribers_source",
-      "schema": "public",
-      "values": [
-        "footer",
-        "article",
-        "home",
-        "other"
-      ]
-    },
-    "public.enum_subscribers_imported_from": {
-      "name": "enum_subscribers_imported_from",
-      "schema": "public",
-      "values": [
-        "web",
-        "mailchimp-import",
-        "mailchimp-import-no-optin-time"
-      ]
-    },
     "public.enum_live_events_status": {
       "name": "enum_live_events_status",
       "schema": "public",
@@ -4272,6 +3935,15 @@
         "approved",
         "rejected"
       ]
+    },
+    "public.enum_redirects_source": {
+      "name": "enum_redirects_source",
+      "schema": "public",
+      "values": [
+        "manual",
+        "rank-math",
+        "legacy-url"
+      ]
     }
   },
   "schemas": {},
@@ -4284,6 +3956,6 @@
     "tables": {},
     "columns": {}
   },
-  "id": "5d6bb891-e5e7-4d5c-9af5-9b6f5fd5c22f",
+  "id": "9b49e6e8-4017-4c26-9d74-1a3b5a336801",
   "prevId": "00000000-0000-0000-0000-000000000000"
 }

@@ -14,6 +14,7 @@ import { ContactMessages } from './collections/ContactMessages'
 import { LiveEvents } from './collections/LiveEvents'
 import { LiveUpdates } from './collections/LiveUpdates'
 import { Media } from './collections/Media'
+import { Redirects } from './collections/Redirects'
 import { Submissions } from './collections/Submissions'
 import { Subscribers } from './collections/Subscribers'
 import { Users } from './collections/Users'
@@ -21,9 +22,15 @@ import { previewArticleEndpoint } from './endpoints/previewArticle'
 import { publicContactEndpoint, publicContactPreflightEndpoint } from './endpoints/publicContact'
 import { newsletterEndpoints } from './endpoints/publicNewsletter'
 import {
+  publicRedirectsEndpoint,
+  publicRedirectsHeadEndpoint,
+  publicRedirectsPreflightEndpoint,
+} from './endpoints/publicRedirects'
+import {
   publicSubmissionsEndpoint,
   publicSubmissionsPreflightEndpoint,
 } from './endpoints/publicSubmissions'
+import { parseAllowedHosts, parseLegacyHosts, resolveArticlePathTemplate } from './lib/redirectPaths'
 import { startScheduler } from './lib/scheduler'
 import {
   checkOriginList,
@@ -46,6 +53,12 @@ const secret = process.env.PAYLOAD_SECRET
 if (!isTest && (!secret || secret.length < 32)) {
   throw new Error('PAYLOAD_SECRET must be set and at least 32 characters long.')
 }
+
+// Redirect settings (go-live C7) fail loudly at startup: a typo in PUBLIC_ARTICLE_PATH_TEMPLATE would otherwise turn
+// into wrong redirects. Unset values are fine (default template, no absolute redirect hosts).
+resolveArticlePathTemplate(process.env)
+parseAllowedHosts(process.env)
+parseLegacyHosts(process.env)
 
 const corsOrigins = csv(process.env.CMS_CORS_ORIGINS).map(normaliseOrigin)
 const csrfOrigins = csv(process.env.CMS_CSRF_ORIGINS).map(normaliseOrigin)
@@ -127,11 +140,15 @@ export default buildConfig({
     Subscribers,
     LiveEvents,
     LiveUpdates,
+    Redirects,
     AuditLogs,
   ],
   endpoints: [
     publicSubmissionsEndpoint,
     publicSubmissionsPreflightEndpoint,
+    publicRedirectsEndpoint,
+    publicRedirectsHeadEndpoint,
+    publicRedirectsPreflightEndpoint,
     publicContactEndpoint,
     publicContactPreflightEndpoint,
     ...newsletterEndpoints,
