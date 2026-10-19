@@ -13,6 +13,7 @@ import { Categories } from './collections/Categories'
 import { LiveEvents } from './collections/LiveEvents'
 import { LiveUpdates } from './collections/LiveUpdates'
 import { Media } from './collections/Media'
+import { LegacyComments } from './collections/LegacyComments'
 import { Redirects } from './collections/Redirects'
 import { Submissions } from './collections/Submissions'
 import { Users } from './collections/Users'
@@ -117,7 +118,7 @@ export default buildConfig({
     user: 'users',
     importMap: { baseDir: path.resolve(dirname) },
   },
-  collections: [Users, Categories, Media, Articles, Submissions, LiveEvents, LiveUpdates, Redirects, AuditLogs],
+  collections: [Users, Categories, Media, Articles, Submissions, LiveEvents, LiveUpdates, Redirects, LegacyComments, AuditLogs],
   endpoints: [
     publicSubmissionsEndpoint,
     publicSubmissionsPreflightEndpoint,

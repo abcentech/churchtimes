@@ -186,6 +186,8 @@ export async function setupFixtures(runId: string) {
     if (eventIds.length) await del('live-updates', { event: { in: eventIds } })
     await del('live-events', like('slug'))
     await del('submissions', like('title'))
+    // legacy-comments.article is required (FK), so the comments must go before their articles.
+    if (articleIds.length) await del('legacy-comments', { article: { in: articleIds } })
     await del('articles', like('slug'))
     await del('media', like('alt'))
     await del('audit-logs', {
