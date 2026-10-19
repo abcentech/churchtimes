@@ -74,6 +74,7 @@ export interface Config {
     submissions: Submission;
     'live-events': LiveEvent;
     'live-updates': LiveUpdate;
+    redirects: Redirect;
     'audit-logs': AuditLog;
     'payload-kv': PayloadKv;
     'payload-locked-documents': PayloadLockedDocument;
@@ -95,6 +96,7 @@ export interface Config {
     submissions: SubmissionsSelect<false> | SubmissionsSelect<true>;
     'live-events': LiveEventsSelect<false> | LiveEventsSelect<true>;
     'live-updates': LiveUpdatesSelect<false> | LiveUpdatesSelect<true>;
+    redirects: RedirectsSelect<false> | RedirectsSelect<true>;
     'audit-logs': AuditLogsSelect<false> | AuditLogsSelect<true>;
     'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
     'payload-locked-documents': PayloadLockedDocumentsSelect<false> | PayloadLockedDocumentsSelect<true>;
@@ -368,6 +370,34 @@ export interface Submission {
   createdAt: string;
 }
 /**
+ * Exact old addresses and where they go. Admin and editor-in-chief only. Articles with a legacy address get their rule automatically.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "redirects".
+ */
+export interface Redirect {
+  id: number;
+  /**
+   * Old path, for example /old-slug/. Stored in canonical form (leading and trailing slash).
+   */
+  from: string;
+  /**
+   * New path (/new-slug/) or an https address on an allowed host. Leave empty for 410 (gone).
+   */
+  to?: string | null;
+  /**
+   * 301 moved permanently, 302 temporary, 410 gone.
+   */
+  status: number;
+  /**
+   * manual rows may not chain; rank-math and legacy-url rows are flattened when the list is generated.
+   */
+  source: 'manual' | 'rank-math' | 'legacy-url';
+  note?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
  * Read-only record of workflow and moderation actions.
  *
  * This interface was referenced by `Config`'s JSON-Schema
@@ -446,6 +476,10 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'live-updates';
         value: number | LiveUpdate;
+      } | null)
+    | ({
+        relationTo: 'redirects';
+        value: number | Redirect;
       } | null)
     | ({
         relationTo: 'audit-logs';
@@ -674,6 +708,19 @@ export interface LiveUpdatesSelect<T extends boolean = true> {
   author?: T;
   approvedBy?: T;
   approvedAt?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "redirects_select".
+ */
+export interface RedirectsSelect<T extends boolean = true> {
+  from?: T;
+  to?: T;
+  status?: T;
+  source?: T;
+  note?: T;
   updatedAt?: T;
   createdAt?: T;
 }
