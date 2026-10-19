@@ -17,6 +17,7 @@
     "migrate:create": "payload migrate:create",
     "seed": "payload run src/seed/index.ts",
     "admin:set-password": "payload run src/seed/setPassword.ts",
+    "import:subscribers": "payload run src/seed/importSubscribers.ts",
     "export:redirects": "payload run src/scripts/exportRedirects.ts --",
     "check:redirects": "payload run src/scripts/checkRedirects.ts --",
     "import:redirects": "payload run src/scripts/importRedirects.ts --",

@@ -72,6 +72,8 @@ export interface Config {
     media: Media;
     articles: Article;
     submissions: Submission;
+    'contact-messages': ContactMessage;
+    subscribers: Subscriber;
     'live-events': LiveEvent;
     'live-updates': LiveUpdate;
     redirects: Redirect;
@@ -94,6 +96,8 @@ export interface Config {
     media: MediaSelect<false> | MediaSelect<true>;
     articles: ArticlesSelect<false> | ArticlesSelect<true>;
     submissions: SubmissionsSelect<false> | SubmissionsSelect<true>;
+    'contact-messages': ContactMessagesSelect<false> | ContactMessagesSelect<true>;
+    subscribers: SubscribersSelect<false> | SubscribersSelect<true>;
     'live-events': LiveEventsSelect<false> | LiveEventsSelect<true>;
     'live-updates': LiveUpdatesSelect<false> | LiveUpdatesSelect<true>;
     redirects: RedirectsSelect<false> | RedirectsSelect<true>;
@@ -370,6 +374,62 @@ export interface Submission {
   createdAt: string;
 }
 /**
+ * Messages sent through the public contact form. Reply by email; mark the status as you go.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "contact-messages".
+ */
+export interface ContactMessage {
+  id: number;
+  reference: string;
+  name: string;
+  email: string;
+  topic: 'general' | 'advertising' | 'corrections' | 'tips' | 'other';
+  message: string;
+  status: 'new' | 'read' | 'replied' | 'spam';
+  /**
+   * Did the notification email go out? "failed" or "not-configured": check the inbox here.
+   */
+  notifyStatus?: ('sent' | 'failed' | 'not-configured') | null;
+  ipHash?: string | null;
+  userAgent?: string | null;
+  contentHash?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Newsletter subscribers. Export (admin only): GET /api/subscribers/export?status=confirmed.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "subscribers".
+ */
+export interface Subscriber {
+  id: number;
+  email: string;
+  name?: string | null;
+  /**
+   * Staff may only move a subscriber to unsubscribed or bounced. Confirmation happens through the e-mailed link.
+   */
+  status: 'pending' | 'confirmed' | 'unsubscribed' | 'bounced' | 'erased';
+  source: 'footer' | 'article' | 'home' | 'other';
+  /**
+   * Version of the consent wording shown when the person signed up.
+   */
+  consentTextVersion: string;
+  consentAt?: string | null;
+  confirmedAt?: string | null;
+  unsubscribedAt?: string | null;
+  ipHash?: string | null;
+  importedFrom?: ('web' | 'mailchimp-import' | 'mailchimp-import-no-optin-time') | null;
+  confirmTokenHash?: string | null;
+  confirmTokenExpiresAt?: string | null;
+  lastConfirmMailAt?: string | null;
+  confirmMailsDayStart?: string | null;
+  confirmMailsInDay?: number | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
  * Exact old addresses and where they go. Admin and editor-in-chief only. Articles with a legacy address get their rule automatically.
  *
  * This interface was referenced by `Config`'s JSON-Schema
@@ -468,6 +528,14 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'submissions';
         value: number | Submission;
+      } | null)
+    | ({
+        relationTo: 'contact-messages';
+        value: number | ContactMessage;
+      } | null)
+    | ({
+        relationTo: 'subscribers';
+        value: number | Subscriber;
       } | null)
     | ({
         relationTo: 'live-events';
@@ -675,6 +743,47 @@ export interface SubmissionsSelect<T extends boolean = true> {
   ipHash?: T;
   contentHash?: T;
   userAgent?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "contact-messages_select".
+ */
+export interface ContactMessagesSelect<T extends boolean = true> {
+  reference?: T;
+  name?: T;
+  email?: T;
+  topic?: T;
+  message?: T;
+  status?: T;
+  notifyStatus?: T;
+  ipHash?: T;
+  userAgent?: T;
+  contentHash?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "subscribers_select".
+ */
+export interface SubscribersSelect<T extends boolean = true> {
+  email?: T;
+  name?: T;
+  status?: T;
+  source?: T;
+  consentTextVersion?: T;
+  consentAt?: T;
+  confirmedAt?: T;
+  unsubscribedAt?: T;
+  ipHash?: T;
+  importedFrom?: T;
+  confirmTokenHash?: T;
+  confirmTokenExpiresAt?: T;
+  lastConfirmMailAt?: T;
+  confirmMailsDayStart?: T;
+  confirmMailsInDay?: T;
   updatedAt?: T;
   createdAt?: T;
 }
