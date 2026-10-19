@@ -76,3 +76,20 @@ hit add/add conflicts on `tools/public-build-policy.mjs` and `unit-tests/public-
 
 A9 (real redirects integration) and A12 (media paths, once the CMS offline map export exists) can start. #56 (contact and newsletter) is being rebuilt on the merged
 base; B6 and B7 can use it once merged.
+
+## Addendum: independent build-and-merge check of #64
+
+Built twice in a temporary worktree: unit 133 passed, 1 skipped; initial JS 36,143 gzip bytes with every optional setting filled (4,817 bytes headroom) and
+36,745 bytes unset (4,215 bytes). `docs/evidence/wave3-reader-budget/quality.json` (37,127) predates the lazy article renderer and is stale but still passes.
+`git merge-tree` simulations: #62 conflicts with #64 in either order (the one-line `OneSignalSDKWorker.js` difference in `tools/public-build-policy.mjs:6`);
+#59 merges cleanly with #64 but conflicts with #57 and #62; #63, #61, #65, #50 and #41 are clean after #64; #49, #45, #42, #43 and #52 conflict with #64.
+
+- **MUST:** make #64 the single carrier. Close #62 and #59 as superseded by #64, rebase or close #45 and #49, rebase #42, #43 and #52 onto whichever lands second, and
+  rewrite the #64 body so it no longer reads as stacked on #62 and #59. Resolving the policy conflict by keeping #62's side would drop the worker entry.
+- **SHOULD, required before any OneSignal app ID is configured:** the push withdrawal listener exists only while the push panel is mounted (`public-push.js:32,73`,
+  `main.js:135`), but `requestConsent()` (`reader-consent.js:14`) opens the same dialog without mounting it. A reader who unticks push there keeps an active
+  worker and subscription. Register one consent listener in `main.js` that runs the opt-out and unregister cleanup whenever push consent is off.
+- **SHOULD:** the comments-disposal tests pass even if disposal is broken (they remove the section themselves or rely on page replacement). Test navigating from article A to B while A's response
+  is held, then release it and assert B shows no A comments and A's fetch was aborted.
+- **SHOULD:** `await import('./lib/article-content.js')` (`main.js:366`) now delays article text by one more download even when the server supplied the data; add a `modulepreload`
+  hint on article routes or keep the renderer in the main bundle (about 4.2 KB headroom).
