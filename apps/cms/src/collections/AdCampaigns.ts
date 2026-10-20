@@ -6,6 +6,7 @@ import type {
   CollectionAfterChangeHook,
   CollectionAfterDeleteHook,
   CollectionBeforeChangeHook,
+  CollectionBeforeOperationHook,
   CollectionBeforeDeleteHook,
   CollectionBeforeValidateHook,
   CollectionConfig,
@@ -39,6 +40,7 @@ import {
   type Variant,
 } from '../lib/advertising'
 import { clampLimit } from '../lib/clampLimit'
+import { assertExpectedUpdatedAt, captureExpectedUpdatedAt } from '../lib/expectedUpdatedAt'
 import { deepEqual } from '../lib/deepEqual'
 import { cleanText } from '../lib/sanitize'
 
@@ -57,7 +59,17 @@ import { cleanText } from '../lib/sanitize'
  */
 
 type Doc = Record<string, unknown>
-type AdContext = { adReason?: string }
+type AdContext = { adReason?: string; adExpectedSent?: boolean; expectedUpdatedAt?: unknown }
+
+/** Runs after captureExpectedUpdatedAt: remembers whether the client sent the version it reviewed (needed to approve). */
+const noteExpected: CollectionBeforeOperationHook = ({ args, operation }) => {
+  if (operation !== 'update') return args
+  const req = (args as { req: PayloadRequest }).req
+  const ctx = (req.context ?? {}) as AdContext
+  ctx.adExpectedSent = ctx.expectedUpdatedAt !== undefined
+  req.context = ctx
+  return args
+}
 
 const asUser = (u: unknown): UserLike | null => (u ? (u as UserLike) : null)
 
@@ -97,6 +109,9 @@ const normalise: CollectionBeforeValidateHook = ({ data, originalDoc }) => {
       return bad('destinationUrl must be an absolute https address (no credentials, at most 500 characters).')
     }
     data.destinationUrl = url
+  }
+  if ('priority' in data && data.priority !== undefined && data.priority !== null) {
+    if (typeof data.priority !== 'number' || !Number.isInteger(data.priority)) return bad('priority must be a whole number from 0 to 100.')
   }
   for (const k of ['startsAt', 'endsAt'] as const) {
     if (k in data && data[k] !== undefined && data[k] !== null) {
@@ -202,8 +217,17 @@ const enforceRules: CollectionBeforeChangeHook = async ({ data, originalDoc, ope
   const previousStatus = operation === 'create' ? undefined : String(orig.status ?? 'draft')
   const targetStatus = String(data.status ?? orig.status ?? 'draft')
   const enteringApproved = targetStatus === 'approved' && previousStatus !== 'approved'
-  const touchesCreatives = operation === 'create' || 'creatives' in data || 'placements' in data
+  // Payload turns an omitted group into `{}`, so `'creatives' in data` is always true on update: compare the stored ids and
+  // placements instead. Creative checks therefore never block pausing, cancelling or editing a campaign whose files
+  // were not touched (a corrupt or replaced file must not stop staff withdrawing it).
+  const touchesCreatives =
+    operation === 'create' ||
+    !deepEqual(normForCompare('creatives', orig.creatives), normForCompare('creatives', merged.creatives)) ||
+    !deepEqual(normForCompare('placements', orig.placements), normForCompare('placements', merged.placements))
 
+  if (enteringApproved && user && !ctx.adExpectedSent) {
+    return bad('expectedUpdatedAt is required to approve: send the updatedAt of the version you reviewed.', 400)
+  }
   if (touchesCreatives || enteringApproved) await checkCreatives(req, placements, merged.creatives)
   if (touchesCreatives) data.creativeMedia = creativeMediaIds(merged.creatives, placements)
 
@@ -308,9 +332,9 @@ export const AdCampaigns: CollectionConfig = {
     delete: editorInChiefOnly,
   },
   hooks: {
-    beforeOperation: [clampLimit],
+    beforeOperation: [clampLimit, captureExpectedUpdatedAt, noteExpected],
     beforeValidate: [normalise],
-    beforeChange: [enforceRules],
+    beforeChange: [assertExpectedUpdatedAt('ad_campaigns'), enforceRules],
     afterChange: [auditChange],
     beforeDelete: [refuseDeleteWhenApproved],
     afterDelete: [auditDelete],

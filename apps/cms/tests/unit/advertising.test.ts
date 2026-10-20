@@ -63,6 +63,7 @@ describe('schedule', () => {
 describe('destination URL', () => {
   it('accepts only absolute https without credentials', () => {
     expect(normalizeDestinationUrl('https://example.test/offer?a=1')).toBe('https://example.test/offer?a=1')
+    expect(normalizeDestinationUrl('  https://Example.TEST  ')).toBe('https://example.test/') // the stored value is the normalised href
     for (const bad of [
       'http://example.test',
       'javascript:alert(1)',
@@ -194,6 +195,18 @@ describe('toPublicCampaign', () => {
       },
     })
     expect(JSON.stringify(out)).not.toMatch(/paid|secret|a@example|approvedBy|"advertiser"|paymentStatus|contactEmail/)
+  })
+  it('re-checks the destination address and skips a campaign that has a bad one', () => {
+    for (const destinationUrl of ['http://example.test/', 'javascript:alert(1)', 'https://u:p@example.test/', '']) {
+      expect(toPublicCampaign({ ...base, destinationUrl }, media, 'https://x.test'), destinationUrl).toBeNull()
+    }
+  })
+  it('can leave out the start clause to find upcoming boundaries', () => {
+    const withStart = liveCampaignClauses('', T, true)
+    const upcoming = liveCampaignClauses('', T, true, { includeUpcoming: true })
+    expect(withStart.some((c) => 'startsAt' in c)).toBe(true)
+    expect(upcoming.some((c) => 'startsAt' in c)).toBe(false)
+    expect(upcoming).toHaveLength(withStart.length - 1)
   })
   it('drops a campaign whose creative is missing instead of delivering it broken', () => {
     expect(toPublicCampaign({ ...base, creatives: { homepageBillboard: { desktop: 1 } } }, media, 'https://x.test')).toBeNull()

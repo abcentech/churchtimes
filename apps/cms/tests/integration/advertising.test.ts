@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto'
 import sharp from 'sharp'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 
-import { ORIGIN, api, newRunId, setupFixtures, type Fixtures } from './helpers'
+import { api, newRunId, setupFixtures, type Fixtures } from './helpers'
 
 /**
  * Go-live C3. Real REST handlers, real PostgreSQL (embedded), real hooks and real uploaded images. No mocks.
@@ -13,6 +13,8 @@ const runId = newRunId()
 const ALLOWED_ORIGIN = 'http://allowed.test' // PUBLIC_SUBMISSION_ORIGINS in tests/integration/global-setup.ts
 let f: Fixtures
 let advertiserId: number
+const CMS_URL = 'http://cms.test'
+const savedCmsUrl = process.env.CMS_PUBLIC_URL
 
 const messages = (res: { json: any }): string => JSON.stringify(res.json?.errors ?? res.json)
 const iso = (offsetSeconds: number) => new Date(Date.now() + offsetSeconds * 1000).toISOString()
@@ -33,6 +35,7 @@ async function upload(token: string, label: string, buf: Buffer, mime: string, e
 }
 
 beforeAll(async () => {
+  process.env.CMS_PUBLIC_URL = CMS_URL
   f = await setupFixtures(runId)
   const adv = await f.payload.create({
     collection: 'advertisers',
@@ -70,6 +73,8 @@ afterAll(async () => {
   await f?.payload.db.deleteMany({ collection: 'advertisers', where: { name: { like: runId } }, req: undefined as never }).catch(() => undefined)
   await f?.payload.delete({ collection: 'audit-logs', where: { summary: { like: runId } }, overrideAccess: true }).catch(() => undefined)
   await f?.cleanup()
+  if (savedCmsUrl === undefined) delete process.env.CMS_PUBLIC_URL
+  else process.env.CMS_PUBLIC_URL = savedCmsUrl
 })
 
 const creativesFull = () => ({
@@ -92,8 +97,15 @@ const body = (extra: Record<string, unknown> = {}) => ({
 
 const create = (token: string, extra: Record<string, unknown> = {}) =>
   api('POST', '/api/ad-campaigns', { token, body: body(extra) })
-const patch = (token: string, id: number, data: Record<string, unknown>) =>
-  api('PATCH', `/api/ad-campaigns/${id}`, { token, body: data })
+/** Approving requires the version the approver reviewed: attach the current `updatedAt` unless the test sets it itself. */
+const patch = async (token: string, id: number, data: Record<string, unknown>) => {
+  let body = data
+  if (data.status === 'approved' && !('expectedUpdatedAt' in data)) {
+    const cur = await api('GET', `/api/ad-campaigns/${id}?depth=0`, { token })
+    body = { ...data, expectedUpdatedAt: cur.json?.updatedAt }
+  }
+  return api('PATCH', `/api/ad-campaigns/${id}`, { token, body })
+}
 
 /** A campaign that satisfies the whole approval gate, still in `draft`. */
 async function ready(extra: Record<string, unknown> = {}): Promise<{ id: number; sponsor: string }> {
@@ -343,8 +355,8 @@ describe('GET /api/public/advertising (C3.2)', () => {
       placements: ['homepage-billboard'],
       creatives: {
         'homepage-billboard': {
-          desktop: { src: `${ORIGIN}/api/media/file/${media.bbDesktop!.filename}`, width: 970, height: 250 },
-          mobile: { src: `${ORIGIN}/api/media/file/${media.bbMobile!.filename}`, width: 320, height: 100 },
+          desktop: { src: `${CMS_URL}/api/media/file/${media.bbDesktop!.filename}`, width: 970, height: 250 },
+          mobile: { src: `${CMS_URL}/api/media/file/${media.bbMobile!.filename}`, width: 320, height: 100 },
         },
       },
     })
@@ -513,5 +525,170 @@ describe('creative media privacy', () => {
     expect((await edit()).status).toBe(200)
     await patch(f.tokens.eic, c.id, { status: 'approved' })
     expect((await edit()).status).toBe(403)
+  })
+})
+
+const setMediaDims = (id: number, width: number, height: number) =>
+  f.payload.db.updateOne({ collection: 'media', id, data: { width, height }, returning: false } as never)
+
+const replaceFile = async (token: string, m: Media, buf: Buffer) => {
+  const form = new FormData()
+  form.set('_payload', JSON.stringify({ alt: `${runId} replaced` }))
+  form.set('file', new Blob([new Uint8Array(buf)], { type: 'image/png' }), `${runId}-replacement.png`)
+  return api('PATCH', `/api/media/${m.id}`, { token, body: form })
+}
+
+describe('review fixes (M1, M2, S1 to S9)', () => {
+  it('M1: no role can replace the file of a creative of an approved or pending campaign, single or bulk', async () => {
+    const own = await upload(f.tokens.eic, 'm1-creative', await solid(320, 50).png().toBuffer(), 'image/png', 'png')
+    const c = await ready({ placements: ['mobile-banner'], creatives: { mobileBanner: { mobile: own.id } } })
+    const replacement = await solid(320, 50).png({ compressionLevel: 9 }).toBuffer()
+    // draft: replacing is still possible (nothing was approved on the strength of this file)
+    const draftReplace = await replaceFile(f.tokens.sectionEditor, own, replacement)
+    expect(draftReplace.status, messages(draftReplace)).toBe(200)
+
+    for (const status of ['approved', 'pending_approval'] as const) {
+      const fresh = await upload(f.tokens.eic, `m1-${status}`, await solid(320, 50).png().toBuffer(), 'image/png', 'png')
+      await patch(f.tokens.eic, c.id, { creatives: { mobileBanner: { mobile: fresh.id } } })
+      expect((await patch(f.tokens.eic, c.id, { status: 'approved' })).status).toBe(200)
+      if (status === 'pending_approval') await patch(f.tokens.eic, c.id, { status: 'pending_approval' })
+      for (const key of ['sectionEditor', 'eic', 'admin'] as const) {
+        const res = await replaceFile(f.tokens[key], fresh, replacement)
+        expect(res.status, `${status} ${key}`).toBe(403)
+      }
+      // bulk update with a file, targeting the creative by its alt
+      const bulkForm = new FormData()
+      bulkForm.set('_payload', JSON.stringify({ alt: `${runId} m1-${status}` }))
+      bulkForm.set('file', new Blob([new Uint8Array(replacement)], { type: 'image/png' }), `${runId}-bulk.png`)
+      const bulk = await api('PATCH', `/api/media?where[alt][equals]=${encodeURIComponent(`${runId} m1-${status}`)}`, {
+        token: f.tokens.eic,
+        body: bulkForm,
+      })
+      expect(bulk.status, `bulk ${status}`).toBe(403)
+      // the stored file is untouched
+      expect(await fileStatus({ ...fresh })).toBe(status === 'approved' ? 200 : 403)
+    }
+    // paused and cancelled campaigns no longer protect the file
+    await patch(f.tokens.eic, c.id, { status: 'paused' })
+    const cur = (await f.payload.findByID({ collection: 'ad-campaigns', id: c.id, depth: 0, overrideAccess: true })) as any
+    const mediaId = cur.creatives.mobileBanner.mobile as number
+    const res = await replaceFile(f.tokens.eic, { id: mediaId, filename: '' }, replacement)
+    expect(res.status, messages(res)).toBe(200)
+  })
+
+  it('M2: pausing, cancelling and editing never re-run creative checks (a corrupt creative cannot trap a live campaign)', async () => {
+    const own = await upload(f.tokens.eic, 'm2-creative', await solid(320, 50).png().toBuffer(), 'image/png', 'png')
+    const c = await live({ placements: ['mobile-banner'], creatives: { mobileBanner: { mobile: own.id } } })
+    await setMediaDims(own.id, 1, 1) // what a bad import or a manual change could leave behind
+    let res = await patch(f.tokens.eic, c.id, { status: 'paused' })
+    expect(res.status, messages(res)).toBe(200)
+    res = await patch(f.tokens.eic, c.id, { priority: 3 })
+    expect(res.status, messages(res)).toBe(200)
+    res = await patch(f.tokens.eic, c.id, { status: 'cancelled' })
+    expect(res.status, messages(res)).toBe(200)
+    // but approving the broken creative is refused
+    res = await patch(f.tokens.eic, c.id, { status: 'approved' })
+    expect(res.status).toBe(400)
+    expect(messages(res)).toMatch(/320x50/)
+  })
+
+  it('S1: approving needs the version that was reviewed (409 when it changed, 400 when missing)', async () => {
+    const c = await ready()
+    const id = c.id
+    const missing = await api('PATCH', `/api/ad-campaigns/${id}`, { token: f.tokens.eic, body: { status: 'approved' } })
+    expect(missing.status).toBe(400)
+    expect(messages(missing)).toMatch(/expectedUpdatedAt/)
+    const seen = (await api('GET', `/api/ad-campaigns/${id}?depth=0`, { token: f.tokens.eic })).json.updatedAt as string
+    // a colleague edits the public text after it was reviewed
+    expect((await patch(f.tokens.eic, id, { alt: 'Changed after review' })).status).toBe(200)
+    const stale = await api('PATCH', `/api/ad-campaigns/${id}`, { token: f.tokens.eic, body: { status: 'approved', expectedUpdatedAt: seen } })
+    expect(stale.status).toBe(409)
+    expect((await f.payload.findByID({ collection: 'ad-campaigns', id, depth: 0, overrideAccess: true })).status).toBe('draft')
+    expect((await patch(f.tokens.eic, id, { status: 'approved' })).status).toBe(200)
+    expect((await api('PATCH', `/api/ad-campaigns/${id}`, { token: f.tokens.eic, body: { status: 'approved', expectedUpdatedAt: 'nonsense' } })).status).toBe(400)
+  })
+
+  it('S4: creative links come from configuration only, never from the Host header; unset fails closed', async () => {
+    await live()
+    const forged = await api('GET', '/api/public/advertising', { headers: { Host: 'evil.test', 'X-Forwarded-Host': 'evil.test' } })
+    expect(forged.status).toBe(200)
+    expect(forged.text).toContain(`${CMS_URL}/api/media/file/`)
+    expect(forged.text).not.toContain('evil.test')
+    const saved = process.env.CMS_PUBLIC_URL
+    process.env.CMS_PUBLIC_URL = ''
+    try {
+      const res = await ads()
+      expect(res.status).toBe(503)
+      expect(res.headers.get('cache-control')).toBe('no-store')
+      await wipeCampaigns()
+      const empty = await ads() // nothing to deliver, nothing to build: still fine
+      expect(empty.status).toBe(200)
+      expect(empty.json.campaigns).toEqual([])
+    } finally {
+      process.env.CMS_PUBLIC_URL = saved
+    }
+  })
+
+  it('S3: stores the normalised https address and skips a row that bypassed the hooks with a bad one', async () => {
+    const c = await live({ destinationUrl: 'https://Example.TEST' })
+    expect((await f.payload.findByID({ collection: 'ad-campaigns', id: c.id, depth: 0, overrideAccess: true })).destinationUrl).toBe('https://example.test/')
+    await f.payload.db.updateOne({ collection: 'ad-campaigns', id: c.id, data: { destinationUrl: 'javascript:alert(1)' }, returning: false } as never)
+    expect(mine(await ads())).toHaveLength(0)
+  })
+
+  it('S7: priority must be a whole number', async () => {
+    expect((await create(f.tokens.eic, { priority: 1.5 })).status).toBe(400)
+    expect((await create(f.tokens.eic, { priority: 100 })).status).toBe(201)
+  })
+
+  it('S9: rights unticked behind the hooks removes the campaign from the feed and the file route', async () => {
+    const c = await live()
+    expect(await fileStatus(media.bbDesktop!)).toBe(200)
+    await f.payload.db.updateOne({ collection: 'ad-campaigns', id: c.id, data: { rightsConfirmed: false }, returning: false } as never)
+    expect(mine(await ads())).toHaveLength(0)
+    expect(await fileStatus(media.bbDesktop!)).toBe(403)
+  })
+
+  it('S9: a creative shared by two campaigns stays public while either is delivered', async () => {
+    const a = await live()
+    const b = await live()
+    expect(await fileStatus(media.bbDesktop!)).toBe(200)
+    await patch(f.tokens.eic, a.id, { status: 'paused' })
+    expect(await fileStatus(media.bbDesktop!)).toBe(200)
+    await patch(f.tokens.eic, b.id, { status: 'paused' })
+    expect(await fileStatus(media.bbDesktop!)).toBe(403)
+  })
+
+  it('S9: anonymous callers cannot filter media through the campaign join (no oracle for advertiser data)', async () => {
+    await live()
+    const probe = (path: string) =>
+      api('GET', `/api/media?where[${path}][like]=pat@adv-secret&depth=0`)
+    for (const path of [
+      // (a nested path such as adCampaignCreatives.advertiser.contactEmail is refused the same way, 400, but Payload leaves a
+      // floating rejected promise for nested join paths on every join field; that is kept out of this test)
+      'adCampaignCreatives.paymentStatus',
+      'adCampaignCreatives.sponsor',
+    ]) {
+      const res = await probe(path)
+      expect([400, 403], `${path} -> ${res.status}`).toContain(res.status)
+      expect(res.text).not.toContain('pat@adv-secret')
+    }
+    // staff roles cannot filter through the join either
+    expect((await api('GET', '/api/media?where[adCampaignCreatives.status][equals]=approved&depth=0', { token: f.tokens.reporter })).status).toBeGreaterThanOrEqual(400)
+  })
+
+  it('S9: the feed never carries more than 100 campaigns', async () => {
+    const base = body({ rightsConfirmed: true, paymentStatus: 'paid', status: 'approved' }) as Record<string, unknown>
+    for (let i = 0; i < 101; i++) {
+      await f.payload.create({
+        collection: 'ad-campaigns',
+        data: { ...base, sponsor: `${runId} cap ${i}`, priority: i % 100 } as never,
+        overrideAccess: true,
+      })
+    }
+    const res = await ads()
+    expect(res.status).toBe(200)
+    expect(res.json.campaigns).toHaveLength(100)
+    expect(res.json.campaigns[0].priority).toBe(99)
   })
 })

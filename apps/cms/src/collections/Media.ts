@@ -74,7 +74,51 @@ const skipJoins: CollectionBeforeOperationHook = ({ args, operation }) => {
   return args
 }
 
-const checkUpload: CollectionBeforeOperationHook = ({ args, operation }) => {
+/**
+ * Go-live C3: the FILE of a media that is a creative of an `approved` or `pending_approval` campaign can never be replaced,
+ * by any role (editors and trusted server code included), single or bulk. Creatives are checked (exact size, type, weight,
+ * not animated) when they are attached, so swapping the file underneath would skip every check and the approval. The
+ * workflow is: upload a new media, repoint the campaign (which sends an approved campaign back to `pending_approval`).
+ * Runs in `beforeOperation`, before Payload deletes the old file. Metadata edits are handled by the freeze above.
+ */
+const guardAdCreativeFile: CollectionBeforeOperationHook = async ({ args, operation }) => {
+  if (operation !== 'update') return args
+  const a = args as { id?: number | string; where?: Where; req: PayloadRequest }
+  if (!(a.req as { file?: unknown }).file) return args
+  let ids: Array<number | string>
+  if (a.id !== undefined && a.id !== null) {
+    ids = [a.id]
+  } else {
+    // Bulk: resolve the targets (trusted read, capped) and refuse when any of them is a protected creative.
+    const hit = await a.req.payload.find({
+      collection: 'media',
+      where: a.where ?? {},
+      limit: 1000,
+      pagination: false,
+      depth: 0,
+      select: { filename: true },
+      overrideAccess: true,
+      req: a.req,
+    })
+    ids = (hit.docs as Array<{ id: number | string }>).map((d) => d.id)
+  }
+  if (ids.length === 0) return args
+  const used = await a.req.payload.count({
+    collection: 'ad-campaigns',
+    where: { and: [{ creativeMedia: { in: ids } }, { status: { in: ['approved', 'pending_approval'] } }] },
+    overrideAccess: true,
+    req: a.req,
+  })
+  if (used.totalDocs > 0) {
+    throw new APIError(
+      'This image is a creative of an approved or pending ad campaign and its file cannot be replaced. Upload a new image and point the campaign at it.',
+      403,
+    )
+  }
+  return args
+}
+
+const checkUpload: CollectionBeforeOperationHook =({ args, operation }) => {
   if (operation !== 'create' && operation !== 'update') return args
   const file = (args.req as { file?: { name: string; data?: Uint8Array; mimetype?: string } }).file
   if (!file) return args
@@ -382,7 +426,7 @@ export const Media: CollectionConfig = {
     delete: editorInChiefOnly,
   },
   hooks: {
-    beforeOperation: [clampLimit, skipJoins, guardFrozenMediaBeforeFiles, checkUpload],
+    beforeOperation: [clampLimit, skipJoins, guardAdCreativeFile, guardFrozenMediaBeforeFiles, checkUpload],
     beforeChange: [guardMediaChange],
     afterChange: [auditMedia],
     afterDelete: [auditDelete],

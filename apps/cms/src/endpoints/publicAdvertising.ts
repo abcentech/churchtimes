@@ -1,13 +1,14 @@
 import { createHash } from 'node:crypto'
 
-import type { Endpoint, PayloadRequest } from 'payload'
+import type { Endpoint, PayloadRequest, Where } from 'payload'
 
 import {
   cacheSeconds,
   creativeMediaIds,
   envFlag,
   inWindow,
-  paymentOk,
+  liveCampaignClauses,
+
   requirePayment,
   toMs,
   toPublicCampaign,
@@ -23,8 +24,8 @@ import { isOriginAllowed } from './publicSubmissions'
  *   approval data and notes are never copied. The file route applies the same rule (Media.readAccess), so a creative is
  *   public only while its campaign is delivered.
  * - `Cache-Control: public, max-age=N`, N = min(60, whole seconds to the next start or end of an approved campaign). An
- *   `ETag` is sent for CDNs. Browsers rely on max-age: the CORS headers expose no response headers and
- *   allow no request headers, so a cross-origin page can neither read the ETag nor send If-None-Match without a preflight.
+ *   `ETag` is sent for CDNs. Browsers rely on max-age: the route exposes no response headers to cross-origin scripts (the ETag is
+ *   unreadable) and its CORS answer does not list If-None-Match, so a cross-origin page cannot make a conditional request.
  * - Origin: when sent it must be in PUBLIC_SUBMISSION_ORIGINS (403), the same allowlist as the public submissions endpoint.
  * - AdSense is only a pair of flags from server configuration; no publisher id or script is ever delivered.
  */
@@ -44,14 +45,17 @@ const corsHeaders = (origin: string | null): Record<string, string> =>
 const errorResponse = (status: number, message: string) =>
   Response.json({ ok: false, errors: [{ message }] }, { status, headers: { 'Cache-Control': 'no-store', Vary: 'Origin' } })
 
-/** Base URL for creative `src`: the configured CMS origin, else the origin the request came in on. */
-function baseUrl(req: PayloadRequest): string {
-  const configured = (process.env.CMS_PUBLIC_URL ?? '').trim().replace(/\/+$/, '')
-  if (configured) return configured
+/**
+ * Base URL for creative `src`: the configured CMS origin (`CMS_PUBLIC_URL`, else Payload's `serverURL`). Never taken from
+ * the request: a forged Host header must not be able to point creative links (and a CDN cache entry) at another host.
+ * Returns null when nothing is configured; the endpoint then fails closed (503) if it has a campaign to deliver.
+ */
+function baseUrl(req: PayloadRequest): string | null {
+  const configured = (process.env.CMS_PUBLIC_URL ?? '').trim() || req.payload.config.serverURL || ''
   try {
-    return new URL(req.url ?? 'http://localhost').origin
+    return configured ? new URL(configured).origin : null
   } catch {
-    return 'http://localhost'
+    return null
   }
 }
 
@@ -60,19 +64,12 @@ async function respond(req: PayloadRequest, withBody: boolean): Promise<Response
   if (!isOriginAllowed(origin)) return errorResponse(403, 'Origin not allowed.')
 
   const nowMs = Date.now()
-  const nowIso = new Date(nowMs).toISOString()
   const require = requirePayment()
 
   const scan = await req.payload.find({
     collection: 'ad-campaigns',
-    where: {
-      and: [
-        { status: { equals: 'approved' } },
-        { rightsConfirmed: { equals: true } },
-        { endsAt: { greater_than: nowIso } },
-        ...(require ? [{ paymentStatus: { in: ['paid', 'waived'] } }] : []),
-      ],
-    },
+    // The same clauses the file route uses (Media.readAccess), minus the start clause so upcoming starts count as cache boundaries.
+    where: { and: liveCampaignClauses('', nowMs, require, { includeUpcoming: true }) } as Where,
     sort: 'startsAt',
     limit: MAX_SCAN,
     pagination: false,
@@ -80,7 +77,7 @@ async function respond(req: PayloadRequest, withBody: boolean): Promise<Response
     overrideAccess: true,
     req,
   })
-  const eligible = (scan.docs as unknown as Array<Record<string, unknown>>).filter((c) => paymentOk(c.paymentStatus, require))
+  const eligible = scan.docs as unknown as Array<Record<string, unknown>>
 
   // Boundaries that can change the answer: every start still ahead and every end of a campaign that is eligible.
   const maxAge = cacheSeconds(
@@ -112,8 +109,12 @@ async function respond(req: PayloadRequest, withBody: boolean): Promise<Response
   }
 
   const base = baseUrl(req)
+  if (live.length > 0 && !base) {
+    req.payload.logger.error('GET /api/public/advertising refused: CMS_PUBLIC_URL (or serverURL) is not set, so creative links cannot be built.')
+    return errorResponse(503, 'Advertising is temporarily unavailable.')
+  }
   const campaigns = live
-    .map((c) => toPublicCampaign(c, mediaById, base))
+    .map((c) => toPublicCampaign(c, mediaById, base as string))
     .filter((c): c is Record<string, unknown> => c !== null)
 
   const body = JSON.stringify({

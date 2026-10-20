@@ -41,7 +41,7 @@ export const paymentOk = (status: unknown, require: boolean): boolean =>
 
 export const envFlag = (value: string | undefined): boolean => (value ?? '').trim().toLowerCase() === 'true'
 
-/** Absolute https URL, no credentials, 1 to 500 characters. Returns the trimmed URL or null. */
+/** Absolute https URL, no credentials, 1 to 500 characters (also after normalisation). Returns the normalised `href` or null. */
 export function normalizeDestinationUrl(value: unknown): string | null {
   if (typeof value !== 'string') return null
   const raw = value.trim()
@@ -57,7 +57,8 @@ export function normalizeDestinationUrl(value: unknown): string | null {
   if (url.protocol !== 'https:') return null
   if (url.username || url.password) return null
   if (!url.hostname) return null
-  return raw
+  if (url.href.length > 500) return null
+  return url.href
 }
 
 export const isAdTimestamp = (value: unknown): value is string | Date => {
@@ -213,6 +214,9 @@ export function toPublicCampaign(
     PLACEMENTS.includes(p as Placement),
   )
   if (placements.length === 0) return null
+  // Defence in depth: rows written around the hooks (import, SQL) must not put a non-https or credentialed link on the page.
+  const destinationUrl = normalizeDestinationUrl(c.destinationUrl)
+  if (!destinationUrl) return null
   const set = readCreatives(c.creatives)
   const creatives: Record<string, Record<string, unknown>> = {}
   for (const p of placements) {
@@ -233,7 +237,7 @@ export function toPublicCampaign(
     status: 'active',
     sponsor: c.sponsor,
     alt: c.alt,
-    destinationUrl: c.destinationUrl,
+    destinationUrl,
     startsAt: new Date(toMs(c.startsAt)).toISOString(),
     endsAt: new Date(toMs(c.endsAt)).toISOString(),
     priority: c.priority ?? 0,
@@ -247,12 +251,18 @@ export function toPublicCampaign(
  * while payment is required, and `startsAt <= now < endsAt`. `prefix` is '' for a query on `ad-campaigns` and
  * 'adCampaignCreatives.' for the join used by Media's read rule, so the endpoint and the file route agree by construction.
  */
-export function liveCampaignClauses(prefix: string, nowMs: number, require: boolean): Array<Record<string, unknown>> {
+export function liveCampaignClauses(
+  prefix: string,
+  nowMs: number,
+  require: boolean,
+  options: { includeUpcoming?: boolean } = {},
+): Array<Record<string, unknown>> {
   const nowIso = new Date(nowMs).toISOString()
   return [
     { [`${prefix}status`]: { equals: 'approved' } },
     { [`${prefix}rightsConfirmed`]: { equals: true } },
-    { [`${prefix}startsAt`]: { less_than_equal: nowIso } },
+    // `includeUpcoming` drops the start clause: used to find the next boundary, never to decide what is delivered.
+    ...(options.includeUpcoming ? [] : [{ [`${prefix}startsAt`]: { less_than_equal: nowIso } }]),
     { [`${prefix}endsAt`]: { greater_than: nowIso } },
     ...(require ? [{ [`${prefix}paymentStatus`]: { in: ['paid', 'waived'] } }] : []),
   ]
