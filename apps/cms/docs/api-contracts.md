@@ -1,4 +1,4 @@
-# Church Times CMS — API contracts (v1.12)
+# Church Times CMS — API contracts (v1.13)
 
 Status: implemented on `agent/payload-core`. v1.1 added Turnstile, duplicate detection, staff auth/session
 contract and security hardening; v1.2 closes the verified security-review findings: media ownership, version
@@ -768,6 +768,59 @@ Environment: `PUBLIC_ARTICLE_PATH_TEMPLATE`, `REDIRECT_ALLOWED_HOSTS` (**must eq
 host also needs `PUBLIC_SITE_URL`**), `LEGACY_SITE_HOSTS` (`docs/operations.md`). Migration `20261017_095306_redirects` (table `redirects`,
 enum `enum_redirects_source`, locked-documents relation column), reversible (down then up is tested).
 
+### Go-live C6: legacy comments archive
+
+Implements `go-live-contracts.md` C6: the approved WordPress comments, read-only, shown under migrated articles. There are no new comments.
+
+**`legacy-comments` collection.** Fields: `article` (relation, required), `authorName` (1 to 120, plain text), `content` (1 to 5,000, plain text),
+`commentedAt`, `legacyId` (WordPress comment id, unique), `parentLegacyId?`, `status` (`approved` | `hidden`). **No commenter email, website or IP
+exists in the collection**, in any response, or in the audit log; the importer helper drops them before anything is written.
+Access: create is refused for every API caller (the importer uses the server-side Local API); update is limited to editors in scope
+(admin, editor-in-chief, section-editor for articles in their sections) and, by field-level access, to `status` only (hide or restore, audited as
+`legacy-comment.hide` / `legacy-comment.restore`; `article`, text, date and ids cannot be changed, so a comment cannot be moved to another article);
+delete is admin only (audited as `legacy-comment.delete`). Anonymous callers (and non-editor staff) only ever read `approved` comments of
+`published` articles, also on `GET /api/legacy-comments/:id` and `/count`; a section editor reads those plus every comment of articles in their
+sections (the same shape as article read access). `status` is returned to staff only. Anonymous `GET /:id` still returns `createdAt` and
+`updatedAt` (harmless import timestamps; they are not hidden).
+
+**`GET /api/legacy-comments?article=<id|slug>`** (anonymous; also HEAD, trailing slash accepted). This collection endpoint replaces Payload's
+generic list route on that path, so a caller cannot choose fields, filters or sorting. **The renderer's request form is accepted:**
+`GET /api/legacy-comments?where[article][equals]=12&sort=commentedAt&limit=100&page=1&depth=0` is an alias for `article=12`; every other
+`where` key, `sort`, `select` and `depth` is ignored (the sort is always `commentedAt`, then `legacyId`, oldest first).
+
+| Query | Meaning |
+| --- | --- |
+| `article` (or `where[article][equals]`) | numeric value: the article id **first** (if an article has that id, no slug is tried, so `article=2024` never reaches another article's slug); otherwise the slug of a **published** article |
+| `articleLegacyId` | alternative to `article`: the WordPress post id (`articles.legacyId`) |
+| `limit` | 1 to 100, default 50; larger is clamped to 100; invalid becomes 50 |
+| `page` | 1 to 10,000, default 1 |
+
+`200 { docs: [{ id, legacyId, parentLegacyId, authorName, commentedAt, content }], totalDocs, limit, page, totalPages, hasNextPage, hasPrevPage,
+nextPage, prevPage }` (`nextPage` and `prevPage` are page numbers or `null`). **`legacyId` is part of the public projection** (with `parentLegacyId`
+it is how a client builds threads; neither is private). `content` is plain text with line breaks only. `400` when neither `article` nor
+`articleLegacyId` is given (or `articleLegacyId` is not a number); `403` for an `Origin` not in `PUBLIC_SUBMISSION_ORIGINS` (compared
+case-insensitively). An unknown or unpublished article is `200` with an empty list (the endpoint does not reveal unpublished slugs).
+`Cache-Control: public, max-age=60` (short, so a hidden comment leaves caches quickly; the contract names no value), `Vary: Origin`, exact
+`Access-Control-Allow-Origin` echo for allowlisted origins, `OPTIONS` preflight. Errors use `Cache-Control: no-store`.
+
+**Text rules** (`src/lib/legacyComments.ts`): on import, HTML and scripts are stripped, `&amp; &quot; &apos; &nbsp;` and numeric references are
+decoded **once** (never `<` or `>`, so output cannot contain markup), control characters, lone surrogates, noncharacters and bidirectional marks
+(U+061C, U+200B, U+200E/F, U+202A-E, U+2060-9, U+FEFF) are removed (ZWJ and ZWNJ kept) and the text is cleaned again after decoding. The write hook
+and the public output re-clean **without decoding** (so `&amp;lt;` stays `&lt;`) and never re-clean on update. Email addresses typed into the
+text (also full-width forms, found on the NFKC-folded text) become `[email removed]`; the pattern is bounded (local part 1-64, domain 1-253,
+top-level label 2-63) and runs over the 5,000-character cap plus a margin, then the cap is applied again. A name that is an email address, a
+web address (scheme, `www.`) or a bare host name (`example.com`) becomes `Anonymous`, as does an empty name. Length caps cut at a code-point boundary.
+
+**Deleting an article that has archived comments is refused with `409`** (*This article has N archived comments. Archive the article instead,
+or ask an admin to delete its comments first.*), by a `beforeDelete` hook on `articles`. Refusing is safer than deleting: the comments are
+archive data and the relation is required, so silently removing them for an editor would lose data, and letting the database refuse gave a 500.
+
+**Importer helper** `toLegacyCommentData(wxrComment, articleId)` returns `{ ok: true, data, truncated, dateFromLocal }` or `{ ok: false, reason }`
+(`unapproved`, `spam`, `trash`, `pingback`, `trackback`, `other-type`, `bad-id`, `bad-date`, `empty`). Only `comment_approved = 1` with an empty or
+`comment` type is kept; the GMT date is preferred. Migration `20261019_230557_legacy_comments` (table, enum, composite index
+`(article_id, status, commented_at, legacy_id)` for the public list), reversible (down, up, down is tested). **Production needs a UTF8 database**
+(`docs/operations.md`).
+
 ## 8. Environment variables
 
 See `apps/cms/.env.example` (annotated) and `docs/operations.md` §4. Secrets (`PAYLOAD_SECRET`, `PREVIEW_SECRET`,
@@ -778,6 +831,16 @@ proxy) and https-only `CMS_PUBLIC_URL`/CORS/CSRF settings (`docs/security.md`). 
 limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/operations.md` §4).
 
 ## 9. Changelog
+
+### v1.13: Go-live C6 legacy comments
+Go-live contract C6 (comments archive). Additive.
+- New collection `legacy-comments` (no email, website or IP stored; create refused over the API; editors may only hide or restore, admin deletes; audited).
+- New anonymous `GET /api/legacy-comments?article=<id|slug>` (alias `where[article][equals]=`, also `articleLegacyId`), plain text, `limit` capped at 100,
+  `nextPage`/`prevPage`, `Cache-Control: public, max-age=60`, origin allowlist (now compared case-insensitively, shared with the other public endpoints).
+  It replaces Payload's generic list route on that path. `legacyId` is in the public projection.
+- **Behaviour change:** deleting an article that has archived comments is `409` (see "Go-live C6").
+- Importer helper `toLegacyCommentData`; migration `20261019_230557_legacy_comments` (reversible, composite index). Test database is now created as UTF8;
+  production needs a UTF8 database.
 
 ### v1.12: Go-live C4 newsletter
 Additive, no breaking change for existing clients. 

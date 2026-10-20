@@ -109,10 +109,11 @@ export function isOriginAllowed(origin: string | null, env: NodeJS.ProcessEnv = 
   if (!origin) return true
   const list = (env.PUBLIC_SUBMISSION_ORIGINS ?? '')
     .split(',')
-    .map((s) => s.trim().replace(/\/$/, ''))
+    .map((s) => s.trim().replace(/\/$/, '').toLowerCase())
     .filter(Boolean)
   if (list.length === 0) return env.NODE_ENV !== 'production'
-  return list.includes(origin.replace(/\/$/, ''))
+  // Scheme and host are case-insensitive; browsers send them lower-case, but a configured value may not be.
+  return list.includes(origin.replace(/\/$/, '').toLowerCase())
 }
 
 const json = (body: unknown, status: number, headers: Record<string, string> = {}) =>

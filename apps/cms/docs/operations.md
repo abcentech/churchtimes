@@ -15,7 +15,7 @@ Minimum for a small VPS:
 | RAM | 4 GB | `next build` can need more than this. Build on a CI runner or a larger machine, or add swap. |
 | Disk | 40 GB SSD | Media uploads grow over time. Monitor usage. |
 | OS | Ubuntu 24.04 LTS | |
-| PostgreSQL | 16 | Installed on the same VPS. |
+| PostgreSQL | 16 | Installed on the same VPS. The database must use the UTF8 encoding (`createdb -E UTF8`; check with `psql -l`): the legacy comments archive holds emoji and non-Latin text that other encodings cannot store. |
 | Node.js | 24 | Use the version in the repository root `.nvmrc`. |
 | Reverse proxy | Caddy (recommended, automatic TLS) or Nginx | Terminates TLS and forwards to the app on `127.0.0.1:3000`. |
 

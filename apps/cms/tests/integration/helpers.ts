@@ -15,6 +15,8 @@ export const newRunId = (): string => `t${randomBytes(4).toString('hex')}`
 
 const handlers = {
   GET: REST_GET(config),
+  // Next hands a HEAD request to the GET route handler; Payload then picks the endpoint registered for method head.
+  HEAD: REST_GET(config),
   POST: REST_POST(config),
   PATCH: REST_PATCH(config),
   DELETE: REST_DELETE(config),
@@ -186,6 +188,8 @@ export async function setupFixtures(runId: string) {
     if (eventIds.length) await del('live-updates', { event: { in: eventIds } })
     await del('live-events', like('slug'))
     await del('submissions', like('title'))
+    // legacy-comments.article is required (FK), so the comments must go before their articles.
+    if (articleIds.length) await del('legacy-comments', { article: { in: articleIds } })
     await del('articles', like('slug'))
     await del('media', like('alt'))
     await del('audit-logs', {
