@@ -1,4 +1,4 @@
-# Church Times CMS — API contracts (v1.11)
+# Church Times CMS — API contracts (v1.13)
 
 Status: implemented on `agent/payload-core`. v1.1 added Turnstile, duplicate detection, staff auth/session
 contract and security hardening; v1.2 closes the verified security-review findings: media ownership, version
@@ -384,6 +384,109 @@ images of that one article** (any status), nothing else: the article id comes fr
 expiry enforced); a token for another article, an expired, tampered or empty token grants nothing (`403`/`404` as for anonymous). Use the
 returned URLs as they are; do not cache them beyond the token's lifetime.
 
+### Go-live C5: contact
+
+`POST /api/public/contact` stores a reader's message in the staff-only `contact-messages` collection (separate from story
+submissions, so the editorial queue stays editorial) and e-mails staff. Anonymous, credential-free, same rules as §4.1:
+`Origin` must be in `PUBLIC_SUBMISSION_ORIGINS` (403; allowlisted origins get an exact `Access-Control-Allow-Origin` echo and
+`Access-Control-Expose-Headers: Retry-After`), `Content-Type: application/json` (415), body at most **16 KB** (413), `OPTIONS` preflight answered.
+
+```json
+{ "name": "Ada Obi", "email": "ada@example.test", "topic": "general",
+  "message": "Plain text, 20 to 5000 characters.", "website": "", "turnstileToken": "0.xxxx" }
+```
+
+- `name` 2 to 120; `email` valid (lower-cased on store); `topic` one of `general`, `advertising`, `corrections`, `tips`, `other`;
+  `message` 20 to 5 000 characters of plain text (HTML tags and control characters are stripped before the length is judged).
+- Turnstile action **`contact-message`**. It must be listed in `TURNSTILE_EXPECTED_ACTION` when that variable is set. The endpoint
+  also pins the token to its own action: a valid token minted for another form's action (for example `newsletter-subscribe`) is `403`.
+- Processing order: origin, content type, declared size, per-IP limit, capped body read and JSON parse, honeypot, validation,
+  Turnstile, duplicate, per-address limit, write, notification. Rate limiting precedes Turnstile so bots cannot burn Siteverify quota.
+- Limits: per IP `CONTACT_RATE_LIMIT` (5) per `CONTACT_RATE_WINDOW_SECONDS` (900); per address 3 per hour (counted for verified,
+  non-duplicate messages); the same address with the same message (case and whitespace insensitive) within 72 h is `409`. Every `429`
+  carries `Retry-After` and exposes it.
+- A non-empty `website` (honeypot) returns the normal `201` with a throw-away reference, stores nothing, sends nothing, skips Siteverify.
+
+Responses:
+- `201 { "ok": true, "reference": "MSG-7KQ2M9XA", "message": "Received. We will reply by email." }`. The reference is `MSG-` plus exactly 8
+  characters from `ABCDEFGHJKMNPQRSTUVWXYZ23456789`.
+- `400 { ok:false, errors:[{ field, message }] }` (validation, bad JSON, missing Turnstile token) · `403` (origin, Turnstile) ·
+  `409` duplicate · `413` · `415` · `429` · `500` store failed.
+
+Notification: one e-mail to `CONTACT_NOTIFY_TO` (comma list, server-side, validated at startup in production, **never returned
+to a client or written to logs**), `Reply-To` = the sender's address, plain-text body. CR, LF and other control characters are removed
+from every header-bound value. The mail is queued **after** the `201` (a hanging SMTP server never delays the answer, so a retry cannot hit a false `409`;
+SMTP timeouts are 10 s connect, 10 s greeting, 20 s socket) and `notifyStatus` is updated when it finishes. The message is stored **before** any mail is attempted: if SMTP or `CONTACT_NOTIFY_TO` is missing, or sending
+fails, the message is still stored, the answer is still the normal `201`, the failure is logged (reference only) and the row shows
+`notifyStatus` = `failed` or `not-configured` to staff.
+
+`contact-messages` (`/api/contact-messages`, staff-only: `admin` and `editor-in-chief`; never anonymous): `reference`, `name`, `email`,
+`topic`, `message`, `status` (`new`, `read`, `replied`, `spam`), `notifyStatus` (`sent`, `failed`, `not-configured`), `ipHash`,
+`userAgent`, `contentHash`. Only `status` is editable over REST; rows cannot be created over REST; raw IP addresses are never stored.
+
+### Go-live C4: newsletter
+
+The CMS stores consent and subscribers; it does **not** send newsletters. Three anonymous endpoints (same rules as §4.1: `Origin` in
+`PUBLIC_SUBMISSION_ORIGINS` or 403, JSON only or 415, `OPTIONS` preflights, `Access-Control-Expose-Headers: Retry-After`) plus staff tools.
+
+**`POST /api/public/newsletter/subscribe`** (body cap 8 KB, Turnstile action `newsletter-subscribe`, pinned to this endpoint)
+
+```json
+{ "email": "reader@example.test", "name": "Optional name", "consent": true,
+  "source": "footer", "website": "", "turnstileToken": "0.xxxx" }
+```
+- `email` valid, at most 254, lower-cased. `name` optional, 2 to 120; **a missing field, `null` and an empty string all mean "no name"**.
+  `consent` must be literally `true`. `source` is required and one of `footer`, `article`, `home`, `other`.
+- Order: origin, content type, size, **503 check**, per-IP limit, body, honeypot, validation, Turnstile, per-address limit, write.
+  Limits: per IP `NEWSLETTER_RATE_LIMIT` (5) per `NEWSLETTER_RATE_WINDOW_SECONDS` (900); per address 3 per hour, counted for every verified
+  attempt whatever the address's state. Both `429` with `Retry-After`.
+- **Double opt-in.** A new address is stored `pending` with the SHA-256 of a random token (the token is never stored), expiring in 72 h, and the
+  CMS e-mails `${PUBLIC_SITE_URL}/newsletter/confirm?token=...` (a public-site page, never an API URL; `PUBLIC_SITE_URL` is https-only in production).
+  The mail is queued after the answer is built, so response time does not reveal whether the address existed.
+- **Neutral answer.** A new, an already-pending and an already-confirmed address all get the byte-identical
+  `202 { "ok": true, "message": "If this address can be subscribed, we sent a confirmation email." }`. Pending: a fresh link replaces the old one.
+  Confirmed: nothing is sent or changed. **Unsubscribed or bounced: not re-added**; the row keeps its status, the same answer is returned, and a
+  fresh confirmation link is mailed. Opening it is the only way back (it also records fresh consent). A mail failure is logged and still answers `202`.
+- **Mail-bombing guards.** Beyond the 3 per hour per address: a resend cooldown `NEWSLETTER_RESEND_COOLDOWN_SECONDS` (600; inside it nothing is sent and the
+  earlier link stays valid), a daily cap `NEWSLETTER_MAX_CONFIRM_MAILS_PER_DAY` (5 per rolling 24 h), and `bounced` addresses are never mailed automatically.
+  Every refused case returns the same neutral `202`. Timestamps and counters live on the subscriber row (internal, never in a response).
+- Timing note: response bodies are byte-identical for every state, but database work still differs slightly by subscriber state; the mail is queued after
+  the answer so SMTP time does not leak.
+- A honeypot hit returns the normal `202` and stores nothing.
+- `503 { "ok": false, "errors": [{ "message": "Sign-up is unavailable." }] }` and nothing stored when, in production, SMTP is not configured or
+  `PUBLIC_SITE_URL` is missing or not https.
+- A person erased earlier who signs up again is a fresh double opt-in (new `pending` row); the erase record stays.
+
+**`POST /api/public/newsletter/confirm`** and **`POST /api/public/newsletter/unsubscribe`**: body `{ "token": "..." }` (cap 2 KB), no Turnstile (the token
+is the proof), per-IP limit `NEWSLETTER_TOKEN_RATE_LIMIT` (20) per window. **POST only: any other method is `405` with `Allow: POST, OPTIONS`**, so mail
+scanners that pre-fetch links change nothing.
+- confirm: single-use random token, valid 72 h, matched by its SHA-256. One conditional `UPDATE` (id, token hash, observed status and expiry in the
+  `WHERE`, token cleared in the same statement) sets `confirmed` and `confirmedAt`; of simultaneous confirms exactly one wins and writes the one audit row.
+- unsubscribe: HMAC-SHA256-signed token `u1.<subscriber id>.<signature>` (key `NEWSLETTER_TOKEN_SECRET`, constant-time comparison, no expiry so every
+  future newsletter can carry a working link). Sets `unsubscribed` and `unsubscribedAt`. Idempotent; an erased subscriber stays erased.
+- Both answer `200 { "ok": true }`. Any invalid, expired, used, forged or unknown token is the same `400 { "ok": false, "errors": [{ "message": "This link is no longer valid." }] }`.
+
+**Staff data.** `subscribers` (`/api/subscribers`, `admin` and `editor-in-chief` read; never anonymous, never in a public response): `email` (unique,
+lower-cased), `name?`, `status` (`pending`, `confirmed`, `unsubscribed`, `bounced`, `erased`), `source`, `consentTextVersion`, `consentAt`, `confirmedAt?`,
+`unsubscribedAt?`, `ipHash`, `importedFrom?` (`web`, `mailchimp-import`); `confirmTokenHash` and `confirmTokenExpiresAt` exist but are invisible over REST
+and in the admin UI. Nothing can be created or deleted over REST; over REST staff may only move a status to `unsubscribed` or `bounced` (`confirmed` can
+only come from the double opt-in link or the import).
+- **`GET /api/subscribers/export?status=confirmed`**: CSV for `admin` only (401 anonymous, 403 others), `status` one of `pending`, `confirmed`
+  (default), `unsubscribed`, `bounced` (else 400), `Cache-Control: no-store`, audited (`subscriber.export`, count only). Columns: `email,name,status,source,consentAt,confirmedAt,unsubscribedAt,importedFrom`.
+  A cell starting with `=`, `+`, `-`, `@`, tab or CR is prefixed with `'`.
+- **`POST /api/subscribers/:id/erase`** (`admin` only, audited): the address becomes `erased:<HMAC-SHA256 keyed with IP_HASH_SALT>`, the name, IP hash and token
+  are cleared, `status` is `erased`. The row is a suppression record that the importer honours. Erasure does **not** touch `contact-messages` from the same
+  address (an admin deletes those manually), and rotating `IP_HASH_SALT` breaks the suppression match.
+- **Import CLI** `npm run import:subscribers -- --file <csv> [--apply] [--assume-subscribed]` (server-side only, no endpoint). Dry run by default; output is
+  counts only, never an address. The file must be outside the repository. Only rows Mailchimp marks `subscribed` are imported, as `confirmed`,
+  `importedFrom = mailchimp-import`, `consentAt` = `OPTIN_TIME` (else `CONFIRM_TIME`, else the import time). Header names are matched loosely (`Email Address`,
+  `First Name`, `Last Name`, `OPTIN_TIME`, `CONFIRM_TIME`, `Status`). No Status column: refused unless `--assume-subscribed` (the "Subscribed" segment export).
+  A file with `UNSUB_TIME` or `CLEAN_TIME` columns (unsubscribed or cleaned export) is refused, even with `--assume-subscribed`. A row with no `OPTIN_TIME` is
+  imported with `consentAt` null and `importedFrom = mailchimp-import-no-optin-time`, and counted in the report (the import time is never used as consent
+  time). A path inside the repository is refused (real paths, case-insensitive on Windows). Errors print only class and code.
+  Existing rows and erased addresses are skipped, never overwritten. Commenters, form senders and every other source are never imported.
+- Provider sync (Mailchimp API) is **not implemented** and off.
+
 ## 5. Staff authentication and sessions
 
 Built-in Payload auth on the `users` collection plus PostgreSQL. No third-party auth provider.
@@ -674,34 +777,49 @@ Implements `go-live-contracts.md` C6: the approved WordPress comments, read-only
 exists in the collection**, in any response, or in the audit log; the importer helper drops them before anything is written.
 Access: create is refused for every API caller (the importer uses the server-side Local API); update is limited to editors in scope
 (admin, editor-in-chief, section-editor for articles in their sections) and, by field-level access, to `status` only (hide or restore, audited as
-`legacy-comment.hide` / `legacy-comment.restore`); delete is admin only (audited as `legacy-comment.delete`). Anonymous callers (and non-editor
-staff) only ever read `approved` comments of `published` articles, also on `GET /api/legacy-comments/:id`.
+`legacy-comment.hide` / `legacy-comment.restore`; `article`, text, date and ids cannot be changed, so a comment cannot be moved to another article);
+delete is admin only (audited as `legacy-comment.delete`). Anonymous callers (and non-editor staff) only ever read `approved` comments of
+`published` articles, also on `GET /api/legacy-comments/:id` and `/count`; a section editor reads those plus every comment of articles in their
+sections (the same shape as article read access). `status` is returned to staff only. Anonymous `GET /:id` still returns `createdAt` and
+`updatedAt` (harmless import timestamps; they are not hidden).
 
-**`GET /api/legacy-comments?article=<id|slug>`** (anonymous; also HEAD). This collection endpoint replaces Payload's generic list route on
-that path, so a caller cannot choose fields, filters or sorting (`where`, `sort`, `select`, `depth` are ignored).
+**`GET /api/legacy-comments?article=<id|slug>`** (anonymous; also HEAD, trailing slash accepted). This collection endpoint replaces Payload's
+generic list route on that path, so a caller cannot choose fields, filters or sorting. **The renderer's request form is accepted:**
+`GET /api/legacy-comments?where[article][equals]=12&sort=commentedAt&limit=100&page=1&depth=0` is an alias for `article=12`; every other
+`where` key, `sort`, `select` and `depth` is ignored (the sort is always `commentedAt`, then `legacyId`, oldest first).
 
 | Query | Meaning |
 | --- | --- |
-| `article` | numeric id, otherwise the slug of a **published** article |
+| `article` (or `where[article][equals]`) | numeric value: the article id **first** (if an article has that id, no slug is tried, so `article=2024` never reaches another article's slug); otherwise the slug of a **published** article |
 | `articleLegacyId` | alternative to `article`: the WordPress post id (`articles.legacyId`) |
 | `limit` | 1 to 100, default 50; larger is clamped to 100; invalid becomes 50 |
 | `page` | 1 to 10,000, default 1 |
 
-`200 { docs: [{ id, legacyId, parentLegacyId, authorName, commentedAt, content }], totalDocs, limit, page, totalPages, hasNextPage, hasPrevPage }`,
-oldest first (`commentedAt`, then `legacyId`). `content` is plain text with line breaks only. `400` when neither `article` nor `articleLegacyId`
-is given (or `articleLegacyId` is not a number); `403` for an `Origin` not in `PUBLIC_SUBMISSION_ORIGINS`. An unknown or unpublished article is
-`200` with an empty list (the endpoint does not reveal unpublished slugs). `Cache-Control: public, max-age=60` (short, so a hidden comment leaves
-caches quickly; the contract names no value), `Vary: Origin`, exact `Access-Control-Allow-Origin` echo for allowlisted origins, `OPTIONS` preflight.
-Errors use `Cache-Control: no-store`.
+`200 { docs: [{ id, legacyId, parentLegacyId, authorName, commentedAt, content }], totalDocs, limit, page, totalPages, hasNextPage, hasPrevPage,
+nextPage, prevPage }` (`nextPage` and `prevPage` are page numbers or `null`). **`legacyId` is part of the public projection** (with `parentLegacyId`
+it is how a client builds threads; neither is private). `content` is plain text with line breaks only. `400` when neither `article` nor
+`articleLegacyId` is given (or `articleLegacyId` is not a number); `403` for an `Origin` not in `PUBLIC_SUBMISSION_ORIGINS` (compared
+case-insensitively). An unknown or unpublished article is `200` with an empty list (the endpoint does not reveal unpublished slugs).
+`Cache-Control: public, max-age=60` (short, so a hidden comment leaves caches quickly; the contract names no value), `Vary: Origin`, exact
+`Access-Control-Allow-Origin` echo for allowlisted origins, `OPTIONS` preflight. Errors use `Cache-Control: no-store`.
 
-**Text rules** (`src/lib/legacyComments.ts`, applied on import and on every write; output is re-cleaned): HTML and scripts stripped, `&amp; &quot;
-&apos; &nbsp;` and numeric references decoded but **never `<` or `>`** (so output cannot contain markup), control characters, lone surrogates,
-noncharacters and bidirectional overrides removed (ZWJ and ZWNJ kept), email addresses typed into the text replaced by `[email removed]`, a name that is
-an email or web address becomes `Anonymous`, length caps cut at a code-point boundary.
+**Text rules** (`src/lib/legacyComments.ts`): on import, HTML and scripts are stripped, `&amp; &quot; &apos; &nbsp;` and numeric references are
+decoded **once** (never `<` or `>`, so output cannot contain markup), control characters, lone surrogates, noncharacters and bidirectional marks
+(U+061C, U+200B, U+200E/F, U+202A-E, U+2060-9, U+FEFF) are removed (ZWJ and ZWNJ kept) and the text is cleaned again after decoding. The write hook
+and the public output re-clean **without decoding** (so `&amp;lt;` stays `&lt;`) and never re-clean on update. Email addresses typed into the
+text (also full-width forms, found on the NFKC-folded text) become `[email removed]`; the pattern is bounded (local part 1-64, domain 1-253,
+top-level label 2-63) and runs over the 5,000-character cap plus a margin, then the cap is applied again. A name that is an email address, a
+web address (scheme, `www.`) or a bare host name (`example.com`) becomes `Anonymous`, as does an empty name. Length caps cut at a code-point boundary.
+
+**Deleting an article that has archived comments is refused with `409`** (*This article has N archived comments. Archive the article instead,
+or ask an admin to delete its comments first.*), by a `beforeDelete` hook on `articles`. Refusing is safer than deleting: the comments are
+archive data and the relation is required, so silently removing them for an editor would lose data, and letting the database refuse gave a 500.
 
 **Importer helper** `toLegacyCommentData(wxrComment, articleId)` returns `{ ok: true, data, truncated, dateFromLocal }` or `{ ok: false, reason }`
 (`unapproved`, `spam`, `trash`, `pingback`, `trackback`, `other-type`, `bad-id`, `bad-date`, `empty`). Only `comment_approved = 1` with an empty or
-`comment` type is kept; the GMT date is preferred. Migration `20261019_215634_legacy_comments`, reversible.
+`comment` type is kept; the GMT date is preferred. Migration `20261019_230557_legacy_comments` (table, enum, composite index
+`(article_id, status, commented_at, legacy_id)` for the public list), reversible (down, up, down is tested). **Production needs a UTF8 database**
+(`docs/operations.md`).
 
 ## 8. Environment variables
 
@@ -714,12 +832,32 @@ limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/op
 
 ## 9. Changelog
 
-### v1.11: Go-live C6 legacy comments
+### v1.13: Go-live C6 legacy comments
 Go-live contract C6 (comments archive). Additive.
 - New collection `legacy-comments` (no email, website or IP stored; create refused over the API; editors may only hide or restore, admin deletes; audited).
-- New anonymous `GET /api/legacy-comments?article=<id|slug>` (also `articleLegacyId`), plain text, `limit` capped at 100, `Cache-Control: public, max-age=60`,
-  origin allowlist. It replaces Payload's generic list route on that path (the `where[article][equals]=` form in `go-live-contracts.md` C6 is superseded).
-- Importer helper `toLegacyCommentData`; migration `20261019_215634_legacy_comments`. Test database is now created as UTF8.
+- New anonymous `GET /api/legacy-comments?article=<id|slug>` (alias `where[article][equals]=`, also `articleLegacyId`), plain text, `limit` capped at 100,
+  `nextPage`/`prevPage`, `Cache-Control: public, max-age=60`, origin allowlist (now compared case-insensitively, shared with the other public endpoints).
+  It replaces Payload's generic list route on that path. `legacyId` is in the public projection.
+- **Behaviour change:** deleting an article that has archived comments is `409` (see "Go-live C6").
+- Importer helper `toLegacyCommentData`; migration `20261019_230557_legacy_comments` (reversible, composite index). Test database is now created as UTF8;
+  production needs a UTF8 database.
+
+### v1.12: Go-live C4 newsletter
+Additive, no breaking change for existing clients. 
+- New `POST /api/public/newsletter/subscribe`, `/confirm`, `/unsubscribe` (+ preflights, 405 for other methods), staff-only collection `subscribers`,
+  `GET /api/subscribers/export`, `POST /api/subscribers/:id/erase`, CLI `npm run import:subscribers` (see "Go-live C4: newsletter" in §4).
+- New environment variables `PUBLIC_SITE_URL`, `NEWSLETTER_TOKEN_SECRET`, `NEWSLETTER_RATE_LIMIT`, `NEWSLETTER_RATE_WINDOW_SECONDS`, `NEWSLETTER_TOKEN_RATE_LIMIT`.
+  **Operational change:** production startup now also requires `NEWSLETTER_TOKEN_SECRET` (32+ characters, distinct from the other secrets) and rejects a
+  malformed or non-https `PUBLIC_SITE_URL`; the loopback-only disposable staging stack (`CMS_ALLOW_INSECURE_LOCAL_STAGING`) is exempt and derives a throw-away key.
+  `TURNSTILE_EXPECTED_ACTION` must also list `newsletter-subscribe` when set.
+
+### v1.11: Go-live C5 contact
+Additive, no breaking change. 
+- New `POST /api/public/contact` and `OPTIONS` preflight (see "Go-live C5: contact" in §4). New staff-only collection `contact-messages`.
+- New environment variables `CONTACT_RATE_LIMIT`, `CONTACT_RATE_WINDOW_SECONDS`, `CONTACT_NOTIFY_TO`. `TURNSTILE_EXPECTED_ACTION` must
+  now also list `contact-message` when it is set.
+- New shared helper `src/lib/publicEndpoint.ts` (origin, CORS, body cap, error shape, per-endpoint Turnstile action pin) for new public endpoints;
+  `POST /api/public/submissions` is unchanged.
 
 ### v1.10: Go-live C7 redirects
 Go-live contract C7 (redirects). Additive.

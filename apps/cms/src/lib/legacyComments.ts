@@ -64,15 +64,25 @@ export type LegacyCommentResult =
   | { ok: true; data: LegacyCommentData; truncated: boolean; dateFromLocal: boolean }
   | { ok: false; reason: SkipReason }
 
-const EMAIL_RE = /[^\s@<>()[\]\\,;:"']+@[^\s@<>()[\]\\,;:"']+\.[^\s@<>()[\]\\,;:"']+/g
-const URL_RE = /^(?:https?:\/\/|www\.)\S+$/i
+// Every part is bounded (local part 1-64, domain 1-253, top-level label 2-63), so matching stays linear in practice
+// and a hostile run of '@' or '.' cannot make it explode. The text is also cut to a few thousand characters first.
+const EMAIL_CLASS = '[^\\s@<>()[\\]\\\\,;:"\'/]'
+const EMAIL_SOURCE = `${EMAIL_CLASS}{1,64}@${EMAIL_CLASS}{1,253}\\.[^\\s@<>()[\\]\\\\,;:"'/.]{2,63}`
+const EMAIL_RE = new RegExp(EMAIL_SOURCE, 'gu')
+const EMAIL_ONE = new RegExp(EMAIL_SOURCE, 'u')
+/** `https://x`, `ftp://x`, `javascript://x`: a scheme followed by `//`, anywhere at the start (spaces allowed after it). */
+const SCHEME_RE = /^\s*[a-z][a-z0-9+.-]{1,20}:\/\//i
+const WWW_RE = /(?:^|\s)www\./i
+/** `example.com`, `example.co.uk/path`: one word that is a host name. */
+const HOST_RE = /^[^\s@/]{1,200}\.[a-z]{2,63}(?::\d{1,5})?(?:\/\S*)?$/i
 
 const ENTITIES: Record<string, string> = { amp: '&', quot: '"', apos: "'", nbsp: ' ' }
 
 /**
  * Decode the entities WordPress commonly leaves in comment text. `&lt;` and `&gt;` are deliberately NOT decoded, and
  * numeric references to `<` and `>` are left as written, so the result can never contain markup that a careless
- * consumer might render as HTML.
+ * consumer might render as HTML. Decoding happens exactly once, on import (`toLegacyCommentData`); every other path
+ * (write hook, public output) uses the non-decoding cleaners, so `&amp;lt;` is never turned into `<` by a second pass.
  */
 function decodeEntities(input: string): string {
   return input.replace(/&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|([a-zA-Z]+));/g, (whole, dec, hex, name) => {
@@ -87,13 +97,14 @@ function decodeEntities(input: string): string {
 
 /**
  * Remove lone surrogates (which break JSON consumers and PostgreSQL), the Unicode noncharacters, and the invisible
- * bidirectional controls (U+200B zero-width space, U+200E-200F direction marks, U+202A-202E embeddings and overrides, U+2060-2069
- * and U+FEFF), which can be used to make a name or a text read differently from what it is.
+ * bidirectional controls (U+061C Arabic letter mark, U+200B zero-width space, U+200E-200F direction marks, U+202A-202E
+ * embeddings and overrides, U+2060-2069 and U+FEFF), which can be used to make a name or a text read differently from
+ * what it is. ZWJ and ZWNJ are kept (emoji sequences, Persian, Indic scripts).
  */
 function wellFormed(input: string): string {
   return input
     .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '')
-    .replace(/[\u{FDD0}-\u{FDEF}\u{FFFE}\u{FFFF}\u{200B}\u{200E}\u{200F}\u{202A}-\u{202E}\u{2060}-\u{2069}\u{FEFF}]/gu, '')
+    .replace(/[\u{FDD0}-\u{FDEF}\u{FFFE}\u{FFFF}\u{61C}\u{200B}\u{200E}\u{200F}\u{202A}-\u{202E}\u{2060}-\u{2069}\u{FEFF}]/gu, '')
 }
 
 /** Cut at a code-point boundary (never in the middle of a surrogate pair). */
@@ -106,41 +117,79 @@ function cutAt(input: string, max: number): string {
 }
 
 const RAW_BOUND = 200_000
+/** Extra characters kept past the cap while looking for emails, so an address straddling the cap is seen whole. */
+const REDACT_MARGIN = 320
+
+/**
+ * Replace email addresses by a marker. The check also runs on the NFKC-folded text, so full-width forms
+ * (`john` + U+FF20 + `example.com`) are caught; when one is found the folded text is used (compatibility characters
+ * are lost, which is acceptable for a text that contained an address).
+ */
+function redactEmails(text: string): string {
+  const folded = text.normalize('NFKC')
+  const source = EMAIL_ONE.test(folded) ? folded : text
+  return source.replace(EMAIL_RE, EMAIL_REDACTED)
+}
 
 export type CleanedContent = { text: string; truncated: boolean }
 
-/** Plain text only: no HTML, entities decoded (except angle brackets), emails redacted, at most 5,000 characters. */
+/** Apply the length cap and the email redaction (redaction runs on the capped text plus a margin, then the cap again). */
+function finishContent(cleaned: string, wasCut: boolean): CleanedContent {
+  const window = cutAt(cleaned, COMMENT_CONTENT_MAX + REDACT_MARGIN)
+  const redacted = redactEmails(window)
+  const text = cutAt(redacted, COMMENT_CONTENT_MAX)
+  return { text, truncated: wasCut || window.length < cleaned.length || redacted.length > COMMENT_CONTENT_MAX }
+}
+
+/**
+ * Plain text only: no HTML, entities decoded once (except angle brackets), control and bidi characters removed, emails
+ * redacted, at most 5,000 characters. For the importer; use `plainTextForOutput` on anything already stored.
+ */
 export function cleanCommentContent(value: unknown): CleanedContent {
   if (typeof value !== 'string') return { text: '', truncated: false }
   // Bound the work done on a hostile value before any regex runs; the real cap is applied after cleaning.
   const bounded = value.length > RAW_BOUND ? value.slice(0, RAW_BOUND) : value
   const stripped = cleanText(wellFormed(bounded), { multiline: true })
-  const decoded = wellFormed(decodeEntities(stripped))
-  const redacted = decoded.replace(EMAIL_RE, EMAIL_REDACTED)
-  const text = cutAt(redacted, COMMENT_CONTENT_MAX)
-  return { text, truncated: redacted.length > COMMENT_CONTENT_MAX || value.length > bounded.length }
+  // cleanText again after decoding, so a decoded character (a C1 control, a NEL) is normalised like any other.
+  const decoded = cleanText(wellFormed(decodeEntities(stripped)), { multiline: true })
+  return finishContent(decoded, value.length > bounded.length)
 }
 
 /**
- * Plain text for output when the stored value was already cleaned at write time: strips markup, control characters
- * and bad unicode, and caps the length, but does not decode entities a second time.
+ * Plain text for a value that was already cleaned once (the write hook, the public output): strips markup, control
+ * and bidi characters and bad unicode, redacts emails and caps the length, but does NOT decode entities again.
  */
 export function plainTextForOutput(value: unknown): string {
   if (typeof value !== 'string') return ''
   const bounded = value.length > RAW_BOUND ? value.slice(0, RAW_BOUND) : value
-  return cutAt(wellFormed(cleanText(wellFormed(bounded), { multiline: true })), COMMENT_CONTENT_MAX)
+  return finishContent(cleanText(wellFormed(bounded), { multiline: true }), false).text
+}
+
+/** Name checks on the NFKC-folded name; a name that is an address, a web address or a host name is not published. */
+function finalizeName(raw: string): string {
+  const name = cutAt(wellFormed(raw), COMMENT_NAME_MAX)
+  if (name === '') return ANONYMOUS_NAME
+  const folded = name.normalize('NFKC')
+  if (folded.includes('@') || SCHEME_RE.test(folded) || WWW_RE.test(folded) || HOST_RE.test(folded)) return ANONYMOUS_NAME
+  return name
 }
 
 /**
- * One line, at most 120 characters. A name that is an email address or a web address is replaced (an anonymous
- * commenter's address must not become public through the name field); an empty name becomes "Anonymous".
+ * One line, at most 120 characters, entities decoded once. A name that is an email address, a web address or a host
+ * name is replaced (an anonymous commenter's address must not become public through the name field); an empty name
+ * becomes "Anonymous".
  */
 export function cleanCommentAuthorName(value: unknown): string {
   if (typeof value !== 'string') return ANONYMOUS_NAME
   const bounded = value.length > 2000 ? value.slice(0, 2000) : value
-  const name = cutAt(wellFormed(decodeEntities(cleanText(wellFormed(bounded)))), COMMENT_NAME_MAX)
-  if (name === '' || URL_RE.test(name) || name.includes('@')) return ANONYMOUS_NAME
-  return name
+  return finalizeName(cleanText(wellFormed(decodeEntities(cleanText(wellFormed(bounded))))))
+}
+
+/** Same checks for a stored name, without decoding again. */
+export function plainNameForOutput(value: unknown): string {
+  if (typeof value !== 'string') return ANONYMOUS_NAME
+  const bounded = value.length > 2000 ? value.slice(0, 2000) : value
+  return finalizeName(cleanText(wellFormed(bounded)))
 }
 
 /** `2019-03-04 10:11:12` (WordPress, no zone, read as UTC) or ISO-8601. Returns an ISO string or null. */
@@ -225,7 +274,7 @@ export function toPublicComment(doc: Record<string, unknown>): PublicComment {
     id: Number(doc.id),
     legacyId: num(doc.legacyId),
     parentLegacyId: num(doc.parentLegacyId),
-    authorName: typeof doc.authorName === 'string' ? doc.authorName : ANONYMOUS_NAME,
+    authorName: plainNameForOutput(doc.authorName),
     commentedAt: typeof doc.commentedAt === 'string' ? doc.commentedAt : null,
     content: plainTextForOutput(doc.content),
   }

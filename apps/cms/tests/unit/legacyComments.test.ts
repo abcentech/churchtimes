@@ -7,11 +7,14 @@ import {
   EMAIL_REDACTED,
   cleanCommentAuthorName,
   cleanCommentContent,
+  plainNameForOutput,
+  plainTextForOutput,
   toLegacyCommentData,
   toPublicComment,
   type WxrComment,
 } from '../../src/lib/legacyComments'
 import { parseCommentPaging } from '../../src/endpoints/publicLegacyComments'
+import { isOriginAllowed } from '../../src/endpoints/publicSubmissions'
 
 const base: WxrComment = {
   id: '101',
@@ -203,5 +206,84 @@ describe('parseCommentPaging', () => {
     expect(p('limit=-5&page=-1')).toEqual({ limit: 50, page: 1 })
     expect(p('limit=abc&page=1e9')).toEqual({ limit: 50, page: 1 })
     expect(p('limit=99999999999&page=99999999')).toEqual({ limit: 50, page: 10000 })
+  })
+})
+
+describe('review fixes: decoding, emails, names, bidi', () => {
+  it('decodes entities exactly once: the output cleaners never decode again', () => {
+    const imported = cleanCommentContent('&amp;lt;b&amp;gt; and &amp;amp;')
+    expect(imported.text).toBe('&lt;b&gt; and &amp;')
+    // what the write hook and the public output do to an already stored value
+    expect(plainTextForOutput(imported.text)).toBe(imported.text)
+    expect(plainNameForOutput('Tom &amp; Jerry')).toBe('Tom &amp; Jerry')
+    expect(cleanCommentAuthorName('Tom &amp; Jerry')).toBe('Tom & Jerry')
+  })
+
+  it('cleans again after decoding: a decoded C1 control is removed', () => {
+    expect(cleanCommentContent('a&#133;b&#8232;c').text).not.toMatch(/[\u{85}\u{2028}]/u)
+  })
+
+  it('strips U+061C (Arabic letter mark) from text and names', () => {
+    expect(cleanCommentContent('a\u{61C}b').text).toBe('ab')
+    expect(cleanCommentAuthorName('Ad\u{61C}a')).toBe('Ada')
+  })
+
+  it('redacts full-width and mixed-form email addresses (NFKC fold)', () => {
+    expect(cleanCommentContent('mail john\u{FF20}example\u{FF0E}com now').text).toBe(`mail ${EMAIL_REDACTED} now`)
+    expect(cleanCommentContent('mail JOHN.Doe+x@Example.CO.UK now').text).toBe(`mail ${EMAIL_REDACTED} now`)
+    expect(plainTextForOutput('stored john\u{FF20}example.com value')).toBe(`stored ${EMAIL_REDACTED} value`)
+  })
+
+  it('redacts an address that straddles the 5,000-character cap', () => {
+    const text = 'a'.repeat(COMMENT_CONTENT_MAX - 6) + ' bob@example.com tail'
+    const out = cleanCommentContent(text).text
+    expect(out.length).toBeLessThanOrEqual(COMMENT_CONTENT_MAX)
+    expect(out).not.toMatch(/bob@|@example|example\.com/)
+  })
+
+  it('the email pattern stays fast on hostile input', () => {
+    const inputs = [
+      '@'.repeat(100_000),
+      'a@'.repeat(50_000),
+      `${'a'.repeat(60)}@${'b.'.repeat(120)}`.repeat(40),
+      `x@${'a'.repeat(100_000)}`,
+      `${'a'.repeat(100_000)}@x.y`,
+      '.'.repeat(100_000) + '@' + '.'.repeat(100_000),
+    ]
+    const started = Date.now()
+    for (const i of inputs) cleanCommentContent(i)
+    expect(Date.now() - started).toBeLessThan(5000)
+  })
+
+  it('names that are a host name, a web address or a full-width address become Anonymous', () => {
+    for (const n of ['example.com', 'www.example.com/x', 'http://evil x', 'HTTPS://EVIL.TEST', 'john\u{FF20}example.com', '\u{FF45}xample.com', 'sub.example.co.uk']) {
+      expect(cleanCommentAuthorName(n)).toBe(ANONYMOUS_NAME)
+    }
+    for (const n of ['Dr. Ada Obi', 'Chinedu O\u{2019}Brien', 'Mary-Jane', 'A.B.']) {
+      expect(cleanCommentAuthorName(n)).toBe(n)
+    }
+  })
+
+  it('cleans the stored author name on output as well', () => {
+    const out = toPublicComment({ id: 1, authorName: 'example.com', content: 'x', commentedAt: null })
+    expect(out.authorName).toBe(ANONYMOUS_NAME)
+    expect(toPublicComment({ id: 1, authorName: '<b>Ada</b>\u{202E}', content: 'x' }).authorName).toBe('Ada')
+  })
+})
+
+describe('isOriginAllowed', () => {
+  it('compares configured and request origins case-insensitively', () => {
+    const env = { PUBLIC_SUBMISSION_ORIGINS: 'https://WWW.Example.org/, http://Other.test' } as unknown as NodeJS.ProcessEnv
+    expect(isOriginAllowed('https://www.example.org', env)).toBe(true)
+    expect(isOriginAllowed('HTTPS://WWW.EXAMPLE.ORG/', env)).toBe(true)
+    expect(isOriginAllowed('http://other.test', env)).toBe(true)
+    expect(isOriginAllowed('https://evil.test', env)).toBe(false)
+    expect(isOriginAllowed(null, env)).toBe(true)
+  })
+})
+
+describe('parseCommentPaging page cap', () => {
+  it('is covered above', () => {
+    expect(parseCommentPaging(new URLSearchParams('page=10001'))).toEqual({ limit: 50, page: 10000 })
   })
 })

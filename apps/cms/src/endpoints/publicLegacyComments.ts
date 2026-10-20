@@ -51,13 +51,34 @@ export function parseCommentPaging(params: URLSearchParams): { limit: number; pa
   return { limit, page }
 }
 
+/**
+ * The id of the PUBLISHED article the caller means, or undefined. A numeric value is an article id first: if an article
+ * with that id exists (whatever its status) it is the one meant and no slug is tried, so `article=2024` can never reach
+ * the comments of a different article whose slug is "2024". Only when no article has that id is the value tried as a slug.
+ */
+async function resolveArticleId(req: PayloadRequest, article: string, legacyId: number | undefined): Promise<number | undefined> {
+  const find = async (where: Where) => {
+    const res = await req.payload.find({ collection: 'articles', where, limit: 1, depth: 0, overrideAccess: true })
+    return res.docs[0] as { id?: number; status?: string } | undefined
+  }
+  const published: Where = { status: { equals: 'published' } }
+  if (legacyId !== undefined) return (await find({ and: [published, { legacyId: { equals: legacyId } }] }))?.id
+  if (/^\d{1,9}$/.test(article)) {
+    const byId = await find({ id: { equals: Number(article) } })
+    if (byId) return byId.status === 'published' ? byId.id : undefined
+  }
+  return (await find({ and: [published, { slug: { equals: article } }] }))?.id
+}
+
 async function respond(req: PayloadRequest, withBody: boolean): Promise<Response> {
   const origin = req.headers.get('origin')
   if (!isOriginAllowed(origin)) return fail(403, 'Origin not allowed.')
   const cors = corsHeaders(origin)
 
   const params = req.searchParams ?? new URL(req.url ?? 'http://localhost/').searchParams
-  const article = params.get('article')?.trim() ?? ''
+  // `article` is the documented form. `where[article][equals]` is accepted as an alias because the public renderer builds
+  // its request that way (the shape of Payload REST); every other `where` key, `sort`, `select` and `depth` is ignored.
+  const article = (params.get('article') ?? params.get('where[article][equals]'))?.trim() ?? ''
   const legacyRaw = params.get('articleLegacyId')
   if (article === '' && legacyRaw === null) return fail(400, 'Query parameter "article" is required.', cors)
   if (article.length > 300) return fail(400, 'Query parameter "article" is too long.', cors)
@@ -66,22 +87,7 @@ async function respond(req: PayloadRequest, withBody: boolean): Promise<Response
 
   const { limit, page } = parseCommentPaging(params)
 
-  const key: Where =
-    legacyId !== undefined
-      ? { legacyId: { equals: legacyId } }
-      : /^\d{1,9}$/.test(article)
-        ? { or: [{ id: { equals: Number(article) } }, { slug: { equals: article } }] }
-        : { slug: { equals: article } }
-
-  const found = await req.payload.find({
-    collection: 'articles',
-    where: { and: [{ status: { equals: 'published' } }, key] },
-    limit: 1,
-    depth: 0,
-    overrideAccess: true,
-
-  })
-  const articleId = (found.docs[0] as { id?: number } | undefined)?.id
+  const articleId = await resolveArticleId(req, article, legacyId)
 
   const result = articleId
     ? await req.payload.find({
@@ -94,7 +100,7 @@ async function respond(req: PayloadRequest, withBody: boolean): Promise<Response
         overrideAccess: true,
         select: { authorName: true, content: true, commentedAt: true, legacyId: true, parentLegacyId: true },
       })
-    : { docs: [], totalDocs: 0, totalPages: 1, page, hasNextPage: false, hasPrevPage: false }
+    : { docs: [], totalDocs: 0, totalPages: 1, page, hasNextPage: false, hasPrevPage: false, nextPage: null, prevPage: null }
 
   const body = {
     docs: result.docs.map((d) => toPublicComment(d as unknown as Record<string, unknown>)),
@@ -103,6 +109,8 @@ async function respond(req: PayloadRequest, withBody: boolean): Promise<Response
     page: result.page ?? page,
     totalPages: result.totalPages,
     hasNextPage: result.hasNextPage,
+    nextPage: result.nextPage ?? null,
+    prevPage: result.prevPage ?? null,
     hasPrevPage: result.hasPrevPage,
   }
   return new Response(withBody ? JSON.stringify(body) : null, {

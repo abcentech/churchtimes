@@ -2208,6 +2208,412 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.contact_messages": {
+      "name": "contact_messages",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "reference": {
+          "name": "reference",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "topic": {
+          "name": "topic",
+          "type": "enum_contact_messages_topic",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "message": {
+          "name": "message",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "enum_contact_messages_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'new'"
+        },
+        "notify_status": {
+          "name": "notify_status",
+          "type": "enum_contact_messages_notify_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ip_hash": {
+          "name": "ip_hash",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "user_agent": {
+          "name": "user_agent",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "content_hash": {
+          "name": "content_hash",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "contact_messages_reference_idx": {
+          "name": "contact_messages_reference_idx",
+          "columns": [
+            {
+              "expression": "reference",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "contact_messages_email_idx": {
+          "name": "contact_messages_email_idx",
+          "columns": [
+            {
+              "expression": "email",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "contact_messages_topic_idx": {
+          "name": "contact_messages_topic_idx",
+          "columns": [
+            {
+              "expression": "topic",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "contact_messages_status_idx": {
+          "name": "contact_messages_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "contact_messages_content_hash_idx": {
+          "name": "contact_messages_content_hash_idx",
+          "columns": [
+            {
+              "expression": "content_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "contact_messages_updated_at_idx": {
+          "name": "contact_messages_updated_at_idx",
+          "columns": [
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "contact_messages_created_at_idx": {
+          "name": "contact_messages_created_at_idx",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.subscribers": {
+      "name": "subscribers",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "enum_subscribers_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "source": {
+          "name": "source",
+          "type": "enum_subscribers_source",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "consent_text_version": {
+          "name": "consent_text_version",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "consent_at": {
+          "name": "consent_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "confirmed_at": {
+          "name": "confirmed_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "unsubscribed_at": {
+          "name": "unsubscribed_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ip_hash": {
+          "name": "ip_hash",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "imported_from": {
+          "name": "imported_from",
+          "type": "enum_subscribers_imported_from",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "confirm_token_hash": {
+          "name": "confirm_token_hash",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "confirm_token_expires_at": {
+          "name": "confirm_token_expires_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_confirm_mail_at": {
+          "name": "last_confirm_mail_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "confirm_mails_day_start": {
+          "name": "confirm_mails_day_start",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "confirm_mails_in_day": {
+          "name": "confirm_mails_in_day",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "subscribers_email_idx": {
+          "name": "subscribers_email_idx",
+          "columns": [
+            {
+              "expression": "email",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "subscribers_status_idx": {
+          "name": "subscribers_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "subscribers_confirm_token_hash_idx": {
+          "name": "subscribers_confirm_token_hash_idx",
+          "columns": [
+            {
+              "expression": "confirm_token_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "subscribers_updated_at_idx": {
+          "name": "subscribers_updated_at_idx",
+          "columns": [
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "subscribers_created_at_idx": {
+          "name": "subscribers_created_at_idx",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.live_events": {
       "name": "live_events",
       "schema": "",
@@ -2843,203 +3249,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.legacy_comments": {
-      "name": "legacy_comments",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "serial",
-          "primaryKey": true,
-          "notNull": true
-        },
-        "article_id": {
-          "name": "article_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "author_name": {
-          "name": "author_name",
-          "type": "varchar",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "content": {
-          "name": "content",
-          "type": "varchar",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "commented_at": {
-          "name": "commented_at",
-          "type": "timestamp(3) with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "legacy_id": {
-          "name": "legacy_id",
-          "type": "numeric",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "parent_legacy_id": {
-          "name": "parent_legacy_id",
-          "type": "numeric",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "status": {
-          "name": "status",
-          "type": "enum_legacy_comments_status",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'approved'"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp(3) with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp(3) with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "legacy_comments_article_idx": {
-          "name": "legacy_comments_article_idx",
-          "columns": [
-            {
-              "expression": "article_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "legacy_comments_commented_at_idx": {
-          "name": "legacy_comments_commented_at_idx",
-          "columns": [
-            {
-              "expression": "commented_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "legacy_comments_legacy_id_idx": {
-          "name": "legacy_comments_legacy_id_idx",
-          "columns": [
-            {
-              "expression": "legacy_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "legacy_comments_parent_legacy_id_idx": {
-          "name": "legacy_comments_parent_legacy_id_idx",
-          "columns": [
-            {
-              "expression": "parent_legacy_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "legacy_comments_status_idx": {
-          "name": "legacy_comments_status_idx",
-          "columns": [
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "legacy_comments_updated_at_idx": {
-          "name": "legacy_comments_updated_at_idx",
-          "columns": [
-            {
-              "expression": "updated_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "legacy_comments_created_at_idx": {
-          "name": "legacy_comments_created_at_idx",
-          "columns": [
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "legacy_comments_article_id_articles_id_fk": {
-          "name": "legacy_comments_article_id_articles_id_fk",
-          "tableFrom": "legacy_comments",
-          "tableTo": "articles",
-          "columnsFrom": [
-            "article_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.audit_logs": {
       "name": "audit_logs",
       "schema": "",
@@ -3422,6 +3631,18 @@
           "primaryKey": false,
           "notNull": false
         },
+        "contact_messages_id": {
+          "name": "contact_messages_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "subscribers_id": {
+          "name": "subscribers_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
         "live_events_id": {
           "name": "live_events_id",
           "type": "integer",
@@ -3436,12 +3657,6 @@
         },
         "redirects_id": {
           "name": "redirects_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "legacy_comments_id": {
-          "name": "legacy_comments_id",
           "type": "integer",
           "primaryKey": false,
           "notNull": false
@@ -3574,6 +3789,36 @@
           "method": "btree",
           "with": {}
         },
+        "payload_locked_documents_rels_contact_messages_id_idx": {
+          "name": "payload_locked_documents_rels_contact_messages_id_idx",
+          "columns": [
+            {
+              "expression": "contact_messages_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "payload_locked_documents_rels_subscribers_id_idx": {
+          "name": "payload_locked_documents_rels_subscribers_id_idx",
+          "columns": [
+            {
+              "expression": "subscribers_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "payload_locked_documents_rels_live_events_id_idx": {
           "name": "payload_locked_documents_rels_live_events_id_idx",
           "columns": [
@@ -3609,21 +3854,6 @@
           "columns": [
             {
               "expression": "redirects_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "payload_locked_documents_rels_legacy_comments_id_idx": {
-          "name": "payload_locked_documents_rels_legacy_comments_id_idx",
-          "columns": [
-            {
-              "expression": "legacy_comments_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -3729,6 +3959,32 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
+        "payload_locked_documents_rels_contact_messages_fk": {
+          "name": "payload_locked_documents_rels_contact_messages_fk",
+          "tableFrom": "payload_locked_documents_rels",
+          "tableTo": "contact_messages",
+          "columnsFrom": [
+            "contact_messages_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "payload_locked_documents_rels_subscribers_fk": {
+          "name": "payload_locked_documents_rels_subscribers_fk",
+          "tableFrom": "payload_locked_documents_rels",
+          "tableTo": "subscribers",
+          "columnsFrom": [
+            "subscribers_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
         "payload_locked_documents_rels_live_events_fk": {
           "name": "payload_locked_documents_rels_live_events_fk",
           "tableFrom": "payload_locked_documents_rels",
@@ -3761,19 +4017,6 @@
           "tableTo": "redirects",
           "columnsFrom": [
             "redirects_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "payload_locked_documents_rels_legacy_comments_fk": {
-          "name": "payload_locked_documents_rels_legacy_comments_fk",
-          "tableFrom": "payload_locked_documents_rels",
-          "tableTo": "legacy_comments",
-          "columnsFrom": [
-            "legacy_comments_id"
           ],
           "columnsTo": [
             "id"
@@ -4149,6 +4392,66 @@
         "converted"
       ]
     },
+    "public.enum_contact_messages_topic": {
+      "name": "enum_contact_messages_topic",
+      "schema": "public",
+      "values": [
+        "general",
+        "advertising",
+        "corrections",
+        "tips",
+        "other"
+      ]
+    },
+    "public.enum_contact_messages_status": {
+      "name": "enum_contact_messages_status",
+      "schema": "public",
+      "values": [
+        "new",
+        "read",
+        "replied",
+        "spam"
+      ]
+    },
+    "public.enum_contact_messages_notify_status": {
+      "name": "enum_contact_messages_notify_status",
+      "schema": "public",
+      "values": [
+        "sent",
+        "failed",
+        "not-configured"
+      ]
+    },
+    "public.enum_subscribers_status": {
+      "name": "enum_subscribers_status",
+      "schema": "public",
+      "values": [
+        "pending",
+        "confirmed",
+        "unsubscribed",
+        "bounced",
+        "erased"
+      ]
+    },
+    "public.enum_subscribers_source": {
+      "name": "enum_subscribers_source",
+      "schema": "public",
+      "values": [
+        "footer",
+        "article",
+        "home",
+        "other"
+      ]
+    },
+    "public.enum_subscribers_imported_from": {
+      "name": "enum_subscribers_imported_from",
+      "schema": "public",
+      "values": [
+        "web",
+        "mailchimp-import",
+        "mailchimp-import-no-optin-time"
+      ]
+    },
     "public.enum_live_events_status": {
       "name": "enum_live_events_status",
       "schema": "public",
@@ -4175,14 +4478,6 @@
         "rank-math",
         "legacy-url"
       ]
-    },
-    "public.enum_legacy_comments_status": {
-      "name": "enum_legacy_comments_status",
-      "schema": "public",
-      "values": [
-        "approved",
-        "hidden"
-      ]
     }
   },
   "schemas": {},
@@ -4195,6 +4490,6 @@
     "tables": {},
     "columns": {}
   },
-  "id": "68c3925f-0812-4331-bb49-4d36baadf0f6",
+  "id": "7ea3d65b-192d-4b79-b11e-506f2cc253ac",
   "prevId": "00000000-0000-0000-0000-000000000000"
 }

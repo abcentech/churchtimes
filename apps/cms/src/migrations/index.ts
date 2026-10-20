@@ -7,7 +7,8 @@ import * as migration_20261014_221500_live_events_started_at_backfill from './20
 import * as migration_20261016_094708_article_seo_fields from './20261016_094708_article_seo_fields';
 import * as migration_20261016_110618_media_legacy_path from './20261016_110618_media_legacy_path';
 import * as migration_20261017_095306_redirects from './20261017_095306_redirects';
-import * as migration_20261019_215634_legacy_comments from './20261019_215634_legacy_comments';
+import * as migration_20261019_215623_contact_and_newsletter from './20261019_215623_contact_and_newsletter';
+import * as migration_20261019_230557_legacy_comments from './20261019_230557_legacy_comments';
 
 export const migrations = [
   {
@@ -56,8 +57,13 @@ export const migrations = [
     name: '20261017_095306_redirects',
   },
   {
-    up: migration_20261019_215634_legacy_comments.up,
-    down: migration_20261019_215634_legacy_comments.down,
-    name: '20261019_215634_legacy_comments'
+    up: migration_20261019_215623_contact_and_newsletter.up,
+    down: migration_20261019_215623_contact_and_newsletter.down,
+    name: '20261019_215623_contact_and_newsletter',
+  },
+  {
+    up: migration_20261019_230557_legacy_comments.up,
+    down: migration_20261019_230557_legacy_comments.down,
+    name: '20261019_230557_legacy_comments'
   },
 ];

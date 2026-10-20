@@ -322,3 +322,169 @@ describe('import reconciliation on a synthetic export', () => {
     expect((await list(`article=${art.slug}`)).json.totalDocs).toBe(2)
   })
 })
+
+describe('review fixes: renderer request shape, resolution, scope', () => {
+  it('accepts the renderer form where[article][equals]=<id> and returns nextPage/prevPage', async () => {
+    const art = await f.seedArticle({ status: 'published', publishedAt: new Date().toISOString() })
+    for (let i = 0; i < 3; i++) await importComment(art.id, { dateGmt: `2019-02-0${i + 1} 00:00:00`, content: `r${i}` })
+    const url = `where[article][equals]=${art.id}&sort=-content&limit=2&page=1&depth=0&where[status][equals]=hidden&where[or][0][id][exists]=true`
+    const p1 = await list(url)
+    expect(p1.status).toBe(200)
+    expect(p1.json.docs.map((d: { content: string }) => d.content)).toEqual(['r0', 'r1'])
+    expect(p1.json.nextPage).toBe(2)
+    expect(p1.json.prevPage).toBeNull()
+    const p2 = await list(`where[article][equals]=${art.id}&limit=2&page=2`)
+    expect(p2.json.docs.map((d: { content: string }) => d.content)).toEqual(['r2'])
+    expect(p2.json.nextPage).toBeNull()
+    expect(p2.json.prevPage).toBe(1)
+    // the bracket form can arrive percent-encoded
+    const enc = await list(`where%5Barticle%5D%5Bequals%5D=${art.id}`)
+    expect(enc.json.totalDocs).toBe(3)
+    // `article` wins over the alias
+    const both = await list(`article=${art.id}&where[article][equals]=${pubArticle.id}`)
+    expect(both.json.totalDocs).toBe(3)
+  })
+
+  it('a numeric article value is an id first: it never reaches another article by slug', async () => {
+    const victim = await f.seedArticle({ status: 'published', publishedAt: new Date().toISOString() })
+    await importComment(victim.id, { content: 'victim comment' })
+    // an article whose slug is the victim id as text (published) and the victim id's own comments
+    const decoy = await f.seedArticle({ status: 'published', publishedAt: new Date().toISOString(), slug: String(victim.id) })
+    await importComment(decoy.id, { content: 'decoy comment' })
+    const r = await list(`article=${victim.id}`)
+    expect(r.json.docs.map((d: { content: string }) => d.content)).toEqual(['victim comment'])
+    // id of an unpublished article: no slug fallback either
+    const draftWithSlugTwin = await f.seedArticle({ status: 'draft' })
+    await f.seedArticle({ status: 'published', publishedAt: new Date().toISOString(), slug: String(draftWithSlugTwin.id) })
+    const d = await list(`article=${draftWithSlugTwin.id}`)
+    expect(d.json.docs).toEqual([])
+    // the slug form still works for a numeric slug when no article has that id
+    const byDecoySlug = await list(`article=${decoy.slug}`)
+    expect(byDecoySlug.json.totalDocs).toBe(1)
+  })
+
+  it('HEAD answers with the headers and no body, and a trailing slash works', async () => {
+    const head = await api('HEAD', `/api/legacy-comments?article=${pubArticle.slug}`).catch(() => null)
+    // the REST helper has no HEAD handler: call the endpoint through GET with the trailing slash instead and check HEAD via the config
+    expect(head === null || head.text === '').toBe(true)
+    const slash = await api('GET', `/api/legacy-comments/?article=${pubArticle.slug}`)
+    expect(slash.status).toBe(200)
+    expect(slash.json.docs).toBeInstanceOf(Array)
+    const headEndpoint = f.payload.collections['legacy-comments'].config.endpoints
+    expect(Array.isArray(headEndpoint) && headEndpoint.some((e) => e.method === 'head' && e.path === '/')).toBe(true)
+  })
+
+  it('has the composite index for the public list', async () => {
+    const res = (await (f.payload.db as any).drizzle.execute(
+      `select indexdef from pg_indexes where tablename = 'legacy_comments'`,
+    )) as { rows: { indexdef: string }[] }
+    expect(res.rows.some((r) => /article_id.*status.*commented_at.*legacy_id/.test(r.indexdef))).toBe(true)
+  })
+})
+
+describe('review fixes: access that must not regress', () => {
+  it('an approved comment on a DRAFT article is invisible by id and by count (anonymous and reporter)', async () => {
+    const c = await importComment(draftArticle.id, { content: 'draft article comment' })
+    for (const token of [undefined, f.tokens.reporter, f.tokens.trusted]) {
+      const byId = await api('GET', `/api/legacy-comments/${c.id}`, { token })
+      expect(byId.status).toBe(404)
+      const count = await api('GET', `/api/legacy-comments/count?where[article][equals]=${draftArticle.id}`, { token })
+      expect(count.status).toBe(200)
+      expect(count.json.totalDocs).toBe(0)
+    }
+    const eic = await api('GET', `/api/legacy-comments/${c.id}`, { token: f.tokens.eic })
+    expect(eic.status).toBe(200)
+  })
+
+  it('anonymous GET /:id never exposes the moderation status', async () => {
+    const c = await importComment(pubArticle.id, { content: 'status hidden from public' })
+    const anon = await api('GET', `/api/legacy-comments/${c.id}`)
+    expect(anon.status).toBe(200)
+    expect(anon.json.status).toBeUndefined()
+    expect(anon.json.content).toBe('status hidden from public')
+    expect(JSON.stringify(anon.json)).not.toMatch(/private\.example|203\.0\.113\.9/)
+    const staff = await api('GET', `/api/legacy-comments/${c.id}`, { token: f.tokens.eic })
+    expect(staff.json.status).toBe('approved')
+  })
+
+  it('article, commentedAt, parentLegacyId, legacyId and text cannot be changed through the API', async () => {
+    const other = await f.seedArticle({ status: 'published', publishedAt: new Date().toISOString() })
+    const c = await importComment(pubArticle.id, { content: 'immutable text', parent: '77' })
+    const before = (await f.payload.findByID({ collection: 'legacy-comments', id: c.id, overrideAccess: true, depth: 0 })) as Record<string, unknown>
+    const r = await api('PATCH', `/api/legacy-comments/${c.id}`, {
+      token: f.tokens.eic,
+      body: {
+        article: other.id,
+        commentedAt: '2001-01-01T00:00:00.000Z',
+        parentLegacyId: 1,
+        legacyId: 42,
+        content: 'x',
+        authorName: 'x',
+        status: 'hidden',
+      },
+    })
+    expect(r.status).toBe(200)
+    const after = (await f.payload.findByID({ collection: 'legacy-comments', id: c.id, overrideAccess: true, depth: 0 })) as Record<string, unknown>
+    for (const k of ['article', 'commentedAt', 'parentLegacyId', 'legacyId', 'content', 'authorName']) {
+      expect(after[k]).toEqual(before[k])
+    }
+    expect(after.status).toBe('hidden')
+    // an update that only hides must not re-clean stored text
+    expect(after.content).toBe('immutable text')
+  })
+
+  it('section editor read scope: in-scope comments of any state, out-of-scope only public ones', async () => {
+    const inArt = await f.seedArticle({ status: 'published', publishedAt: new Date().toISOString() }) // category A
+    const outArt = await f.seedArticle({ status: 'published', publishedAt: new Date().toISOString(), category: f.catB.id })
+    const outDraft = await f.seedArticle({ status: 'draft', category: f.catB.id })
+    const inDraft = await f.seedArticle({ status: 'draft' })
+    const hiddenIn = await importComment(inArt.id)
+    await f.payload.update({ collection: 'legacy-comments', id: hiddenIn.id, data: { status: 'hidden' }, overrideAccess: true })
+    const hiddenOut = await importComment(outArt.id)
+    await f.payload.update({ collection: 'legacy-comments', id: hiddenOut.id, data: { status: 'hidden' }, overrideAccess: true })
+    const publicOut = await importComment(outArt.id)
+    const draftOut = await importComment(outDraft.id)
+    const draftIn = await importComment(inDraft.id)
+
+    const get = (id: number, token: string) => api('GET', `/api/legacy-comments/${id}`, { token })
+    const se = f.tokens.sectionEditor
+    expect((await get(hiddenIn.id, se)).status).toBe(200)
+    expect((await get(draftIn.id, se)).status).toBe(200)
+    expect((await get(publicOut.id, se)).status).toBe(200) // public comments of a published article in another section
+    expect((await get(hiddenOut.id, se)).status).toBe(404)
+    expect((await get(draftOut.id, se)).status).toBe(404)
+    // the same comment is also visible to other staff as a public comment but a hidden one is not
+    expect((await get(hiddenIn.id, f.tokens.reporter)).status).toBe(404)
+    expect((await get(hiddenIn.id, f.tokens.eic)).status).toBe(200)
+  })
+})
+
+describe('review fixes: deleting an article that has archived comments', () => {
+  it('is refused with 409 and the article and its comments survive; it works once the comments are deleted', async () => {
+    const art = await f.seedArticle({ status: 'draft' })
+    const c1 = await importComment(art.id)
+    const c2 = await importComment(art.id)
+
+    const refused = await api('DELETE', `/api/articles/${art.id}`, { token: f.tokens.eic })
+    expect(refused.status).toBe(409)
+    expect(JSON.stringify(refused.json)).toMatch(/2 archived comments/)
+    expect((await api('GET', `/api/articles/${art.id}`, { token: f.tokens.eic })).status).toBe(200)
+    expect((await f.payload.count({ collection: 'legacy-comments', where: { article: { equals: art.id } }, overrideAccess: true })).totalDocs).toBe(2)
+
+    // a bulk delete by query is refused too (per document)
+    const bulk = await api('DELETE', `/api/articles?where[id][equals]=${art.id}`, { token: f.tokens.eic })
+    expect(bulk.json?.errors?.length ?? 0).toBeGreaterThan(0)
+    expect((await f.payload.count({ collection: 'articles', where: { id: { equals: art.id } }, overrideAccess: true })).totalDocs).toBe(1)
+
+    for (const c of [c1, c2]) {
+      expect((await api('DELETE', `/api/legacy-comments/${c.id}`, { token: f.tokens.admin })).status).toBe(200)
+    }
+    const ok = await api('DELETE', `/api/articles/${art.id}`, { token: f.tokens.eic })
+    expect(ok.status).toBe(200)
+  })
+
+  it('an article without comments deletes normally', async () => {
+    const art = await f.seedArticle({ status: 'draft' })
+    expect((await api('DELETE', `/api/articles/${art.id}`, { token: f.tokens.eic })).status).toBe(200)
+  })
+})

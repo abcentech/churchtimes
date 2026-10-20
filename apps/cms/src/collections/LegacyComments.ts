@@ -9,15 +9,15 @@ import type {
   Where,
 } from 'payload'
 
-import { isAdmin, isEditorInChief, userSectionIds, type UserLike } from '../access/roles'
+import { isAdmin, isEditorInChief, isStaff, userSectionIds, type UserLike } from '../access/roles'
 import { publicLegacyCommentsEndpoints } from '../endpoints/publicLegacyComments'
 import { writeAuditLog } from '../lib/audit'
 import { clampLimit } from '../lib/clampLimit'
 import {
   COMMENT_CONTENT_MAX,
   COMMENT_NAME_MAX,
-  cleanCommentAuthorName,
-  cleanCommentContent,
+  plainNameForOutput,
+  plainTextForOutput,
 } from '../lib/legacyComments'
 
 /**
@@ -47,7 +47,7 @@ const read: Access = ({ req }) => {
   if (isEditorInChief(user)) return true
   if (user?.role === 'section-editor') {
     const sections = userSectionIds(user)
-    return sections.length ? { 'article.category': { in: sections } } : publicWhere
+    return sections.length ? { or: [publicWhere, { 'article.category': { in: sections } }] } : publicWhere
   }
   return publicWhere
 }
@@ -65,12 +65,16 @@ const update: Access = ({ req }) => {
 const never: FieldAccess = () => false
 const never_ = () => false
 
-/** Same cleaning as the importer, so a value written any other way ends up in the same plain-text form. */
-const cleanFields: CollectionBeforeValidateHook = ({ data }) => {
-  if (!data) return data
-  if ('authorName' in data) data.authorName = cleanCommentAuthorName(data.authorName)
+/**
+ * On create only: plain-text cleaning WITHOUT entity decoding (the importer decodes once, in `toLegacyCommentData`; a
+ * second decode would turn `&amp;lt;` into `<`). An update never re-cleans stored text; the text fields cannot be
+ * updated through the API at all.
+ */
+const cleanFields: CollectionBeforeValidateHook = ({ data, operation }) => {
+  if (!data || operation !== 'create') return data
+  if ('authorName' in data) data.authorName = plainNameForOutput(data.authorName)
   if ('content' in data) {
-    const content = cleanCommentContent(data.content).text
+    const content = plainTextForOutput(data.content)
     if (content === '') throw new APIError('Comment text is required.', 400)
     data.content = content
   }
@@ -113,6 +117,8 @@ export const LegacyComments: CollectionConfig = {
       'Archived comments from the old WordPress site. Read-only: staff can hide or restore a comment but not edit it. No commenter email, website or IP is stored.',
   },
   timestamps: true,
+  // The public list: where article = ? and status = approved, ordered by commentedAt then legacyId.
+  indexes: [{ fields: ['article', 'status', 'commentedAt', 'legacyId'] }],
   access: {
     read,
     create: never_,
@@ -176,6 +182,8 @@ export const LegacyComments: CollectionConfig = {
       required: true,
       defaultValue: 'approved',
       index: true,
+      // Staff only: an anonymous reader of GET /api/legacy-comments/:id never sees the moderation status.
+      access: { read: ({ req }) => isStaff(asUser(req.user)) },
       options: [
         { label: 'Approved', value: 'approved' },
         { label: 'Hidden', value: 'hidden' },

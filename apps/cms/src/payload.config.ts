@@ -10,14 +10,18 @@ import sharp from 'sharp'
 import { Articles } from './collections/Articles'
 import { AuditLogs } from './collections/AuditLogs'
 import { Categories } from './collections/Categories'
+import { ContactMessages } from './collections/ContactMessages'
 import { LiveEvents } from './collections/LiveEvents'
 import { LiveUpdates } from './collections/LiveUpdates'
 import { Media } from './collections/Media'
 import { LegacyComments } from './collections/LegacyComments'
 import { Redirects } from './collections/Redirects'
 import { Submissions } from './collections/Submissions'
+import { Subscribers } from './collections/Subscribers'
 import { Users } from './collections/Users'
 import { previewArticleEndpoint } from './endpoints/previewArticle'
+import { publicContactEndpoint, publicContactPreflightEndpoint } from './endpoints/publicContact'
+import { newsletterEndpoints } from './endpoints/publicNewsletter'
 import {
   publicRedirectsEndpoint,
   publicRedirectsHeadEndpoint,
@@ -33,6 +37,7 @@ import {
   checkOriginList,
   csv,
   normaliseOrigin,
+  turnstileActionWarnings,
   validateProductionEnv,
 } from './lib/securityConfig'
 
@@ -80,6 +85,10 @@ if (isProd && !isBuildPhase) {
   }
 }
 
+if (!isTest && !isBuildPhase) {
+  for (const warning of turnstileActionWarnings(process.env)) console.warn(`[security] ${warning}`)
+}
+
 // CMS_PUBLIC_URL is the origin the admin UI is served from. Payload adds serverURL to the CSRF
 // allowlist itself; we also normalise it (no trailing slash) so the Origin comparison matches.
 const serverURL = process.env.CMS_PUBLIC_URL ? normaliseOrigin(process.env.CMS_PUBLIC_URL) : undefined
@@ -96,6 +105,10 @@ const email = smtpHost
         port: Number.parseInt(process.env.SMTP_PORT ?? '', 10) || 587,
         secure: process.env.SMTP_SECURE === 'true',
         requireTLS: process.env.SMTP_SECURE !== 'true' && isProd,
+        // nodemailer defaults are 2 min (connect) and 10 min (socket): a hanging SMTP server must not pin requests or jobs.
+        connectionTimeout: 10_000,
+        greetingTimeout: 10_000,
+        socketTimeout: 20_000,
         ...(process.env.SMTP_USER
           ? { auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS ?? '' } }
           : {}),
@@ -118,13 +131,29 @@ export default buildConfig({
     user: 'users',
     importMap: { baseDir: path.resolve(dirname) },
   },
-  collections: [Users, Categories, Media, Articles, Submissions, LiveEvents, LiveUpdates, Redirects, LegacyComments, AuditLogs],
+  collections: [
+    Users,
+    Categories,
+    Media,
+    Articles,
+    Submissions,
+    ContactMessages,
+    Subscribers,
+    LiveEvents,
+    LiveUpdates,
+    Redirects,
+    LegacyComments,
+    AuditLogs,
+  ],
   endpoints: [
     publicSubmissionsEndpoint,
     publicSubmissionsPreflightEndpoint,
     publicRedirectsEndpoint,
     publicRedirectsHeadEndpoint,
     publicRedirectsPreflightEndpoint,
+    publicContactEndpoint,
+    publicContactPreflightEndpoint,
+    ...newsletterEndpoints,
     previewArticleEndpoint,
   ],
   editor: lexicalEditor(),

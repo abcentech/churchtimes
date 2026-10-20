@@ -25,17 +25,16 @@ export async function up({ db, payload, req }: MigrateUpArgs): Promise<void> {
   CREATE INDEX "legacy_comments_status_idx" ON "legacy_comments" USING btree ("status");
   CREATE INDEX "legacy_comments_updated_at_idx" ON "legacy_comments" USING btree ("updated_at");
   CREATE INDEX "legacy_comments_created_at_idx" ON "legacy_comments" USING btree ("created_at");
+  CREATE INDEX "article_status_commentedAt_legacyId_idx" ON "legacy_comments" USING btree ("article_id","status","commented_at","legacy_id");
   ALTER TABLE "payload_locked_documents_rels" ADD CONSTRAINT "payload_locked_documents_rels_legacy_comments_fk" FOREIGN KEY ("legacy_comments_id") REFERENCES "public"."legacy_comments"("id") ON DELETE cascade ON UPDATE no action;
   CREATE INDEX "payload_locked_documents_rels_legacy_comments_id_idx" ON "payload_locked_documents_rels" USING btree ("legacy_comments_id");`)
 }
 
 export async function down({ db, payload, req }: MigrateDownArgs): Promise<void> {
   await db.execute(sql`
-   ALTER TABLE "legacy_comments" DISABLE ROW LEVEL SECURITY;
-  DROP TABLE "legacy_comments" CASCADE;
-  ALTER TABLE "payload_locked_documents_rels" DROP CONSTRAINT "payload_locked_documents_rels_legacy_comments_fk";
-  
-  DROP INDEX "payload_locked_documents_rels_legacy_comments_id_idx";
-  ALTER TABLE "payload_locked_documents_rels" DROP COLUMN "legacy_comments_id";
-  DROP TYPE "public"."enum_legacy_comments_status";`)
+   ALTER TABLE "payload_locked_documents_rels" DROP CONSTRAINT IF EXISTS "payload_locked_documents_rels_legacy_comments_fk";
+  DROP INDEX IF EXISTS "payload_locked_documents_rels_legacy_comments_id_idx";
+  ALTER TABLE "payload_locked_documents_rels" DROP COLUMN IF EXISTS "legacy_comments_id";
+  DROP TABLE IF EXISTS "legacy_comments" CASCADE;
+  DROP TYPE IF EXISTS "public"."enum_legacy_comments_status";`)
 }
