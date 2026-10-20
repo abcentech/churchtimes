@@ -4,6 +4,7 @@ import type {
   CollectionAfterChangeHook,
   CollectionAfterDeleteHook,
   CollectionBeforeChangeHook,
+  CollectionBeforeDeleteHook,
   CollectionBeforeOperationHook,
   CollectionBeforeValidateHook,
   CollectionConfig,
@@ -461,7 +462,28 @@ const auditChanges: CollectionAfterChangeHook = async ({ doc, previousDoc, opera
   return doc
 }
 
-const auditDelete: CollectionAfterDeleteHook = async ({ doc, req }) => {
+/**
+ * Go-live C6: an article that still has archived legacy comments cannot be deleted (409). The comments belong to the
+ * archive and `legacy-comments.article` is required, so the delete would otherwise fail inside the database (500) or,
+ * if we deleted the comments for the editor, silently destroy archive data. An admin deletes the comments first
+ * (audited), or the article is archived instead.
+ */
+const refuseDeleteWithLegacyComments: CollectionBeforeDeleteHook = async ({ id, req }) => {
+  const found = await req.payload.count({
+    collection: 'legacy-comments',
+    where: { article: { equals: id } },
+    overrideAccess: true,
+    req,
+  })
+  if (found.totalDocs > 0) {
+    throw new APIError(
+      `This article has ${found.totalDocs} archived comment${found.totalDocs === 1 ? '' : 's'}. Archive the article instead, or ask an admin to delete its comments first.`,
+      409,
+    )
+  }
+}
+
+const auditDelete: CollectionAfterDeleteHook =async ({ doc, req }) => {
   if ((req.context as { seed?: boolean } | undefined)?.seed === true) return doc
   await writeAuditLog(req, {
     action: 'delete',
@@ -495,6 +517,7 @@ export const Articles: CollectionConfig = {
     beforeOperation: [clampLimit, markRestore, captureExpectedUpdatedAt],
     beforeValidate: [autoSlug, normalizeSeoFields, validateEmbeds, validateBodyImages],
     beforeChange: [assertExpectedUpdatedAt('articles'), deriveBodyMedia, enforceWorkflow],
+    beforeDelete: [refuseDeleteWithLegacyComments],
     afterChange: [auditChanges],
     afterDelete: [auditDelete],
   },

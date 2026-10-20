@@ -42,6 +42,8 @@ export async function setup(): Promise<void> {
       password,
       port,
       persistent: false,
+      // Windows would otherwise pick WIN1252, which cannot store emoji or non-Latin text (legacy comments, C6).
+      initdbFlags: ['--encoding=UTF8', '--locale=C'],
       onLog: () => {},
       onError: () => {},
     })
