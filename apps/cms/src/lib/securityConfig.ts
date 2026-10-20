@@ -1,3 +1,4 @@
+import { parseRecipientList } from './contactMessage'
 import { isTurnstileDummySecret } from './turnstile'
 
 /**
@@ -122,6 +123,25 @@ const UNSAFE_IP_HEADERS = new Set([
   'content-length',
 ])
 
+/** Actions the contact and newsletter forms send. A TURNSTILE_EXPECTED_ACTION list that lacks one rejects that whole form. */
+export const NEW_FORM_TURNSTILE_ACTIONS = ['contact-message', 'newsletter-subscribe'] as const
+
+/**
+ * One-line startup warnings (never a startup failure): TURNSTILE_EXPECTED_ACTION is set but does not list the action of
+ * the contact or newsletter form, so every request to that form would be answered 403. Unset is fine (and is covered by
+ * the separate "not set" warning in validateProductionEnv).
+ */
+export function turnstileActionWarnings(env: NodeJS.ProcessEnv): string[] {
+  const list = csv(env.TURNSTILE_EXPECTED_ACTION)
+  if (list.length === 0) return []
+  const missing = NEW_FORM_TURNSTILE_ACTIONS.filter((a) => !list.includes(a))
+  return missing.length === 0
+    ? []
+    : [
+        `TURNSTILE_EXPECTED_ACTION is set but does not include ${missing.join(' and ')}: every request to the matching form is rejected with 403 until it is added.`,
+      ]
+}
+
 export type ProductionEnvCheck = {
   /** Startup fails when non-empty. */
   problems: string[]
@@ -211,6 +231,40 @@ export function validateProductionEnv(env: NodeJS.ProcessEnv): ProductionEnvChec
   const smtpHost = env.SMTP_HOST?.trim()
   if (smtpHost && !(env.EMAIL_FROM_ADDRESS ?? '').trim()) {
     problems.push('EMAIL_FROM_ADDRESS is required when SMTP_HOST is set.')
+  }
+
+  // Newsletter (C4). The HMAC key for unsubscribe links must be its own strong secret in production: unsubscribe links
+  // are put in every future e-mail, so a weak or shared key would let anyone forge them. Disposable loopback staging
+  // (staging.enabled) derives a throw-away key instead (lib/newsletter.ts resolveNewsletterTokenSecret).
+  const tokenSecret = env.NEWSLETTER_TOKEN_SECRET?.trim() ?? ''
+  if (!staging.enabled) {
+    if (tokenSecret.length < 32) {
+      problems.push('NEWSLETTER_TOKEN_SECRET must be set and at least 32 characters long.')
+    } else if (tokenSecret === secret || tokenSecret === preview) {
+      problems.push('NEWSLETTER_TOKEN_SECRET must differ from PAYLOAD_SECRET and PREVIEW_SECRET.')
+    }
+  } else if (tokenSecret && tokenSecret.length < 32) {
+    problems.push('NEWSLETTER_TOKEN_SECRET must be at least 32 characters long when set.')
+  }
+  // PUBLIC_SITE_URL is where confirmation links point (the public site, never the API). Optional at startup (the
+  // sign-up answers 503 while it is unset), but when set it must be a bare https origin.
+  const siteUrl = env.PUBLIC_SITE_URL?.trim() ?? ''
+  if (siteUrl) {
+    const parsed = parseOrigin(siteUrl)
+    if (!parsed) problems.push('PUBLIC_SITE_URL must be a bare origin like https://www.example.org (no path or trailing slash).')
+    else if (parsed.protocol !== 'https:' && !(staging.enabled && isLoopbackHostname(parsed.hostname))) {
+      problems.push('PUBLIC_SITE_URL must use https in production.')
+    }
+  }
+
+  // Contact form notifications (C5). Recipients are server-side only. Invalid entries would silently drop mail,
+  // so they fail startup (the message never echoes an address). An empty list is allowed: messages are still
+  // stored (CMS > Contact messages) and each one logs that no notification was sent.
+  const notify = parseRecipientList(env.CONTACT_NOTIFY_TO)
+  if (notify.invalid.length > 0) {
+    problems.push(
+      `CONTACT_NOTIFY_TO has ${notify.invalid.length} invalid or surplus address(es); use a comma list of up to 10 valid e-mail addresses.`,
+    )
   }
 
   return { problems, warnings }

@@ -111,7 +111,7 @@ message listing every problem (missing secrets, http or wildcard origins, dummy 
 | `IP_HASH_SALT` | yes | 32 hex chars | Salt for hashing client IPs on submissions, at least 16 characters. |
 | `TURNSTILE_SECRET_KEY` | **yes (production)** | `0x4AAAA…` (secret) | Cloudflare Turnstile secret key. Startup fails in production without it, or with a Cloudflare dummy test secret. Dev fallback: always-pass test secret + warning. |
 | `TURNSTILE_ALLOWED_HOSTNAMES` | recommended (startup warning when unset) | `www.churchtimesnigeria.net` | Comma list. Siteverify's `hostname` must match (case-insensitive), otherwise 403. Do not set it with dummy/test keys (they return a fixed hostname). |
-| `TURNSTILE_EXPECTED_ACTION` | recommended (startup warning when unset) | `submit-story` | Comma list. If set, the widget's `action` must be exactly one of the entries (case-sensitive); a token without an action is rejected (403). Must include the value the public site sends as `VITE_TURNSTILE_ACTION` (default `submit-story`). |
+| `TURNSTILE_EXPECTED_ACTION` | recommended (startup warning when unset) | `submit-story,contact-message,newsletter-subscribe` | Comma list. If set, the widget's `action` must be exactly one of the entries (case-sensitive); a token without an action is rejected (403). Must include every action the public site sends: `VITE_TURNSTILE_ACTION` (default `submit-story`) plus `contact-message` and `newsletter-subscribe` for the contact and newsletter forms. Each new endpoint also pins its own action, so a token for one form is refused by another. |
 | `CMS_PUBLIC_URL` | **yes (production)** | `https://cms.example.org` | Public origin of the CMS: https, no trailing slash. Used as Payload `serverURL` (also added to the CSRF allowlist), reset links, absolute media URLs. |
 | `CMS_CORS_ORIGINS` | yes | `https://www.example.org,https://newsroom.example.org` | Browser origins allowed to call the API (CORS). Explicit origins only. |
 | `CMS_CSRF_ORIGINS` | yes | `https://newsroom.example.org` | Extra origins allowed to make cookie-authenticated requests (the CMS origin is always included). |
@@ -119,6 +119,14 @@ message listing every problem (missing secrets, http or wildcard origins, dummy 
 | `SUBMISSION_RATE_LIMIT` / `SUBMISSION_RATE_WINDOW_SECONDS` | no | `5` / `900` | Submissions per IP per window. |
 | `SUBMISSION_EMAIL_RATE_LIMIT` / `SUBMISSION_EMAIL_RATE_WINDOW_SECONDS` | no | `3` / `3600` | Submissions per e-mail address per window. |
 | `SUBMISSION_DUPLICATE_WINDOW_HOURS` | no | `72` | Identical email+title+body inside this window is rejected (409). |
+| `CONTACT_RATE_LIMIT` / `CONTACT_RATE_WINDOW_SECONDS` | no | `5` / `900` | Contact messages per IP per window (`POST /api/public/contact`). Per e-mail address the limit is fixed at 3 per hour. |
+| `CONTACT_NOTIFY_TO` | recommended | `desk@example.org,editor@example.org` | Comma list (max 10) of staff addresses e-mailed for each contact message, with `Reply-To` set to the sender. Server-side only: never returned to a browser or written to logs. An invalid entry stops startup in production. Needs SMTP; without either, messages are still stored and show `notifyStatus: not-configured` in CMS > Contact messages. |
+| `PUBLIC_SITE_URL` | for the newsletter | `https://www.example.org` | Public **site** origin that confirmation e-mails link to (`<origin>/newsletter/confirm?token=...`, never an API URL). Bare origin, https only in production (a malformed or http value stops startup). While unset or http in production, `POST /api/public/newsletter/subscribe` answers `503` and stores nothing. |
+| `NEWSLETTER_TOKEN_SECRET` | **yes (production)** | 64 hex chars | HMAC key for unsubscribe links, at least 32 characters, different from `PAYLOAD_SECRET` and `PREVIEW_SECRET`. Startup fails in production without it (the loopback-only disposable staging stack derives a throw-away key instead). Rotating it breaks every unsubscribe link already sent. |
+| `NEWSLETTER_RATE_LIMIT` / `NEWSLETTER_RATE_WINDOW_SECONDS` | no | `5` / `900` | Newsletter sign-ups per IP per window. Per e-mail address the limit is fixed at 3 per hour. |
+| `NEWSLETTER_TOKEN_RATE_LIMIT` | no | `20` | Per-IP limit (same window) for the confirm and unsubscribe endpoints combined. |
+| `NEWSLETTER_RESEND_COOLDOWN_SECONDS` | no | `600` | If a confirmation e-mail went to an address within this many seconds, a new sign-up gets the same neutral `202` and nothing is sent (`0` disables). |
+| `NEWSLETTER_MAX_CONFIRM_MAILS_PER_DAY` | no | `5` | Daily cap (rolling 24 h) of confirmation e-mails per address; beyond it, same neutral `202`, nothing sent. `bounced` addresses are never mailed automatically. |
 | `PUBLIC_ARTICLE_PATH_TEMPLATE` | no | `/reports/{slug}/` | Current public path of an article, used to derive redirects from `legacyUrl` (C7). Exactly `/reports/{slug}/` (default) or `/{slug}/`; anything else stops startup. Must equal the value the public host reads. |
 | `REDIRECT_ALLOWED_HOSTS` | no | `www.example.org` | Comma list of bare host names a redirect target may use as an absolute https URL (C7). Unset: internal paths only. A malformed entry stops startup. **Must equal the public host's `PUBLIC_REDIRECT_ALLOWED_HOSTS`** (the host also needs `PUBLIC_SITE_URL`): one disagreement makes the host reject the whole list. |
 | `LEGACY_SITE_HOSTS` | no | `churchtimesnigeria.net,www.churchtimesnigeria.net` (default) | Comma list of host names an article's `legacyUrl` may carry. A `legacyUrl` on another host derives no rule (counted). A malformed entry stops startup. |
@@ -438,6 +446,23 @@ Confirm each item before go-live and again after any change to the server:
 - [ ] A public submission from a disallowed origin gets `403`. Verify with `curl -H "Origin: https://evil.example"`.
 - [ ] A reporter account cannot approve or publish an article. Verify in the admin UI and API.
 - [ ] A submission without a valid `turnstileToken` is refused (§4.1 step 6) and one from the real site form is accepted.
+- [ ] Contact form (C5): a message from the real site form gets a `201` with a `MSG-` reference, appears in CMS > Contact messages (admin and
+      editor-in-chief only), and `CONTACT_NOTIFY_TO` receives the notification with Reply-To set to the sender. With SMTP stopped, a message is
+      still stored (`notifyStatus: failed`) and the sender still sees the normal `201`.
+- [ ] Newsletter (C4): `NEWSLETTER_TOKEN_SECRET` and `PUBLIC_SITE_URL` are set; a sign-up from the real site form answers `202`, the confirmation e-mail
+      arrives with a link on the public site, the public confirm page POSTs the token and the row becomes `confirmed` in CMS > Subscribers
+      (admin and editor-in-chief only). With SMTP stopped the form answers `503` and stores nothing. `GET /api/subscribers/export?status=confirmed`
+      works for an `admin` (CSV, audited) and is refused for everyone else.
+- [ ] Mailchimp import (only if the owner supplies an export): keep the CSV **outside** the repository (the command refuses a path inside it), run
+      `npm run import:subscribers -- --file <path>` first (dry run, counts only), check the counts, then add `--apply`. Expected columns, any order:
+      `Email Address` (or `email`), `First Name`, `Last Name`, `OPTIN_TIME`, `CONFIRM_TIME`, `Status`. Only rows whose Status is `subscribed` are imported
+      (as `confirmed`, consent time = `OPTIN_TIME`; a row without it is stored with `consentAt` null and counted). A file with `UNSUB_TIME` or `CLEAN_TIME` columns is refused; a file with no Status column is refused unless it is Mailchimp's "Subscribed" segment export and `--assume-subscribed` is added. Existing rows and erased addresses are never overwritten or re-created.
+- [ ] Privacy notes (contact and newsletter): erasing a subscriber does **not** touch `contact-messages` from the same address (an admin deletes those by
+      hand); rotating `IP_HASH_SALT` changes every erase hash, so earlier erasures stop suppressing re-imports (keep the salt stable); `PUBLIC_SITE_URL` is a
+      bare origin, so the public site must be served at the root of its domain (confirmation links are `<origin>/newsletter/confirm`). Logs for these
+      endpoints carry only error class and code, never an address, name or message; SMTP timeouts are 10 s connect, 10 s greeting, 20 s socket.
+- [ ] `TURNSTILE_EXPECTED_ACTION`, when set, lists `contact-message` and `newsletter-subscribe`; startup prints a `[security]` warning if either is missing
+      (that form would answer 403 to everyone).
 - [ ] Article editor (go-live C1): open an article in the admin, insert a table and a **YouTube video** block (11-character id), save, reload. The
       editor features (blocks, table) are registered on `articles.content` only, so `npx payload generate:importmap` must be re-run and
       committed when they change. Any embed other than a valid YouTube block is refused by the API (`400`). Deploying this change runs
