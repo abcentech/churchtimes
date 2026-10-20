@@ -20,6 +20,7 @@
     "import:subscribers": "payload run src/seed/importSubscribers.ts",
     "export:redirects": "payload run src/scripts/exportRedirects.ts --",
     "check:redirects": "payload run src/scripts/checkRedirects.ts --",
+    "import:wxr-report": "tsx src/seed/importWxrReport.ts",
     "import:redirects": "payload run src/scripts/importRedirects.ts --",
     "db:local": "node scripts/local-db.mjs",
     "typecheck": "tsc --noEmit",
@@ -46,6 +47,7 @@
     "payload": "3.90.2",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "sax": "1.6.1",
     "sharp": "0.35.5"
   },
   "devDependencies": {
