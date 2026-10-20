@@ -79,6 +79,7 @@ export interface Config {
     redirects: Redirect;
     advertisers: Advertiser;
     'ad-campaigns': AdCampaign;
+    'legacy-comments': LegacyComment;
     'audit-logs': AuditLog;
     'payload-kv': PayloadKv;
     'payload-locked-documents': PayloadLockedDocument;
@@ -106,6 +107,7 @@ export interface Config {
     redirects: RedirectsSelect<false> | RedirectsSelect<true>;
     advertisers: AdvertisersSelect<false> | AdvertisersSelect<true>;
     'ad-campaigns': AdCampaignsSelect<false> | AdCampaignsSelect<true>;
+    'legacy-comments': LegacyCommentsSelect<false> | LegacyCommentsSelect<true>;
     'audit-logs': AuditLogsSelect<false> | AuditLogsSelect<true>;
     'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
     'payload-locked-documents': PayloadLockedDocumentsSelect<false> | PayloadLockedDocumentsSelect<true>;
@@ -551,6 +553,33 @@ export interface Redirect {
   createdAt: string;
 }
 /**
+ * Archived comments from the old WordPress site. Read-only: staff can hide or restore a comment but not edit it. No commenter email, website or IP is stored.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "legacy-comments".
+ */
+export interface LegacyComment {
+  id: number;
+  article: number | Article;
+  authorName: string;
+  /**
+   * Plain text. Render with line breaks only.
+   */
+  content: string;
+  commentedAt: string;
+  /**
+   * WordPress comment id.
+   */
+  legacyId: number;
+  /**
+   * WordPress id of the comment this answers (threading; display depth is capped at 2).
+   */
+  parentLegacyId?: number | null;
+  status: 'approved' | 'hidden';
+  updatedAt: string;
+  createdAt: string;
+}
+/**
  * Read-only record of workflow and moderation actions.
  *
  * This interface was referenced by `Config`'s JSON-Schema
@@ -649,6 +678,10 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'ad-campaigns';
         value: number | AdCampaign;
+      } | null)
+    | ({
+        relationTo: 'legacy-comments';
+        value: number | LegacyComment;
       } | null)
     | ({
         relationTo: 'audit-logs';
@@ -987,6 +1020,21 @@ export interface AdCampaignsSelect<T extends boolean = true> {
   approvedBy?: T;
   approvedAt?: T;
   creativeMedia?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "legacy-comments_select".
+ */
+export interface LegacyCommentsSelect<T extends boolean = true> {
+  article?: T;
+  authorName?: T;
+  content?: T;
+  commentedAt?: T;
+  legacyId?: T;
+  parentLegacyId?: T;
+  status?: T;
   updatedAt?: T;
   createdAt?: T;
 }

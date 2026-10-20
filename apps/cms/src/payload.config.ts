@@ -16,6 +16,7 @@ import { ContactMessages } from './collections/ContactMessages'
 import { LiveEvents } from './collections/LiveEvents'
 import { LiveUpdates } from './collections/LiveUpdates'
 import { Media } from './collections/Media'
+import { LegacyComments } from './collections/LegacyComments'
 import { Redirects } from './collections/Redirects'
 import { Submissions } from './collections/Submissions'
 import { Subscribers } from './collections/Subscribers'
@@ -150,6 +151,7 @@ export default buildConfig({
     Redirects,
     Advertisers,
     AdCampaigns,
+    LegacyComments,
     AuditLogs,
   ],
   endpoints: [

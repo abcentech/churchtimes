@@ -21,9 +21,9 @@ const tableExists = async (name: string): Promise<boolean> => {
   return res.rows[0].t !== null
 }
 
-describe('C3 migration 20261020_134844_ad_campaigns is reversible', () => {
+describe('C3 migration 20261020_144045_ad_campaigns is reversible', () => {
   it('runs down, down again, then up, leaving working tables', async () => {
-    const entry = migrations.find((m) => m.name === '20261020_134844_ad_campaigns')
+    const entry = migrations.find((m) => m.name === '20261020_144045_ad_campaigns')
     expect(entry).toBeTruthy()
     const args = { db: (f.payload.db as any).drizzle, payload: f.payload, req: {} } as never
 

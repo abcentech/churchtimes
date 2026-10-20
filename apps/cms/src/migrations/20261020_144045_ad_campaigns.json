@@ -3980,6 +3980,236 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.legacy_comments": {
+      "name": "legacy_comments",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "article_id": {
+          "name": "article_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "author_name": {
+          "name": "author_name",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "content": {
+          "name": "content",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "commented_at": {
+          "name": "commented_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "legacy_id": {
+          "name": "legacy_id",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "parent_legacy_id": {
+          "name": "parent_legacy_id",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "enum_legacy_comments_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'approved'"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "legacy_comments_article_idx": {
+          "name": "legacy_comments_article_idx",
+          "columns": [
+            {
+              "expression": "article_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "legacy_comments_commented_at_idx": {
+          "name": "legacy_comments_commented_at_idx",
+          "columns": [
+            {
+              "expression": "commented_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "legacy_comments_legacy_id_idx": {
+          "name": "legacy_comments_legacy_id_idx",
+          "columns": [
+            {
+              "expression": "legacy_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "legacy_comments_parent_legacy_id_idx": {
+          "name": "legacy_comments_parent_legacy_id_idx",
+          "columns": [
+            {
+              "expression": "parent_legacy_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "legacy_comments_status_idx": {
+          "name": "legacy_comments_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "legacy_comments_updated_at_idx": {
+          "name": "legacy_comments_updated_at_idx",
+          "columns": [
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "legacy_comments_created_at_idx": {
+          "name": "legacy_comments_created_at_idx",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "article_status_commentedAt_legacyId_idx": {
+          "name": "article_status_commentedAt_legacyId_idx",
+          "columns": [
+            {
+              "expression": "article_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "commented_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "legacy_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "legacy_comments_article_id_articles_id_fk": {
+          "name": "legacy_comments_article_id_articles_id_fk",
+          "tableFrom": "legacy_comments",
+          "tableTo": "articles",
+          "columnsFrom": [
+            "article_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.audit_logs": {
       "name": "audit_logs",
       "schema": "",
@@ -4404,6 +4634,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "legacy_comments_id": {
+          "name": "legacy_comments_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
         "audit_logs_id": {
           "name": "audit_logs_id",
           "type": "integer",
@@ -4637,6 +4873,21 @@
           "method": "btree",
           "with": {}
         },
+        "payload_locked_documents_rels_legacy_comments_id_idx": {
+          "name": "payload_locked_documents_rels_legacy_comments_id_idx",
+          "columns": [
+            {
+              "expression": "legacy_comments_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "payload_locked_documents_rels_audit_logs_id_idx": {
           "name": "payload_locked_documents_rels_audit_logs_id_idx",
           "columns": [
@@ -4816,6 +5067,19 @@
           "tableTo": "ad_campaigns",
           "columnsFrom": [
             "ad_campaigns_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "payload_locked_documents_rels_legacy_comments_fk": {
+          "name": "payload_locked_documents_rels_legacy_comments_fk",
+          "tableFrom": "payload_locked_documents_rels",
+          "tableTo": "legacy_comments",
+          "columnsFrom": [
+            "legacy_comments_id"
           ],
           "columnsTo": [
             "id"
@@ -5307,6 +5571,14 @@
         "paid",
         "waived"
       ]
+    },
+    "public.enum_legacy_comments_status": {
+      "name": "enum_legacy_comments_status",
+      "schema": "public",
+      "values": [
+        "approved",
+        "hidden"
+      ]
     }
   },
   "schemas": {},
@@ -5319,6 +5591,6 @@
     "tables": {},
     "columns": {}
   },
-  "id": "1d9c948e-314f-48e9-8112-2ac2de97d8a6",
+  "id": "d8be05cf-7c72-4d95-a7eb-230e8681326d",
   "prevId": "00000000-0000-0000-0000-000000000000"
 }
