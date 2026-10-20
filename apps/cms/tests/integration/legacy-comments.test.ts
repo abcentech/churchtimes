@@ -364,14 +364,16 @@ describe('review fixes: renderer request shape, resolution, scope', () => {
   })
 
   it('HEAD answers with the headers and no body, and a trailing slash works', async () => {
-    const head = await api('HEAD', `/api/legacy-comments?article=${pubArticle.slug}`).catch(() => null)
-    // the REST helper has no HEAD handler: call the endpoint through GET with the trailing slash instead and check HEAD via the config
-    expect(head === null || head.text === '').toBe(true)
+    const head = await api('HEAD', `/api/legacy-comments?article=${pubArticle.slug}`)
+    expect(head.status).toBe(200)
+    expect(head.text).toBe('')
+    expect(head.headers.get('cache-control')).toBe('public, max-age=60')
     const slash = await api('GET', `/api/legacy-comments/?article=${pubArticle.slug}`)
     expect(slash.status).toBe(200)
     expect(slash.json.docs).toBeInstanceOf(Array)
-    const headEndpoint = f.payload.collections['legacy-comments'].config.endpoints
-    expect(Array.isArray(headEndpoint) && headEndpoint.some((e) => e.method === 'head' && e.path === '/')).toBe(true)
+    const headSlash = await api('HEAD', `/api/legacy-comments/?article=${pubArticle.slug}`)
+    expect(headSlash.status).toBe(200)
+    expect(headSlash.text).toBe('')
   })
 
   it('has the composite index for the public list', async () => {
@@ -410,7 +412,7 @@ describe('review fixes: access that must not regress', () => {
   it('article, commentedAt, parentLegacyId, legacyId and text cannot be changed through the API', async () => {
     const other = await f.seedArticle({ status: 'published', publishedAt: new Date().toISOString() })
     const c = await importComment(pubArticle.id, { content: 'immutable text', parent: '77' })
-    const before = (await f.payload.findByID({ collection: 'legacy-comments', id: c.id, overrideAccess: true, depth: 0 })) as Record<string, unknown>
+    const before = (await f.payload.findByID({ collection: 'legacy-comments', id: c.id, overrideAccess: true, depth: 0 })) as unknown as Record<string, unknown>
     const r = await api('PATCH', `/api/legacy-comments/${c.id}`, {
       token: f.tokens.eic,
       body: {
@@ -424,7 +426,7 @@ describe('review fixes: access that must not regress', () => {
       },
     })
     expect(r.status).toBe(200)
-    const after = (await f.payload.findByID({ collection: 'legacy-comments', id: c.id, overrideAccess: true, depth: 0 })) as Record<string, unknown>
+    const after = (await f.payload.findByID({ collection: 'legacy-comments', id: c.id, overrideAccess: true, depth: 0 })) as unknown as Record<string, unknown>
     for (const k of ['article', 'commentedAt', 'parentLegacyId', 'legacyId', 'content', 'authorName']) {
       expect(after[k]).toEqual(before[k])
     }

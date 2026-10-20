@@ -15,6 +15,8 @@ export const newRunId = (): string => `t${randomBytes(4).toString('hex')}`
 
 const handlers = {
   GET: REST_GET(config),
+  // Next hands a HEAD request to the GET route handler; Payload then picks the endpoint registered for method head.
+  HEAD: REST_GET(config),
   POST: REST_POST(config),
   PATCH: REST_PATCH(config),
   DELETE: REST_DELETE(config),
