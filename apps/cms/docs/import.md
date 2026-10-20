@@ -46,11 +46,15 @@ deterministic `id`). Attributes (class, style, event handlers, ...) are never ca
 
 ### Limits
 
-Input over 5 MB (`maxInputBytes`) throws `HtmlConversionError('input-too-large')`. Element nesting deeper than 512
-levels throws `'too-deep'` before parsing (parse5's cost grows with the square of the depth); between 64 and 512 levels
-the deeper subtree is flattened to text and reported. More than `maxNodes` (20 000) output nodes throws
-`'too-many-nodes'`. The output is checked with `findEmbedProblem` (embed and depth rules of the Articles validators)
-before it is returned.
+Input over 5 MB (`maxInputBytes`) throws `HtmlConversionError('input-too-large')`. Element nesting deeper than 512 levels
+throws `'too-deep'` while parsing: a tree adapter hook on parse5 itself sees every element the real parser opens (so
+`<div/>`, raw text rules inside svg/math and implied tags are exactly what the parser does) and stops at once, because
+parse5's cost grows with the square of the depth. Between 64 and 512 levels the deeper subtree is flattened to text and
+reported. Gutenberg block comments are paired in one linear pass with an explicit stack; block nesting counts like
+element nesting (flattened past 64 levels). More than `maxNodes` (20 000) output nodes throws `'too-many-nodes'`. Any
+other failure is wrapped as `HtmlConversionError('invalid-output')`, never a raw error. The output is checked with
+`findEmbedProblem` (embed and depth rules of the Articles validators) before it is returned. Addresses in the report carry
+no user info, query string or fragment; warnings are capped at 50.
 
 ### QA report command
 

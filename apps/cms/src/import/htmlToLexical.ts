@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 
-import { type DefaultTreeAdapterMap, parseFragment, Tokenizer, TokenizerMode } from 'parse5'
+import { type DefaultTreeAdapterMap, defaultTreeAdapter, parseFragment } from 'parse5'
 
 import { stripShortcodes, sanitizeLegacyLinks } from '../lib/legacyContent'
 import { findEmbedProblem, YOUTUBE_BLOCK_SLUG, YOUTUBE_ID_RE, YOUTUBE_TITLE_MAX, youtubeTitleProblem } from '../lib/lexicalEmbeds'
@@ -69,57 +69,29 @@ export class HtmlConversionError extends Error {
  * parse5 builds the tree with a cost that grows roughly with the square of the nesting (about 4 s for 10 000 nested
  * `div`s, 15 s for nested lists), so a hostile input is refused BEFORE parsing when its element nesting is deeper than
  * this. Nesting between `maxDepth` (64) and this limit is parsed and flattened to text, and reported.
+ *
+ * The limit is enforced by parse5 itself: a tree adapter whose `onItemPush` hook sees every element the parser opens
+ * (the real open-element stack, so `<div/>`, raw-text rules inside svg/math and implied tags are exactly what the
+ * parser does) and throws as soon as the stack is deeper than the limit.
  */
 export const MAX_PARSE_DEPTH = 512
 
-const VOID_TAGS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr', 'basefont', 'bgsound', 'frame', 'keygen'])
-/** Tags whose end tag is optional (the parser closes them itself) and which cannot nest without a counted ancestor. */
-const OPTIONAL_END_TAGS = new Set(['p', 'li', 'dt', 'dd', 'tr', 'td', 'th', 'tbody', 'thead', 'tfoot', 'option', 'optgroup', 'colgroup', 'caption', 'html', 'head', 'body'])
-
-/** Linear scan with parse5's tokenizer (no tree): throws when element nesting could exceed `MAX_PARSE_DEPTH`. */
-function assertParseDepth(html: string): void {
-  const stack: string[] = []
-  const counts = new Map<string, number>()
-  let tooDeep = false
-  const tokenizer: Tokenizer = new Tokenizer(
-    {},
-    {
-      onComment() {},
-      onDoctype() {},
-      onEof() {},
-      onCharacter() {},
-      onNullCharacter() {},
-      onWhitespaceCharacter() {},
-      onStartTag(token) {
-        const name = token.tagName
-        // raw-text elements: their content is text, not tags (the parser switches the tokenizer the same way)
-        if (name === 'script') tokenizer.state = TokenizerMode.SCRIPT_DATA
-        else if (name === 'style' || name === 'xmp' || name === 'iframe' || name === 'noembed' || name === 'noframes' || name === 'noscript') tokenizer.state = TokenizerMode.RAWTEXT
-        else if (name === 'title' || name === 'textarea') tokenizer.state = TokenizerMode.RCDATA
-        else if (name === 'plaintext') tokenizer.state = TokenizerMode.PLAINTEXT
-        if (token.selfClosing || VOID_TAGS.has(name) || OPTIONAL_END_TAGS.has(name)) return
-        stack.push(name)
-        counts.set(name, (counts.get(name) ?? 0) + 1)
-        if (stack.length > MAX_PARSE_DEPTH) {
-          tooDeep = true
-          tokenizer.pause()
-        }
-      },
-      onEndTag(token) {
-        const name = token.tagName
-        if ((counts.get(name) ?? 0) === 0) return
-        for (;;) {
-          const top = stack.pop() as string
-          counts.set(top, (counts.get(top) ?? 1) - 1)
-          if (top === name) break
-        }
-      },
+function parseLimited(html: string) {
+  let open = 0
+  // The fragment parser keeps one synthetic root element on the stack; real nesting is one less.
+  const limit = MAX_PARSE_DEPTH + 1
+  const adapter = {
+    ...defaultTreeAdapter,
+    onItemPush: () => {
+      if (++open > limit) {
+        throw new HtmlConversionError('too-deep', `The HTML nests elements more than ${MAX_PARSE_DEPTH} levels deep; it is refused.`)
+      }
     },
-  )
-  tokenizer.write(html, true)
-  if (tooDeep) {
-    throw new HtmlConversionError('too-deep', `The HTML nests elements more than ${MAX_PARSE_DEPTH} levels deep; it is refused.`)
+    onItemPop: () => {
+      open--
+    },
   }
+  return parseFragment(html, { treeAdapter: adapter })
 }
 
 export type ConversionReport = {
@@ -256,7 +228,11 @@ const isElem = (n: ChildNode | undefined): n is Elem => n !== undefined && 'tagN
 const isText = (n: ChildNode): n is DefaultTreeAdapterMap['textNode'] => n.nodeName === '#text'
 const isComment = (n: ChildNode): n is DefaultTreeAdapterMap['commentNode'] => n.nodeName === '#comment'
 
-const attr = (el: Elem, name: string): string | undefined => el.attrs.find((a) => a.name === name)?.value
+const stripControls = (s: string): string => s.replace(CONTROL_RE, '')
+const attr = (el: Elem, name: string): string | undefined => {
+  const v = el.attrs.find((a) => a.name === name)?.value
+  return v === undefined ? undefined : stripControls(v)
+}
 
 const squash = (s: string): string => s.replace(/[ \t\r\n\f\u00A0]+/g, ' ').trim()
 
@@ -286,7 +262,7 @@ function textContent(nodes: ChildNode[]): string {
   for (let i = nodes.length - 1; i >= 0; i--) stack.push(nodes[i])
   while (stack.length > 0) {
     const n = stack.pop() as ChildNode
-    if (isText(n)) out += n.value
+    if (isText(n)) out += stripControls(n.value)
     else if (isElem(n)) {
       if (DROP_WITH_CONTENT.has(n.tagName)) continue
       out += ' '
@@ -320,7 +296,16 @@ const elementBase = { format: '', indent: 0, version: 1, direction: 'ltr' }
 const paragraph = (children: LexicalNode[]): LexicalNode => ({ type: 'paragraph', ...elementBase, textFormat: 0, children })
 const heading = (tag: string, children: LexicalNode[]): LexicalNode => ({ type: 'heading', tag, ...elementBase, children })
 const quote = (children: LexicalNode[]): LexicalNode => ({ type: 'quote', ...elementBase, children })
-const upload = (mediaId: number): LexicalNode => ({ type: 'upload', relationTo: 'media', value: mediaId, version: 3, fields: null, format: '' })
+const upload = (mediaId: number, index: number): LexicalNode => ({
+  type: 'upload',
+  // the id the editor writes on upload nodes (deterministic 24-hex)
+  id: createHash('sha1').update(`up:${index}:${mediaId}`).digest('hex').slice(0, 24),
+  relationTo: 'media',
+  value: mediaId,
+  version: 3,
+  fields: null,
+  format: '',
+})
 const linkNode = (url: string, newTab: boolean, children: LexicalNode[]): LexicalNode => ({
   type: 'link',
   version: 3,
@@ -353,37 +338,105 @@ type Frame = {
   para: boolean
   pre: boolean
   listDepth: number
+  /** wpautop-like handling of newlines (classic documents and classic/freeform blocks). */
+  autop: boolean
 }
+
+/** Most distinct shortcode tags tracked as "still open" across text nodes (the replay cost is bounded by this). */
+export const LINK_MAX_LENGTH = 2000
+export const MAX_OPEN_SHORTCODES = 20
+/** Most warnings kept in the report; further ones are counted in one final line. */
+export const MAX_WARNINGS = 50
+/** Most images handled inside one figure or gallery. */
+export const MAX_IMAGES_PER_FIGURE = 5000
 
 type Ctx = {
   opts: HtmlToLexicalOptions
   report: ConversionReport
-  autop: boolean
   maxDepth: number
   ytIndex: number
+  uploadIndex: number
   openShortcodes: Map<string, number>
+  shortcodeOverflow: boolean
   hoist: LexicalNode[]
+  /** Caption(s) of the figure being walked, taken by its single image. */
+  pendingCaption: { captions: ChildNode[][]; used: boolean } | null
+  /** Links turned to text by the converter itself (the link pass reports its own). */
+  extraConverted: { url: string; reason: string }[]
+  suppressedWarnings: number
 }
 
-const YT_SHORTCODE_FULL_RE = /^\[(youtube|embed|yt)(?:\s*=\s*|\s+)?([^\]]*)\](?:([^[\]]*)\[\/\1\])?$/
+function warn(ctx: Ctx, message: string): void {
+  if (ctx.report.warnings.length < MAX_WARNINGS) ctx.report.warnings.push(message)
+  else ctx.suppressedWarnings++
+}
 
-/** Url or id from the inside of a `[youtube ...]` style shortcode, else null. */
-function youtubeFromShortcode(trimmed: string): string | null {
-  const m = YT_SHORTCODE_FULL_RE.exec(trimmed)
-  if (!m) return null
-  const [, , attrs, inner] = m
+type ShortcodePart = { text: string } | { shortcode: string; tag: string; id: string | null }
+
+/** `[youtube ...]`, `[yt ...]` and `[embed]...[/embed]` markers inside a text, found without regular expressions. */
+function splitYoutubeShortcodes(text: string): ShortcodePart[] {
+  const parts: ShortcodePart[] = []
+  let last = 0
+  let i = 0
+  const noCloser = new Set<string>()
+  while ((i = text.indexOf('[', i)) !== -1) {
+    const head = /^\[(youtube|yt|embed)(?=[\s=\]])/.exec(text.slice(i, i + 10))
+    if (!head) {
+      i++
+      continue
+    }
+    const tag = head[1]
+    const close = text.indexOf(']', i)
+    if (close === -1) break
+    const attrs = text.slice(i + 1 + tag.length, close)
+    let end = close + 1
+    let inner = ''
+    const closer = `[/${tag}]`
+    if (!noCloser.has(tag)) {
+      const ci = text.indexOf(closer, end)
+      if (ci === -1) noCloser.add(tag)
+      else if (!text.slice(end, ci).includes('[')) {
+        inner = text.slice(end, ci)
+        end = ci + closer.length
+      }
+    }
+    const id = youtubeFromShortcode(tag, attrs, inner)
+    if (i > last) parts.push({ text: text.slice(last, i) })
+    parts.push({ shortcode: text.slice(i, end), tag, id })
+    last = end
+    i = end
+  }
+  if (parts.length === 0) return [{ text }]
+  if (last < text.length) parts.push({ text: text.slice(last) })
+  return parts
+}
+
+/** The video id from the inside of a `[youtube ...]` style shortcode, else null. A bare id only counts for youtube/yt. */
+function youtubeFromShortcode(tag: string, attrs: string, inner: string): string | null {
   const candidates: string[] = []
-  if (inner) candidates.push(inner.trim())
-  const a = attrs.trim()
+  if (inner.trim()) candidates.push(inner.trim())
+  const a = attrs.trim().replace(/^=\s*/, '')
   const named = /(?:^|\s)(?:url|src|link|id|v)\s*=\s*(?:"([^"]*)"|'([^']*)'|(\S+))/i.exec(a)
   if (named) candidates.push((named[1] ?? named[2] ?? named[3] ?? '').trim())
   if (a) candidates.push(a.replace(/^["']|["']$/g, '').trim())
   for (const c of candidates) {
     const fromUrl = extractYoutubeId(c)
     if (fromUrl) return fromUrl
-    if (YOUTUBE_ID_RE.test(c)) return c
+    if ((tag === 'youtube' || tag === 'yt') && YOUTUBE_ID_RE.test(c)) return c
   }
   return null
+}
+
+/** A report-safe form of an address: no user info, no query string, no fragment, bounded length. */
+export function redactUrl(raw: string): string {
+  const cut = (s: string) => s.slice(0, 200)
+  try {
+    const u = new URL(raw.trim())
+    if (u.protocol === 'http:' || u.protocol === 'https:') return cut(`${u.protocol}//${u.host}${u.pathname}`)
+    return cut(`${u.protocol}${u.pathname}`)
+  } catch {
+    return cut(raw.trim().split(/[?#]/)[0].replace(/\/\/[^/@\s]*@/, '//'))
+  }
 }
 
 function emptyReport(inputBytes: number): ConversionReport {
@@ -471,6 +524,16 @@ function inlineFromItems(items: Item[]): LexicalNode[] {
 // ---------------------------------------------------------------------------------------------
 
 export function htmlToLexical(html: string, options: HtmlToLexicalOptions): HtmlToLexicalResult {
+  try {
+    return convert(html, options)
+  } catch (err) {
+    if (err instanceof HtmlConversionError) throw err
+    // anything unexpected (a stack overflow, a throwing caller option) is a conversion failure, never a raw error
+    throw new HtmlConversionError('invalid-output', `The HTML could not be converted: ${err instanceof Error ? err.name : 'error'}.`)
+  }
+}
+
+function convert(html: string, options: HtmlToLexicalOptions): HtmlToLexicalResult {
   const maxInput = options.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES
   const maxNodes = options.maxNodes ?? DEFAULT_MAX_NODES
   const input = typeof html === 'string' ? html : ''
@@ -482,22 +545,28 @@ export function htmlToLexical(html: string, options: HtmlToLexicalOptions): Html
   const ctx: Ctx = {
     opts: options,
     report,
-    autop: !/<!--\s*wp:/i.test(input),
     maxDepth: Math.min(options.maxDepth ?? DEFAULT_MAX_DEPTH, DEFAULT_MAX_DEPTH),
     ytIndex: 0,
+    uploadIndex: 0,
     openShortcodes: new Map(),
+    shortcodeOverflow: false,
     hoist: [],
+    pendingCaption: null,
+    extraConverted: [],
+    suppressedWarnings: 0,
   }
+  // Gutenberg documents carry block comments; their newlines are plain whitespace. Everything else is classic.
+  const hasBlocks = input.includes('<!--') && /<!--\s*\/?wp:/i.test(input)
 
   // Count entity references before decoding (a statistic only; the parser does the decoding).
   report.entitiesDecoded = (input.match(/&(?:#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]{1,31});/g) ?? []).length
 
   const cleanInput = input.replace(CONTROL_RE, '')
   if (cleanInput.length !== input.length) report.warnings.push(`Removed ${input.length - cleanInput.length} control characters (including null bytes).`)
-  assertParseDepth(cleanInput)
-  const fragment = parseFragment(cleanInput)
 
-  const frame: Frame = { fmt: 0, link: null, depth: 0, inCell: false, para: true, pre: false, listDepth: 0 }
+  const fragment = parseLimited(cleanInput)
+
+  const frame: Frame = { fmt: 0, link: null, depth: 0, inCell: false, para: true, pre: false, listDepth: 0, autop: !hasBlocks }
   const out: LexicalNode[] = []
   const col: Collector = { items: [] }
   walk(ctx, kids(fragment as unknown as { childNodes: ChildNode[] }), frame, col, out)
@@ -528,11 +597,16 @@ export function htmlToLexical(html: string, options: HtmlToLexicalOptions): Html
   })
   content = linkResult.root as { root: LexicalNode }
   root = content.root
+  // Reports carry no user info, query strings or fragments (an address can hold a token).
+  const redact = (e: { url: string; reason: string }) => ({ url: e.url === '' ? '' : redactUrl(e.url), reason: e.reason })
   report.links = {
     rewritten: linkResult.report.rewritten,
-    unmapped: linkResult.report.unmapped,
-    converted: linkResult.report.converted,
+    unmapped: linkResult.report.unmapped.map(redact),
+    converted: [...ctx.extraConverted, ...linkResult.report.converted].map(redact),
   }
+  report.images.unresolved = report.images.unresolved.map((u) => ({ src: redactUrl(u.src), reason: u.reason }))
+  report.embeds.linked = report.embeds.linked.map((u) => ({ url: redactUrl(u.url) }))
+  if (ctx.suppressedWarnings > 0) report.warnings.push(`${ctx.suppressedWarnings} further warnings were not listed.`)
   mergeAdjacentText(root)
 
   report.nodeCount = countNodes(root)
@@ -644,34 +718,53 @@ function scope(ctx: Ctx, nodes: ChildNode[], frame: Frame): LexicalNode[] {
 // ---------------------------------------------------------------------------------------------
 
 function handleText(ctx: Ctx, value: string, frame: Frame, col: Collector): void {
-  let text = value
+  const text = stripControls(value)
   if (text === '') return
-  const trimmed = text.trim()
-  // [youtube ...] / [embed]url[/embed] on its own
-  if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
-    const id = youtubeFromShortcode(trimmed)
-    if (id) {
-      ctx.report.youtube++
-      col.items.push({ kind: 'block', nodes: [youtubeBlock(id, ctx.ytIndex++)] })
-      bump(ctx.report.shortcodesRemoved, YT_SHORTCODE_FULL_RE.exec(trimmed)?.[1] ?? 'youtube')
-      return
+  if (text.includes('[')) {
+    // [youtube ...] / [yt ...] / [embed]...[/embed] anywhere in the text: a video block, or removed and reported
+    for (const part of splitYoutubeShortcodes(text)) {
+      if ('text' in part) handlePlainText(ctx, part.text, frame, col)
+      else {
+        bump(ctx.report.shortcodesRemoved, part.tag)
+        if (part.id) {
+          ctx.report.youtube++
+          col.items.push({ kind: 'block', nodes: [youtubeBlock(part.id, ctx.ytIndex++)] })
+        }
+      }
     }
+    return
   }
+  handlePlainText(ctx, text, frame, col)
+}
+
+function handlePlainText(ctx: Ctx, input: string, frame: Frame, col: Collector): void {
+  let text = input
+  if (text === '') return
   // Shortcodes: markers can be split across text nodes (`[caption ...]<img> text[/caption]`), so tags still open from
-  // earlier text nodes are replayed as a synthetic prefix and removed again.
+  // earlier text nodes are replayed as a synthetic prefix and removed again. The number of tracked tags is capped.
   if (text.includes('[')) {
     let prefix = ''
-    for (const [tag, n] of ctx.openShortcodes) for (let i = 0; i < Math.min(n, 5); i++) prefix += `[${tag} x=1]`
+    let prefixCount = 0
+    for (const [tag, n] of ctx.openShortcodes) {
+      for (let i = 0; i < Math.min(n, 5); i++) {
+        prefix += `[${tag} x=1]`
+        prefixCount++
+      }
+    }
     const result = stripShortcodes(prefix + text, { knownTags: [...(ctx.opts.knownShortcodes ?? []), 'youtube', 'yt'] })
     if (result.count > 0) {
-      const skip = prefix === '' ? 0 : result.removals.slice(0, [...ctx.openShortcodes.values()].reduce((a, b) => a + Math.min(b, 5), 0)).length
-      for (const r of result.removals.slice(skip)) {
+      for (const r of result.removals.slice(prefixCount)) {
         bump(ctx.report.shortcodesRemoved, r.tag)
         const cur = ctx.openShortcodes.get(r.tag) ?? 0
         if (r.reason === 'closing') {
           if (cur <= 1) ctx.openShortcodes.delete(r.tag)
           else ctx.openShortcodes.set(r.tag, cur - 1)
-        } else if (cur < 50) ctx.openShortcodes.set(r.tag, cur + 1)
+        } else if (cur > 0 || ctx.openShortcodes.size < MAX_OPEN_SHORTCODES) {
+          if (cur < 50) ctx.openShortcodes.set(r.tag, cur + 1)
+        } else if (!ctx.shortcodeOverflow) {
+          ctx.shortcodeOverflow = true
+          warn(ctx, `More than ${MAX_OPEN_SHORTCODES} different shortcode tags are open at once; pairing is not tracked for the rest.`)
+        }
       }
       text = result.text
     }
@@ -688,7 +781,7 @@ function handleText(ctx: Ctx, value: string, frame: Frame, col: Collector): void
     })
     return
   }
-  if (!ctx.autop) {
+  if (!frame.autop) {
     push(text.replace(/[ \t\r\n\f\u00A0]+/g, ' '))
     return
   }
@@ -750,8 +843,9 @@ const CONTAINER_BLOCKS = new Set([
   'social-link', 'site-title', 'query', 'post-title', 'post-content', 'separator',
 ])
 
-function handleBlock(ctx: Ctx, bc: BlockComment, inner: ChildNode[], frame: Frame, col: Collector, out: LexicalNode[]): void {
+function handleBlock(ctx: Ctx, bc: BlockComment, innerSegs: Seg[], frame: Frame, col: Collector, out: LexicalNode[]): void {
   const name = bc.name
+  const inner = flattenSegs(innerSegs)
   const embedName = name === 'embed' || name.startsWith('embed/') || name.startsWith('core-embed/')
   if (!CONTAINER_BLOCKS.has(name) && !embedName) bump(ctx.report.unknownBlocks, name)
   if (name === 'more' || name === 'nextpage') {
@@ -769,13 +863,13 @@ function handleBlock(ctx: Ctx, bc: BlockComment, inner: ChildNode[], frame: Fram
     handleGallery(ctx, inner, frame, out)
     return
   }
-  // Everything else: the inner HTML carries the structure (h2, ul, figure, ...); handle it generically.
+  // Everything else: the inner HTML carries the structure (h2, ul, figure, ...); handle it generically. Raw HTML
+  // blocks (html, shortcode) are sanitised by construction: only the shapes above are ever written. Classic/freeform
+  // blocks are classic-editor text, so newline handling is switched back on inside them.
   flush(ctx, col, out)
-  walk(ctx, inner, frame, col, out)
+  const inFrame = name === 'freeform' || name === 'classic' ? { ...frame, autop: true } : frame
+  walkSegs(ctx, innerSegs, inFrame, col, out)
   flush(ctx, col, out)
-  if (name === 'html' || name === 'shortcode') {
-    // raw HTML blocks are sanitised by construction: only the shapes above are ever written.
-  }
 }
 
 function handleEmbedBlock(ctx: Ctx, bc: BlockComment, inner: ChildNode[], frame: Frame, out: LexicalNode[]): void {
@@ -789,15 +883,20 @@ function handleEmbedBlock(ctx: Ctx, bc: BlockComment, inner: ChildNode[], frame:
     url = textContent(wrapper ? kids(wrapper) : inner)
     if (/\s/.test(url)) url = url.split(/\s+/)[0]
   }
-  const caption = textContent(findAll(inner, (e) => e.tagName === 'figcaption', 1).flatMap((e) => kids(e)))
+  const capEls = findAll(inner, (e) => e.tagName === 'figcaption')
+  const caption = squash(capEls.map((e) => textContent(kids(e))).join(' '))
+  const captionParas = () => capEls.flatMap((e) => captionParagraphs(ctx, kids(e), frame))
   const id = extractYoutubeId(url)
   if (id) {
     ctx.report.youtube++
-    out.push(youtubeBlock(id, ctx.ytIndex++, caption ? caption.slice(0, YOUTUBE_TITLE_MAX) : undefined))
+    // The caption becomes the block title when it is an acceptable plain-text title; otherwise it is kept as paragraphs.
+    const asTitle = caption !== '' && youtubeTitleProblem(caption) === null
+    out.push(youtubeBlock(id, ctx.ytIndex++, asTitle ? caption : undefined))
+    if (caption !== '' && !asTitle) out.push(...captionParas())
     return
   }
   otherEmbed(ctx, url, 'embed block', out)
-  void frame
+  out.push(...captionParas())
 }
 
 /** A non-YouTube embed: a link paragraph when it is a safe https address, otherwise dropped. Always reported. */
@@ -814,25 +913,26 @@ function otherEmbed(ctx: Ctx, rawUrl: string, what: string, out: LexicalNode[] |
 }
 
 function handleGallery(ctx: Ctx, inner: ChildNode[], frame: Frame, out: LexicalNode[]): void {
-  const imgs = findAll(inner, (e) => e.tagName === 'img')
+  const found = findAll(inner, (e) => e.tagName === 'img', MAX_IMAGES_PER_FIGURE + 1)
+  if (found.length > MAX_IMAGES_PER_FIGURE) {
+    warn(ctx, `A gallery holds more than ${MAX_IMAGES_PER_FIGURE} images; the ones after the first ${MAX_IMAGES_PER_FIGURE} were not converted.`)
+  }
+  const imgs = found.slice(0, MAX_IMAGES_PER_FIGURE)
   const galleryCaptions: ChildNode[][] = []
   for (const fig of findAll(inner, (e) => e.tagName === 'figure')) {
     const count = findAll(kids(fig), (e) => e.tagName === 'img', 2).length
     if (count > 1) {
-      const cap = kids(fig).find((c): c is Elem => isElem(c) && c.tagName === 'figcaption')
-      if (cap) galleryCaptions.push(kids(cap))
+      for (const c of kids(fig)) if (isElem(c) && c.tagName === 'figcaption') galleryCaptions.push(kids(c))
     }
   }
   for (const img of imgs) {
-    let caption: ChildNode[] = []
-    const parent = (img as unknown as { parentNode?: ChildNode }).parentNode
-    let fig: ChildNode | undefined = parent
+    let captions: ChildNode[][] = []
+    let fig: ChildNode | undefined = (img as unknown as { parentNode?: ChildNode }).parentNode
     for (let i = 0; i < 3 && fig && !(isElem(fig) && fig.tagName === 'figure'); i++) fig = (fig as unknown as { parentNode?: ChildNode }).parentNode
     if (fig && isElem(fig) && fig.tagName === 'figure' && findAll(kids(fig), (e) => e.tagName === 'img', 2).length === 1) {
-      const cap = kids(fig).find((c): c is Elem => isElem(c) && c.tagName === 'figcaption')
-      if (cap) caption = kids(cap)
+      captions = kids(fig).filter((c): c is Elem => isElem(c) && c.tagName === 'figcaption').map((c) => kids(c))
     }
-    out.push(...imageBlocks(ctx, img, caption, frame))
+    out.push(...imageBlocks(ctx, img, captions, frame))
   }
   for (const cap of galleryCaptions) out.push(...captionParagraphs(ctx, cap, frame))
 }
@@ -853,14 +953,23 @@ function imageSrc(img: Elem): string {
 
 function captionParagraphs(ctx: Ctx, nodes: ChildNode[], frame: Frame): LexicalNode[] {
   const blocks = scope(ctx, nodes, { ...frame, para: false, listDepth: LIST_MAX_DEPTH + 1 })
-  return blocks.filter((b) => b.type === 'paragraph').map((b) => paragraph(b.children as LexicalNode[]))
+  return blocks.map((b) => (b.type === 'heading' || b.type === 'quote' ? paragraph(b.children as LexicalNode[]) : b))
 }
 
-function imageBlocks(ctx: Ctx, img: Elem, captionNodes: ChildNode[], frame: Frame): LexicalNode[] {
+/** Shortcode markers removed from a short text (alt, caption) with the same rules as the body text. */
+function withoutShortcodes(ctx: Ctx, text: string, report: boolean): string {
+  if (!text.includes('[')) return text
+  const result = stripShortcodes(text, { knownTags: [...(ctx.opts.knownShortcodes ?? []), 'youtube', 'yt'] })
+  if (report) for (const r of result.removals) bump(ctx.report.shortcodesRemoved, r.tag)
+  return squash(result.text)
+}
+
+function imageBlocks(ctx: Ctx, img: Elem, captionList: ChildNode[][], frame: Frame): LexicalNode[] {
   const src = imageSrc(img)
-  const alt = squash(attr(img, 'alt') ?? '')
-  const captionText = captionNodes.length > 0 ? textContent(captionNodes) : ''
-  const captions = captionNodes.length > 0 ? captionParagraphs(ctx, captionNodes, frame) : []
+  const alt = withoutShortcodes(ctx, squash(attr(img, 'alt') ?? ''), true)
+  // the caption text handed to resolveImage is cleaned quietly: the caption paragraphs below report their own removals
+  const captionText = withoutShortcodes(ctx, squash(captionList.map((c) => textContent(c)).join(' ')), false)
+  const captions = captionList.flatMap((c) => captionParagraphs(ctx, c, frame))
   let resolved: { mediaId: number } | null = null
   if (src && !/^(data|javascript|vbscript):/i.test(src)) {
     try {
@@ -871,7 +980,7 @@ function imageBlocks(ctx: Ctx, img: Elem, captionNodes: ChildNode[], frame: Fram
   }
   if (resolved && Number.isInteger(resolved.mediaId) && resolved.mediaId >= 1 && resolved.mediaId <= 2147483647) {
     ctx.report.images.resolved++
-    return [upload(resolved.mediaId), ...captions]
+    return [upload(resolved.mediaId, ctx.uploadIndex++), ...captions]
   }
   ctx.report.images.unresolved.push({
     src: src.slice(0, 500),
@@ -897,10 +1006,10 @@ function clampSpan(raw: string | undefined): number {
 function flattenTable(ctx: Ctx, rows: CellSpec[][], reason: string, tableEl: Elem): LexicalNode[] {
   ctx.report.tables.flattened.push({ reason })
   const out: LexicalNode[] = []
-  const cap = findAll(kids(tableEl), (e) => e.tagName === 'caption', 1)[0]
-  void cap
-  for (const row of rows.slice(0, 5000)) {
-    const cells = row.slice(0, 200).map((c) => textContent(kids(c.el))).filter((t) => t !== '')
+  void tableEl
+  // every row and every cell is kept (a table too large for the node limit fails the whole conversion instead)
+  for (const row of rows) {
+    const cells = row.map((c) => textContent(kids(c.el))).filter((t) => t !== '')
     if (cells.length > 0) out.push(paragraph([textNode(cells.join(' | '), 0)]))
   }
   return out
@@ -981,6 +1090,7 @@ function handleTable(ctx: Ctx, tableEl: Elem, frame: Frame): LexicalNode[] {
         c: p.c,
         node: {
           type: 'tablecell',
+          ...{ format: '', indent: 0, direction: 'ltr' },
           version: 1,
           headerState,
           colSpan: p.colSpan,
@@ -993,7 +1103,8 @@ function handleTable(ctx: Ctx, tableEl: Elem, frame: Frame): LexicalNode[] {
     }
     for (let c = 0; c < width; c++) {
       if (!filled.has(c) && !occupied.has(`${r},${c}`)) {
-        nodes.push({ c, node: { type: 'tablecell', version: 1, headerState: 0, colSpan: 1, rowSpan: 1, backgroundColor: null, children: [paragraph([])] } })
+        nodes.push({ c, node: { type: 'tablecell',
+          ...{ format: '', indent: 0, direction: 'ltr' }, version: 1, headerState: 0, colSpan: 1, rowSpan: 1, backgroundColor: null, children: [paragraph([])] } })
       }
     }
     rowNodes[r] = nodes.sort((a, b) => a.c - b.c).map((n) => n.node)
@@ -1002,7 +1113,7 @@ function handleTable(ctx: Ctx, tableEl: Elem, frame: Frame): LexicalNode[] {
   blocks.push({
     type: 'table',
     ...elementBase,
-    children: rowNodes.map((cells) => ({ type: 'tablerow', version: 1, children: cells })),
+    children: rowNodes.map((cells) => ({ type: 'tablerow', version: 1, format: '', indent: 0, direction: 'ltr', children: cells })),
   })
   return blocks
 }
@@ -1089,52 +1200,94 @@ function handleList(ctx: Ctx, el: Elem, frame: Frame): LexicalNode[] {
 // The walk
 // ---------------------------------------------------------------------------------------------
 
+type BlockSeg = { block: BlockComment; children: Seg[] }
+type Seg = ChildNode | BlockSeg
+const isBlockSeg = (s: Seg): s is BlockSeg => 'block' in s
+
+/**
+ * Pair Gutenberg open/close markers among sibling nodes in ONE linear pass with an explicit stack (no recursion, no
+ * rescans): a close marker closes the nearest open block of the same name (blocks opened inside it are closed with it),
+ * a stray close is ignored, blocks still open at the end are closed there. Both irregularities are reported once.
+ */
+function buildSegments(ctx: Ctx, nodes: ChildNode[]): Seg[] {
+  if (!nodes.some(isComment)) return nodes
+  const rootSegs: Seg[] = []
+  const stack: BlockSeg[] = []
+  const counts = new Map<string, number>()
+  let unclosed = 0
+  let stray = 0
+  const target = (): Seg[] => (stack.length > 0 ? stack[stack.length - 1].children : rootSegs)
+  for (const node of nodes) {
+    const bc = isComment(node) ? parseBlockComment(node.data) : null
+    if (!bc) {
+      target().push(node)
+      continue
+    }
+    if (bc.kind === 'open') {
+      const seg: BlockSeg = { block: bc, children: [] }
+      target().push(seg)
+      stack.push(seg)
+      counts.set(bc.name, (counts.get(bc.name) ?? 0) + 1)
+    } else if (bc.kind === 'self') {
+      target().push({ block: bc, children: [] })
+    } else if ((counts.get(bc.name) ?? 0) > 0) {
+      for (;;) {
+        const top = stack.pop() as BlockSeg
+        counts.set(top.block.name, (counts.get(top.block.name) ?? 1) - 1)
+        if (top.block.name === bc.name) break
+        unclosed++
+      }
+    } else stray++
+  }
+  unclosed += stack.length
+  if (unclosed > 0) warn(ctx, `${unclosed} Gutenberg block(s) were not closed; the rest of their container was used.`)
+  if (stray > 0) warn(ctx, `${stray} Gutenberg close marker(s) had no opening marker and were ignored.`)
+  return rootSegs
+}
+
+/** The plain DOM nodes of a segment tree in document order (block structure dropped), iterative. */
+function flattenSegs(segs: Seg[]): ChildNode[] {
+  const out: ChildNode[] = []
+  const stack: Seg[] = []
+  for (let i = segs.length - 1; i >= 0; i--) stack.push(segs[i])
+  while (stack.length > 0) {
+    const s = stack.pop() as Seg
+    if (isBlockSeg(s)) for (let i = s.children.length - 1; i >= 0; i--) stack.push(s.children[i])
+    else out.push(s)
+  }
+  return out
+}
+
 function walk(ctx: Ctx, nodes: ChildNode[], frame: Frame, col: Collector, out: LexicalNode[]): void {
-  for (let i = 0; i < nodes.length; i++) {
-    const node = nodes[i]
+  walkSegs(ctx, buildSegments(ctx, nodes), frame, col, out)
+}
+
+function walkSegs(ctx: Ctx, segs: Seg[], frame: Frame, col: Collector, out: LexicalNode[]): void {
+  for (const seg of segs) {
+    if (isBlockSeg(seg)) {
+      if (frame.depth >= ctx.maxDepth) {
+        // block nesting counts like element nesting: past the limit the content is flattened (block structure dropped)
+        ctx.report.deepNestingFlattened++
+        walk(ctx, flattenSegs(seg.children), frame, col, out)
+      } else {
+        handleBlock(ctx, seg.block, seg.children, { ...frame, depth: frame.depth + 1 }, col, out)
+      }
+      continue
+    }
+    const node = seg
     if (isText(node)) {
       handleText(ctx, node.value, frame, col)
       continue
     }
     if (isComment(node)) {
-      const data = node.data
-      const trimmed = data.trim()
+      const trimmed = node.data.trim()
       if (/^more(\s|$)/i.test(trimmed) || /^nextpage$/i.test(trimmed)) {
         ctx.report.moreMarkers++
         col.items.push({ kind: 'parabreak' })
-        continue
-      }
-      const bc = parseBlockComment(data)
-      if (!bc) {
-        ctx.report.commentsDropped++
-        continue
-      }
-      if (bc.kind === 'close') continue // a stray close marker
-      if (bc.kind === 'self') {
-        handleBlock(ctx, bc, [], frame, col, out)
-        continue
-      }
-      // find the matching close among the following siblings, honouring nesting of the same name
-      let depth = 1
-      let end = nodes.length
-      for (let j = i + 1; j < nodes.length; j++) {
-        const nj = nodes[j]
-        if (!isComment(nj)) continue
-        const other = parseBlockComment(nj.data)
-        if (!other || other.name !== bc.name) continue
-        if (other.kind === 'open') depth++
-        else if (other.kind === 'close' && --depth === 0) {
-          end = j
-          break
-        }
-      }
-      if (end === nodes.length) ctx.report.warnings.push(`Gutenberg block "${bc.name}" is not closed; the rest of its container was used.`)
-      handleBlock(ctx, bc, nodes.slice(i + 1, end), frame, col, out)
-      i = end
+      } else ctx.report.commentsDropped++
       continue
     }
-    if (!isElem(node)) continue
-    walkElement(ctx, node, frame, col, out)
+    if (isElem(node)) walkElement(ctx, node, frame, col, out)
   }
 }
 
@@ -1161,7 +1314,13 @@ function walkElement(ctx: Ctx, el: Elem, frame: Frame, col: Collector, out: Lexi
     return
   }
   if (tag === 'img') {
-    col.items.push({ kind: 'block', nodes: imageBlocks(ctx, el, [], deeper) })
+    const pc = ctx.pendingCaption
+    let caps: ChildNode[][] = []
+    if (pc && !pc.used) {
+      pc.used = true
+      caps = pc.captions
+    }
+    col.items.push({ kind: 'block', nodes: imageBlocks(ctx, el, caps, deeper) })
     return
   }
   if (tag === 'br') {
@@ -1233,27 +1392,34 @@ function walkElement(ctx: Ctx, el: Elem, frame: Frame, col: Collector, out: Lexi
       return
     }
     case 'figure': {
-      const imgs = findAll(kids(el), (e) => e.tagName === 'img', 50)
-      if (imgs.length > 0) {
+      flush(ctx, col, out)
+      const hasImg = findAll(kids(el), (e) => e.tagName === 'img', 2)
+      if (hasImg.length === 0) {
+        walk(ctx, kids(el), deeper, col, out)
         flush(ctx, col, out)
-        const caps = kids(el).filter((c): c is Elem => isElem(c) && c.tagName === 'figcaption')
-        const captionNodes = caps.flatMap((c) => kids(c))
-        if (imgs.length === 1) out.push(...imageBlocks(ctx, imgs[0], captionNodes, deeper))
-        else {
-          for (const img of imgs) out.push(...imageBlocks(ctx, img, [], deeper))
-          if (captionNodes.length > 0) out.push(...captionParagraphs(ctx, captionNodes, deeper))
-        }
         return
       }
+      // A figure with images: everything in it is walked in order (images, paragraphs, links, ...); the figcaption(s)
+      // follow the image as separate paragraphs. A single image takes the captions itself.
+      const capEls = kids(el).filter((c): c is Elem => isElem(c) && c.tagName === 'figcaption')
+      const single = hasImg.length === 1 && capEls.length > 0
+      const saved = ctx.pendingCaption
+      const pending = single ? { captions: capEls.map((c) => kids(c)), used: false } : null
+      ctx.pendingCaption = pending
+      walk(ctx, kids(el).filter((c) => !(isElem(c) && c.tagName === 'figcaption')), deeper, col, out)
       flush(ctx, col, out)
-      walk(ctx, kids(el), deeper, col, out)
-      flush(ctx, col, out)
+      ctx.pendingCaption = saved
+      if (!single || (pending && !pending.used)) {
+        for (const c of capEls) out.push(...captionParagraphs(ctx, kids(c), deeper))
+      }
       return
     }
     case 'a': {
       const href = (attr(el, 'href') ?? '').trim()
       let link = frame.link
-      if (href !== '') {
+      if (href.length > LINK_MAX_LENGTH) {
+        ctx.extraConverted.push({ url: href.slice(0, 200), reason: `link address longer than ${LINK_MAX_LENGTH} characters` })
+      } else if (href !== '') {
         if (frame.link) {
           bump(ctx.report.unknownElements, 'a (nested link flattened)')
         } else {
