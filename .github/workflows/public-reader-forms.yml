@@ -1,0 +1,25 @@
+name: Public reader forms contract stubs
+on:
+  pull_request:
+    paths:
+      - 'src/forms/reader-forms.*'
+      - 'src/lib/reader-form-contracts.js'
+      - 'src/lib/turnstile.js'
+      - 'reader-forms-tests/**'
+      - 'playwright.reader-forms.config.js'
+      - 'package*.json'
+      - '.github/workflows/public-reader-forms.yml'
+  workflow_dispatch:
+jobs:
+  contract-stubs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: node --test unit-tests/reader-forms.test.js
+      - run: npx playwright test --config playwright.reader-forms.config.js --reporter=list,github
