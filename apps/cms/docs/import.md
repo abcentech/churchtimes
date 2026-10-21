@@ -196,7 +196,7 @@ code (`IMPORT_USAGE`, `IMPORT_FILE_INSIDE_REPO`, `IMPORT_FILE_UNREADABLE`, `IMPO
   and Media `upload` audit rows, right after each is created), `commit` or `abort` (end of the post's transaction) and
   `end`. A kill loses at most the line being written; `readManifest` (manifest.ts) skips a torn last line and reports
   `openIntents` (a post that was in flight). An id logged in a transaction that never committed does not exist in the
-  database, and rolling back a missing id is harmless. There is no rollback command yet. An updated article's previous
+  database, and rolling back a missing id is harmless. Rollback reads this file (see "Rehearsal and rollback"). An updated article's previous
   content is not kept in it (Payload keeps article versions).
 - SIGINT and SIGTERM stop the run between posts: the post in flight finishes, the manifest gets its `end` line and the
   report is printed (exit code 1).
@@ -217,7 +217,7 @@ the database for the legacy ids seen. Unmapped-link and image counts are per occ
 
 ### Not yet covered
 
-A rollback command that reads the manifest; pages (`page` items are not imported); draft and private posts; tags;
+Pages (`page` items are not imported); draft and private posts; tags;
 authors as users; redirects (see `import:redirects`); a real 4,346-post export and the real uploads folder (the tests use
 a small synthetic export).
 
@@ -232,3 +232,68 @@ dry run, first run, no-op second run, `--update`, manifest, audit rows, comments
 `tests/unit/htmlToLexical.test.ts` (table-driven unit and adversarial cases), `tests/unit/htmlToLexicalCorpus.test.ts`
 (48 synthetic articles from `tests/fixtures/html/corpus.ts`), `tests/unit/convertReport.test.ts` and
 `tests/integration/import-lexical.test.ts` (converted bodies through the real REST handlers). All content is invented.
+
+## Rehearsal and rollback
+
+### `npm run import:rollback -- --manifest <path> [--apply] [--force] [--allow-incomplete]`
+
+Undoes ONE import run from its manifest (`src/import/rollback.ts`). A DRY RUN unless `--apply`.
+
+- Deletes only ids the manifest lists as created by that run: legacy comments, articles (only rows with a legacy id), media documents
+  and their files, and categories. Audit rows are KEPT (they are the record of what happened); one `import.rollback` audit row (counts only) is added.
+  Articles the run only updated are never touched (`articlesUpdatedNotReverted`; Payload keeps their earlier versions).
+- Refuses (exit 2, one code) when the manifest is missing or unreadable (`ROLLBACK_MANIFEST_UNREADABLE`), is not a manifest (`ROLLBACK_MANIFEST_INVALID`)
+  or has no `end` line, meaning the run was killed (`ROLLBACK_MANIFEST_INCOMPLETE`), unless `--allow-incomplete`. Then the ids logged for the post in flight
+  (`openIntents`) are included like any other; a post whose transaction never committed left no rows, so its ids are simply "already gone".
+  Nothing is ever looked up by legacy id: only ids written in the manifest are deleted.
+- Skips a row whose `updatedAt` is later than the run's end (staff edited it, or a later `--update` run rewrote it): `edited-since-import`. `--force` deletes those too;
+  nothing else is overridden. After an `--update` run, rolling back the FIRST manifest therefore needs `--force`. For a killed run the time of the last manifest write is used.
+- Skips rows something else still needs, never deleting them: an article with comments that are not being deleted (`has-remaining-comments`),
+  media used by an article, ad campaign or live update, a category used by an article, live event or user (`still-used`), and a media file name that is not a
+  plain name inside the media folder (`file-outside-media-folder`). Dependants go first: comments, articles, media, categories.
+- Ids already gone are counted (`alreadyGone`), so a second rollback changes nothing. One database transaction per item; a failed item is counted
+  (`failed`, exit 1) and the rest continue.
+- Output is counts and fixed codes only: listed, deleted (or would delete), already gone, skipped by reason, failed, per kind.
+- Payload removes a media file together with its document, before the row. An item that fails afterwards can leave a document whose file is gone; run the rollback again.
+
+### `npm run import:rehearse -- [--posts 1000] [--images 60] [--seed N] [--keep]`
+
+A full rehearsal on a throwaway embedded PostgreSQL (free port, temp data directory, removed at the end) with a LARGE SYNTHETIC export written to a temp
+folder outside the repository (`tests/fixtures/wxr/large.ts`: images, captions, galleries, embeds, unknown shortcodes, 8-deep nested blocks, entities, scripts and
+iframes, tables, password and draft posts, duplicate and non-ASCII slugs, no slug, threaded comments, spam, email-shaped text). It runs: dry run,
+apply, second apply (must change nothing), update, rollback (dry, apply, again). It prints counts, per-phase seconds, posts per second, database
+queries and peak memory, then PASS/FAIL checks (exit 1 on any FAIL). Files it adds to the media folder are removed. No real data is read.
+
+Reference run on a Windows laptop, 1,000 posts (957 importable, 1,905 comments, 60 images): dry run 14 s, apply 113 s (9 posts/s, about 26 queries per article), second apply 17 s,
+update 86 s, rollback 35 s; peak RSS about 430 MB for the whole process (Payload included). Time scales linearly: a 4,346-post export is roughly 8 minutes to apply.
+
+`tests/integration/import-process-signal.test.ts` starts the real command (`payload run src/seed/importWxr.ts -- ...`) against a large synthetic export and stops it
+part-way: a real SIGINT on Linux and macOS (the post in flight finishes, the manifest ends with status `stopped`, exit 1), and on Windows a hard kill, because Node cannot
+send SIGINT to another process there (it terminates it with no handler) and a console Ctrl+C cannot be sent to a detached child without a native addon. A hard kill is the
+harder case: no `end` line, possibly a torn last line. In both, the manifest stays readable and `import:rollback --allow-incomplete` removes what the run wrote, twice.
+`payload run` parses flags itself, so the npm scripts end with `--` (without it `--file` never reaches the importer and the run stops with `IMPORT_USAGE`);
+calling `payload run` by hand needs the same `--` before `--file`.
+
+### Owner runbook
+
+Use folders OUTSIDE the repository. Replace the example paths.
+
+```
+cd apps/cms
+# 0. Use a scratch database first (never staging or production). Check that DATABASE_URL points at it.
+# 1. Rehearse the tooling on synthetic data (no real files involved)
+npm run import:rehearse
+# 2. Dry run on the real export: writes nothing
+npm run import:wxr -- --file D:\churchtimes-private\export.xml --uploads D:\churchtimes-private\uploads
+# 3. Apply. The manifest must not exist yet. Keep it: it is the only way to undo this run
+npm run import:wxr -- --file D:\churchtimes-private\export.xml --uploads D:\churchtimes-private\uploads --apply --manifest D:\churchtimes-private\manifests\run-1.jsonl
+# 4. QA report: the counts printed at the end ("published posts accounted for X of Y", failures, unresolved images),
+#    then open a sample of articles in the admin. Repeat step 3 with a new manifest name to prove it is a no-op ("unchanged", no new ids).
+# 5. Rollback, only if the result is not accepted. Dry run first and read the counts, then apply:
+npm run import:rollback -- --manifest D:\churchtimes-private\manifests\run-1.jsonl
+npm run import:rollback -- --manifest D:\churchtimes-private\manifests\run-1.jsonl --apply
+# A killed run (no end line): add --allow-incomplete. Rows staff edited since (or that --update rewrote): add --force, after reading the dry run.
+```
+
+A rollback does not remove audit rows (kept on purpose), does not restore an article that `--update` rewrote (use its version history), and touches
+nothing the manifest does not list.
