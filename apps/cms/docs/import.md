@@ -305,3 +305,57 @@ npm run import:rollback -- --manifest D:\churchtimes-private\manifests\run-1.jso
 
 A rollback does not remove audit rows (kept on purpose), does not restore an article that `--update` rewrote (use its version history), and touches
 nothing the manifest does not list.
+
+## Legacy media map export (A12)
+
+The public host serves old `/wp-content/uploads/...` addresses from an exact map that the owner exports from the CMS and provisions privately. The
+host never scans media and never holds a staff credential. Format and rules: `docs/api-contracts.md`, "Go-live A12: legacy media map".
+
+Run it from `apps/cms` against the database that holds the imported media, with the output OUTSIDE the repository:
+
+```
+# Dry run (default): counts and the sha256 only, nothing written
+npm run export:media-map --
+# Write the map (mode 0600, atomic rename). Optional recorded thumbnail aliases: --aliases <json outside the repo>
+npm run export:media-map -- --out D:\private\media-map.json
+```
+
+Only media that anonymous readers can already read are exported (published article images, approved live photos, delivered ad creatives). The
+`excluded` counts show what was skipped (`notAnonymous` is normal: every private or withdrawn upload). Copy the file to the public host's
+provisioning path over a private channel, check the `sha256` matches the dry run, and let the host swap it in atomically. Never commit it: it lists
+every public legacy path.
+
+- **Rotation.** Export again whenever imports finish or on a schedule, then replace the file on the host; the old file keeps working until swapped.
+- **Withdrawal.** When an article is unpublished or archived its media becomes private and the next export no longer lists it. Re-export and rotate
+  promptly after a withdrawal. Until the host reloads the new map, and while responses already served stay cached (browser or CDN `max-age`), the old
+  address can still answer; plan for that window (export time + host reload + cache lifetime). The CMS file URL itself stops answering anonymous
+  requests immediately.
+- **Aliases.** Thumbnail addresses (`photo-300x200.jpg`) are served only when recorded in the `--aliases` JSON as
+  `[{"alias":"2023/10/photo-300x200.jpg","path":"2023/10/photo.jpg"}]`; they are never guessed.
+
+## Legacy media map export (A12)
+
+The public host serves old `/wp-content/uploads/...` addresses from an exact map that the owner exports from the CMS and provisions privately. The
+host never scans media and never holds a staff credential. Format and rules: `docs/api-contracts.md`, "Go-live A12: legacy media map".
+
+Run it from `apps/cms` against the database that holds the imported media, with the output OUTSIDE the repository:
+
+```
+# Dry run (default): counts and the sha256 only, nothing written
+npm run export:media-map --
+# Write the map (mode 0600, atomic rename). Optional recorded thumbnail aliases: --aliases <json outside the repo>
+npm run export:media-map -- --out D:\private\media-map.json
+```
+
+Only media that anonymous readers can already read are exported (published article images, approved live photos, delivered ad creatives). The
+`excluded` counts show what was skipped (`notAnonymous` is normal: every private or withdrawn upload). Copy the file to the public host's
+provisioning path over a private channel, check the `sha256` matches the dry run, and let the host swap it in atomically. Never commit it: it lists
+every public legacy path.
+
+- **Rotation.** Export again whenever imports finish or on a schedule, then replace the file on the host; the old file keeps working until swapped.
+- **Withdrawal.** When an article is unpublished or archived its media becomes private and the next export no longer lists it. Re-export and rotate
+  promptly after a withdrawal. Until the host reloads the new map, and while responses already served stay cached (browser or CDN `max-age`), the old
+  address can still answer; plan for that window (export time + host reload + cache lifetime). The CMS file URL itself stops answering anonymous
+  requests immediately.
+- **Aliases.** Thumbnail addresses (`photo-300x200.jpg`) are served only when recorded in the `--aliases` JSON as
+  `[{"alias":"2023/10/photo-300x200.jpg","path":"2023/10/photo.jpg"}]`; they are never guessed.

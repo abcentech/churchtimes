@@ -1,4 +1,4 @@
-# Church Times CMS — API contracts (v1.14)
+# Church Times CMS — API contracts (v1.15)
 
 Status: implemented on `agent/payload-core`. v1.1 added Turnstile, duplicate detection, staff auth/session
 contract and security hardening; v1.2 closes the verified security-review findings: media ownership, version
@@ -679,6 +679,34 @@ new `file` to replace the file):
   stops being public when its article is unpublished. A media file that was public stays reachable by anyone who has already
   downloaded it, obviously. Note the freeze above still includes `scheduled` articles (their media is frozen but private).
 
+### Go-live A12: legacy media map (offline export)
+
+Not an HTTP endpoint. The public host must serve `/wp-content/uploads/*` from an exact, privately provisioned map, with no anonymous
+media scan and no staff credential on the public host. The CMS side is an offline export run by the owner:
+`npm run export:media-map -- [--out <file>] [--aliases <json>]` (`apps/cms/src/lib/mediaMapExport.ts`, `mediaMapData.ts`, `mediaMapCli.ts`).
+
+- **Privacy.** A media is exported only if an ANONYMOUS reader can read it today under the media read rule (§3: media of a published
+  article, an approved live update of a live/ended event, a delivered ad creative). The exporter asks the CMS with `overrideAccess: false`
+  and no user, so drafts, in-review, scheduled, archived/withdrawn and unreferenced media are never listed. `legacyPath` (staff-only) is
+  read by a trusted second read and only for those ids. The file carries no ids, alt, caption, credit, uploader or any staff field.
+- **Format** (`media-map/1`, JSON, UTF-8): `{ version, generatedAt, counts: { entries, aliases, excluded }, sha256, entries, aliases }`.
+  `entries[]` = `{ path, file, mime, size }`: `path` is the legacy path after `/wp-content/uploads/` (NFC, percent-decoded once, no duplicate,
+  leading or trailing slash, no `.`/`..`, case-sensitive, exact match); `file` is the CMS public file URL path (`/api/media/file/<name>`);
+  `mime` is `image/jpeg|png|webp`; `size` is bytes. Sorted by `path` in code-unit order. `aliases[]` = `{ alias, path }`, sorted by `alias`.
+- **Aliases.** A size-suffix alias (`photo-300x200.jpg` -> `photo.jpg`) exists only when it is recorded in the owner's `--aliases` JSON
+  (`[{ "alias": ..., "path": ... }]`) AND the alias equals the original with exactly one `-WxH` suffix before the extension AND the original is an
+  exported entry AND no exact entry has the alias path. Otherwise it is counted in `excluded.badAlias` and dropped. The host tries the exact
+  entry first, then the alias; it never strips suffixes itself.
+- **Ambiguity.** Two media claiming one normalised path are both dropped (`excluded.duplicatePath`).
+- **Integrity.** `sha256` is over `{"version","entries","aliases"}` in that serialised order (no timestamp), so the same content hashes the same
+  on every run. `generatedAt` is informational.
+- **CLI.** Without `--out` it is a dry run printing counts and the hash only. `--out` must be outside the repository (refused with exit 2);
+  the file is written to a temp file in the target folder with mode `0600`, then renamed over the target. Output never prints a path or file name.
+- **Withdrawal and rotation.** Re-export and replace the map atomically on the host. A withdrawn media (its article leaves `published`) disappears
+  at the next export. Staleness window = time until the next export + host map reload + cache lifetime of responses already served
+  (downstream `max-age` / CDN); export right after a withdrawal. The CMS file URL itself is anonymous-denied immediately by the media read rule.
+- Not covered: aliases are not recorded on the media document (no schema change); the owner supplies them. `HEAD`/range behaviour belongs to the host.
+
 ## 7. Error shape
 
 Payload-native routes return Payload's `{ errors: [{ message, ... }] }`. Custom endpoints in §4 and §6 return
@@ -900,6 +928,9 @@ proxy) and https-only `CMS_PUBLIC_URL`/CORS/CSRF settings (`docs/security.md`). 
 limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/operations.md` §4).
 
 ## 9. Changelog
+
+### v1.15: Go-live A12 legacy media map
+Additive, no schema change. New offline command `npm run export:media-map` and the `media-map/1` file format (§ "Go-live A12: legacy media map (offline export)"). No new HTTP route; media read access is unchanged.
 
 ### v1.14: Go-live C3 advertising
 Go-live contract C3 (advertising). Additive, except that approving an ad campaign through the API requires `expectedUpdatedAt` (new collection, no existing client).
