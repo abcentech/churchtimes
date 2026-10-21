@@ -4,6 +4,7 @@ import path from 'node:path'
 import { createLocalReq, type Payload, type PayloadRequest } from 'payload'
 
 import { writeAuditLog } from '../lib/audit'
+import { PLACEMENT_FIELD, PLACEMENTS, requiredVariants } from '../lib/advertising'
 import { readManifest, type ManifestSummary } from './manifest'
 import type { Tally } from './qa'
 
@@ -14,7 +15,7 @@ import type { Tally } from './qa'
  *   files, which must be plain file names inside the media folder) and categories. Articles the run only UPDATED are
  *   never touched (counted `articlesUpdatedNotReverted`). Audit rows are KEPT; one `import.rollback` audit row is added.
  * - Safe by default: a DRY RUN unless `apply`. A manifest without an `end` line (the run was killed) is refused unless
- *   `allowIncomplete`. Rows edited after the run (`updatedAt` later than the run's end) are skipped unless `force`.
+ *   `allowIncomplete`. A row must have been created inside the run window (createdAt) and carry the loader marker; a row changed since (updatedAt > createdAt) is skipped unless `force`.
  *   Ids that no longer exist are counted (`alreadyGone`), so a second rollback is a no-op.
  * - A row that something else still depends on is skipped, never force-deleted: an article that still has comments
  *   the run did not create or that staff kept, media still used by an article, ad campaign or live update, a category
@@ -37,6 +38,8 @@ export type RollbackOptions = {
   force?: boolean
   /** Accept a manifest with no `end` line (a killed run). */
   allowIncomplete?: boolean
+  /** An incomplete manifest younger than this (default 60 s) is refused: the run may still be going. Tests set 0. */
+  minIncompleteAgeMs?: number
   progress?: (line: string) => void
 }
 
@@ -55,7 +58,7 @@ export type ItemCounts = {
 export type RollbackReport = {
   mode: 'dry-run' | 'apply'
   force: boolean
-  manifest: { complete: boolean; endStatus: string | null; openIntents: number; abortedPosts: number }
+  manifest: { startedAt: string | null; complete: boolean; endStatus: string | null; openIntents: number; abortedPosts: number }
   comments: ItemCounts
   articles: ItemCounts
   media: ItemCounts
@@ -83,7 +86,8 @@ type Ctx = {
   base: PayloadRequest
   apply: boolean
   force: boolean
-  /** Rows edited after this instant are "edited since the run". */
+  /** Provenance window: a row the run created has `createdAt` between the run's start (minus a few seconds) and its end. */
+  windowStart: number
   cutoff: number
   /** Dry run only: rows an apply would already have deleted, so dependants are judged as after it. */
   pending: {
@@ -107,19 +111,47 @@ async function fetchDoc(ctx: Ctx, req: PayloadRequest, collection: string, id: n
     depth: 0,
     pagination: false,
     overrideAccess: true,
-    select: { updatedAt: true, ...select } as never,
+    select: { createdAt: true, updatedAt: true, ...select } as never,
     req,
   })
   return (found.docs[0] as Doc | undefined) ?? null
 }
 
-const edited = (ctx: Ctx, doc: Doc): boolean => !ctx.force && typeof doc.updatedAt === 'string' && new Date(doc.updatedAt).getTime() > ctx.cutoff
+/** Clock slack between the manifest's start line and the database timestamps. */
+const WINDOW_SLACK_MS = 5000
+/** A row nobody touched has updatedAt equal to createdAt; staff or a later run change it by more than this. */
+const EDIT_EPSILON_MS = 1000
+
+/** Did the row come into being during this run? `createdAt` must lie inside the run's window. */
+const inWindow = (ctx: Ctx, doc: Doc): boolean => {
+  const t = typeof doc.createdAt === 'string' ? Date.parse(doc.createdAt) : NaN
+  return Number.isFinite(t) && t >= ctx.windowStart - WINDOW_SLACK_MS && t <= ctx.cutoff
+}
+
+const edited = (ctx: Ctx, doc: Doc): boolean => {
+  if (ctx.force) return false
+  const u = typeof doc.updatedAt === 'string' ? Date.parse(doc.updatedAt) : NaN
+  const c = typeof doc.createdAt === 'string' ? Date.parse(doc.createdAt) : NaN
+  return !Number.isFinite(u) || !Number.isFinite(c) || u > c + EDIT_EPSILON_MS
+}
+
+/** Provenance common to every kind (the run's time window) and the kind's own marker, which a loader row always carries. */
+const provenance = (ctx: Ctx, doc: Doc, marker: boolean): string | null => {
+  if (!inWindow(ctx, doc)) return 'outside-run-window'
+  if (!marker) return 'not-an-imported-row'
+  return null
+}
 
 const count = async (ctx: Ctx, req: PayloadRequest, collection: string, where: Record<string, unknown>): Promise<number> =>
   (await ctx.payload.count({ collection: collection as never, where: where as never, overrideAccess: true, req })).totalDocs
 
-/** A media file name written by Payload is a plain name; anything else is not trusted with a delete. */
-const SAFE_FILE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$/
+/**
+ * A media file name is a plain name: spaces, non-ASCII and a leading underscore are fine, but no separator, drive or
+ * stream colon, control character, leading dot or over-long name. The real path must also stay inside the media folder.
+ */
+// eslint-disable-next-line no-control-regex
+const UNSAFE_FILE_RE = /[\u0000-\u001F\u007F-\u009F/\\:]/
+const safeFileName = (n: string): boolean => n.length > 0 && n.length <= 255 && !n.startsWith('.') && !UNSAFE_FILE_RE.test(n) && path.basename(n) === n
 
 function mediaFilesConfined(payload: Payload, doc: Doc): boolean {
   const names: string[] = []
@@ -128,7 +160,7 @@ function mediaFilesConfined(payload: Payload, doc: Doc): boolean {
   if (sizes && typeof sizes === 'object') {
     for (const s of Object.values(sizes)) if (s && typeof s.filename === 'string') names.push(s.filename)
   }
-  if (names.some((n) => !SAFE_FILE_RE.test(n))) return false
+  if (names.some((n) => !safeFileName(n))) return false
   const staticDir = (payload.collections as Record<string, { config: { upload?: { staticDir?: string } } }>).media?.config.upload?.staticDir
   if (!staticDir) return false
   let root: string
@@ -161,8 +193,8 @@ type Handler = {
 const handlers: Record<Handler['collection'], Handler> = {
   'legacy-comments': {
     collection: 'legacy-comments',
-    select: { article: true },
-    check: async (ctx, _req, doc) => (edited(ctx, doc) ? 'edited-since-import' : null),
+    select: { article: true, legacyId: true },
+    check: async (ctx, _req, doc) => provenance(ctx, doc, typeof doc.legacyId === 'number') ?? (edited(ctx, doc) ? 'edited-since-import' : null),
     note: (ctx, doc) => {
       const a = asId(doc.article)
       if (a !== null) bumpMap(ctx.pending.commentsByArticle, a)
@@ -173,7 +205,8 @@ const handlers: Record<Handler['collection'], Handler> = {
     select: { legacyId: true, category: true, featuredImage: true, bodyMedia: true },
     check: async (ctx, req, doc) => {
       // Only rows the loader made carry a legacy id.
-      if (typeof doc.legacyId !== 'number') return 'not-an-imported-article'
+      const bad = provenance(ctx, doc, typeof doc.legacyId === 'number')
+      if (bad) return bad
       if (edited(ctx, doc)) return 'edited-since-import'
       const remaining = (await count(ctx, req, 'legacy-comments', { article: { equals: doc.id } })) - (ctx.pending.commentsByArticle.get(doc.id) ?? 0)
       return remaining > 0 ? 'has-remaining-comments' : null
@@ -190,15 +223,19 @@ const handlers: Record<Handler['collection'], Handler> = {
   },
   media: {
     collection: 'media',
-    select: { filename: true, sizes: true },
+    select: { filename: true, sizes: true, legacyPath: true },
     check: async (ctx, req, doc) => {
+      const bad = provenance(ctx, doc, typeof doc.legacyPath === 'string' && doc.legacyPath !== '')
+      if (bad) return bad
+      if (!mediaFilesConfined(ctx.payload, doc)) return 'unsafe-file-name'
       if (edited(ctx, doc)) return 'edited-since-import'
-      if (!mediaFilesConfined(ctx.payload, doc)) return 'file-outside-media-folder'
       const articles =
         (await count(ctx, req, 'articles', { or: [{ featuredImage: { equals: doc.id } }, { bodyMedia: { equals: doc.id } }] })) -
         (ctx.pending.articlesByMedia.get(doc.id) ?? 0)
       if (articles > 0) return 'still-used'
-      if ((await count(ctx, req, 'ad-campaigns', { creativeMedia: { equals: doc.id } })) > 0) return 'still-used'
+      // EVERY creative field of every placement (`creativeMedia` only covers the placements a campaign selected).
+      const creativeFields = PLACEMENTS.flatMap((p) => requiredVariants(p).map((v) => ({ [`creatives.${PLACEMENT_FIELD[p]}.${v}`]: { equals: doc.id } })))
+      if ((await count(ctx, req, 'ad-campaigns', { or: creativeFields })) > 0) return 'still-used'
       if ((await count(ctx, req, 'live-updates', { image: { equals: doc.id } })) > 0) return 'still-used'
       return null
     },
@@ -208,6 +245,8 @@ const handlers: Record<Handler['collection'], Handler> = {
     collection: 'categories',
     select: {},
     check: async (ctx, req, doc) => {
+      const bad = provenance(ctx, doc, true)
+      if (bad) return bad
       if (edited(ctx, doc)) return 'edited-since-import'
       const articles = (await count(ctx, req, 'articles', { category: { equals: doc.id } })) - (ctx.pending.articlesByCategory.get(doc.id) ?? 0)
       if (articles > 0) return 'still-used'
@@ -274,8 +313,14 @@ export async function runRollback(payload: Payload, opts: RollbackOptions): Prom
   const m = summariseManifest(manifestPath)
   if (!m.complete && !opts.allowIncomplete) throw new RollbackError('ROLLBACK_MANIFEST_INCOMPLETE')
 
-  // "After the run": its end line, or (a killed run) the last time anything was appended to the manifest.
-  const endMs = m.endAt ? Date.parse(m.endAt) : fs.statSync(manifestPath).mtimeMs
+  const startMs = m.startedAt ? Date.parse(m.startedAt) : NaN
+  if (!Number.isFinite(startMs)) throw new RollbackError('ROLLBACK_MANIFEST_INVALID')
+  // End of the run's window: its end line, or (a killed run) the last time anything was appended to the manifest.
+  const mtimeMs = fs.statSync(manifestPath).mtimeMs
+  // A manifest still being written by a live run must not be rolled back under it.
+  if (!m.complete && Date.now() - mtimeMs < (opts.minIncompleteAgeMs ?? 60_000)) throw new RollbackError('ROLLBACK_MANIFEST_TOO_RECENT')
+  const parsedEnd = m.endAt ? Date.parse(m.endAt) : NaN
+  const endMs = Number.isFinite(parsedEnd) ? parsedEnd : mtimeMs
   const apply = opts.apply === true
   const ids = {
     comments: uniq(m.comments),
@@ -286,7 +331,7 @@ export async function runRollback(payload: Payload, opts: RollbackOptions): Prom
   const report: RollbackReport = {
     mode: apply ? 'apply' : 'dry-run',
     force: opts.force === true,
-    manifest: { complete: m.complete, endStatus: m.endStatus, openIntents: m.openIntents.length, abortedPosts: m.aborted.length },
+    manifest: { startedAt: m.startedAt, complete: m.complete, endStatus: m.endStatus, openIntents: m.openIntents.length, abortedPosts: m.aborted.length },
     comments: counts(ids.comments.length),
     articles: counts(ids.articles.length),
     media: counts(ids.media.length),
@@ -302,7 +347,8 @@ export async function runRollback(payload: Payload, opts: RollbackOptions): Prom
     base: await createLocalReq({ context: { import: true } }, payload),
     apply,
     force: opts.force === true,
-    cutoff: Number.isFinite(endMs) ? endMs : Date.now(),
+    windowStart: startMs,
+    cutoff: endMs,
     pending: { commentsByArticle: new Map(), articlesByCategory: new Map(), articlesByMedia: new Map() },
   }
 
@@ -359,7 +405,7 @@ export function formatRollbackReport(r: RollbackReport): string {
     `  ${name}: listed ${c.listed}, ${apply ? 'deleted' : 'would delete'} ${apply ? c.deleted : c.wouldDelete}, already gone ${c.alreadyGone}, skipped [${skippedText(c.skipped)}], failed ${c.failed}`
   return [
     `Import rollback (${r.mode}${r.force ? ', force' : ''})`,
-    `Manifest: ${r.manifest.complete ? `complete (${r.manifest.endStatus})` : 'INCOMPLETE'}, open intents ${r.manifest.openIntents}, aborted posts ${r.manifest.abortedPosts}`,
+    `Manifest (started ${r.manifest.startedAt ?? "unknown"}): ${r.manifest.complete ? `complete (${r.manifest.endStatus})` : 'INCOMPLETE'}, open intents ${r.manifest.openIntents}, aborted posts ${r.manifest.abortedPosts}`,
     line('comments', r.comments),
     line('articles', r.articles),
     line('media', r.media),

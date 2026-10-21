@@ -111,9 +111,9 @@ export function readManifest(filePath: string): ManifestSummary {
       out.endAt = typeof r.at === 'string' ? r.at : null
     } else if (r.type === 'id') {
       if (r.collection === 'articles') (r.action === 'created' ? out.articles.created : out.articles.updated).push(r.id)
-      else if (r.collection === 'categories') out.categories.push(r.id)
-      else if (r.collection === 'media') out.media.push(r.id)
-      else if (r.collection === 'legacy-comments') out.comments.push(r.id)
+      else if (r.collection === 'categories' && r.action === 'created') out.categories.push(r.id)
+      else if (r.collection === 'media' && r.action === 'created') out.media.push(r.id)
+      else if (r.collection === 'legacy-comments' && r.action === 'created') out.comments.push(r.id)
       else if (r.collection === 'audit-logs') out.audits.push(r.id)
     }
   }

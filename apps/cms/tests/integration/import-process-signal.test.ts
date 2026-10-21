@@ -98,9 +98,9 @@ describe('import process interrupted mid-run', () => {
     // Whatever was committed is in the database; rollback (incomplete manifests need the flag on Windows) removes it.
     const inDb = async () => (await f.payload.count({ collection: 'articles', where: { legacyId: { greater_than_equal: idBase, less_than: idBase + 1_000_000 } }, overrideAccess: true })).totalDocs
     expect(await inDb()).toBeGreaterThanOrEqual(15)
-    await expect(runRollback(f.payload, { manifestPath, apply: true, allowIncomplete: !m.complete })).resolves.toMatchObject({ mode: 'apply' })
+    await expect(runRollback(f.payload, { manifestPath, apply: true, allowIncomplete: !m.complete, minIncompleteAgeMs: 0 })).resolves.toMatchObject({ mode: 'apply' })
     expect(await inDb()).toBe(0)
-    const again = await runRollback(f.payload, { manifestPath, apply: true, allowIncomplete: !m.complete })
+    const again = await runRollback(f.payload, { manifestPath, apply: true, allowIncomplete: !m.complete, minIncompleteAgeMs: 0 })
     expect(again.articles.deleted + again.comments.deleted + again.media.deleted + again.categories.deleted).toBe(0)
   }, 600_000)
 })

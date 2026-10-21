@@ -239,22 +239,30 @@ dry run, first run, no-op second run, `--update`, manifest, audit rows, comments
 
 Undoes ONE import run from its manifest (`src/import/rollback.ts`). A DRY RUN unless `--apply`.
 
-- Deletes only ids the manifest lists as created by that run: legacy comments, articles (only rows with a legacy id), media documents
-  and their files, and categories. Audit rows are KEPT (they are the record of what happened); one `import.rollback` audit row (counts only) is added.
-  Articles the run only updated are never touched (`articlesUpdatedNotReverted`; Payload keeps their earlier versions).
+- Deletes only ids the manifest lists as CREATED by that run, and only when the row proves it: legacy comments (with a legacy id), articles (with a legacy id), media
+  documents (with a legacy path) and their files, and categories. Every row must also have been created inside the run's time window (`createdAt` between the
+  manifest's start line, minus 5 seconds, and its end line, or for a killed run the last manifest write); anything else is skipped
+  (`outside-run-window`, `not-an-imported-row`). Only `created` id lines count: `updated` lines for any kind are ignored, and articles the run only updated are never touched
+  (`articlesUpdatedNotReverted`; Payload keeps their earlier versions).
+  Audit rows are KEPT (they are the record of what happened); one `import.rollback` audit row (counts only) is added. Each row that is deleted also writes
+  the collection's own `delete` audit row (Articles and Media include the title or file name in its summary, as for any staff deletion).
 - Refuses (exit 2, one code) when the manifest is missing or unreadable (`ROLLBACK_MANIFEST_UNREADABLE`), is not a manifest (`ROLLBACK_MANIFEST_INVALID`)
-  or has no `end` line, meaning the run was killed (`ROLLBACK_MANIFEST_INCOMPLETE`), unless `--allow-incomplete`. Then the ids logged for the post in flight
-  (`openIntents`) are included like any other; a post whose transaction never committed left no rows, so its ids are simply "already gone".
-  Nothing is ever looked up by legacy id: only ids written in the manifest are deleted.
-- Skips a row whose `updatedAt` is later than the run's end (staff edited it, or a later `--update` run rewrote it): `edited-since-import`. `--force` deletes those too;
-  nothing else is overridden. After an `--update` run, rolling back the FIRST manifest therefore needs `--force`. For a killed run the time of the last manifest write is used.
+  or has no `end` line, meaning the run was killed (`ROLLBACK_MANIFEST_INCOMPLETE`), unless `--allow-incomplete`; even then a manifest written to in the last 60 seconds is
+  refused (`ROLLBACK_MANIFEST_TOO_RECENT`, the run may still be going). The ids logged for the post in flight (`openIntents`) are included like any other; a post whose
+  transaction never committed left no rows, so its ids are simply "already gone". Nothing is ever looked up by legacy id: only ids written in the manifest are deleted.
+  `--apply` needs `--manifest` on the command line (no `IMPORT_MANIFEST_PATH` fallback); the report prints the manifest's start time so you can see you picked the right file.
+- Skips a row changed after it was created (`updatedAt` more than a second after `createdAt`: staff edited it, or a later `--update` run rewrote it): `edited-since-import`.
+  `--force` deletes those too; nothing else is overridden. After an `--update` run, rolling back the FIRST manifest therefore needs `--force`.
 - Skips rows something else still needs, never deleting them: an article with comments that are not being deleted (`has-remaining-comments`),
-  media used by an article, ad campaign or live update, a category used by an article, live event or user (`still-used`), and a media file name that is not a
-  plain name inside the media folder (`file-outside-media-folder`). Dependants go first: comments, articles, media, categories.
+  media used by an article, a live update, or ANY creative field of ANY placement of an ad campaign, a category used by an article, live event or user (`still-used`), and a media
+  file name that is not a plain name (no separator, drive or stream colon, control character or leading dot; spaces, non-ASCII and a leading underscore are fine) inside
+  the media folder (`unsafe-file-name`, not overridden by `--force`). Dependants go first: comments, articles, media, categories.
+- Deleting an article or media row silently clears references that are not checked: older article versions (`featuredImage`), submissions that point at the article, and redirects.
+  Neither is expected for a freshly imported article; look at the dry run if staff used the site in between.
 - Ids already gone are counted (`alreadyGone`), so a second rollback changes nothing. One database transaction per item; a failed item is counted
   (`failed`, exit 1) and the rest continue.
 - Output is counts and fixed codes only: listed, deleted (or would delete), already gone, skipped by reason, failed, per kind.
-- Payload removes a media file together with its document, before the row. An item that fails afterwards can leave a document whose file is gone; run the rollback again.
+- Accepted limit: Payload removes a media file together with its document, before the row is deleted. An item that fails afterwards can leave a document whose file is gone; run the rollback again.
 
 ### `npm run import:rehearse -- [--posts 1000] [--images 60] [--seed N] [--keep]`
 
@@ -262,7 +270,7 @@ A full rehearsal on a throwaway embedded PostgreSQL (free port, temp data direct
 folder outside the repository (`tests/fixtures/wxr/large.ts`: images, captions, galleries, embeds, unknown shortcodes, 8-deep nested blocks, entities, scripts and
 iframes, tables, password and draft posts, duplicate and non-ASCII slugs, no slug, threaded comments, spam, email-shaped text). It runs: dry run,
 apply, second apply (must change nothing), update, rollback (dry, apply, again). It prints counts, per-phase seconds, posts per second, database
-queries and peak memory, then PASS/FAIL checks (exit 1 on any FAIL). Files it adds to the media folder are removed. No real data is read.
+queries and peak memory, then PASS/FAIL checks (exit 1 on any FAIL). Its media folder is inside the temp folder (the real one is never touched), and Ctrl+C stops PostgreSQL and removes the temp folder. No real data is read.
 
 Reference run on a Windows laptop, 1,000 posts (957 importable, 1,905 comments, 60 images): dry run 14 s, apply 113 s (9 posts/s, about 26 queries per article), second apply 17 s,
 update 86 s, rollback 35 s; peak RSS about 430 MB for the whole process (Payload included). Time scales linearly: a 4,346-post export is roughly 8 minutes to apply.

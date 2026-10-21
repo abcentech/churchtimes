@@ -4,8 +4,8 @@
  * Full rehearsal of the WordPress import on a THROWAWAY embedded PostgreSQL (free port, temp data directory) with a
  * LARGE SYNTHETIC export generated into a temp folder outside the repository: dry run, apply, second apply (must be
  * a no-op), update, rollback (dry, then apply, then again). Prints a counts-only summary with timings, peak memory
- * and database query counts. Nothing real is read; nothing outside the temp folder and the (gitignored) media folder
- * is written, and files added to the media folder are removed again. Exit code 1 when any check fails.
+ * and database query counts. Nothing real is read; everything it writes (database, export, uploads, manifests and the
+ * media folder) lives in one temp folder that is removed at the end, also on Ctrl+C. Exit code 1 when any check fails.
  */
 import fs from 'node:fs'
 import net from 'node:net'
@@ -92,9 +92,31 @@ async function main(): Promise<number> {
     onLog: () => {},
     onError: () => {},
   })
-  let mediaDir: string | undefined
-  let mediaBefore = new Set<string>()
+  // The media folder is INSIDE the temp folder: the rehearsal never touches the real one.
+  const mediaDir = path.join(tmp, 'media')
   let payloadRef: { destroy: () => Promise<void> } | undefined
+  let cleaned = false
+  const cleanup = async () => {
+    if (cleaned) return
+    cleaned = true
+    try {
+      await payloadRef?.destroy()
+    } catch {
+      // ignore
+    }
+    try {
+      await embedded.stop()
+    } catch {
+      // ignore
+    }
+    if (!KEEP) fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+  }
+  // Ctrl+C or a termination request: stop PostgreSQL and remove the temp folder, then leave.
+  for (const sig of ['SIGINT', 'SIGTERM'] as const) {
+    process.once(sig, () => {
+      void cleanup().finally(() => process.exit(130))
+    })
+  }
   try {
     await embedded.initialise()
     await embedded.start()
@@ -118,11 +140,15 @@ async function main(): Promise<number> {
     const { runRollback } = await import('../src/import/rollback')
     const { readManifest } = await import('../src/import/manifest')
 
-    const payload = await getPayload({ config })
+    // Before Payload boots: point the media collection at a folder inside the temp folder.
+    const resolved = await config
+    const mediaConfig = resolved.collections.find((c) => c.slug === 'media')
+    if (!mediaConfig || typeof mediaConfig.upload !== 'object') throw new Error('media collection has no upload config')
+    mediaConfig.upload.staticDir = mediaDir
+    fs.mkdirSync(mediaDir, { recursive: true })
+    const payload = await getPayload({ config: resolved })
     payloadRef = payload
     await payload.db.migrate({ migrations: migrations as never })
-    mediaDir = path.resolve((payload.collections as any).media.config.upload.staticDir as string)
-    mediaBefore = new Set(fs.existsSync(mediaDir) ? fs.readdirSync(mediaDir) : [])
 
     // Synthetic uploads and export.
     fs.mkdirSync(path.join(uploads, ...IMAGE_DIR.split('/')), { recursive: true })
@@ -177,7 +203,7 @@ async function main(): Promise<number> {
     check('rollback had no failures', rbApply.articles.failed + rbApply.comments.failed + rbApply.media.failed + rbApply.categories.failed === 0)
     const rbAgain = await timed('rollback again', total, () => runRollback(payload, { manifestPath: manifestOf('apply'), apply: true, force: true }))
     check('second rollback is a no-op', rbAgain.articles.deleted + rbAgain.comments.deleted + rbAgain.media.deleted + rbAgain.categories.deleted === 0)
-    const leftover = fs.existsSync(mediaDir) ? fs.readdirSync(mediaDir).filter((f) => !mediaBefore.has(f)) : []
+    const leftover = fs.existsSync(mediaDir) ? fs.readdirSync(mediaDir) : []
     check('media files removed with their documents', leftover.length === 0)
 
     // Summary: counts only.
@@ -195,21 +221,7 @@ async function main(): Promise<number> {
     console.log(failed === 0 ? 'Rehearsal passed.' : `Rehearsal FAILED (${failed} checks).`)
     return failed === 0 ? 0 : 1
   } finally {
-    try {
-      await payloadRef?.destroy()
-    } catch {
-      // ignore
-    }
-    // Remove any file this run left in the media folder (a failed rollback, a crash), never one that was there before.
-    if (mediaDir && fs.existsSync(mediaDir)) {
-      for (const f of fs.readdirSync(mediaDir)) if (!mediaBefore.has(f)) fs.rmSync(path.join(mediaDir, f), { force: true })
-    }
-    try {
-      await embedded.stop()
-    } catch {
-      // ignore
-    }
-    if (!KEEP) fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+    await cleanup()
   }
 }
 
