@@ -9,6 +9,8 @@ import sharp from 'sharp'
 
 import { Articles } from './collections/Articles'
 import { AuditLogs } from './collections/AuditLogs'
+import { AdCampaigns } from './collections/AdCampaigns'
+import { Advertisers } from './collections/Advertisers'
 import { Categories } from './collections/Categories'
 import { ContactMessages } from './collections/ContactMessages'
 import { LiveEvents } from './collections/LiveEvents'
@@ -22,6 +24,11 @@ import { Users } from './collections/Users'
 import { previewArticleEndpoint } from './endpoints/previewArticle'
 import { publicContactEndpoint, publicContactPreflightEndpoint } from './endpoints/publicContact'
 import { newsletterEndpoints } from './endpoints/publicNewsletter'
+import {
+  publicAdvertisingEndpoint,
+  publicAdvertisingHeadEndpoint,
+  publicAdvertisingPreflightEndpoint,
+} from './endpoints/publicAdvertising'
 import {
   publicRedirectsEndpoint,
   publicRedirectsHeadEndpoint,
@@ -142,6 +149,8 @@ export default buildConfig({
     LiveEvents,
     LiveUpdates,
     Redirects,
+    Advertisers,
+    AdCampaigns,
     LegacyComments,
     AuditLogs,
   ],
@@ -154,6 +163,9 @@ export default buildConfig({
     publicContactEndpoint,
     publicContactPreflightEndpoint,
     ...newsletterEndpoints,
+    publicAdvertisingEndpoint,
+    publicAdvertisingHeadEndpoint,
+    publicAdvertisingPreflightEndpoint,
     previewArticleEndpoint,
   ],
   editor: lexicalEditor(),

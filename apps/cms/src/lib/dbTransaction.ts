@@ -86,11 +86,11 @@ export async function claimSubscriberConfirmation(
  */
 export async function lockedUpdatedAt(
   req: PayloadRequest,
-  table: 'articles' | 'live_updates',
+  table: 'articles' | 'live_updates' | 'ad_campaigns',
   id: number,
 ): Promise<Date | null> {
   const { db } = await executor(req)
-  const tableName = sql.raw(`"${table === 'articles' ? 'articles' : 'live_updates'}"`)
+  const tableName = sql.raw(`"${table === 'articles' ? 'articles' : table === 'ad_campaigns' ? 'ad_campaigns' : 'live_updates'}"`)
   const res = await db.execute(sql`select "updated_at" from ${tableName} where "id" = ${id} for update`)
   const value = (res.rows?.[0] as { updated_at?: Date | string } | undefined)?.updated_at
   if (value === undefined || value === null) return null
