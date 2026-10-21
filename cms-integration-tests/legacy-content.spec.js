@@ -7,22 +7,32 @@ test('50 synthetic historical articles render through real CMS REST on a mobile/
  test.setTimeout(180000);
  const fixture=await (await request.get(cms+'/__test/fixtures')).json();expect(fixture.legacySamples).toHaveLength(50);
  const faults=[];page.on('pageerror',error=>faults.push(error.message));page.on('console',message=>{if(message.type()==='error')faults.push(message.text());});
- const checked=[];
+ const checked=[];const thirdParty=[];
+ page.on('request',request=>{const url=new URL(request.url());if(!['127.0.0.1','localhost'].includes(url.hostname))thirdParty.push(url.origin);});
  for(const sample of fixture.legacySamples) {
   const response=await page.goto(ssr+'/reports/'+sample.slug+'/');expect(response.status()).toBe(200);
   await expect(page.locator('.article-header h1')).toHaveText(sample.title);
   const body=page.locator('.newsroom-article-body');await expect(body).toContainText('Synthetic archived narrative');
-  await expect(body.locator('table')).toHaveCount(1);await expect(body.locator('th[scope="col"]')).toHaveCount(2);await expect(body.locator('th[scope="row"]')).toHaveCount(1);
+  await expect(body.locator('table')).toHaveCount(1);await expect(body.locator('th[scope="col"]')).toHaveCount(sample.index===50?20:2);await expect(body.locator('th[scope="row"]')).toHaveCount(sample.index===50?99:1);
+  await expect(body).toContainText('Synthetic narrative after table');
+  await expect(body.locator('h2,h3,h4,h5,h6')).toHaveCount(5);
+  await expect(body.locator('a[href^="/news/synthetic-"]')).toHaveCount(1);
+  await expect(body.locator('a[href^="https://www.youtube.com/watch"]')).toHaveCount(sample.index%5===0?1:0);
+  await expect(body.locator('p p')).toHaveCount(0);
+  if(sample.index%10===0)await expect(body.locator('p:has(> a[href^="https://www.youtube.com/watch"])')).toContainText('Synthetic inline video');
+  if(sample.index===50)await expect(body.locator('td,th')).toHaveCount(2000);
+  if(sample.index===48)await expect(body.locator('td[colspan="20"]')).toHaveText('Synthetic spanning value');
+  await expect(body.locator('.article-table-note')).toHaveCount(sample.index===49?1:0);
   await expect(body.locator('a[href^="https://example.test/"]')).toHaveCount(1);
   await expect(body.locator('figcaption')).toContainText('CMS integration caption');
   await expect(body.locator('img')).toHaveAttribute('srcset',/\d+w/);
   await expect(body.locator('img')).toHaveJSProperty('complete',true);expect(await body.locator('img').evaluate(image=>image.naturalWidth)).toBeGreaterThan(0);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   expect(await page.evaluate(()=>window.legacyLeak)).toBeUndefined();expect(await body.locator('script,iframe,a[href^="javascript:"]').count()).toBe(0);
-  const axe=await new AxeBuilder({page}).include('#cms-report').withTags(['wcag2a','wcag2aa','wcag21a','wcag21aa']).analyze();expect(axe.violations).toEqual([]);
+  const axe=await new AxeBuilder({page}).include('#cms-report').withTags(['wcag2a','wcag2aa','wcag21a','wcag21aa','best-practice']).analyze();expect(axe.violations).toEqual([]);
   checked.push({index:sample.index,title:sample.title,slug:sample.slug,overflow:false,accessibilityViolations:0});
  }
- expect(faults).toEqual([]);
+ expect(faults).toEqual([]);expect(thirdParty).toEqual([]);
  const evidence=JSON.stringify({kind:'real Payload REST with synthetic article data; Turnstile transport STUBBED and unused',project:testInfo.project.name,checked},null,2);
  const path=testInfo.outputPath('synthetic-legacy-corpus.json');await writeFile(path,evidence);
  await testInfo.attach('synthetic-legacy-corpus.json',{path,contentType:'application/json'});
