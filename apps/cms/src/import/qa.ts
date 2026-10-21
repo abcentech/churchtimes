@@ -24,6 +24,8 @@ export type ImportReport = {
     /** Everything not imported, by reason: password-protected, status-<x>, bad-id, no-date, conversion-<code>, write-failed, ... */
     skipped: Tally
     passwordProtected: number
+    /** Imported before, but the post is now draft, private, trashed ...: left as it is in the CMS. */
+    previouslyImportedNowNotPublished: number
   }
   categories: { created: number; fallbackUsed: number }
   media: { reused: number; created: number; unresolved: Tally }
@@ -51,7 +53,7 @@ export function newReport(mode: 'dry-run' | 'apply', update: boolean): ImportRep
     mode,
     update,
     source: { items: t(), postsByStatus: t(), publishedPosts: 0, approvedCommentsOnPublishedPosts: 0, attachments: 0 },
-    articles: { created: 0, updated: 0, unchanged: 0, skipped: t(), passwordProtected: 0 },
+    articles: { created: 0, updated: 0, unchanged: 0, skipped: t(), passwordProtected: 0, previouslyImportedNowNotPublished: 0 },
     categories: { created: 0, fallbackUsed: 0 },
     media: { reused: 0, created: 0, unresolved: t() },
     content: { imagesResolved: 0, imagesUnresolved: 0, linksUnmapped: 0, featuredImageMissing: 0, youtube: 0, tablesFlattened: 0, embedsDropped: 0 },
@@ -59,6 +61,11 @@ export function newReport(mode: 'dry-run' | 'apply', update: boolean): ImportRep
     notes: [],
   }
 }
+
+const KNOWN_STATUSES = new Set(['publish', 'draft', 'private', 'pending', 'future', 'trash', 'auto-draft', 'inherit'])
+
+/** Report keys come from a closed set: a status the file invents becomes `other`. */
+export const statusKey = (status: string): string => (KNOWN_STATUSES.has(status) ? status : 'other')
 
 export const bumpTally = (tally: Tally, key: string, by = 1): void => {
   tally[key] = (tally[key] ?? 0) + by
@@ -72,7 +79,7 @@ export function reconcile(rep: ImportReport): { sourcePublished: number; account
   const skippedPublished = sum(
     Object.fromEntries(Object.entries(rep.articles.skipped).filter(([k]) => !k.startsWith('status-'))),
   )
-  const accountedFor = imported + skippedPublished
+  const accountedFor = imported + rep.articles.passwordProtected + skippedPublished
   return { sourcePublished: rep.source.publishedPosts, accountedFor, difference: rep.source.publishedPosts - accountedFor }
 }
 
@@ -100,6 +107,7 @@ export function formatImportReport(rep: ImportReport): string {
     `  password-protected (skipped): ${rep.articles.passwordProtected}`,
     ...lines('  skipped by reason', rep.articles.skipped),
     `  published posts accounted for: ${rec.accountedFor} of ${rec.sourcePublished} (difference ${rec.difference})`,
+    `  previously imported, now not published in the export (left alone): ${rep.articles.previouslyImportedNowNotPublished}`,
     '',
     'Categories',
     `  created: ${rep.categories.created}`,

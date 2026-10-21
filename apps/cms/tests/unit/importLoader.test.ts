@@ -5,10 +5,10 @@ import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { parseImportArgs } from '../../src/import/cli'
-import { prepareComments, stripEmailShaped } from '../../src/import/comments'
-import { newManifest, openManifest } from '../../src/import/manifest'
+import { cleanDisplayName, prepareComments, stripEmailShaped } from '../../src/import/comments'
+import { openManifest, readManifest } from '../../src/import/manifest'
 import { confineUploadPath, isSafeRelativeUploadPath } from '../../src/import/media'
-import { bumpTally, formatImportReport, newReport, reconcile } from '../../src/import/qa'
+import { bumpTally, formatImportReport, newReport, reconcile, statusKey } from '../../src/import/qa'
 import type { WxrComment } from '../../src/import/wxr'
 
 let root: string
@@ -59,12 +59,13 @@ describe('confineUploadPath', () => {
     expect(r.ok).toBe(false)
     if (!r.ok) expect(r.reason).toBe('bad-path')
   })
-  it('refuses a link that leaves the root (real path check)', () => {
+  it('refuses a link that leaves the root (real path check)', (ctx) => {
     const link = path.join(root, 'escape')
     try {
       fs.symlinkSync(outside, link, process.platform === 'win32' ? 'junction' : 'dir')
     } catch {
-      return // no permission to link here: covered by the traversal cases above
+      ctx.skip() // no permission to link here: the traversal cases above still cover the textual refusals
+      return
     }
     expect(confineUploadPath(root, 'escape/private.png')).toEqual({ ok: false, reason: 'outside-root' })
   })
@@ -118,6 +119,26 @@ describe('prepareComments', () => {
     expect([by.get(4), by.get(5)].filter((v) => v === null).length).toBeGreaterThanOrEqual(1)
     expect(r.orphanedParents).toBeGreaterThanOrEqual(2)
   })
+  it('skips trash comments', () => {
+    const r = prepareComments([wc({ id: 1, approved: 'trash' }), wc({ id: 2 })], 1)
+    expect(r.rows.map((x) => x.legacyId)).toEqual([2])
+    expect(r.skipped.trash).toBe(1)
+  })
+  it('a name with an at-sign becomes Anonymous before any stripping', () => {
+    const r = prepareComments([wc({ id: 1, authorName: 'jo@site.example.test' }), wc({ id: 2, authorName: 'jo\uFF20site.example.test' })], 1)
+    expect(r.rows.map((x) => x.authorName)).toEqual(['Anonymous', 'Anonymous'])
+  })
+  it('cleanDisplayName empties an email-like byline', () => {
+    expect(cleanDisplayName('Ada Synthetic')).toBe('Ada Synthetic')
+    expect(cleanDisplayName('ada@example.test')).toBe('')
+    expect(cleanDisplayName('ada\uFF20example.test')).toBe('')
+  })
+  it('stripEmailShaped output', () => {
+    expect(stripEmailShaped('write a.b+c@sub.example.test now')).toBe('write [email removed] now')
+    expect(stripEmailShaped('x@y.test, z@w.example.org.')).toBe('[email removed], [email removed].')
+    expect(stripEmailShaped('no address here, @handle and 5@6')).toBe('no address here, @handle and 5@6')
+    expect(stripEmailShaped('fullwidth bob\uFF20example.test')).toBe('fullwidth [email removed]')
+  })
   it('stripEmailShaped is linear on hostile input', () => {
     const t0 = Date.now()
     stripEmailShaped('@'.repeat(20000) + 'a.'.repeat(10000))
@@ -127,16 +148,34 @@ describe('prepareComments', () => {
 })
 
 describe('manifest', () => {
-  it('is created exclusively and never overwritten', () => {
-    const p = path.join(path.dirname(root), 'manifest.json')
+  it('is append-only, readable after a kill, and never overwritten', () => {
+    const p = path.join(path.dirname(root), 'manifest.jsonl')
     const sink = openManifest(p)
-    const m = newManifest()
-    m.articles.created.push(1, 2)
-    sink.write(m)
-    sink.close()
-    expect(JSON.parse(fs.readFileSync(p, 'utf8')).articles.created).toEqual([1, 2])
+    sink.append({ type: 'intent', legacyId: 11 })
+    sink.id('articles', 'created', 1)
+    sink.id('media', 'created', 2)
+    sink.append({ type: 'commit', legacyId: 11 })
+    sink.append({ type: 'intent', legacyId: 12 })
+    sink.id('articles', 'created', 3)
+    // The process is killed here: no end record, no close, and a torn last line.
+    fs.appendFileSync(p, '{"type":"id","collection":"articles","act')
+    const m = readManifest(p)
+    expect(m.complete).toBe(false)
+    expect(m.articles.created).toEqual([1, 3])
+    expect(m.media).toEqual([2])
+    expect(m.openIntents).toEqual([12])
     if (process.platform !== 'win32') expect(fs.statSync(p).mode & 0o777).toBe(0o600)
     expect(() => openManifest(p)).toThrow()
+    sink.close()
+  })
+  it('records aborts and the end status', () => {
+    const p = path.join(path.dirname(root), 'manifest2.jsonl')
+    const sink = openManifest(p)
+    sink.append({ type: 'intent', legacyId: 5 })
+    sink.append({ type: 'abort', legacyId: 5 })
+    sink.append({ type: 'end', at: new Date().toISOString(), status: 'failed' })
+    sink.close()
+    expect(readManifest(p)).toMatchObject({ complete: true, endStatus: 'failed', aborted: [5], openIntents: [] })
   })
 })
 
@@ -148,7 +187,9 @@ describe('report', () => {
     rep.articles.passwordProtected = 1
     bumpTally(rep.articles.skipped, 'no-date')
     const rec = reconcile(rep)
-    expect(rec).toMatchObject({ sourcePublished: 5, accountedFor: 4 })
+    expect(rec).toEqual({ sourcePublished: 5, accountedFor: 5, difference: 0 })
+    expect(statusKey('draft')).toBe('draft')
+    expect(statusKey('x-invented-by-the-file')).toBe('other')
     const text = formatImportReport(rep)
     expect(text).toContain('password-protected (skipped): 1')
     expect(text).not.toMatch(/https?:|@/)
@@ -163,5 +204,8 @@ describe('cli arguments', () => {
     expect(parseImportArgs([], {})).toBeNull()
     expect(parseImportArgs(['--file', 'a.xml', '--limit', 'x'], {})).toBeNull()
     expect(parseImportArgs(['--file', 'a.xml', '--manifest'], {})).toBeNull()
+    expect(parseImportArgs(['--file', '--apply'], {})).toBeNull()
+    expect(parseImportArgs(['--file', 'a.xml', '--update'], {})).toMatchObject({ update: true, forceUpdate: false })
+    expect(parseImportArgs(['--file', 'a.xml', '--force-update'], {})).toMatchObject({ update: true, forceUpdate: true })
   })
 })

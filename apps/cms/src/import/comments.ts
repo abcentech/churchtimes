@@ -31,10 +31,17 @@ export function stripEmailShaped(text: string): string {
   return bounded.replace(AT_SIGN_FOLDED, '@').replace(EMAIL_SHAPED, EMAIL_REDACTED)
 }
 
-/** A name that still holds an at-sign after cleaning is not published. */
+/** A name that holds an at-sign (checked BEFORE any stripping, so it is never published as a marker) becomes Anonymous. */
 function safeName(name: string): string {
   const folded = name.replace(AT_SIGN_FOLDED, '@')
   return folded.includes('@') ? ANONYMOUS_NAME : name
+}
+
+/** A byline or display name: empty when it is (or contains) an email address. */
+export function cleanDisplayName(value: string, max = 120): string {
+  const folded = value.replace(AT_SIGN_FOLDED, '@')
+  if (folded.includes('@')) return ''
+  return value.slice(0, max).trim()
 }
 
 export function adaptWxrComment(c: WxrComment): Record<string, unknown> {
@@ -77,7 +84,7 @@ export function prepareComments(comments: readonly WxrComment[], articleId: numb
     if (r.dateFromLocal) out.dateFromLocal++
     out.rows.push({
       ...r.data,
-      authorName: safeName(stripEmailShaped(r.data.authorName)),
+      authorName: safeName(safeName(c.authorName) === ANONYMOUS_NAME ? ANONYMOUS_NAME : stripEmailShaped(r.data.authorName)),
       content: stripEmailShaped(r.data.content),
     })
   }
@@ -107,6 +114,7 @@ export async function writeComments(
   req: PayloadRequest,
   rows: readonly LegacyCommentData[],
   dryRun: boolean,
+  onCreated?: (id: number) => void,
 ): Promise<{ created: number[]; existing: number; wouldCreate: number }> {
   if (rows.length === 0) return { created: [], existing: 0, wouldCreate: 0 }
   const have = new Set<number>()
@@ -135,6 +143,7 @@ export async function writeComments(
       req,
     })) as { id: number }
     created.push(doc.id)
+    onCreated?.(doc.id)
   }
   return { created, existing: have.size, wouldCreate: todo.length }
 }

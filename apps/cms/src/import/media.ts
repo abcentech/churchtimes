@@ -96,6 +96,10 @@ export type MediaResolver = {
   /** A path under the uploads folder (`2023/10/photo.jpg`), for example `_wp_attached_file`. */
   resolvePath: (legacyPath: string, ctx: { alt?: string; caption?: string; articleTitle?: string }) => Promise<MediaOutcome>
   stats: MediaStats
+  /** Use this request (and its transaction) for the following calls. */
+  setReq: (req: PayloadRequest) => void
+  /** Forget what was resolved (after a rolled-back transaction, whose media rows no longer exist). */
+  reset: () => void
 }
 
 const bump = (rec: Record<string, number>, key: string) => {
@@ -116,6 +120,7 @@ export function createMediaResolver(opts: MediaResolverOptions): MediaResolver {
   const stats: MediaStats = { reused: 0, created: 0, unresolved: {} }
   const hosts = new Set(opts.oldHosts.map((h) => h.toLowerCase()))
   const cache = new Map<string, MediaOutcome>()
+  let req = opts.req
 
   const fail = (reason: string): MediaOutcome => {
     bump(stats.unresolved, reason)
@@ -130,7 +135,7 @@ export function createMediaResolver(opts: MediaResolverOptions): MediaResolver {
       depth: 0,
       pagination: false,
       overrideAccess: true,
-      req: opts.req,
+      req: req,
     })
     const id = (found.docs[0] as { id?: number } | undefined)?.id
     return typeof id === 'number' ? id : null
@@ -155,7 +160,8 @@ export function createMediaResolver(opts: MediaResolverOptions): MediaResolver {
       }
       if (opts.dryRun) {
         stats.created++
-        return { ok: true, mediaId: 0, created: true }
+        // A placeholder (never written): 1 and not 0, so the converter treats it as a resolved image exactly as in a real run.
+        return { ok: true, mediaId: 1, created: true }
       }
       try {
         const doc = (await opts.payload.create({
@@ -167,7 +173,7 @@ export function createMediaResolver(opts: MediaResolverOptions): MediaResolver {
           } as never,
           filePath: confined.file,
           overrideAccess: true,
-          req: opts.req,
+          req: req,
         })) as { id: number }
         stats.created++
         opts.onCreated?.(doc.id)
@@ -190,6 +196,10 @@ export function createMediaResolver(opts: MediaResolverOptions): MediaResolver {
 
   return {
     stats,
+    setReq: (r) => {
+      req = r
+    },
+    reset: () => cache.clear(),
     resolvePath: async (legacyPath, ctx) => {
       if (!isSafeRelativeUploadPath(legacyPath)) return fail('bad-path')
       return run(legacyPath, ctx)

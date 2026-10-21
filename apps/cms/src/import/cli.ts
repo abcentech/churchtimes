@@ -18,7 +18,9 @@ export type CliIo = { out: (line: string) => void; err: (line: string) => void }
 export function parseImportArgs(argv: readonly string[], env: Record<string, string | undefined>): ImportOptions | null {
   const value = (name: string): string | undefined => {
     const i = argv.indexOf(name)
-    return i >= 0 ? argv[i + 1] : undefined
+    const v = i >= 0 ? argv[i + 1] : undefined
+    // `--file --apply` must not read `--apply` as the file name.
+    return v !== undefined && v.startsWith('--') ? undefined : v
   }
   const file = value('--file')
   if (!file) return null
@@ -36,7 +38,8 @@ export function parseImportArgs(argv: readonly string[], env: Record<string, str
     uploadsRoot: value('--uploads'),
     manifestPath: value('--manifest') ?? env.IMPORT_MANIFEST_PATH,
     dryRun: !argv.includes('--apply'),
-    update: argv.includes('--update'),
+    update: argv.includes('--update') || argv.includes('--force-update'),
+    forceUpdate: argv.includes('--force-update'),
     oldHosts: (value('--old-host') ?? '').split(',').map((h) => h.trim()).filter(Boolean),
     limit,
   }
@@ -54,12 +57,23 @@ export async function runImportCli(
     io.err('IMPORT_USAGE')
     return 2
   }
+  // SIGINT / SIGTERM: finish the post being written, then end cleanly (manifest closed, report printed).
+  const signal = { stopped: false }
+  const stop = () => {
+    signal.stopped = true
+  }
+  process.once('SIGINT', stop)
+  process.once('SIGTERM', stop)
   try {
-    const report = await runImport(payload, { ...opts, progress: (l) => io.err(l) })
+    const report = await runImport(payload, { ...opts, signal, progress: (l) => io.err(l) })
     io.out(formatImportReport(report))
+    if (signal.stopped) return 1
     return Object.keys(report.articles.skipped).some((k) => k === 'write-failed' || k.startsWith('conversion-')) ? 1 : 0
   } catch (err) {
     io.err(err instanceof ImportError ? err.code : err instanceof WxrError ? err.code : `IMPORT_FAILED ${safeErrorSummary(err)}`)
     return err instanceof ImportError && err.code !== 'IMPORT_TOO_MANY_FAILURES' ? 2 : 1
+  } finally {
+    process.off('SIGINT', stop)
+    process.off('SIGTERM', stop)
   }
 }

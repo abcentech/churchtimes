@@ -147,27 +147,27 @@ cd apps/cms
 # dry run (the default): reads the file and the database, writes nothing
 npm run import:wxr -- --file D:\churchtimes-private\export.xml --uploads D:\churchtimes-private\uploads
 # real run, against a SCRATCH database first
-$env:IMPORT_MANIFEST_PATH = 'D:\churchtimes-private\manifests\run-1.json'
+$env:IMPORT_MANIFEST_PATH = 'D:\churchtimes-private\manifests\run-1.jsonl'
 npm run import:wxr -- --file D:\churchtimes-private\export.xml --uploads D:\churchtimes-private\uploads --apply
 ```
 
 Flags: `--file` (required), `--uploads <folder>` (the copied `wp-content/uploads`), `--manifest <path>` or
-`IMPORT_MANIFEST_PATH`, `--apply` (write), `--update` (rewrite already imported articles), `--old-host a.test,b.test`
+`IMPORT_MANIFEST_PATH`, `--apply` (write), `--update` (rewrite already imported articles that nobody edited since), `--force-update` (also those), `--old-host a.test,b.test`
 (extra old-site hosts; the hosts in the export's own header are always used), `--limit N` (first N posts, for trials).
 Exit code 0 when clean, 1 when an article failed to convert or write, 2 for a usage or path error. Errors print one short
-code (`IMPORT_USAGE`, `IMPORT_FILE_INSIDE_REPO`, `IMPORT_UPLOADS_INSIDE_REPO`, `IMPORT_MANIFEST_REQUIRED`,
+code (`IMPORT_USAGE`, `IMPORT_FILE_INSIDE_REPO`, `IMPORT_FILE_UNREADABLE`, `IMPORT_UPLOADS_INSIDE_REPO`, `IMPORT_MANIFEST_REQUIRED`,
 `IMPORT_MANIFEST_INSIDE_REPO`, `IMPORT_MANIFEST_UNWRITABLE`, `IMPORT_TOO_MANY_FAILURES`, or a `WXR_*` code).
 
 ### What is imported
 
 - Posts with status `publish` and no password. Everything else is counted, never written: password-protected posts
   (`passwordProtected`), other statuses (`status-draft`, ...), missing id, date or title.
-- Article: title, slug (from `wp:post_name`; on a clash `-<wp id>` is added), excerpt (plain text), body (converted),
+- Article: title, slug (from `wp:post_name`; on a clash `-<wp id>`, then a number, is added; every candidate is checked, and links between articles use the FINAL slug), excerpt (plain text), body (converted),
   first category (created when absent; none gives `uncategorised`), featured image (`_thumbnail_id`), byline (channel
   author display name), `publishedAt` (the GMT date), `legacyUrl`, `legacyId`, Rank Math / Yoast title and description
   (dropped when they hold `%variables%` or are over the length limits, C2). Imported articles are `published`.
 - Approved ordinary comments through `toLegacyCommentData`, plus a second email-shaped-text pass over names and bodies
-  (an address becomes `[email removed]`, a name with an at-sign becomes `Anonymous`). `parentLegacyId` is kept only
+  (an address becomes `[email removed]`, a name with an at-sign becomes `Anonymous`; a byline that is an email address is dropped). `parentLegacyId` is kept only
   when the parent is imported for the same article (loops are broken); otherwise the reply becomes top level.
 - Images: article HTML addresses and `_wp_attached_file` are reduced to a path under `wp-content/uploads` and matched
   to `media.legacyPath` (exact path, then without a `-300x200` size suffix); when there is none the file is read from
@@ -180,23 +180,30 @@ code (`IMPORT_USAGE`, `IMPORT_FILE_INSIDE_REPO`, `IMPORT_UPLOADS_INSIDE_REPO`, `
 - Its own context flag, `req.context.import` (server-side, a REST client cannot set it), not `seed`. The only thing it
   skips is the editorial workflow (`Articles.enforceWorkflow`); the Articles validators (embeds, body images, SEO
   fields, slug) stay on.
+- `articles.legacyId` and `legacyUrl` are server-owned (field access `create: never, update: never`; only the Local API of the importer writes them) and `legacyId` is UNIQUE (migration `20261021_100000_article_legacy_id_unique`, which refuses to run while duplicates exist). More than one match for a legacy id fails that post (`duplicate-legacy-id`), it never picks the first.
+- One database transaction per post (article, categories, media rows, comments, audit rows): a failure leaves nothing of that post. Uploaded files already copied to the media folder stay on disk as orphans.
 - Idempotent. An article is found by `legacyId`; by default an existing one is left alone (counted `unchanged`) and a
   second run changes nothing: no article, media, comment or audit row is written. `--update` rewrites the converted
-  fields (not slug, category, status or date). Comments are completed for existing articles too (ids that exist are
+  fields (not slug, category, status or date) but skips an article edited after its last `import.article` audit row (`edited-since-import`; one with no such row counts as edited) unless `--force-update`. Comments are completed for existing articles too (ids that exist are
   skipped), so an interrupted run can simply be repeated.
 - Dry run writes nothing: no media, category, article, comment, audit row or manifest.
-- One `import.article` audit row per article created or updated (summary `Imported legacy article <wp id> (created)`;
-  no title or address). The ordinary `create` audit row of the Articles collection is written as well.
-- Rollback manifest (`--apply` only): JSON of ids (articles created and updated, categories, media, comments, audit
-  rows), no text. Created exclusively (`wx`) at the start of the run, so an existing or unwritable path stops the run
-  before any database write; written with mode `0o600` (Windows ignores POSIX modes; keep the folder private); filled
-  in as the run progresses and finally also after a failure. It must be outside the repository. There is no rollback
-  command yet; the manifest is what one needs. An updated article's previous content is not kept in it (Payload keeps
-  article versions).
+- One `import.article` audit row per article created or updated (actorRole `import`, status taken from the saved article, summary `Imported legacy article <wp id> (created)`;
+  no title or address). The ordinary `create` (Articles) and `upload` (Media) audit rows are written too, with `import` as actor role.
+- Rollback manifest (`--apply` only): an append-only JSON Lines file of ids (no text), written outside the repository with
+  mode `0o600` (Windows ignores POSIX modes; keep the folder private). It is created exclusively (`wx`) after the export
+  file has opened and before any database write, and every line is fsynced as it is written: `intent` (before a post is
+  touched), `id` (articles created or updated, categories, media, comments, and the `import.article`, Articles `create`
+  and Media `upload` audit rows, right after each is created), `commit` or `abort` (end of the post's transaction) and
+  `end`. A kill loses at most the line being written; `readManifest` (manifest.ts) skips a torn last line and reports
+  `openIntents` (a post that was in flight). An id logged in a transaction that never committed does not exist in the
+  database, and rolling back a missing id is harmless. There is no rollback command yet. An updated article's previous
+  content is not kept in it (Payload keeps article versions).
+- SIGINT and SIGTERM stop the run between posts: the post in flight finishes, the manifest gets its `end` line and the
+  report is printed (exit code 1).
 - Files are read only from inside the real `--uploads` folder: UNC and device paths, drive letters, `..`, backslashes,
   alternate-stream colons, NUL and control characters are refused, and the real path (symlinks and junctions resolved)
   must stay inside the real uploads folder. Files over 25 MB are refused.
-- 50 consecutive failed articles stop the run (`IMPORT_TOO_MANY_FAILURES`).
+- 50 consecutive failed writes, or (after 20 posts) more than half failing, stop the run (`IMPORT_TOO_MANY_FAILURES`). Report keys for post statuses come from a fixed set (anything else is `other`).
 
 ### QA report
 

@@ -100,8 +100,8 @@ Rules:
   status: 'draft' | 'in_review' | 'changes_requested' | 'approved' | 'scheduled' | 'published' | 'archived'
   publishedAt?: string
   corrections?: { id: string; correctedAt: string; note: string }[]
-  legacyUrl?: string           // original churchtimesnigeria.net URL (redirect mapping)
-  legacyId?: number            // WordPress post ID
+  legacyUrl?: string           // original churchtimesnigeria.net URL (redirect mapping); server-owned: never writable through the API
+  legacyId?: number            // WordPress post ID; server-owned (set by the import loader only) and UNIQUE
   createdAt: string
   updatedAt: string
 }

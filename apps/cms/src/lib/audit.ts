@@ -27,7 +27,7 @@ export async function writeAuditLog(req: PayloadRequest, entry: AuditEntry) {
       docId: String(entry.docId),
       summary: summary ? summary.slice(0, 1000) : undefined,
       actor: actor ?? user?.id ?? undefined,
-      actorRole: actorRole ?? user?.role ?? undefined,
+      actorRole: actorRole ?? user?.role ?? ((req.context as { import?: boolean } | undefined)?.import === true ? 'import' : undefined),
     } as never,
     overrideAccess: true,
     req,

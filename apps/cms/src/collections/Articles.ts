@@ -632,7 +632,9 @@ export const Articles: CollectionConfig = {
         { name: 'note', type: 'textarea', required: true },
       ],
     },
-    { name: 'legacyUrl', type: 'text' },
-    { name: 'legacyId', type: 'number', index: true },
+    // Server-owned (set by the archive importer through the Local API, which skips field access): no client may
+    // set or change them, or one article could claim another's WordPress id and hijack its redirects.
+    { name: 'legacyUrl', type: 'text', access: { create: never, update: never } },
+    { name: 'legacyId', type: 'number', index: true, unique: true, access: { create: never, update: never } },
   ],
 }
