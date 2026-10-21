@@ -1,5 +1,9 @@
 # Wave 3 combined public-lane evidence
 
+**Historical Wave 3 evidence, not a current Wave 4 readiness claim.** CMS merge
+gates listed below describe the 2026-10-17 run; #55/#56 are merged as of
+2026-10-21. Use the Wave 4 spec for the current integration/review queue.
+
 Recorded locally on 2026-10-17 using production Vite output served by
 `tools/serve-public.mjs`, real anonymous Payload REST and disposable PostgreSQL.
 The audited source is integration `17e7900075be134da65c973048352b9198b994da`;
@@ -26,7 +30,10 @@ vary; these are recorded measurements, not a statistical speed guarantee.
 | Live | 95 → 96 | 100 → 100 | 100 → 100 | 2708 | 0.041 |
 
 Both production quality gates passed. Staging remains deliberately noindex;
-SEO scores 66/63/69/63 reflect that gate. The separate real-CMS SEO tests cover
+The SEO scores **66/63/69/63 are manually transcribed from the local Lighthouse
+reports**, not fields in the committed before/after quality JSON and not an
+additional machine-validated result of this evidence PR. They reflect the
+noindex setting. The separate real-CMS SEO tests cover
 indexable/staging modes, both article URL templates, XML, archived metadata and
 published-only discovery. No indexing setting was changed for this audit.
 
