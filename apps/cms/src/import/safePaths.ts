@@ -37,3 +37,8 @@ export function isInsideRepo(target: string, _cwd: string = process.cwd()): bool
     dir = parent
   }
 }
+
+/** True for a UNC (`\host\share`, `//host/share`) or device (`\?\`, `\.\`) path. */
+export function isNetworkOrDevicePath(p: string): boolean {
+  return NETWORK_OR_DEVICE_RE.test(p)
+}

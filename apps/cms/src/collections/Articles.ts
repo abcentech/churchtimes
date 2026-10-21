@@ -277,12 +277,16 @@ const enforceWorkflow: CollectionBeforeChangeHook = async ({ data, originalDoc, 
     systemNow?: string
     restoreVersion?: boolean
     correctionAmended?: boolean
+    import?: boolean
   }
   const isCreate = operation === 'create'
   const orig = (originalDoc ?? {}) as Doc
   const now = ctx.systemNow ? new Date(ctx.systemNow) : new Date()
 
   if (ctx.seed === true) return data
+  // Archive importer (src/import/run.ts): server-side only. Skips the editorial workflow (the import publishes the
+  // archive as it was) but NOT the validators (embeds, body images, SEO fields, slug rules), unlike seed.
+  if (ctx.import === true) return data
 
   const prevStatus = (isCreate ? undefined : orig.status) as ArticleStatus | undefined
   const nextStatus = (data.status ?? prevStatus ?? 'draft') as ArticleStatus
@@ -628,7 +632,9 @@ export const Articles: CollectionConfig = {
         { name: 'note', type: 'textarea', required: true },
       ],
     },
-    { name: 'legacyUrl', type: 'text' },
-    { name: 'legacyId', type: 'number', index: true },
+    // Server-owned (set by the archive importer through the Local API, which skips field access): no client may
+    // set or change them, or one article could claim another's WordPress id and hijack its redirects.
+    { name: 'legacyUrl', type: 'text', access: { create: never, update: never } },
+    { name: 'legacyId', type: 'number', index: true, unique: true, access: { create: never, update: never } },
   ],
 }

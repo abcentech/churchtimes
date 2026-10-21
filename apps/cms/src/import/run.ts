@@ -1,0 +1,648 @@
+import fs from 'node:fs'
+import path from 'node:path'
+
+import { createLocalReq, type Payload, type PayloadRequest } from 'payload'
+
+import { writeAuditLog } from '../lib/audit'
+import { legacyPathFromUrl } from '../lib/legacyMediaPath'
+import { cleanText, slugify } from '../lib/sanitize'
+import { hasTemplateVariable, SEO_DESCRIPTION_MAX, SEO_TITLE_MAX } from '../lib/seoFields'
+import { safeErrorSummary } from '../lib/safeLog'
+import { cleanDisplayName, prepareComments, writeComments } from './comments'
+import { HtmlConversionError, htmlToLexical, type ConversionReport } from './htmlToLexical'
+import { openManifest, type ManifestSink } from './manifest'
+import { createMediaResolver, isSafeRelativeUploadPath, type MediaResolver } from './media'
+import { bumpTally, newReport, statusKey, type ImportReport } from './qa'
+import { isInsideRepo } from './safePaths'
+import { readWxrFile, type WxrAttachment, type WxrItem } from './wxr'
+
+/**
+ * WordPress archive loader: parse (WXR) -> convert (HTML to Lexical) -> write (Local API). See docs/import.md.
+ *
+ * - Its OWN context flag, `req.context.import`, not `seed`: the Articles validators (embeds, body images, SEO fields,
+ *   slug rules) stay ON; only the editorial workflow is skipped (Articles.enforceWorkflow).
+ * - Idempotent: an article is matched by `legacyId` (unique in the database). Default: an existing one is left alone
+ *   (comments are still completed). `update` rewrites the converted fields of an existing article, but not one that an
+ *   editor changed after its import unless `forceUpdate`.
+ * - Each post (article, media, category, comments, audit rows) is written in ONE database transaction: a failure
+ *   leaves nothing of that post behind.
+ * - Dry run: reads the file and the database, writes NOTHING and reports what would happen.
+ * - An `import.article` audit row per article created or updated (actorRole `import`), and a crash-safe append-only
+ *   rollback manifest (ids only) outside the repository, mode 0o600 (see manifest.ts).
+ * - Only published, not password-protected posts are imported. Everything else is counted in the report.
+ */
+
+export class ImportError extends Error {
+  constructor(public readonly code: string) {
+    super(code)
+    this.name = 'ImportError'
+  }
+}
+
+/** A post that must be skipped, with a fixed reason code for the report. */
+class PostSkip extends Error {
+  constructor(public readonly reason: string) {
+    super(reason)
+    this.name = 'PostSkip'
+  }
+}
+
+export type ImportOptions = {
+  /** The WXR export. Must be outside the repository. */
+  file: string
+  /** The copied `wp-content/uploads` folder. Outside the repository. Without it only existing media is matched. */
+  uploadsRoot?: string
+  /** Rollback manifest path (outside the repository, must not exist). Required unless `dryRun`. */
+  manifestPath?: string
+  dryRun: boolean
+  /** Rewrite the converted fields of an article that was imported before. */
+  update?: boolean
+  /** With `update`: also rewrite articles that were edited in the CMS after their import. */
+  forceUpdate?: boolean
+  /** Extra old-site host names (the hosts in the export's own site header are always used). */
+  oldHosts?: readonly string[]
+  /** Stop after this many posts (trial runs). */
+  limit?: number
+  /** Checked between posts; the CLI sets it from SIGINT and SIGTERM. The run then ends cleanly. */
+  signal?: { readonly stopped: boolean }
+  /** Abort after this many failed posts in a row (default 50). */
+  maxConsecutiveFailures?: number
+  /** Called with a short progress line (counts only). */
+  progress?: (line: string) => void
+  /** Working directory for the repository checks. */
+  cwd?: string
+}
+
+const FALLBACK_CATEGORY = { slug: 'uncategorised', title: 'Uncategorised' }
+const DEFAULT_MAX_CONSECUTIVE_FAILURES = 50
+/** Past this many posts, more than half failing aborts the run. */
+const FAILURE_RATIO_MIN_POSTS = 20
+
+const ENTITIES: Record<string, string> = { amp: '&', quot: '"', apos: "'", nbsp: ' ', '#39': "'", '#038': '&' }
+/** Decode the entities WordPress leaves in titles and excerpts. `&lt;` and `&gt;` are deliberately left as written. */
+const decode = (s: string): string => s.replace(/&(amp|quot|apos|nbsp|#39|#038);/g, (_m, n: string) => ENTITIES[n] ?? _m)
+
+const plain = (html: string, max: number, multiline = false): string => cleanText(decode(cleanText(html, { multiline })), { max, multiline })
+
+function hostsOf(...urls: string[]): string[] {
+  const out: string[] = []
+  for (const u of urls) {
+    try {
+      out.push(new URL(u).hostname.toLowerCase())
+    } catch {
+      // not an address
+    }
+  }
+  return out
+}
+
+const articleSlug = (it: WxrItem): string => slugify(it.slug || it.title, 150, `post-${it.wpId}`)
+
+/** Importable here: published and not password-protected, with an id. */
+const importable = (it: WxrItem): boolean => it.kind === 'post' && it.status === 'publish' && !it.hasPassword && it.wpId !== null
+
+type Ctx = {
+  payload: Payload
+  req: PayloadRequest
+  opts: ImportOptions
+  report: ImportReport
+  manifest: ManifestSink | undefined
+  media: MediaResolver
+  categories: Map<string, number>
+  /** Media ids created for the post being written (to find their `upload` audit rows). */
+  postMedia: number[]
+}
+
+type ExistingArticle = { id: number; slug?: string; updatedAt?: string }
+
+/** The article with this legacy id: none, one, or (a corrupt database) a refusal. Never silently the first of several. */
+async function findByLegacyId(payload: Payload, req: PayloadRequest, legacyId: number): Promise<ExistingArticle | undefined> {
+  const found = await payload.find({
+    collection: 'articles',
+    where: { legacyId: { equals: legacyId } },
+    limit: 2,
+    depth: 0,
+    pagination: false,
+    overrideAccess: true,
+    select: { slug: true, updatedAt: true },
+    req,
+  })
+  if (found.docs.length > 1) throw new PostSkip('duplicate-legacy-id')
+  return found.docs[0] as ExistingArticle | undefined
+}
+
+async function slugTaken(payload: Payload, req: PayloadRequest, slug: string): Promise<boolean> {
+  const hit = await payload.find({
+    collection: 'articles',
+    where: { slug: { equals: slug } },
+    limit: 1,
+    depth: 0,
+    overrideAccess: true,
+    select: { slug: true },
+    req,
+  })
+  return hit.docs.length > 0
+}
+
+/** The slug the article has (existing) or will get: the WordPress one, else with the post id, else numbered; each candidate is checked. */
+async function decideSlug(payload: Payload, req: PayloadRequest, claimed: Set<string>, item: WxrItem): Promise<string> {
+  const existing = await findByLegacyId(payload, req, item.wpId as number)
+  if (existing?.slug) {
+    claimed.add(existing.slug)
+    return existing.slug
+  }
+  const base = articleSlug(item)
+  const fit = (s: string) => s.slice(0, 160).replace(/-+$/, '')
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const candidate = attempt === 0 ? base : fit(`${base.slice(0, 140)}-${item.wpId}${attempt > 1 ? `-${attempt}` : ''}`)
+    if (!claimed.has(candidate) && !(await slugTaken(payload, req, candidate))) {
+      claimed.add(candidate)
+      return candidate
+    }
+  }
+  throw new PostSkip('slug-unavailable')
+}
+
+type Pass1 = {
+  attachments: Map<number, WxrAttachment>
+  authors: Map<string, string>
+  siteHosts: string[]
+  /** Old slug -> the FINAL slug the article has or will get (after collision handling). */
+  slugMap: Record<string, string>
+  /** wp id -> final slug, or the reason the post cannot be given one. */
+  slugs: Map<number, string | { skip: string }>
+}
+
+async function pass1(file: string, payload: Payload, req: PayloadRequest, report: ImportReport): Promise<Pass1> {
+  const out: Pass1 = { attachments: new Map(), authors: new Map(), siteHosts: [], slugMap: {}, slugs: new Map() }
+  const claimed = new Set<string>()
+  for await (const rec of readWxrFile(file)) {
+    if (rec.record === 'site') out.siteHosts = hostsOf(rec.site.baseSiteUrl, rec.site.baseBlogUrl)
+    else if (rec.record === 'author') {
+      if (rec.author.login) out.authors.set(rec.author.login, rec.author.displayName)
+    } else if (rec.record === 'item') {
+      const it = rec.item
+      bumpTally(report.source.items, it.kind)
+      if (it.kind === 'attachment') {
+        report.source.attachments++
+        if (it.wpId !== null && it.attachment) out.attachments.set(it.wpId, it.attachment)
+      }
+      if (it.kind === 'post') {
+        bumpTally(report.source.postsByStatus, statusKey(it.status))
+        if (it.status === 'publish') {
+          report.source.publishedPosts++
+          for (const c of it.comments) {
+            if (c.approved === '1' && (c.type === 'comment' || c.type === '')) report.source.approvedCommentsOnPublishedPosts++
+          }
+        }
+        if (importable(it)) {
+          try {
+            const slug = await decideSlug(payload, req, claimed, it)
+            out.slugs.set(it.wpId as number, slug)
+            if (it.slug) out.slugMap[it.slug] = slug
+          } catch (err) {
+            if (!(err instanceof PostSkip)) throw err
+            out.slugs.set(it.wpId as number, { skip: err.reason })
+          }
+        }
+      }
+    }
+  }
+  return out
+}
+
+async function categoryFor(ctx: Ctx, item: WxrItem): Promise<number> {
+  const first = item.categories.find((c) => c.nicename)
+  const slug = first ? slugify(first.nicename, 100, FALLBACK_CATEGORY.slug) : FALLBACK_CATEGORY.slug
+  const title = first ? plain(first.name || first.nicename, 120) || slug : FALLBACK_CATEGORY.title
+  if (!first) ctx.report.categories.fallbackUsed++
+  const known = ctx.categories.get(slug)
+  if (known !== undefined) return known
+  const found = await ctx.payload.find({
+    collection: 'categories',
+    where: { slug: { equals: slug } },
+    limit: 1,
+    depth: 0,
+    overrideAccess: true,
+    req: ctx.req,
+  })
+  let id = (found.docs[0] as { id?: number } | undefined)?.id
+  if (id === undefined) {
+    ctx.report.categories.created++
+    if (ctx.opts.dryRun) id = 0
+    else {
+      const doc = (await ctx.payload.create({
+        collection: 'categories',
+        data: { title, slug } as never,
+        overrideAccess: true,
+        req: ctx.req,
+      })) as { id: number }
+      id = doc.id
+      ctx.manifest?.id('categories', 'created', id)
+    }
+  }
+  ctx.categories.set(slug, id)
+  return id
+}
+
+type Converted = { content: { root: unknown }; report: ConversionReport }
+
+/** Two passes: the first collects image addresses, they are resolved (async), the second builds the body. */
+async function convert(ctx: Ctx, item: WxrItem, oldHosts: readonly string[], slugMap: Record<string, string>): Promise<Converted> {
+  const wanted = new Map<string, { alt: string; caption: string }>()
+  const options = { oldHosts, slugMap, articleTitle: plain(item.title, 240) }
+  htmlToLexical(item.contentHtml, {
+    ...options,
+    resolveImage: (src, c) => {
+      if (!wanted.has(src)) wanted.set(src, { alt: c.alt, caption: c.caption })
+      return { mediaId: 1 }
+    },
+  })
+  const resolved = new Map<string, number>()
+  for (const [src, meta] of wanted) {
+    const r = await ctx.media.resolveUrl(src, { ...meta, articleTitle: options.articleTitle })
+    if (r.ok) resolved.set(src, r.mediaId)
+  }
+  const result = htmlToLexical(item.contentHtml, {
+    ...options,
+    resolveImage: (src) => {
+      const id = resolved.get(src)
+      return id === undefined ? null : { mediaId: id }
+    },
+  })
+  return { content: result.content, report: result.report }
+}
+
+async function featuredImageFor(ctx: Ctx, item: WxrItem, attachments: Map<number, WxrAttachment>): Promise<number | undefined> {
+  if (item.thumbnailId === null) return undefined
+  const att = attachments.get(item.thumbnailId)
+  // `_wp_attached_file` is normally relative to the uploads folder, but can be an absolute server path: then the address is used.
+  const rel = att
+    ? att.attachedFile && isSafeRelativeUploadPath(att.attachedFile)
+      ? att.attachedFile
+      : (legacyPathFromUrl(att.url) ?? legacyPathFromUrl(att.attachedFile))
+    : null
+  const r = rel
+    ? await ctx.media.resolvePath(rel, { alt: att?.altText ?? '', articleTitle: plain(item.title, 240) })
+    : { ok: false as const, reason: 'no-attachment' }
+  if (!r.ok) {
+    ctx.report.content.featuredImageMissing++
+    return undefined
+  }
+  return r.mediaId
+}
+
+function seoValue(raw: string | null | undefined, max: number): string | undefined {
+  if (!raw) return undefined
+  const v = plain(raw, 2000)
+  if (v === '' || v.length > max || hasTemplateVariable(v)) return undefined
+  return v
+}
+
+function addConversionStats(rep: ImportReport, c: ConversionReport): void {
+  rep.content.imagesResolved += c.images.resolved
+  rep.content.imagesUnresolved += c.images.unresolved.length
+  rep.content.linksUnmapped += c.links.unmapped.length
+  rep.content.youtube += c.youtube
+  rep.content.tablesFlattened += c.tables.flattened.length
+  rep.content.embedsDropped += c.embeds.dropped.length
+}
+
+function assertReadable(file: string): void {
+  try {
+    fs.accessSync(file, fs.constants.R_OK)
+    if (!fs.statSync(file).isFile()) throw new Error('not a file')
+  } catch {
+    throw new ImportError('IMPORT_FILE_UNREADABLE')
+  }
+}
+
+export async function runImport(payload: Payload, opts: ImportOptions): Promise<ImportReport> {
+  const cwd = opts.cwd ?? process.cwd()
+  const file = path.resolve(cwd, opts.file)
+  if (isInsideRepo(file, cwd)) throw new ImportError('IMPORT_FILE_INSIDE_REPO')
+  const uploadsRoot = opts.uploadsRoot ? path.resolve(cwd, opts.uploadsRoot) : undefined
+  if (uploadsRoot && isInsideRepo(uploadsRoot, cwd)) throw new ImportError('IMPORT_UPLOADS_INSIDE_REPO')
+  let manifestPath: string | undefined
+  if (!opts.dryRun) {
+    if (!opts.manifestPath) throw new ImportError('IMPORT_MANIFEST_REQUIRED')
+    manifestPath = path.resolve(cwd, opts.manifestPath)
+    if (isInsideRepo(manifestPath, cwd)) throw new ImportError('IMPORT_MANIFEST_INSIDE_REPO')
+  }
+  // The export must open before a manifest file is created, so a bad path does not leave an empty manifest behind.
+  assertReadable(file)
+  let manifest: ManifestSink | undefined
+  if (manifestPath) {
+    try {
+      manifest = openManifest(manifestPath)
+    } catch {
+      throw new ImportError('IMPORT_MANIFEST_UNWRITABLE')
+    }
+  }
+
+  const report = newReport(opts.dryRun ? 'dry-run' : 'apply', opts.update === true)
+  let endStatus: 'complete' | 'failed' | 'stopped' = 'failed'
+  try {
+    const req = await createLocalReq({ context: { import: true } }, payload)
+    const first = await pass1(file, payload, req, report)
+    const oldHosts = [...new Set([...(opts.oldHosts ?? []).map((h) => h.toLowerCase()), ...first.siteHosts])]
+    const postMedia: number[] = []
+    const media = createMediaResolver({
+      payload,
+      req,
+      uploadsRoot,
+      oldHosts,
+      dryRun: opts.dryRun,
+      onCreated: (id) => {
+        manifest?.id('media', 'created', id)
+        postMedia.push(id)
+      },
+    })
+    const ctx: Ctx = { payload, req, opts, report, manifest, media, categories: new Map(), postMedia }
+
+    const seenLegacyIds: number[] = []
+    const seenArticleIds: number[] = []
+    const maxConsecutive = opts.maxConsecutiveFailures ?? DEFAULT_MAX_CONSECUTIVE_FAILURES
+    let processed = 0
+    let failures = 0
+    let consecutiveFailures = 0
+    let stopped = false
+    for await (const rec of readWxrFile(file)) {
+      if (rec.record !== 'item' || rec.item.kind !== 'post') continue
+      const item = rec.item
+      const skip = (reason: string) => bumpTally(report.articles.skipped, reason)
+      if (item.status !== 'publish') {
+        skip(`status-${statusKey(item.status)}`)
+        if (item.wpId !== null && (await payload.count({ collection: 'articles', where: { legacyId: { equals: item.wpId } }, overrideAccess: true, req })).totalDocs > 0) {
+          report.articles.previouslyImportedNowNotPublished++
+        }
+        continue
+      }
+      if (item.hasPassword) {
+        report.articles.passwordProtected++
+        continue
+      }
+      if (opts.signal?.stopped) {
+        stopped = true
+        break
+      }
+      if (opts.limit !== undefined && processed >= opts.limit) break
+      processed++
+      if (item.wpId === null) {
+        skip('bad-id')
+        continue
+      }
+      if (item.dateGmt === null) {
+        skip('no-date')
+        continue
+      }
+      const title = plain(item.title, 240)
+      if (title === '') {
+        skip('no-title')
+        continue
+      }
+      try {
+        await importOne(ctx, item, title, first, oldHosts, seenArticleIds)
+        seenLegacyIds.push(item.wpId)
+        consecutiveFailures = 0
+      } catch (err) {
+        if (err instanceof PostSkip) skip(err.reason)
+        else if (err instanceof HtmlConversionError) skip(`conversion-${err.code}`)
+        else {
+          // Only a failed write counts towards the abort limits (a database or disk problem is systemic).
+          skip('write-failed')
+          opts.progress?.(`article failed: ${safeErrorSummary(err)}`)
+          failures++
+          consecutiveFailures++
+          if (consecutiveFailures >= maxConsecutive || (processed >= FAILURE_RATIO_MIN_POSTS && failures * 2 > processed)) {
+            throw new ImportError('IMPORT_TOO_MANY_FAILURES')
+          }
+        }
+      }
+      if (processed % 100 === 0) opts.progress?.(`${processed} posts processed`)
+    }
+
+    report.media.reused = media.stats.reused
+    report.media.created = media.stats.created
+    report.media.unresolved = { ...media.stats.unresolved }
+
+    if (!opts.dryRun) {
+      let articlesInDatabase = 0
+      for (let i = 0; i < seenLegacyIds.length; i += 500) {
+        articlesInDatabase += (
+          await payload.count({ collection: 'articles', where: { legacyId: { in: seenLegacyIds.slice(i, i + 500) } }, overrideAccess: true, req })
+        ).totalDocs
+      }
+      let commentsInDatabase = 0
+      for (let i = 0; i < seenArticleIds.length; i += 500) {
+        commentsInDatabase += (
+          await payload.count({ collection: 'legacy-comments', where: { article: { in: seenArticleIds.slice(i, i + 500) } }, overrideAccess: true, req })
+        ).totalDocs
+      }
+      report.verified = { articlesInDatabase, commentsInDatabase }
+      report.notes.push('manifest-written')
+    } else {
+      report.notes.push('dry-run-nothing-written')
+    }
+    if (stopped) report.notes.push('stopped-early-by-signal')
+    endStatus = stopped ? 'stopped' : 'complete'
+    return report
+  } finally {
+    if (manifest) {
+      try {
+        manifest.append({ type: 'end', at: new Date().toISOString(), status: endStatus })
+      } finally {
+        manifest.close()
+      }
+    }
+  }
+}
+
+/** Did an editor change the article after the loader last wrote it? (No import audit row counts as edited.) */
+async function editedSinceImport(ctx: Ctx, article: ExistingArticle): Promise<boolean> {
+  const last = await ctx.payload.find({
+    collection: 'audit-logs',
+    where: { and: [{ collection: { equals: 'articles' } }, { docId: { equals: String(article.id) } }, { action: { equals: 'import.article' } }] },
+    sort: '-createdAt',
+    limit: 1,
+    depth: 0,
+    overrideAccess: true,
+    req: ctx.req,
+  })
+  const at = (last.docs[0] as { createdAt?: string } | undefined)?.createdAt
+  if (!at || !article.updatedAt) return true
+  return new Date(article.updatedAt).getTime() > new Date(at).getTime()
+}
+
+async function importOne(
+  ctx: Ctx,
+  item: WxrItem,
+  title: string,
+  first: Pass1,
+  oldHosts: readonly string[],
+  seenArticleIds: number[],
+): Promise<void> {
+  const { payload, opts, report, manifest } = ctx
+  const legacyId = item.wpId as number
+  const snapshot = structuredClone(report)
+  const baseReq = ctx.req
+
+  // One transaction per post (not in a dry run, which writes nothing).
+  const req = await createLocalReq({ context: { import: true } }, payload)
+  let txId: number | string | null = null
+  if (!opts.dryRun) {
+    txId = (await payload.db.beginTransaction()) as number | string | null
+    if (txId) req.transactionID = txId
+  }
+  ctx.req = req
+  ctx.media.setReq(req)
+  manifest?.append({ type: 'intent', legacyId })
+  ctx.postMedia.length = 0
+  let createdArticle: number | undefined
+  try {
+    await importPost(ctx, item, title, first, oldHosts, seenArticleIds, (id) => {
+      createdArticle = id
+    })
+    if (txId) await payload.db.commitTransaction(txId)
+    manifest?.append({ type: 'commit', legacyId })
+  } catch (err) {
+    if (txId) {
+      try {
+        await payload.db.rollbackTransaction(txId)
+      } catch {
+        // already ended
+      }
+    }
+    manifest?.append({ type: 'abort', legacyId })
+    // The rolled-back rows no longer exist: forget what was cached about them.
+    Object.assign(report, snapshot)
+    ctx.categories.clear()
+    ctx.media.reset()
+    throw err
+  } finally {
+    ctx.req = baseReq
+    ctx.media.setReq(baseReq)
+  }
+
+  // Audit rows written by the collections' own hooks (Articles `create`, Media `upload`): add their ids to the manifest.
+  if (manifest && createdArticle !== undefined) {
+    const audits = await payload.find({
+      collection: 'audit-logs',
+      where: { and: [{ collection: { equals: 'articles' } }, { docId: { equals: String(createdArticle) } }, { action: { equals: 'create' } }] },
+      limit: 5,
+      depth: 0,
+      pagination: false,
+      overrideAccess: true,
+      req: baseReq,
+    })
+    for (const a of audits.docs as { id: number }[]) manifest.id('audit-logs', 'created', a.id)
+  }
+  if (manifest && ctx.postMedia.length > 0) {
+    const uploads = await payload.find({
+      collection: 'audit-logs',
+      where: { and: [{ collection: { equals: 'media' } }, { docId: { in: ctx.postMedia.map(String) } }, { action: { equals: 'upload' } }] },
+      limit: 200,
+      depth: 0,
+      pagination: false,
+      overrideAccess: true,
+      req: baseReq,
+    })
+    for (const a of uploads.docs as { id: number }[]) manifest.id('audit-logs', 'created', a.id)
+  }
+}
+
+async function importPost(
+  ctx: Ctx,
+  item: WxrItem,
+  title: string,
+  first: Pass1,
+  oldHosts: readonly string[],
+  seenArticleIds: number[],
+  onCreatedArticle: (id: number) => void,
+): Promise<void> {
+  const { payload, req, opts, report, manifest } = ctx
+  const legacyId = item.wpId as number
+  const planned = first.slugs.get(legacyId)
+  if (planned !== undefined && typeof planned !== 'string') throw new PostSkip(planned.skip)
+  const existing = await findByLegacyId(payload, req, legacyId)
+
+  let articleId = existing?.id ?? 0
+  let skipArticleWrite = false
+  if (existing && !opts.update) {
+    report.articles.unchanged++
+    skipArticleWrite = true
+  } else if (existing && !opts.forceUpdate && (await editedSinceImport(ctx, existing))) {
+    bumpTally(report.articles.skipped, 'edited-since-import')
+    skipArticleWrite = true
+  }
+  if (!skipArticleWrite) {
+    const converted = await convert(ctx, item, oldHosts, first.slugMap)
+    addConversionStats(report, converted.report)
+    const featuredImage = await featuredImageFor(ctx, item, first.attachments)
+    const excerpt = plain(item.excerptHtml, 600, true)
+    const byline = item.author ? cleanDisplayName(plain(first.authors.get(item.author) ?? '', 120)) : ''
+    const fields = {
+      title,
+      excerpt: excerpt || undefined,
+      content: converted.content,
+      featuredImage,
+      bylineName: byline || undefined,
+      seoTitle: seoValue(item.seo.rankMathTitle ?? item.seo.yoastTitle, SEO_TITLE_MAX),
+      seoDescription: seoValue(item.seo.rankMathDescription ?? item.seo.yoastDescription, SEO_DESCRIPTION_MAX),
+      legacyUrl: /^https?:\/\//i.test(item.link) ? item.link.slice(0, 1000) : undefined,
+      legacyId,
+    }
+    if (existing) {
+      if (!opts.dryRun) {
+        const doc = (await payload.update({ collection: 'articles', id: existing.id, data: fields as never, overrideAccess: true, depth: 0, req })) as { id: number; status?: string }
+        manifest?.id('articles', 'updated', existing.id)
+        await audit(ctx, existing.id, legacyId, 'updated', doc.status)
+      }
+      report.articles.updated++
+    } else {
+      const category = await categoryFor(ctx, item)
+      const slug = planned as string
+      if (!opts.dryRun) {
+        const doc = (await payload.create({
+          collection: 'articles',
+          data: { ...fields, slug, category, status: 'published', publishedAt: item.dateGmt } as never,
+          overrideAccess: true,
+          depth: 0,
+          req,
+        })) as { id: number; status?: string }
+        articleId = doc.id
+        onCreatedArticle(doc.id)
+        manifest?.id('articles', 'created', doc.id)
+        await audit(ctx, doc.id, legacyId, 'created', doc.status)
+      }
+      report.articles.created++
+    }
+  }
+
+  // Comments (also for an article that already existed, so an interrupted run is completed).
+  const prepared = prepareComments(item.comments, articleId)
+  for (const [reason, n] of Object.entries(prepared.skipped)) bumpTally(report.comments.skipped, reason, n ?? 0)
+  report.comments.orphanedParents += prepared.orphanedParents
+  report.comments.truncated += prepared.truncated
+  if (existing || !opts.dryRun) {
+    const written = await writeComments(payload, req, prepared.rows, opts.dryRun, (id) => manifest?.id('legacy-comments', 'created', id))
+    report.comments.created += opts.dryRun ? written.wouldCreate : written.created.length
+    report.comments.existing += written.existing
+  } else {
+    report.comments.created += prepared.rows.length
+  }
+  if (articleId) seenArticleIds.push(articleId)
+}
+
+async function audit(ctx: Ctx, articleId: number, legacyId: number, outcome: 'created' | 'updated', status: string | undefined): Promise<void> {
+  const row = (await writeAuditLog(ctx.req, {
+    action: 'import.article',
+    collection: 'articles',
+    docId: articleId,
+    toStatus: status ?? 'published',
+    actorRole: 'import',
+    summary: `Imported legacy article ${legacyId} (${outcome})`,
+    details: { legacyId, outcome },
+  })) as { id: number }
+  ctx.manifest?.id('audit-logs', 'created', row.id)
+}
