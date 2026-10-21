@@ -1,9 +1,11 @@
 # A12 proposal: preserve legacy WordPress image paths
 
 **Design for review only. No proxy, file route, flag, exporter or deployment is implemented by this PR.**
-The owner has not chosen D2 (the public production host). CMS PR [#54](https://github.com/abcentech/churchtimes/pull/54)
-remains open: it proposes a staff-only `media.legacyPath`, not an anonymous lookup endpoint or a deployable map.
-The CMS export/map contract below is therefore a proposal for Claude and the owner, not an existing API.
+CMS PR [#54](https://github.com/abcentech/churchtimes/pull/54) is merged and provides the staff-only
+`media.legacyPath` field and helpers. It does **not** provide an anonymous lookup endpoint or an offline media map.
+Wave 4 permits Node behind Caddy with the public site at the domain root as the D2 planning default; the actual
+production host and its operational limits still need owner acceptance. **A12 implementation remains blocked on
+Claude's offline map-export/withdrawal contract.** The shape below is a proposal, not a shipping CMS API.
 
 The goal is to retain approved image URLs such as `/wp-content/uploads/2021/03/synthetic-photo.jpg` on the public
 origin. An exact, reviewed map points that address to an already-public CMS media file. The browser keeps its old
@@ -17,12 +19,17 @@ All examples here are synthetic. Real migration inventories and maps stay in app
   does not widen media access or scan anonymous media documents to discover it.
 - Codex implements a narrowly scoped public route only after design review and agreement on that export contract.
 - Hosting must preserve the original request target for validation, route `/wp-content/uploads/` to the Node host,
-  and bypass shared/CDN caches for this route. Caddy is one candidate, not a selected production host.
+  and bypass shared/CDN caches for the initial no-store proposal. Node behind Caddy at the domain root is the
+  Wave 4 planning default; it is not evidence of an owner-approved production installation.
 - A future `PUBLIC_LEGACY_MEDIA_ENABLED=true` setting would opt in. Unset/false must register no proxy behavior and
   make no CMS request. The proposed `PUBLIC_LEGACY_MEDIA_MAP` would identify a local, operator-provisioned file;
   neither setting is implemented or approved for production here.
 
-## Proposed private export contract
+## Proposed private export contract — new CMS-lane work
+
+The offline exporter, approved-file eligibility rules, map normalisation vectors, revocation/rotation behaviour and
+withdrawal window are explicit contract deliverables for Claude. Neither the importer nor the merged staff-only
+field supplies them implicitly. Codex must not start the route until that export contract lands.
 
 An authorised offline job on the CMS side joins staff-only `legacyPath` with reconciled media records and their
 anonymous public-file projection. It emits only explicitly approved media reachable from published content. It uses
@@ -62,7 +69,7 @@ expected type, not permission to trust upstream bytes. No original absolute site
 authors, emails, staff IDs, access tokens or import diagnostics belong in this artifact. An approved legacy image
 filename is necessarily visible when served; directory listings and the complete map must never be publicly served.
 
-WordPress size suffixes are resolved **offline**. PR #54 proposes exact-path lookup before stripping a size suffix:
+WordPress size suffixes are resolved **offline**. The merged PR #54 helper tries the exact path before stripping a size suffix:
 `banner-1920x1080.jpg` can be an original filename. The exporter must honour that precedence and emit each approved
 alias explicitly. It must report ambiguous matches/collisions instead of silently choosing a record. The host performs
 one exact map lookup; it never guesses a filename, strips a suffix at runtime, searches CMS collections or falls back
@@ -70,9 +77,12 @@ to fetching the old website. Missing variants remain unavailable until explicitl
 
 ## Path and origin validation proposal
 
-Exporter and host need agreed normalisation test vectors before implementation. PR #54's helper currently collapses
-slashes and tolerates a failed percent decode; the request-facing rules proposed here are deliberately stricter.
-That difference must produce an explicit reconciliation report, not silent loss or an undocumented second key format.
+Exporter and host need agreed normalisation test vectors before implementation. The merged CMS helper in
+`apps/cms/src/lib/legacyMediaPath.ts` collapses duplicate slashes, retains raw text when percent decoding fails, and
+does **not** NFC-normalise Unicode. `legacyPath` remains staff-only. The request-facing rules proposed here are
+deliberately stricter: an export must report malformed escapes, slash aliases, decomposed Unicode and collisions
+for reconciliation instead of copying helper output blindly. Do not silently lose media or introduce a second,
+undocumented key format; the agreed exporter/host vectors must settle those differences.
 
 1. Inspect the raw request path before a URL parser or reverse proxy can remove dot segments. Only GET/HEAD on the exact
    case-sensitive `/wp-content/uploads/` prefix are eligible. Never derive routing or fetch origin from `Host`, forwarded
@@ -146,9 +156,28 @@ it cannot be relabelled as a successful complete image. Oversized originals need
   strings, cookies, complete maps, upstream credentials or private migration reports. Operational troubleshooting uses
   explicitly approved private tooling. Incoming client IP exposure/retention and proxy headers need the hosting privacy review.
 
+### Bounded cache alternative for review
+
+If no-store is too costly at launch, a separate approved contract may allow a short cache with a numeric maximum
+withdrawal window **W**. An illustrative proposal is W = 60 seconds with body/browser/shared-cache TTLs capped at
+30 seconds, but neither number is selected by this note. The CMS's cache policy must permit caching. The combined
+worst-case map propagation, any upstream reuse and downstream cache lifetime must fit within W; a single component's
+30-second TTL is not proof of a 60-second end-to-end bound. Bound every layer or keep that layer no-store.
+
+Such a design must disable stale-while-revalidate/stale-if-error, invalidate cached bytes on map revision/removal,
+never cache denied/error responses, and fail closed once freshness expires. Shared caching needs an explicit CDN
+configuration and purge mechanism; a CMS denial or removal must stop new delivery by W in a timed withdrawal test.
+If that bound cannot be demonstrated, retain no-store. Already downloaded images remain outside any recall guarantee.
+
+A permanent 301 to a CMS media URL was rejected for this proposal: browsers and intermediaries can retain the
+redirect after the publisher removes a mapping, bypass future map/withdrawal checks, and bind old public URLs to a
+particular CMS origin. Keeping the publication URL on the public host preserves origin portability and one controlled
+withdrawal/cache boundary. Redirect-based delivery would need its own explicit owner/CMS cache and revocation contract.
+
 Removing an entry prevents future lookups; CMS revocation must also deny anonymous file reads without waiting for an
-export rotation. Images already downloaded cannot be recalled. A shared-cache optimisation must not be introduced until
-its maximum withdrawal delay and purge behavior are agreed and tested. Caddy/CDN must not override `no-store`.
+export rotation. Images already downloaded cannot be recalled. The bounded-cache alternative above must not be introduced until
+its maximum withdrawal delay and purge behavior are agreed and tested. Under the initial proposal, Caddy/CDN must
+not override `no-store`.
 
 ## Immutable map rotation and failure behavior
 
