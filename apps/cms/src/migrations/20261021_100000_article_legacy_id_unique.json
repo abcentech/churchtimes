@@ -3249,6 +3249,737 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.advertisers": {
+      "name": "advertisers",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "contact_name": {
+          "name": "contact_name",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "contact_email": {
+          "name": "contact_email",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "advertisers_updated_at_idx": {
+          "name": "advertisers_updated_at_idx",
+          "columns": [
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "advertisers_created_at_idx": {
+          "name": "advertisers_created_at_idx",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.ad_campaigns_placements": {
+      "name": "ad_campaigns_placements",
+      "schema": "",
+      "columns": {
+        "order": {
+          "name": "order",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "parent_id": {
+          "name": "parent_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "value": {
+          "name": "value",
+          "type": "enum_ad_campaigns_placements",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "ad_campaigns_placements_order_idx": {
+          "name": "ad_campaigns_placements_order_idx",
+          "columns": [
+            {
+              "expression": "order",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ad_campaigns_placements_parent_idx": {
+          "name": "ad_campaigns_placements_parent_idx",
+          "columns": [
+            {
+              "expression": "parent_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "ad_campaigns_placements_parent_fk": {
+          "name": "ad_campaigns_placements_parent_fk",
+          "tableFrom": "ad_campaigns_placements",
+          "tableTo": "ad_campaigns",
+          "columnsFrom": [
+            "parent_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.ad_campaigns": {
+      "name": "ad_campaigns",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "advertiser_id": {
+          "name": "advertiser_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sponsor": {
+          "name": "sponsor",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "alt": {
+          "name": "alt",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "destination_url": {
+          "name": "destination_url",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "creatives_homepage_billboard_desktop_id": {
+          "name": "creatives_homepage_billboard_desktop_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "creatives_homepage_billboard_mobile_id": {
+          "name": "creatives_homepage_billboard_mobile_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "creatives_article_inline_desktop_id": {
+          "name": "creatives_article_inline_desktop_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "creatives_article_inline_mobile_id": {
+          "name": "creatives_article_inline_mobile_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "creatives_mobile_banner_mobile_id": {
+          "name": "creatives_mobile_banner_mobile_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "starts_at": {
+          "name": "starts_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ends_at": {
+          "name": "ends_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "priority": {
+          "name": "priority",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "status": {
+          "name": "status",
+          "type": "enum_ad_campaigns_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'draft'"
+        },
+        "rights_confirmed": {
+          "name": "rights_confirmed",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "default": false
+        },
+        "payment_status": {
+          "name": "payment_status",
+          "type": "enum_ad_campaigns_payment_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'unpaid'"
+        },
+        "approved_by_id": {
+          "name": "approved_by_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "approved_at": {
+          "name": "approved_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "ad_campaigns_advertiser_idx": {
+          "name": "ad_campaigns_advertiser_idx",
+          "columns": [
+            {
+              "expression": "advertiser_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ad_campaigns_creatives_homepage_billboard_creatives_home_idx": {
+          "name": "ad_campaigns_creatives_homepage_billboard_creatives_home_idx",
+          "columns": [
+            {
+              "expression": "creatives_homepage_billboard_desktop_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ad_campaigns_creatives_homepage_billboard_creatives_ho_1_idx": {
+          "name": "ad_campaigns_creatives_homepage_billboard_creatives_ho_1_idx",
+          "columns": [
+            {
+              "expression": "creatives_homepage_billboard_mobile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ad_campaigns_creatives_article_inline_creatives_article__idx": {
+          "name": "ad_campaigns_creatives_article_inline_creatives_article__idx",
+          "columns": [
+            {
+              "expression": "creatives_article_inline_desktop_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ad_campaigns_creatives_article_inline_creatives_articl_1_idx": {
+          "name": "ad_campaigns_creatives_article_inline_creatives_articl_1_idx",
+          "columns": [
+            {
+              "expression": "creatives_article_inline_mobile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ad_campaigns_creatives_mobile_banner_creatives_mobile_ba_idx": {
+          "name": "ad_campaigns_creatives_mobile_banner_creatives_mobile_ba_idx",
+          "columns": [
+            {
+              "expression": "creatives_mobile_banner_mobile_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ad_campaigns_starts_at_idx": {
+          "name": "ad_campaigns_starts_at_idx",
+          "columns": [
+            {
+              "expression": "starts_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ad_campaigns_ends_at_idx": {
+          "name": "ad_campaigns_ends_at_idx",
+          "columns": [
+            {
+              "expression": "ends_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ad_campaigns_status_idx": {
+          "name": "ad_campaigns_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ad_campaigns_payment_status_idx": {
+          "name": "ad_campaigns_payment_status_idx",
+          "columns": [
+            {
+              "expression": "payment_status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ad_campaigns_approved_by_idx": {
+          "name": "ad_campaigns_approved_by_idx",
+          "columns": [
+            {
+              "expression": "approved_by_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ad_campaigns_updated_at_idx": {
+          "name": "ad_campaigns_updated_at_idx",
+          "columns": [
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ad_campaigns_created_at_idx": {
+          "name": "ad_campaigns_created_at_idx",
+          "columns": [
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "ad_campaigns_advertiser_id_advertisers_id_fk": {
+          "name": "ad_campaigns_advertiser_id_advertisers_id_fk",
+          "tableFrom": "ad_campaigns",
+          "tableTo": "advertisers",
+          "columnsFrom": [
+            "advertiser_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "ad_campaigns_creatives_homepage_billboard_desktop_id_media_id_fk": {
+          "name": "ad_campaigns_creatives_homepage_billboard_desktop_id_media_id_fk",
+          "tableFrom": "ad_campaigns",
+          "tableTo": "media",
+          "columnsFrom": [
+            "creatives_homepage_billboard_desktop_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "ad_campaigns_creatives_homepage_billboard_mobile_id_media_id_fk": {
+          "name": "ad_campaigns_creatives_homepage_billboard_mobile_id_media_id_fk",
+          "tableFrom": "ad_campaigns",
+          "tableTo": "media",
+          "columnsFrom": [
+            "creatives_homepage_billboard_mobile_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "ad_campaigns_creatives_article_inline_desktop_id_media_id_fk": {
+          "name": "ad_campaigns_creatives_article_inline_desktop_id_media_id_fk",
+          "tableFrom": "ad_campaigns",
+          "tableTo": "media",
+          "columnsFrom": [
+            "creatives_article_inline_desktop_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "ad_campaigns_creatives_article_inline_mobile_id_media_id_fk": {
+          "name": "ad_campaigns_creatives_article_inline_mobile_id_media_id_fk",
+          "tableFrom": "ad_campaigns",
+          "tableTo": "media",
+          "columnsFrom": [
+            "creatives_article_inline_mobile_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "ad_campaigns_creatives_mobile_banner_mobile_id_media_id_fk": {
+          "name": "ad_campaigns_creatives_mobile_banner_mobile_id_media_id_fk",
+          "tableFrom": "ad_campaigns",
+          "tableTo": "media",
+          "columnsFrom": [
+            "creatives_mobile_banner_mobile_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "ad_campaigns_approved_by_id_users_id_fk": {
+          "name": "ad_campaigns_approved_by_id_users_id_fk",
+          "tableFrom": "ad_campaigns",
+          "tableTo": "users",
+          "columnsFrom": [
+            "approved_by_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.ad_campaigns_rels": {
+      "name": "ad_campaigns_rels",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "order": {
+          "name": "order",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "parent_id": {
+          "name": "parent_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "path": {
+          "name": "path",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "media_id": {
+          "name": "media_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "ad_campaigns_rels_order_idx": {
+          "name": "ad_campaigns_rels_order_idx",
+          "columns": [
+            {
+              "expression": "order",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ad_campaigns_rels_parent_idx": {
+          "name": "ad_campaigns_rels_parent_idx",
+          "columns": [
+            {
+              "expression": "parent_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ad_campaigns_rels_path_idx": {
+          "name": "ad_campaigns_rels_path_idx",
+          "columns": [
+            {
+              "expression": "path",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ad_campaigns_rels_media_id_idx": {
+          "name": "ad_campaigns_rels_media_id_idx",
+          "columns": [
+            {
+              "expression": "media_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "ad_campaigns_rels_parent_fk": {
+          "name": "ad_campaigns_rels_parent_fk",
+          "tableFrom": "ad_campaigns_rels",
+          "tableTo": "ad_campaigns",
+          "columnsFrom": [
+            "parent_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "ad_campaigns_rels_media_fk": {
+          "name": "ad_campaigns_rels_media_fk",
+          "tableFrom": "ad_campaigns_rels",
+          "tableTo": "media",
+          "columnsFrom": [
+            "media_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.legacy_comments": {
       "name": "legacy_comments",
       "schema": "",
@@ -3891,6 +4622,18 @@
           "primaryKey": false,
           "notNull": false
         },
+        "advertisers_id": {
+          "name": "advertisers_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ad_campaigns_id": {
+          "name": "ad_campaigns_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
         "legacy_comments_id": {
           "name": "legacy_comments_id",
           "type": "integer",
@@ -4100,6 +4843,36 @@
           "method": "btree",
           "with": {}
         },
+        "payload_locked_documents_rels_advertisers_id_idx": {
+          "name": "payload_locked_documents_rels_advertisers_id_idx",
+          "columns": [
+            {
+              "expression": "advertisers_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "payload_locked_documents_rels_ad_campaigns_id_idx": {
+          "name": "payload_locked_documents_rels_ad_campaigns_id_idx",
+          "columns": [
+            {
+              "expression": "ad_campaigns_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "payload_locked_documents_rels_legacy_comments_id_idx": {
           "name": "payload_locked_documents_rels_legacy_comments_id_idx",
           "columns": [
@@ -4268,6 +5041,32 @@
           "tableTo": "redirects",
           "columnsFrom": [
             "redirects_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "payload_locked_documents_rels_advertisers_fk": {
+          "name": "payload_locked_documents_rels_advertisers_fk",
+          "tableFrom": "payload_locked_documents_rels",
+          "tableTo": "advertisers",
+          "columnsFrom": [
+            "advertisers_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "payload_locked_documents_rels_ad_campaigns_fk": {
+          "name": "payload_locked_documents_rels_ad_campaigns_fk",
+          "tableFrom": "payload_locked_documents_rels",
+          "tableTo": "ad_campaigns",
+          "columnsFrom": [
+            "ad_campaigns_id"
           ],
           "columnsTo": [
             "id"
@@ -4743,6 +5542,36 @@
         "legacy-url"
       ]
     },
+    "public.enum_ad_campaigns_placements": {
+      "name": "enum_ad_campaigns_placements",
+      "schema": "public",
+      "values": [
+        "homepage-billboard",
+        "article-inline",
+        "mobile-banner"
+      ]
+    },
+    "public.enum_ad_campaigns_status": {
+      "name": "enum_ad_campaigns_status",
+      "schema": "public",
+      "values": [
+        "draft",
+        "pending_approval",
+        "approved",
+        "paused",
+        "cancelled"
+      ]
+    },
+    "public.enum_ad_campaigns_payment_status": {
+      "name": "enum_ad_campaigns_payment_status",
+      "schema": "public",
+      "values": [
+        "unpaid",
+        "invoiced",
+        "paid",
+        "waived"
+      ]
+    },
     "public.enum_legacy_comments_status": {
       "name": "enum_legacy_comments_status",
       "schema": "public",
@@ -4762,6 +5591,6 @@
     "tables": {},
     "columns": {}
   },
-  "id": "4acffba0-6286-4063-9a6b-b6bb4aec6c94",
-  "prevId": "c7f8db89-e6a1-4d4a-902e-c125806471c9"
+  "id": "d5d6ea31-70dc-492b-b2e4-acf15a150e90",
+  "prevId": "00000000-0000-0000-0000-000000000000"
 }
