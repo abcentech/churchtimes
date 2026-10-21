@@ -55,6 +55,11 @@ export function openManifest(filePath: string): ManifestSink {
 }
 
 export type ManifestSummary = {
+  /** A `start` line was read (a file that is not a manifest has none). */
+  started: boolean
+  startedAt: string | null
+  /** Time of the `end` line, when there is one. */
+  endAt: string | null
   complete: boolean
   endStatus: string | null
   articles: { created: number[]; updated: number[] }
@@ -70,6 +75,9 @@ export type ManifestSummary = {
 /** Read a manifest, ignoring a torn last line. Never throws on a malformed line. */
 export function readManifest(filePath: string): ManifestSummary {
   const out: ManifestSummary = {
+    started: false,
+    startedAt: null,
+    endAt: null,
     complete: false,
     endStatus: null,
     articles: { created: [], updated: [] },
@@ -89,7 +97,10 @@ export function readManifest(filePath: string): ManifestSummary {
     } catch {
       continue
     }
-    if (r.type === 'intent') open.add(r.legacyId)
+    if (r.type === 'start') {
+      out.started = true
+      out.startedAt = typeof r.at === 'string' ? r.at : null
+    } else if (r.type === 'intent') open.add(r.legacyId)
     else if (r.type === 'commit') open.delete(r.legacyId)
     else if (r.type === 'abort') {
       open.delete(r.legacyId)
@@ -97,11 +108,12 @@ export function readManifest(filePath: string): ManifestSummary {
     } else if (r.type === 'end') {
       out.complete = true
       out.endStatus = r.status
+      out.endAt = typeof r.at === 'string' ? r.at : null
     } else if (r.type === 'id') {
       if (r.collection === 'articles') (r.action === 'created' ? out.articles.created : out.articles.updated).push(r.id)
-      else if (r.collection === 'categories') out.categories.push(r.id)
-      else if (r.collection === 'media') out.media.push(r.id)
-      else if (r.collection === 'legacy-comments') out.comments.push(r.id)
+      else if (r.collection === 'categories' && r.action === 'created') out.categories.push(r.id)
+      else if (r.collection === 'media' && r.action === 'created') out.media.push(r.id)
+      else if (r.collection === 'legacy-comments' && r.action === 'created') out.comments.push(r.id)
       else if (r.collection === 'audit-logs') out.audits.push(r.id)
     }
   }
