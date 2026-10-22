@@ -33,3 +33,17 @@ export async function writeAuditLog(req: PayloadRequest, entry: AuditEntry) {
     req,
   })
 }
+
+/** Audit row for a server-side CLI run (no request): counts and checksums only, never an address or a token. */
+export async function writeSystemAuditLog(payload: import('payload').Payload, entry: AuditEntry) {
+  return payload.create({
+    collection: 'audit-logs',
+    data: {
+      ...entry,
+      docId: String(entry.docId),
+      summary: entry.summary ? entry.summary.slice(0, 1000) : undefined,
+      actorRole: entry.actorRole ?? 'import',
+    } as never,
+    overrideAccess: true,
+  })
+}

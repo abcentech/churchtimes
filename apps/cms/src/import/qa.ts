@@ -27,7 +27,13 @@ export type ImportReport = {
     /** Imported before, but the post is now draft, private, trashed ...: left as it is in the CMS. */
     previouslyImportedNowNotPublished: number
   }
-  categories: { created: number; fallbackUsed: number }
+  /**
+   * Articles.category is ONE required relationship, so only one WordPress category per post is kept.
+   * `postsWithExtraCategories` / `extraCategoriesDropped` size what the schema cannot hold.
+   */
+  categories: { created: number; fallbackUsed: number; postsWithExtraCategories: number; extraCategoriesDropped: number }
+  /** Bylines are text only (Articles.bylineName); no user account is ever created. Counts of distinct `dc:creator` values. */
+  authors: { distinct: number; withByline: number; unmapped: number; postsWithoutByline: number }
   media: { reused: number; created: number; unresolved: Tally }
   content: {
     imagesResolved: number
@@ -54,7 +60,8 @@ export function newReport(mode: 'dry-run' | 'apply', update: boolean): ImportRep
     update,
     source: { items: t(), postsByStatus: t(), publishedPosts: 0, approvedCommentsOnPublishedPosts: 0, attachments: 0 },
     articles: { created: 0, updated: 0, unchanged: 0, skipped: t(), passwordProtected: 0, previouslyImportedNowNotPublished: 0 },
-    categories: { created: 0, fallbackUsed: 0 },
+    categories: { created: 0, fallbackUsed: 0, postsWithExtraCategories: 0, extraCategoriesDropped: 0 },
+    authors: { distinct: 0, withByline: 0, unmapped: 0, postsWithoutByline: 0 },
     media: { reused: 0, created: 0, unresolved: t() },
     content: { imagesResolved: 0, imagesUnresolved: 0, linksUnmapped: 0, featuredImageMissing: 0, youtube: 0, tablesFlattened: 0, embedsDropped: 0 },
     comments: { created: 0, existing: 0, skipped: t(), orphanedParents: 0, truncated: 0 },
@@ -112,6 +119,13 @@ export function formatImportReport(rep: ImportReport): string {
     'Categories',
     `  created: ${rep.categories.created}`,
     `  articles placed in the fallback category: ${rep.categories.fallbackUsed}`,
+    `  posts with more categories than the schema holds (one): ${rep.categories.postsWithExtraCategories} (${rep.categories.extraCategoriesDropped} extra categories not kept)`,
+    '',
+    'Authors (byline text only, no accounts created)',
+    `  distinct authors: ${rep.authors.distinct}`,
+    `  with a byline: ${rep.authors.withByline}`,
+    `  unmapped (no usable name): ${rep.authors.unmapped}`,
+    `  posts left without a byline: ${rep.authors.postsWithoutByline}`,
     '',
     'Media',
     `  reused: ${rep.media.reused}`,

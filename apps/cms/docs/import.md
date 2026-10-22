@@ -163,8 +163,7 @@ code (`IMPORT_USAGE`, `IMPORT_FILE_INSIDE_REPO`, `IMPORT_FILE_UNREADABLE`, `IMPO
 - Posts with status `publish` and no password. Everything else is counted, never written: password-protected posts
   (`passwordProtected`), other statuses (`status-draft`, ...), missing id, date or title.
 - Article: title, slug (from `wp:post_name`; on a clash `-<wp id>`, then a number, is added; every candidate is checked, and links between articles use the FINAL slug), excerpt (plain text), body (converted),
-  first category (created when absent; none gives `uncategorised`), featured image (`_thumbnail_id`), byline (channel
-  author display name), `publishedAt` (the GMT date), `legacyUrl`, `legacyId`, Rank Math / Yoast title and description
+  ONE category (see "Categories and authors" below), featured image (`_thumbnail_id`), byline text (see below), `publishedAt` (the GMT date), `legacyUrl` (the old permalink, see below), `legacyId`, Rank Math / Yoast title and description
   (dropped when they hold `%variables%` or are over the length limits, C2). Imported articles are `published`.
 - Approved ordinary comments through `toLegacyCommentData`, plus a second email-shaped-text pass over names and bodies
   (an address becomes `[email removed]`, a name with an at-sign becomes `Anonymous`; a byline that is an email address is dropped). `parentLegacyId` is kept only
@@ -205,12 +204,41 @@ code (`IMPORT_USAGE`, `IMPORT_FILE_INSIDE_REPO`, `IMPORT_FILE_UNREADABLE`, `IMPO
   must stay inside the real uploads folder. Files over 25 MB are refused.
 - 50 consecutive failed writes, or (after 20 posts) more than half failing, stop the run (`IMPORT_TOO_MANY_FAILURES`). Report keys for post statuses come from a fixed set (anything else is `other`).
 
+### Categories and authors
+
+- **One category per article.** `Articles.category` is a single REQUIRED relationship and there is no second categories field, so
+  only one WordPress category per post can be kept. The primary is the first listed category, except that WordPress's generic
+  `uncategorised` / `uncategorized` is skipped when a real category exists; a post with none gets the `uncategorised` fallback.
+  Posts that had more are counted (`postsWithExtraCategories`, `extraCategoriesDropped`) so the owner can decide whether a
+  schema change (a `categories` hasMany field plus a migration) is wanted before the real run. Only the kept category is created,
+  and it is recorded in the manifest, so rollback is unchanged (it removes created categories that no article still uses).
+- **Authors without accounts.** `wp:creator` becomes `bylineName` TEXT only: the channel display name, else the creator login. A name that is
+  or contains an email address becomes empty. No user is ever created or matched and `author` is left empty. The report
+  gives counts only: distinct authors, how many got a byline, how many had no usable name (unmapped) and posts left without a byline.
+  A login such as `admin` is used as written when there is no display name; check the `unmapped` and distinct counts on the dry run.
+- **`legacyUrl`.** The old permalink (`<link>`), as a same-site path (`/2023/05/story/`) or an http(s) URL, with the query string and fragment removed.
+  Refused (field left empty): other schemes, protocol-relative `//host`, credentials in the URL, spaces, control characters, backslashes, quotes,
+  angle brackets, over 1000 characters, or nothing left but the site root (for example `?p=123` links). The field is server-owned; only the importer writes it.
+
+### `npm run import:inspect` (sizing, read-only)
+
+```
+cd apps/cms
+npm run import:inspect -- --file D:churchtimes-privateexport.xml
+```
+
+Reads the export only: no database, no network, no writes; a path inside the repository is refused. Output is counts only: posts by
+status, published password-protected posts, categories (in the file, used by posts, posts with more than one), distinct authors
+(a number, no names), comments by status (approved, pending, spam, trash, other), attachments, the top 20 shortcode tag names
+(the only strings taken from the file), the largest post content in bytes, and the deepest HTML element nesting in post content.
+Run it first to size the real import; `import:wxr-report` has the wider parse report.
+
 ### QA report
 
 Printed at the end (counts and reason codes only; no title, slug, address, file name, author name or comment text):
 source items by kind, posts by status, published posts, approved comments on published posts, attachments; articles
 created / updated / unchanged / skipped by reason / password-protected, and "published posts accounted for X of Y";
-categories created and fallback use; media reused / created / unresolved by reason; images resolved and unresolved,
+categories created, fallback use and the extra categories the schema cannot hold; authors (distinct, with a byline, unmapped, posts without a byline: counts only); media reused / created / unresolved by reason; images resolved and unresolved,
 links unmapped, featured images missing, YouTube embeds, tables flattened, embeds dropped; comments created, already
 present, skipped by reason, orphaned parents, truncated; and (apply only) the number of articles and comments now in
 the database for the legacy ids seen. Unmapped-link and image counts are per occurrence.
@@ -218,7 +246,7 @@ the database for the legacy ids seen. Unmapped-link and image counts are per occ
 ### Not yet covered
 
 Pages (`page` items are not imported); draft and private posts; tags;
-authors as users; redirects (see `import:redirects`); a real 4,346-post export and the real uploads folder (the tests use
+authors as user accounts (never created, by design); more than one category per article (the schema has one); redirects (see `import:redirects`); a real 4,346-post export and the real uploads folder (the tests use
 a small synthetic export).
 
 ### Tests
@@ -305,3 +333,36 @@ npm run import:rollback -- --manifest D:\churchtimes-private\manifests\run-1.jso
 
 A rollback does not remove audit rows (kept on purpose), does not restore an article that `--update` rewrote (use its version history), and touches
 nothing the manifest does not list.
+
+## Legacy media map export (A12)
+
+The public host serves old `/wp-content/uploads/...` addresses from an exact map that the owner exports from the CMS and provisions privately. The
+host never scans media and never holds a staff credential. Format and rules: `docs/api-contracts.md`, "Go-live A12: legacy media map". Note that
+the format differs from the proposal in PR #58, which must be updated.
+
+Run it from `apps/cms` against the database that holds the imported media, with every output OUTSIDE the repository:
+
+```
+# Dry run (default): counts and digests only, nothing written
+npm run export:media-map --
+# Write the map plus <out>.sha256. Optional: recorded thumbnail aliases and an itemised detail file
+npm run export:media-map -- --out D:\private\media-map.json --detail-file D:\private\media-map-details.txt --aliases D:\private\aliases.json
+```
+
+Only media that anonymous readers can read are exported (published article images, approved live photos, delivered ad creatives). The CLI prints
+`excluded` counts (`notAnonymous` is normal: every private or withdrawn upload; it is never written into the file). Read the detail file: it lists paths
+claimed by more than one media (those are dropped) and rejected aliases. The export refuses more than 50,000 entries (aliases included) or 8 MiB.
+
+**Provisioning check.** The digest that matters is the sha256 of the exact bytes of the file. Copy `media-map.json` and `media-map.json.sha256` to the
+public host's provisioning path over a private channel and run `sha256sum -c media-map.json.sha256` there before the host swaps it in atomically. The
+`content-sha256` printed and stored inside the file is only a stable content id (same content, same id). Never commit either file: they list every
+public legacy path. `0600` has no effect on Windows; protect the folder with its permissions instead.
+
+- **Rotation.** Export again whenever imports finish or on a schedule, then replace the map and its `.sha256` together; the old map keeps working until swapped.
+- **Withdrawal.** With the #58 design (no-store, anonymous CMS check on every request) withdrawal is immediate: when an article is unpublished or
+  archived its media stops being anonymously readable and the old address answers 404 straight away. The next export then drops the entry; re-export
+  and rotate promptly so the map does not keep stale paths. Exceptions: media used by another published article stays public, and an ad creative
+  stops being public when its campaign ends. If a bounded cache is ever added, the window is export time + host reload + cache lifetime. Images already
+  downloaded cannot be recalled.
+- **Aliases.** Thumbnail addresses (`photo-300x200.jpg`) are served only when recorded in the `--aliases` JSON as
+  `[{"alias":"2023/10/photo-300x200.jpg","path":"2023/10/photo.jpg"}]`; they are never guessed, and an alias never overrides a real file with that name.

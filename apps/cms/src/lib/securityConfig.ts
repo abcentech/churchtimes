@@ -176,20 +176,19 @@ export function validateProductionEnv(env: NodeJS.ProcessEnv): ProductionEnvChec
     problems.push('TURNSTILE_SECRET_KEY is one of Cloudflare\'s dummy test secrets; use the real secret in production.')
   }
 
-  // Optional widget pinning. Not a startup failure (the secret alone is valid), but without these two settings a
-  // token minted for another hostname or widget action is accepted. Disposable staging uses Cloudflare's dummy keys,
-  // which always report fixed hostnames, so the advice does not apply there.
+  // Widget pinning is REQUIRED in production: without these two settings a token minted for another hostname or widget
+  // action is accepted. Disposable loopback staging uses Cloudflare's dummy keys, which always report a fixed hostname,
+  // so the requirement does not apply there.
   if (!staging.enabled) {
-    if (!(env.TURNSTILE_ALLOWED_HOSTNAMES ?? '').trim()) {
-      warnings.push(
-        'TURNSTILE_ALLOWED_HOSTNAMES is not set: Turnstile tokens issued for any hostname are accepted. Set it to the public ' +
-          'hostname(s) of the widget (comma list, for example www.churchtimesnigeria.net).',
+    if (csv(env.TURNSTILE_ALLOWED_HOSTNAMES).length === 0) {
+      problems.push(
+        'TURNSTILE_ALLOWED_HOSTNAMES is required in production: set it to the public hostname(s) of the widget (comma list, for example www.churchtimesnigeria.net).',
       )
     }
-    if (!(env.TURNSTILE_EXPECTED_ACTION ?? '').trim()) {
-      warnings.push(
-        'TURNSTILE_EXPECTED_ACTION is not set: Turnstile tokens with any widget action are accepted. Set it to the action the ' +
-          'public site sends (VITE_TURNSTILE_ACTION in its build, default submit-story).',
+    if (csv(env.TURNSTILE_EXPECTED_ACTION).length === 0) {
+      problems.push(
+        'TURNSTILE_EXPECTED_ACTION is required in production: set it to the widget action(s) the public site sends ' +
+          '(for example submit-story,contact-message,newsletter-subscribe).',
       )
     }
   }
@@ -203,6 +202,10 @@ export function validateProductionEnv(env: NodeJS.ProcessEnv): ProductionEnvChec
   }
 
   const originOptions = (name: string) => ({ name, production: true, allowInsecureLoopback: staging.enabled })
+  // An empty list is a misconfiguration in production (every browser call would fail, or be silently unchecked).
+  for (const name of ['CMS_CORS_ORIGINS', 'CMS_CSRF_ORIGINS', 'PUBLIC_SUBMISSION_ORIGINS'] as const) {
+    if (csv(env[name]).length === 0) problems.push(`${name} is required in production (comma list of explicit https origins).`)
+  }
   problems.push(...checkOriginList(csv(env.CMS_CORS_ORIGINS), originOptions('CMS_CORS_ORIGINS')))
   problems.push(...checkOriginList(csv(env.CMS_CSRF_ORIGINS), originOptions('CMS_CSRF_ORIGINS')))
   problems.push(...checkOriginList(csv(env.PUBLIC_SUBMISSION_ORIGINS), originOptions('PUBLIC_SUBMISSION_ORIGINS')))
@@ -228,8 +231,21 @@ export function validateProductionEnv(env: NodeJS.ProcessEnv): ProductionEnvChec
     )
   }
 
+  // SMTP is required in production: staff password reset cannot be delivered without it. Explicit opt-out for a
+  // deployment that really has no mail (CMS_ALLOW_NO_SMTP=true; then use the break-glass procedure in docs/operations.md).
+  // Disposable loopback staging never needs it.
   const smtpHost = env.SMTP_HOST?.trim()
-  if (smtpHost && !(env.EMAIL_FROM_ADDRESS ?? '').trim()) {
+  if (!smtpHost && !staging.enabled) {
+    if (env.CMS_ALLOW_NO_SMTP === 'true') {
+      warnings.push('SMTP_HOST is not set (CMS_ALLOW_NO_SMTP=true): password-reset and notification e-mails are not delivered.')
+    } else {
+      problems.push(
+        'SMTP_HOST is required in production (staff password reset needs e-mail). Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS and EMAIL_FROM_ADDRESS, ' +
+          'or set CMS_ALLOW_NO_SMTP=true to start without e-mail.',
+      )
+    }
+  }
+  if (smtpHost &&!(env.EMAIL_FROM_ADDRESS ?? '').trim()) {
     problems.push('EMAIL_FROM_ADDRESS is required when SMTP_HOST is set.')
   }
 

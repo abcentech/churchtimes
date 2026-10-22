@@ -1,0 +1,166 @@
+# Production stack for the Church Times CMS on a single Ubuntu VPS with Docker and a HOST Caddy (docs/operations.md,
+# "Production deployment"). NOT for development: use docker-compose.yml for that.
+#
+#   export CMS_IMAGE=ghcr.io/abcentech/churchtimes-cms@sha256:<digest from the CI build>
+#   export CMS_MIGRATOR_IMAGE=ghcr.io/abcentech/churchtimes-cms-migrator@sha256:<digest, same commit>
+#   docker compose -f docker-compose.production.yml up -d postgres
+#   docker compose -f docker-compose.production.yml --profile ops run --rm migrate     # BEFORE starting the new cms
+#   docker compose -f docker-compose.production.yml up -d cms
+#
+# Host prerequisites (created once, see docs/operations.md):
+#   /etc/churchtimes/cms.env                       runtime env file, mode 600 (see apps/cms/.env.example). DATABASE_URL must be
+#                                                  postgres://churchtimes:<password>@postgres:5432/churchtimes with the SAME password as below.
+#   /etc/churchtimes/secrets/postgres_password     one line, mode 600, no secrets in this repository
+#   /srv/churchtimes/media                         uploads, must be owned by uid:gid 1000:1000 (`chown 1000:1000`, mode 750).
+#                                                  1000 is the `node` user inside the image; Postgres data lives in the named volume `pgdata`.
+#
+# Hardening summary: image pinned by digest; non-root uid 1000; read-only root filesystem with tmpfs for the only
+# two scratch paths; all capabilities dropped; no-new-privileges; Postgres on an internal network and never published;
+# memory limits plus oom_score_adj so a memory squeeze kills Node, not the database; rotated local logs.
+name: churchtimes-cms-prod
+
+x-logging: &default-logging
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  postgres:
+    image: postgres:16-bookworm
+    restart: unless-stopped
+    stop_grace_period: 60s
+    environment:
+      POSTGRES_DB: churchtimes
+      POSTGRES_USER: churchtimes
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C.UTF-8"
+    # Tuned for the 1 GiB limit below. shared_buffers 256MB leaves room for connections and the OS page cache.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - max_connections=50
+      - -c
+      - work_mem=4MB
+      - -c
+      - effective_cache_size=512MB
+    secrets:
+      - postgres_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - db
+    # No `ports:` on purpose. The database is reachable only from containers on the internal `db` network.
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /run/postgresql:size=8m,mode=2775,uid=999,gid=999
+    cap_drop:
+      - ALL
+    # The official entrypoint chowns the data directory and drops to the postgres user (gosu): it needs exactly these.
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1g
+    memswap_limit: 1g
+    # Negative = the kernel avoids killing the database. The CMS (positive) is killed first.
+    oom_score_adj: -500
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U churchtimes -d churchtimes -h 127.0.0.1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    logging: *default-logging
+
+  cms:
+    image: ${CMS_IMAGE:?set CMS_IMAGE to the digest-pinned image, ghcr.io/abcentech/churchtimes-cms@sha256:...}
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    user: "1000:1000"
+    env_file: ${CMS_ENV_FILE:-/etc/churchtimes/cms.env}
+    environment:
+      # Keep the image's --no-deprecation; cap the V8 heap below the 1280m container limit (rest is native memory, sharp, buffers).
+      NODE_OPTIONS: "--no-deprecation --max-old-space-size=960"
+      # The scheduler is an in-process loop: exactly ONE cms container may run it (see docs/operations.md). Never scale this service.
+      SCHEDULER_ENABLED: "true"
+    ports:
+      # Loopback only: host Caddy is the only client. Never publish on a public interface.
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ${CMS_MEDIA_DIR:-/srv/churchtimes/media}:/app/media
+    networks:
+      - db
+      - web
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+      - /app/.next/cache:size=256m,uid=1000,gid=1000,mode=0755
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1280m
+    memswap_limit: 1280m
+    oom_score_adj: 500
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/users/me').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 15s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
+    logging: *default-logging
+
+  # One-off: `docker compose -f docker-compose.production.yml --profile ops run --rm migrate`. Uses the MIGRATOR image (full
+  # dependency tree) built from the same commit as CMS_IMAGE. Never starts with `up`, and never runs the scheduler.
+  migrate:
+    profiles: ["ops"]
+    image: ${CMS_MIGRATOR_IMAGE:?set CMS_MIGRATOR_IMAGE to the digest-pinned migrator image}
+    user: "1000:1000"
+    init: true
+    env_file: ${CMS_ENV_FILE:-/etc/churchtimes/cms.env}
+    environment:
+      SCHEDULER_ENABLED: "false"
+      NODE_OPTIONS: "--no-deprecation --max-old-space-size=960"
+    command: ["npm", "run", "migrate"]
+    networks:
+      - db
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+      - /app/.next/cache:size=256m,uid=1000,gid=1000,mode=0755
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1280m
+    memswap_limit: 1280m
+    oom_score_adj: 500
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging: *default-logging
+
+networks:
+  # internal: no route to the outside world, and no host port can be published from it.
+  db:
+    internal: true
+  web:
+
+volumes:
+  pgdata:
+
+secrets:
+  postgres_password:
+    file: ${POSTGRES_PASSWORD_FILE_PATH:-/etc/churchtimes/secrets/postgres_password}
