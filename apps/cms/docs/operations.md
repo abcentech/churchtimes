@@ -44,7 +44,7 @@ Run as a dedicated deploy user, not root. Paths below are examples.
 
 1. **Back up the database first.** Do this before every migration (see §6):
    ```sh
-   sudo -u postgres pg_dump -Fc churchtimes > /var/backups/churchtimes/pre-deploy-$(date -u +%Y%m%dT%H%M%SZ).dump
+   sudo -E env PGUSER=churchtimes PGDATABASE=churchtimes AGE_RECIPIENT=age1... /srv/churchtimes/app/apps/cms/scripts/backup.sh --out /var/backups/churchtimes/predeploy --media /srv/churchtimes/app/apps/cms/media --keep-days 30 --encrypt age   # host PostgreSQL: libpq variables, see section 6
    ```
 2. Fetch the release. Check out the tagged or reviewed commit. Do not deploy an untagged working tree.
    ```sh
@@ -155,9 +155,9 @@ $C config | grep -E 'image:'
 export CMS_IMAGE=ghcr.io/abcentech/churchtimes-cms@sha256:<new digest>
 export CMS_MIGRATOR_IMAGE=ghcr.io/abcentech/churchtimes-cms-migrator@sha256:<new digest>
 
-# 2. Dump the database BEFORE migrating (custom format, written on the host; copy it off-site, section 6).
+# 2. Back up database and media BEFORE migrating (verified, encrypted; copy it off-site, section 6). Run as root.
 $C up -d postgres
-$C exec -T postgres pg_dump -U churchtimes -Fc churchtimes > /var/backups/churchtimes/pre-deploy-$(date -u +%Y%m%dT%H%M%SZ).dump
+PG_EXEC="$C exec -T -e PGUSER=churchtimes postgres" AGE_RECIPIENT=age1... ./scripts/backup.sh --out /var/backups/churchtimes/predeploy --media /srv/churchtimes/media --keep-days 30 --encrypt age
 
 # 3. Pull and migrate with the one-off migrator (it never runs the scheduler).
 $C pull cms migrate
@@ -476,11 +476,11 @@ Remember that the in-memory counters are per process and reset on restart (§8).
 
 - Uploads go to `/app/media` in the container, bind-mounted from `/srv/churchtimes/media` on the host in the production compose (`apps/cms/media` in the systemd setup; `jpeg`, `png`, `webp`, max 10 MB, see `api-contracts.md` §3).
 - The directory must be writable by the app user (uid/gid 1000 for the container) and excluded from git.
-- Back it up with the procedure in §6. Media is not in the database dump.
+- Back it up with the procedure in §6 (`backup.sh` includes it; run it as root, since the directory is `750` owned by uid 1000). Media is not in the database dump.
 
 ## 6. Backups and restore
 
-Tooling lives in `apps/cms/scripts/` (POSIX `sh`; needs `psql`, `pg_dump`, `pg_restore`, `tar`, and `sha256sum` or `shasum`):
+Tooling lives in `apps/cms/scripts/` (POSIX `sh`; needs GNU `tar`, `find`, `xargs`, `sha256sum`, and either the PostgreSQL client tools or Docker):
 
 | Script | Purpose |
 | --- | --- |
@@ -488,52 +488,80 @@ Tooling lives in `apps/cms/scripts/` (POSIX `sh`; needs `psql`, `pg_dump`, `pg_r
 | `restore.sh` | Verifies checksums, then restores into a **new** empty database (and optionally an empty media directory). |
 | `verify-backup.sh` | Restores into a throwaway database, compares row counts and the media manifest, then drops it. |
 
-Connection settings are the standard libpq variables (`PGHOST`, `PGPORT`, `PGUSER`, and `PGPASSWORD` or a `~/.pgpass` file with mode 0600).
-Scripts never take a password as an argument and never print one. Run them as the deploy or a dedicated backup user, not root.
-`tests/unit/backup-scripts.test.ts` exercises all three against a real PostgreSQL (it runs in CI and is skipped, with a visible warning, where
-`pg_dump` or `TEST_DATABASE_URL` is missing).
+`tests/unit/backup-scripts.test.ts` exercises all three against a real PostgreSQL (CI runs it; it skips with a visible warning where `pg_dump` or
+`TEST_DATABASE_URL` is missing).
+
+### How the scripts reach PostgreSQL
+
+In the production stack (section 3.2) PostgreSQL runs in a container and publishes **no port**, so `PGHOST=127.0.0.1` does not work. Use container
+mode: `--pg-exec` (or the `PG_EXEC` variable) is a command prefix that runs `pg_dump`, `pg_restore` and `psql` inside the container. Data travels over
+stdin/stdout, so nothing has to be shared with the container. The prefix is trusted administrator configuration, split on spaces (no shell quoting):
+
+```sh
+PG_EXEC='docker compose -f /srv/churchtimes/app/apps/cms/docker-compose.production.yml exec -T -e PGUSER=churchtimes postgres'
+```
+
+(`-T` is required: without it Docker allocates a TTY and corrupts the dump.) Without containers, use the standard libpq variables (`PGHOST`,
+`PGPORT`, `PGUSER`, and `PGPASSWORD` or a `~/.pgpass` file with mode 0600). Scripts never take a password as an argument and never print one.
+
+### Permission model
+
+- The media directory is `/srv/churchtimes/media`, owned `1000:1000`, mode `750` (section 5). A different, unprivileged user cannot read it.
+- Using Docker is already root-equivalent (anyone in the `docker` group can read every file on the host).
+- Therefore run the backup as **root** (root crontab or a root systemd unit, below). Root reads the media directory and uses Docker; the output is
+  `0700`/`0600` and root-only. If you must use a dedicated user, give it both the `docker` group (accepting that it is root-equivalent) and
+  membership of group `1000` (`usermod -aG <group with gid 1000> churchtimes-backup`, the directory's `750` gives that group read access).
+- Restore does **not** need a superuser: it needs `CREATEDB` to make the new database, or you pre-create an empty database and restore into it.
+  In the production container the `churchtimes` role is the database owner and a superuser, so restoring there as `churchtimes` is fine.
 
 ### Backup
 
 ```sh
-export PGHOST=127.0.0.1 PGUSER=churchtimes PGDATABASE=churchtimes   # password via ~/.pgpass
-apps/cms/scripts/backup.sh --out /var/backups/churchtimes/daily --media /srv/churchtimes/app/apps/cms/media \
-  --keep-days 14 --encrypt auto
-```
-
-Containerised Postgres (production compose, section 3.2): the scripts above need the PostgreSQL client tools on the host. If you only have the database in a container, take the database dump through the container, from `/srv/churchtimes/app/apps/cms` (`-T` matters, otherwise the dump is corrupted), and back up the media folder separately:
-
-```sh
-# Containerised Postgres (production compose, section 3.2), run from /srv/churchtimes/app/apps/cms. -T: no TTY, otherwise the dump is corrupted.
-docker compose -f docker-compose.production.yml exec -T postgres pg_dump -U churchtimes -Fc churchtimes \
-  | gpg --encrypt --recipient <ops-key-id> \
-  > /var/backups/churchtimes/db-$(date -u +%Y%m%dT%H%M%SZ).dump.gpg
-find /var/backups/churchtimes -name 'db-*.dump.gpg' -mtime +14 -delete
+PG_EXEC='docker compose -f /srv/churchtimes/app/apps/cms/docker-compose.production.yml exec -T -e PGUSER=churchtimes postgres' \
+AGE_RECIPIENT=age1... \
+/srv/churchtimes/app/apps/cms/scripts/backup.sh --out /var/backups/churchtimes/daily --media /srv/churchtimes/media \
+  --keep-days 14 --encrypt age
 ```
 
 - Output is `<out>/churchtimes-<UTC timestamp>/` (mode 0700) with `db.dump`, `media.tar.gz`, `media.manifest.sha256`, `counts.txt` and
-  `SHA256SUMS` (all 0600). The directory must be outside the git checkout; the script refuses otherwise.
+  `SHA256SUMS` (all 0600, each with `.age` or `.gpg` when encrypted). It is built in `<out>/.partial-*` and renamed into place only when
+  complete, so a synced copy never contains a half-written backup. Plaintext scratch files live in a private `0700` temp directory **outside**
+  `<out>` (`--tmpdir`, `BACKUP_TMPDIR` or `$TMPDIR`) and are removed on every exit path. Stale `.partial-*`/`.tmp-*` older than a day are removed at start.
+  `<out>` must be outside the git checkout (the script refuses otherwise) and is only `chmod 700` when the script created it; one owned by another user is refused.
 - `counts.txt` records the row counts of `articles`, `media` and `legacy_comments` (override with `BACKUP_COUNT_TABLES`) before and after the dump.
+- A failed or empty `pg_dump` (for example the container is down) fails the whole backup and removes the partial output. The media scan also fails on an
+  unreadable directory or file, refuses symlinks and special files, and refuses an empty media folder (wrong path, unmounted volume) unless
+  `--allow-empty-media`. The finished archive is extracted and checked against its manifest before the backup is accepted.
 - `--encrypt age|gpg|auto|none`. `age` needs `AGE_RECIPIENT` (a public key), `gpg` needs `GPG_RECIPIENT`. `auto` uses whichever is installed and
-  configured, and warns if neither is. Requesting `age` or `gpg` without the tool or recipient fails: it never silently falls back to plaintext.
-  Only public keys are used. **The private key never lives on the VPS or in this repository**; keep it in the password managers of two administrators.
-- `--keep-days N` deletes `churchtimes-*` directories older than N days **after** the new backup succeeded. It only touches directories matching that name.
-- Any failure exits non-zero and removes the partial backup directory. Make your scheduler alert on a non-zero exit, and on the absence of a
-  new backup directory for more than 26 hours.
+  configured and otherwise **fails** unless you pass `--allow-plaintext`. Only public keys are used. **The private key never lives on the VPS or in this
+  repository**; keep it in the password managers of two administrators.
+- `--sign gpg|minisign` signs `SHA256SUMS` (`GPG_SIGN_KEY`, or `MINISIGN_SECRET_KEY`), so tampering by someone who can write the backup directory but does
+  not hold the signing key is detected. Signing needs the secret key on the signing host; use a key that is used only for this and is not the encryption key.
+- `--keep-days N` deletes `churchtimes-*` directories older than N days **after** the new backup succeeded, but always keeps the newest `--keep-min`
+  (default 3), so a clock error or a run of failures cannot prune away the last good backups. It only touches directories matching that name.
+- Any failure exits non-zero. Alert on a non-zero exit, and on the absence of a new backup directory for more than 26 hours.
 
 ### Restore
 
 ```sh
 # restore into a NEW database (default name churchtimes_restore_<timestamp>) and a new media folder
-apps/cms/scripts/restore.sh --backup /var/backups/churchtimes/daily/churchtimes-20261021T020000Z \
-  --target-db churchtimes_restore --media-target /srv/churchtimes/media-restore
+PG_EXEC='docker compose -f /srv/churchtimes/app/apps/cms/docker-compose.production.yml exec -T -e PGUSER=churchtimes postgres' \
+/srv/churchtimes/app/apps/cms/scripts/restore.sh --backup /var/backups/churchtimes/daily/churchtimes-20261021T020000Z \
+  --target-db churchtimes_restore --media-target /srv/churchtimes/media-restore --verify-sig gpg
 # encrypted backups: set AGE_IDENTITY_FILE=/path/to/identity.txt for the restore only, or use the gpg keyring
 ```
 
-- Checksums, the dump's readability and the media manifest are verified **before** anything is created.
-- A target database that already holds tables is refused. `--overwrite-db` drops existing objects first; use it only when you mean to replace that
-  database, never as a reflex on production. A non-empty media target is refused unless `--overwrite-media` is given.
+- Before anything is created: every artifact must be listed in `SHA256SUMS` and must verify, exactly one variant (plain, `.age`, `.gpg`) of each of
+  database dump, media archive, media manifest and counts must be listed, and **any unlisted file in the directory is refused**. With `--verify-sig` a missing or bad
+  signature is refused. The dump must be readable and the media archive must contain only plain files and directories (no links, no `..`), and match
+  its manifest.
+- A target database that already holds tables is refused. `--overwrite-db` drops existing objects first, in a single transaction; use it only when you mean to
+  replace that database, never as a reflex on production. A non-empty media target (or one containing symlinks) is refused unless `--overwrite-media`.
+- `--skip-media` restores the database only and ignores the media archive and its manifest (for example when only the media archive is damaged).
 - After restoring, the script counts `articles`, `media` and `legacy_comments` and compares them with `counts.txt`. A mismatch exits non-zero.
+- Dumps carry no owners or grants (`--no-owner --no-privileges`), so restored objects belong to the role that ran the restore. In the production container
+  that is `churchtimes`, the role the CMS uses. If the CMS connects as a different role, pass `--role <app-role>` so the objects are created with that owner, or
+  run `REASSIGN OWNED BY <restoring role> TO <app-role>;` and re-apply any `GRANT`s afterwards.
 
 ### Windows
 
@@ -543,6 +571,7 @@ those, the manual equivalent is:
 ```powershell
 $ts = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
 pg_dump -Fc --no-owner --no-privileges -h 127.0.0.1 -U churchtimes -f "D:\backups\db-$ts.dump" churchtimes
+if ((Get-Item "D:\backups\db-$ts.dump").Length -eq 0) { throw 'empty dump' }
 Compress-Archive -Path C:\churchtimes\media\* -DestinationPath "D:\backups\media-$ts.zip"
 Get-FileHash "D:\backups\db-$ts.dump","D:\backups\media-$ts.zip" -Algorithm SHA256 | Format-List Hash,Path
 createdb -E UTF8 -T template0 churchtimes_restore
@@ -550,13 +579,14 @@ pg_restore --no-owner --no-privileges -d churchtimes_restore "D:\backups\db-$ts.
 ```
 
 Store the hashes with the backups and compare them before any restore. Production is Linux; the Windows route is for laptops and drills only.
+Do not pipe a dump straight into an encryption tool in a shell without `pipefail`: if the dump fails, a valid but empty encrypted file is written.
 
 ### Schedule
 
-cron (`crontab -e` as the backup user; the log file holds no secrets):
+Run as root (see the permission model). cron (`sudo crontab -e`; the log holds no secrets):
 
 ```cron
-15 2 * * *  PGHOST=127.0.0.1 PGUSER=churchtimes PGDATABASE=churchtimes AGE_RECIPIENT=age1... /srv/churchtimes/app/apps/cms/scripts/backup.sh --out /var/backups/churchtimes/daily --media /srv/churchtimes/app/apps/cms/media --keep-days 14 --encrypt age >>/var/log/churchtimes-backup.log 2>&1
+15 2 * * *  PG_EXEC='docker compose -f /srv/churchtimes/app/apps/cms/docker-compose.production.yml exec -T -e PGUSER=churchtimes postgres' AGE_RECIPIENT=age1... /srv/churchtimes/app/apps/cms/scripts/backup.sh --out /var/backups/churchtimes/daily --media /srv/churchtimes/media --keep-days 14 --encrypt age >>/var/log/churchtimes-backup.log 2>&1
 ```
 
 systemd timer (preferred, because a failed unit shows in `systemctl --failed` and can notify):
@@ -565,10 +595,11 @@ systemd timer (preferred, because a failed unit shows in `systemctl --failed` an
 # /etc/systemd/system/churchtimes-backup.service
 [Service]
 Type=oneshot
-User=churchtimes-backup
-# PGHOST, PGUSER, PGDATABASE, AGE_RECIPIENT. Mode 0600, never a private key.
+User=root
+# PG_EXEC and AGE_RECIPIENT, e.g. PG_EXEC=docker compose -f /srv/churchtimes/app/apps/cms/docker-compose.production.yml exec -T -e PGUSER=churchtimes postgres
+# Mode 0600, root-owned, never a private key.
 EnvironmentFile=/etc/churchtimes/backup.env
-ExecStart=/srv/churchtimes/app/apps/cms/scripts/backup.sh --out /var/backups/churchtimes/daily --media /srv/churchtimes/app/apps/cms/media --keep-days 14 --encrypt age
+ExecStart=/srv/churchtimes/app/apps/cms/scripts/backup.sh --out /var/backups/churchtimes/daily --media /srv/churchtimes/media --keep-days 14 --encrypt age
 
 # /etc/systemd/system/churchtimes-backup.timer
 [Timer]
@@ -579,7 +610,7 @@ RandomizedDelaySec=300
 WantedBy=timers.target
 ```
 
-Enable with `systemctl enable --now churchtimes-backup.timer`. Also run `backup.sh` by hand before every deployment (§3 step 1).
+Enable with `systemctl enable --now churchtimes-backup.timer`. Take a pre-deploy backup with the same command and `--out /var/backups/churchtimes/predeploy` (section 3.2).
 
 ### Off-site copy (3-2-1)
 
@@ -590,23 +621,26 @@ same VPS does not survive that VPS being lost or compromised, so it is not a sec
 2. keep one copy at a **different provider or region** that the production server cannot delete from. Use a write-only or append-only credential
    (a bucket with object lock or versioning) or a pull job run from the backup host. A compromised server must not be able to erase its own backups.
 3. Encrypt before the data leaves the VPS (`--encrypt age`), so the off-site provider never sees plaintext.
+4. Copy only finished backups. Exclude the work-in-progress names `.partial-*` and `.tmp-*`.
 
 Example pull from the backup host, over SSH, with the backups already encrypted:
 
 ```sh
-rsync -a --ignore-existing -e ssh churchtimes-backup@cms.example.org:/var/backups/churchtimes/daily/ /srv/offsite/churchtimes/daily/
+rsync -a --ignore-existing --exclude '.partial-*' --exclude '.tmp-*' -e ssh \
+  root@cms.example.org:/var/backups/churchtimes/daily/ /srv/offsite/churchtimes/daily/
 ```
 
 ### Retention
 
 | Tier | Source | Kept | Where |
 | --- | --- | --- | --- |
-| Daily | `backup.sh --keep-days 14` into `.../daily` | 14 days | VPS and off-site |
+| Daily | `backup.sh --keep-days 14` into `.../daily` | 14 days, never fewer than the newest 3 | VPS and off-site |
 | Weekly | Copy the Sunday daily backup to `.../weekly`, `--keep-days 56` | 8 weeks | Off-site |
 | Monthly | Copy the first daily of the month to `.../monthly`, `--keep-days 365` | 12 months | Off-site |
 | Pre-deploy | `backup.sh --out .../predeploy --keep-days 30` | 30 days | VPS |
 
-Retention is applied per directory, so point each tier at its own `--out`. Prune the off-site copies with the same rule on the backup host.
+Retention is applied per directory, so point each tier at its own `--out`. Prune the off-site copies with the same rule on the backup host
+(only directories named `churchtimes-<timestamp>`, keeping the newest few).
 
 ### Restore drill checklist
 
@@ -624,12 +658,13 @@ PostgreSQL 16, not the production server.
 
 ### After a real restore
 
-1. Point `DATABASE_URL` at the restored database. If the dump is older than the code, run `npm run migrate` before starting the app (§3).
-2. Restore media with `--media-target` and make it usable by the app: `chown -R <app-user>: <media dir>` (the script sets directories 0750 and files 0640).
-3. If the restore follows a compromise, rotate every secret (`PAYLOAD_SECRET`, `PREVIEW_SECRET`, `IP_HASH_SALT`, database and SMTP passwords) and force staff
+1. Point `DATABASE_URL` at the restored database. If the dump is older than the code, run `npm run migrate` before starting the app (section 3).
+2. Restore media with `--media-target` and make it usable by the app: `chown -R 1000:1000 /srv/churchtimes/media` (the script sets directories 0750 and files 0640).
+3. Check table ownership matches the role the CMS connects as (see Restore, `--role`), and re-apply any grants.
+4. If the restore follows a compromise, rotate every secret (`PAYLOAD_SECRET`, `PREVIEW_SECRET`, `IP_HASH_SALT`, database and SMTP passwords) and force staff
    to reset passwords. Do not restore the old `.env`.
-4. Run the functional checks in §11, re-enable the backup timer and take a fresh backup of the restored system.
-5. Data written between the backup and the incident is lost; note the gap and tell the owner.
+5. Run the functional checks in section 11, re-enable the backup timer and take a fresh backup of the restored system.
+6. Data written between the backup and the incident is lost; note the gap and tell the owner.
 
 ## 7. Rollback
 
