@@ -305,3 +305,36 @@ npm run import:rollback -- --manifest D:\churchtimes-private\manifests\run-1.jso
 
 A rollback does not remove audit rows (kept on purpose), does not restore an article that `--update` rewrote (use its version history), and touches
 nothing the manifest does not list.
+
+## Legacy media map export (A12)
+
+The public host serves old `/wp-content/uploads/...` addresses from an exact map that the owner exports from the CMS and provisions privately. The
+host never scans media and never holds a staff credential. Format and rules: `docs/api-contracts.md`, "Go-live A12: legacy media map". Note that
+the format differs from the proposal in PR #58, which must be updated.
+
+Run it from `apps/cms` against the database that holds the imported media, with every output OUTSIDE the repository:
+
+```
+# Dry run (default): counts and digests only, nothing written
+npm run export:media-map --
+# Write the map plus <out>.sha256. Optional: recorded thumbnail aliases and an itemised detail file
+npm run export:media-map -- --out D:\private\media-map.json --detail-file D:\private\media-map-details.txt --aliases D:\private\aliases.json
+```
+
+Only media that anonymous readers can read are exported (published article images, approved live photos, delivered ad creatives). The CLI prints
+`excluded` counts (`notAnonymous` is normal: every private or withdrawn upload; it is never written into the file). Read the detail file: it lists paths
+claimed by more than one media (those are dropped) and rejected aliases. The export refuses more than 50,000 entries (aliases included) or 8 MiB.
+
+**Provisioning check.** The digest that matters is the sha256 of the exact bytes of the file. Copy `media-map.json` and `media-map.json.sha256` to the
+public host's provisioning path over a private channel and run `sha256sum -c media-map.json.sha256` there before the host swaps it in atomically. The
+`content-sha256` printed and stored inside the file is only a stable content id (same content, same id). Never commit either file: they list every
+public legacy path. `0600` has no effect on Windows; protect the folder with its permissions instead.
+
+- **Rotation.** Export again whenever imports finish or on a schedule, then replace the map and its `.sha256` together; the old map keeps working until swapped.
+- **Withdrawal.** With the #58 design (no-store, anonymous CMS check on every request) withdrawal is immediate: when an article is unpublished or
+  archived its media stops being anonymously readable and the old address answers 404 straight away. The next export then drops the entry; re-export
+  and rotate promptly so the map does not keep stale paths. Exceptions: media used by another published article stays public, and an ad creative
+  stops being public when its campaign ends. If a bounded cache is ever added, the window is export time + host reload + cache lifetime. Images already
+  downloaded cannot be recalled.
+- **Aliases.** Thumbnail addresses (`photo-300x200.jpg`) are served only when recorded in the `--aliases` JSON as
+  `[{"alias":"2023/10/photo-300x200.jpg","path":"2023/10/photo.jpg"}]`; they are never guessed, and an alias never overrides a real file with that name.
