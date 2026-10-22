@@ -413,6 +413,7 @@ function inspectStoryModal(article, container, notice = '') {
               ${escapeHtml(article.featuredImage.caption || '')}${article.featuredImage.credit ? ` &middot; Credit: ${escapeHtml(article.featuredImage.credit)}` : ''}
             </div>
           </div>` : ''}
+        ${article.lossy ? `<div class="ethics-notice-box" data-testid="inspect-lossy-banner" role="alert"><p style="margin:0;"><strong>Body contains video/table content not shown; open in CMS admin before approving.</strong> Most imported articles can only have their body edited in the CMS admin.</p></div>` : ''}
         <div class="preview-body" data-testid="inspect-body" style="max-height: 250px; overflow-y: auto; background: var(--color-parchment-light); padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--color-rule);">
           ${markdownToHtml(article.bodyMd, { media: id => article.bodyMedia?.[id] })}
         </div>
@@ -475,8 +476,18 @@ function inspectStoryModal(article, container, notice = '') {
         await transition('changes_requested', { reviewNotes: notes }, 'Changes requested from reporter');
       });
 
-      body.querySelector('#modal-approve-story')?.addEventListener('click', () =>
-        transition('approved', {}, 'Story approved for publication!'));
+      body.querySelector('#modal-approve-story')?.addEventListener('click', async () => {
+        if (article.lossy) {
+          const sure = await askConfirm({
+            title: 'Approve without seeing the whole body?',
+            message: 'This body contains video/table content not shown here. Open it in the CMS admin before approving. Approve anyway?',
+            confirmLabel: 'Approve anyway',
+            testid: 'approve-lossy'
+          });
+          if (!sure) return;
+        }
+        await transition('approved', {}, 'Story approved for publication!');
+      });
 
       body.querySelector('#modal-publish-story')?.addEventListener('click', async () => {
         const ok = await askConfirm({

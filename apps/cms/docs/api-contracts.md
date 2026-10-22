@@ -253,6 +253,8 @@ the widget's `action` must be one of the entries, otherwise 403.
   "body": "What happened…",           // required, 30–20 000, plain text
   "categorySuggestion": "News",       // optional, ≤ 100
   "location": "Ibadan",               // optional, ≤ 120
+  "consent": true,                    // optional boolean (v1.16); required when SUBMISSIONS_REQUIRE_CONSENT=true (400, field "consent")
+  "consentTextVersion": "2026-10",    // optional, ≤ 80; stored only together with consent: true
   "website": "",                      // honeypot — must be empty or absent
   "turnstileToken": "0.xxxx"          // REQUIRED: Cloudflare Turnstile token from the widget (≤ 2048 chars)
 }
@@ -961,6 +963,14 @@ limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/op
 - New server-side commands `npm run newsletter:reconfirm` and `npm run newsletter:purge-unconfirmed`; new consent version `mailchimp-reconfirm-v1`.
 - `/api/subscribers` read and update are now `admin` only (was admin and editor-in-chief); staff status changes are audited and set `unsubscribedAt`; new `GET /api/subscribers/:id/subject-data`.
 - No migration (existing enum values and columns are reused).
+
+### v1.16: submission consent
+Additive. `POST /api/public/submissions` accepts optional boolean `consent` (non-boolean → 400 field `consent`) and `consentTextVersion`.
+When `consent` is `true` the CMS stores `submissions.consentAt` (server time, never client-supplied) and `consentTextVersion`; both are readable by
+staff only. New env `SUBMISSIONS_REQUIRE_CONSENT` (default `false`): when `true`, a missing or false `consent` is a 400 on field `consent`.
+Migration `20261021_110000_submission_consent` (nullable columns). Submitter `email`/`phone` stay readable by every editor role (admin,
+editor-in-chief, section-editor): the newsroom review queue displays them and verifying a tip needs them. Restricting them to editor-in-chief/admin is a
+product decision recorded here, not made.
 
 ### v1.15: Go-live A12 legacy media map
 Additive, no schema change. New offline command `npm run export:media-map` and the `media-map/1` file format (§ "Go-live A12: legacy media map (offline export)"). No new HTTP route; media read access is unchanged.

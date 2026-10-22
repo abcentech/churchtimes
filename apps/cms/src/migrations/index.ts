@@ -11,6 +11,7 @@ import * as migration_20261019_215623_contact_and_newsletter from './20261019_21
 import * as migration_20261019_230557_legacy_comments from './20261019_230557_legacy_comments';
 import * as migration_20261020_144045_ad_campaigns from './20261020_144045_ad_campaigns';
 import * as migration_20261021_100000_article_legacy_id_unique from './20261021_100000_article_legacy_id_unique';
+import * as migration_20261021_110000_submission_consent from './20261021_110000_submission_consent';
 
 export const migrations = [
   {
@@ -77,5 +78,10 @@ export const migrations = [
     up: migration_20261021_100000_article_legacy_id_unique.up,
     down: migration_20261021_100000_article_legacy_id_unique.down,
     name: '20261021_100000_article_legacy_id_unique',
+  },
+  {
+    up: migration_20261021_110000_submission_consent.up,
+    down: migration_20261021_110000_submission_consent.down,
+    name: '20261021_110000_submission_consent',
   },
 ];

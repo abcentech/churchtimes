@@ -96,6 +96,7 @@ export class MockAdapter {
     this.emit('session', this.currentUser);
     return this.currentUser;
   }
+  async refreshSession() { return Boolean(this.currentUser); }
   async logout() { this.currentUser = null; this.emit('session', null); return { ok: true }; }
   getCurrentUser() { return this.currentUser; }
   can(action, ctx) { return can(this.currentUser, action, ctx); }
@@ -158,10 +159,11 @@ export class MockAdapter {
     this.persist();
     return { data: clone(a) };
   }
-  async updateArticle(id, changes) {
+  async updateArticle(id, changes, { expectedUpdatedAt } = {}) {
     const a = this.db.articles.find(x => x.id === id);
     if (!a) throw new ApiError('Story not found.', { status: 404 });
     if (!can(this.currentUser, 'story.edit', this._ctx(a))) throw forbidden();
+    if (!versionMatches(a.updatedAt, expectedUpdatedAt)) throw new ApiError(STALE_MESSAGE, { status: 409 });
     this._apply(a, changes);
     this.persist();
     return { data: clone(a) };
