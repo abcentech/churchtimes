@@ -755,6 +755,14 @@ Confirm each item before go-live and again after any change to the server:
       migration `media_legacy_path` (one nullable indexed column on `media`; reversible).
 - [ ] Wrong password 5 times locks the account; **Forgot password?** works end to end; after logout the old token no longer works.
 
+### Newsletter subscriber data: retention (suggestions, owner to decide)
+
+Nothing here runs on a schedule; the only deletion implemented is the purge command.
+- Imported rows without proof of opt-in: `npm run newsletter:reconfirm -- --apply --deadline <date>`, then `npm run newsletter:purge-unconfirmed -- --deadline <date> --apply` after the date (dry run both first).
+- Suggested: unsubscribed and bounced rows keep only what is needed to honour the opt-out (address or its hash, status, time); review yearly. Erase on request (`POST /api/subscribers/:id/erase`).
+- Suggested: confirmed subscribers with no engagement for 24 months get a re-permission mail, then the purge flow; audit-log rows hold counts and ids only and can be kept.
+- Subscriber data is admin only; every export, per-person export (`GET /api/subscribers/:id/subject-data`), status change, erase and CLI run leaves an audit row. Keep Mailchimp exports outside the repository and delete them after the import.
+
 ## 12. Status
 
 - Production deployment: **not performed**. Requires explicit approval.

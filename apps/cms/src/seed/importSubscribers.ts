@@ -7,13 +7,16 @@
  *   and code (a database error message carries the query parameters, i.e. addresses).
  * - The export is owner-supplied personal data and must stay OUTSIDE the repository; a path inside it (after resolving
  *   symlinks, case-insensitively on Windows) is refused.
- * - Only rows Mailchimp marks as subscribed are imported (as `confirmed`, importedFrom `mailchimp-import`, consentAt = the
- *   Mailchimp OPTIN_TIME). A row with no OPTIN_TIME is imported with consentAt null and importedFrom
- *   `mailchimp-import-no-optin-time` and counted in the report. A file with UNSUB_TIME or CLEAN_TIME columns is refused.
+ * - Subscribed rows with an OPTIN_TIME become `confirmed` (consentAt = OPTIN_TIME, confirmedAt = CONFIRM_TIME only). A subscribed
+ *   row with NO valid OPTIN_TIME becomes `pending` (importedFrom `mailchimp-import-no-optin-time`): it receives nothing until it
+ *   re-confirms (npm run newsletter:reconfirm). Unsubscribed and cleaned rows (or files with UNSUB_TIME / CLEAN_TIME) are imported
+ *   as blocking rows (unsubscribed / bounced). Times must be exactly YYYY-MM-DD HH:MM:SS (UTC). An --apply run writes an audit row
+ *   (counts, file sha256, operator; no personal data).
  *   See docs/api-contracts.md "Go-live C4: newsletter".
  * - `--assume-subscribed`: only for Mailchimp's "Subscribed" segment export, which has no Status column.
  */
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 
 import config from '@payload-config'
@@ -68,6 +71,7 @@ async function main() {
   const counts = await runSubscriberImport(payload, fs.readFileSync(abs, 'utf8'), {
     apply,
     assumeSubscribed: flag('--assume-subscribed'),
+    operator: os.userInfo().username,
   })
   console.log(formatImportReport(counts, apply))
   if (counts.refused) process.exitCode = 2
