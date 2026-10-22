@@ -64,6 +64,11 @@ jobs:
       - run: npm ci
       - run: npm ci
         working-directory: apps/cms
+      - name: Generate per-run secrets (exist only on this runner; the build imports the Payload config)
+        run: |
+          echo "PAYLOAD_SECRET=ci-only-$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "PREVIEW_SECRET=ci-only-$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "IP_HASH_SALT=ci-only-$(openssl rand -hex 16)" >> "$GITHUB_ENV"
       - run: npm run build
         working-directory: apps/cms
       - run: npx playwright install --with-deps chromium
