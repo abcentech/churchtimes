@@ -75,7 +75,7 @@ RSS 15 / 18. The earlier run with 60 images showed 418 ms p50 before and 161 ms 
    had no usable index (the two sort keys cannot use `articles_published_at_idx`), so Postgres read all 4,160 rows,
    including the large `content` column, sorted them (spilling to disk at deep offsets) and returned 20. EXPLAIN: 173 to
    295 ms for the article query alone. Fix: Payload collection `indexes` entry `(status, publishedAt, createdAt)`, migration
-   `20261022_135231_article_list_index` (`IF NOT EXISTS` up, `IF EXISTS` down). The query dropped to about 1 ms at page 1.
+   `20261022_141856_article_list_index` (`IF NOT EXISTS` up, `IF EXISTS` down). The query dropped to about 1 ms at page 1.
    Payload also creates the matching index on `_articles_v`; it is harmless (versions are capped at 50 per article).
 2. **Deep pages stay linear in the offset (not changed).** Payload joins the corrections array with a lateral subquery
    that runs for every row skipped by the offset: about 20 microseconds per skipped row (page 200 is about 90 ms in the

@@ -1,4 +1,5 @@
 import { APIError } from 'payload'
+import sharp from 'sharp'
 import type {
   Access,
   CollectionAfterChangeHook,
@@ -118,7 +119,24 @@ const guardAdCreativeFile: CollectionBeforeOperationHook = async ({ args, operat
   return args
 }
 
-const checkUpload: CollectionBeforeOperationHook =({ args, operation }) => {
+/** Upload decode cap (pixels). Refuses decompression bombs before any resize or re-encode. */
+export const MAX_INPUT_PIXELS = 40_000_000
+
+/**
+ * Re-encode a JPEG / PNG / WebP so the stored original carries no EXIF / XMP / IPTC metadata (GPS position, camera
+ * serial, editing history). The EXIF orientation is applied to the pixels (rotate()) before the tag is dropped, so the
+ * picture looks the same; the ICC profile is kept so colours do not shift; dimensions are unchanged.
+ */
+export async function stripImageMetadata(data: Uint8Array, mime: (typeof ALLOWED_MIME)[number]): Promise<Buffer> {
+  const img = sharp(data, { limitInputPixels: MAX_INPUT_PIXELS, animated: mime === 'image/webp' })
+    .rotate()
+    .keepIccProfile()
+  if (mime === 'image/jpeg') return img.jpeg({ quality: 92, mozjpeg: false }).toBuffer()
+  if (mime === 'image/png') return img.png().toBuffer()
+  return img.webp({ quality: 90 }).toBuffer()
+}
+
+const checkUpload: CollectionBeforeOperationHook = async ({ args, operation }) => {
   if (operation !== 'create' && operation !== 'update') return args
   const file = (args.req as { file?: { name: string; data?: Uint8Array; mimetype?: string } }).file
   if (!file) return args
@@ -139,6 +157,15 @@ const checkUpload: CollectionBeforeOperationHook =({ args, operation }) => {
     if (!sniffed) throw new APIError('Unsupported or corrupt image. Use JPEG, PNG or WebP.', 400)
     if (file.mimetype && file.mimetype !== sniffed) {
       throw new APIError('File content does not match its declared type.', 400)
+    }
+    // Strip metadata from the original, then everything downstream (size variants, dimension and weight checks,
+    // ad creative checks) sees the processed bytes.
+    try {
+      const clean = await stripImageMetadata(file.data, sniffed)
+      file.data = clean
+      ;(file as { size?: number }).size = clean.length
+    } catch {
+      throw new APIError('Unsupported or corrupt image, or larger than 40 megapixels. Use JPEG, PNG or WebP.', 400)
     }
   }
   return args
@@ -443,8 +470,8 @@ export const Media: CollectionConfig = {
   },
   fields: [
     { name: 'alt', type: 'text', required: true, maxLength: 300 },
-    { name: 'caption', type: 'text' },
-    { name: 'credit', type: 'text' },
+    { name: 'caption', type: 'text', maxLength: 1000 },
+    { name: 'credit', type: 'text', maxLength: 300 },
     {
       // Server-set on create; see guardMediaChange / updateAccess. Null for rows that predate the field.
       name: 'uploadedBy',

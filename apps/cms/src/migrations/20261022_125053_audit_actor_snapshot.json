@@ -1181,33 +1181,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "status_publishedAt_createdAt_idx": {
-          "name": "status_publishedAt_createdAt_idx",
-          "columns": [
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "published_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {
@@ -1809,33 +1782,6 @@
           "columns": [
             {
               "expression": "updated_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "version_status_version_publishedAt_version_createdAt_idx": {
-          "name": "version_status_version_publishedAt_version_createdAt_idx",
-          "columns": [
-            {
-              "expression": "version_status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "version_published_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "version_created_at",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -4316,6 +4262,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "actor_id_snapshot": {
+          "name": "actor_id_snapshot",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
         "from_status": {
           "name": "from_status",
           "type": "varchar",
@@ -4406,6 +4358,21 @@
           "columns": [
             {
               "expression": "actor_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "audit_logs_actor_id_snapshot_idx": {
+          "name": "audit_logs_actor_id_snapshot_idx",
+          "columns": [
+            {
+              "expression": "actor_id_snapshot",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -5657,6 +5624,6 @@
     "tables": {},
     "columns": {}
   },
-  "id": "bdd71519-1a83-4c04-a5f7-f3352df4e521",
-  "prevId": "00000000-0000-0000-0000-000000000000"
+  "id": "aa7f4670-e828-4d38-8558-b805ce5c63d5",
+  "prevId": "2fa4e469-5ae9-4c40-a97d-5de8b608b408"
 }

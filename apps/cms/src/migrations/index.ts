@@ -12,7 +12,8 @@ import * as migration_20261019_230557_legacy_comments from './20261019_230557_le
 import * as migration_20261020_144045_ad_campaigns from './20261020_144045_ad_campaigns';
 import * as migration_20261021_100000_article_legacy_id_unique from './20261021_100000_article_legacy_id_unique';
 import * as migration_20261021_110000_submission_consent from './20261021_110000_submission_consent';
-import * as migration_20261022_135231_article_list_index from './20261022_135231_article_list_index';
+import * as migration_20261022_125053_audit_actor_snapshot from './20261022_125053_audit_actor_snapshot';
+import * as migration_20261022_141856_article_list_index from './20261022_141856_article_list_index';
 
 export const migrations = [
   {
@@ -86,8 +87,13 @@ export const migrations = [
     name: '20261021_110000_submission_consent',
   },
   {
-    up: migration_20261022_135231_article_list_index.up,
-    down: migration_20261022_135231_article_list_index.down,
-    name: '20261022_135231_article_list_index'
+    up: migration_20261022_125053_audit_actor_snapshot.up,
+    down: migration_20261022_125053_audit_actor_snapshot.down,
+    name: '20261022_125053_audit_actor_snapshot',
+  },
+  {
+    up: migration_20261022_141856_article_list_index.up,
+    down: migration_20261022_141856_article_list_index.down,
+    name: '20261022_141856_article_list_index'
   },
 ];

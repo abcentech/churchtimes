@@ -17,6 +17,7 @@
     "migrate:create": "payload migrate:create",
     "seed": "payload run src/seed/index.ts",
     "admin:set-password": "payload run src/seed/setPassword.ts --",
+    "admin:create": "payload run src/seed/createAdmin.ts --",
     "import:subscribers": "payload run src/seed/importSubscribers.ts --",
     "newsletter:reconfirm": "payload run src/seed/reconfirmSubscribers.ts --",
     "newsletter:purge-unconfirmed": "payload run src/seed/purgeUnconfirmedSubscribers.ts --",

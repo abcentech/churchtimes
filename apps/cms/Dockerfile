@@ -32,7 +32,9 @@ COPY . .
 # next build loads the Payload config, which requires PAYLOAD_SECRET (>= 32 chars).
 # This placeholder is used only for this RUN step. It is not set as ENV, so it is not
 # present in the runtime image. Real secrets are supplied at runtime via env_file or -e.
-RUN PAYLOAD_SECRET=build-only-placeholder-not-a-secret-000000000000 npm run build
+# .next/cache (webpack/SWC build cache) is dropped: it is large, not needed to run, and the runtime mounts a tmpfs there.
+RUN PAYLOAD_SECRET=build-only-placeholder-not-a-secret-000000000000 npm run build \
+  && rm -rf .next/cache
 
 # ---- prod-deps: production dependency tree only -------------------------------------
 FROM node:24-bookworm-slim AS prod-deps

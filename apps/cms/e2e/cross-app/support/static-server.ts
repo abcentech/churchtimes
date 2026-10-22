@@ -62,9 +62,17 @@ export function startStaticServer(root: string, port: number): Promise<StaticSer
 /** The public site's own host: compiled assets + server-rendered published articles from the CMS (never forwards cookies). */
 export async function startPublicHost(repoRoot: string, dist: string, port: number, cmsUrl: string): Promise<StaticServer> {
   const mod = (await import(pathToFileURL(path.join(repoRoot, 'tools', 'serve-public.mjs')).href)) as {
-    createPublicServer: (opts: { dist: string; cmsUrl: string; basePath: string }) => http.Server
+    createPublicServer: (opts: { dist: string; cmsUrl: string; basePath: string; fetchImpl?: typeof fetch }) => http.Server
   }
-  return listenTracked(mod.createPublicServer({ dist, cmsUrl, basePath: '/' }), port)
+  // The CMS stamps every media URL with its public origin (CMS_PUBLIC_URL = cms.churchtimes.localhost), and the public renderer only
+  // accepts media on the origin it was configured with. So the server is configured with that public origin and only its
+  // transport is pointed at loopback (Node does not resolve *.localhost subdomains, Chromium does via --host-resolver-rules).
+  const fetchImpl: typeof fetch = (input, init) => {
+    const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url)
+    if (url.hostname.endsWith('.localhost')) url.hostname = '127.0.0.1'
+    return fetch(url, init)
+  }
+  return listenTracked(mod.createPublicServer({ dist, cmsUrl, basePath: '/', fetchImpl }), port)
 }
 
 function listenTracked(server: http.Server, port: number): Promise<StaticServer> {

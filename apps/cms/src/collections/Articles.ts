@@ -662,7 +662,7 @@ export const Articles: CollectionConfig = {
       access: { read: staffRead, create: editorWrite, update: editorWrite },
       admin: { position: 'sidebar' },
     },
-    { name: 'bylineName', type: 'text' },
+    { name: 'bylineName', type: 'text', maxLength: 200 },
     {
       name: 'status',
       type: 'select',

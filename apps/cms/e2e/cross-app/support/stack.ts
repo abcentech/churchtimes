@@ -293,10 +293,10 @@ export async function startStack(): Promise<XappConfig> {
     log('NEWSROOM BUILD FAILED (newsroom specs will fail):', newsroomBuildError.split('\n').slice(0, 6).join(' | '))
   }
 
-  // The public site runs on its real host (tools/serve-public.mjs). Its server-side CMS reads use the loopback name, because
-  // Node does not resolve *.localhost subdomains the way Chromium's --host-resolver-rules does here.
+  // The public site runs on its real host (tools/serve-public.mjs). Its server-side CMS reads are configured with the CMS's public origin
+  // (so media URLs match it, like production) and transported over loopback (see startPublicHost).
   statics = [
-    await startPublicHost(repoRoot, publicDir, PORTS.public, `http://localhost:${PORTS.cms}`),
+    await startPublicHost(repoRoot, publicDir, PORTS.public, HOSTS.cms),
     await startStaticServer(publicGapDir, PORTS.publicGap),
   ]
   if (!newsroomBuildError) statics.push(await startStaticServer(newsroomDir, PORTS.newsroom))

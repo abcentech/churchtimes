@@ -17,6 +17,11 @@ export default defineConfig({
           name: 'unit',
           environment: 'node',
           include: ['tests/unit/**/*.test.ts'],
+          // Unit files run in parallel workers (one per file); some do real PBKDF2 at production cost
+          // (600k iterations) or cold-import Payload. Under load the 5 s default flaked. Assertions are
+          // unchanged, only the ceiling is raised.
+          testTimeout: 30000,
+          hookTimeout: 30000,
         },
       },
       {
