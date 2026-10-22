@@ -1545,3 +1545,25 @@ body[data-auth="out"] .session-chip:empty {
   border-color: #DC2626;
   background-color: #FEF2F2;
 }
+
+.offline-banner {
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  padding: 0.5rem 1rem;
+  background-color: #FEF3C7;
+  color: #78350F;
+  border-bottom: 1px solid #F59E0B;
+  font-size: 0.8125rem;
+  text-align: center;
+}
+.offline-banner[hidden] { display: none; }
+.live-stale-indicator {
+  margin-bottom: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background-color: #FEF3C7;
+  color: #78350F;
+  border: 1px solid #F59E0B;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+}
