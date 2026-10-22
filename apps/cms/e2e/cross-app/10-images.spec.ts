@@ -355,7 +355,7 @@ test.describe('Images in stories and live updates (REAL UI)', () => {
       const res = await fetch(`${root}${new URL(src).pathname}`)
       const bytes = Buffer.from(await res.arrayBuffer())
       expect(res.status, `public image file ${src} is still served`).toBe(200)
-      const m = /-(d+)x(d+).png$/.exec(new URL(src).pathname)
+      const m = /-(\d+)x(\d+)\.png$/.exec(new URL(src).pathname)
       if (m) expect(bytes.readUInt32BE(16), `public image file ${src} still has the width in its name`).toBe(Number(m[1]))
       else expect(s.widths).toContain(bytes.readUInt32BE(16))
     }
