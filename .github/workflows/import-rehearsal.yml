@@ -4,6 +4,9 @@ name: Import rehearsal
 # PostgreSQL with a LARGE SYNTHETIC export: dry run, apply, second apply (must be a no-op), update, rollback.
 # Nothing real is read and no repository secret is used. Default size is the real archive size (4,346 posts).
 on:
+  push:
+    branches: [agent/claude-rehearsal-run]
+    paths: ['.github/workflows/import-rehearsal.yml']
   workflow_dispatch:
     inputs:
       posts:
@@ -31,7 +34,7 @@ jobs:
         working-directory: apps/cms
       - name: Rehearse
         working-directory: apps/cms
-        run: npm run import:rehearse -- --posts "${{ inputs.posts }}" --images "${{ inputs.images }}" | tee "$RUNNER_TEMP/rehearsal.txt"
+        run: npm run import:rehearse -- --posts "${{ inputs.posts || '4346' }}" --images "${{ inputs.images || '200' }}" | tee "$RUNNER_TEMP/rehearsal.txt"
       - name: Summary
         if: always()
         run: |
