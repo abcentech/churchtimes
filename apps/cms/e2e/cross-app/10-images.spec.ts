@@ -341,12 +341,23 @@ test.describe('Images in stories and live updates (REAL UI)', () => {
       expect(after.json.width).toBe(before[i].json.width)
     }
 
-    // ... and the original files are still served (a refused replacement must not delete or overwrite the file)
-    for (const [i, src] of s.srcs.entries()) {
+    // ... and the files are still served (a refused replacement must not delete or overwrite them): the original upload at
+    // its recorded dimensions, and the exact (size-variant) file the public page links to, which keeps its own width.
+    for (const [i, id] of s.mediaIds.entries()) {
+      const original = await fetch(`${root}${new URL(before[i].json.url, root).pathname}`)
+      const originalBytes = Buffer.from(await original.arrayBuffer())
+      expect(original.status, `original file of media ${id} is still served`).toBe(200)
+      expect(originalBytes.readUInt32BE(16), `original file of media ${id} still has its original width`).toBe(s.widths[i])
+    }
+    for (const src of s.srcs) {
+      // The public page links to the 800px "card" variant (first variant >= 800px), not the original, so this file's width is
+      // the variant's, stated in its own name (`<name>-<w>x<h>.png`).
       const res = await fetch(`${root}${new URL(src).pathname}`)
       const bytes = Buffer.from(await res.arrayBuffer())
-      expect(res.status, `original file ${src} is still served`).toBe(200)
-      expect(bytes.readUInt32BE(16), `original file ${src} still has its original width`).toBe(s.widths[i])
+      expect(res.status, `public image file ${src} is still served`).toBe(200)
+      const m = /-(d+)x(d+).png$/.exec(new URL(src).pathname)
+      if (m) expect(bytes.readUInt32BE(16), `public image file ${src} still has the width in its name`).toBe(Number(m[1]))
+      else expect(s.widths).toContain(bytes.readUInt32BE(16))
     }
 
     // the public article still shows the original pictures

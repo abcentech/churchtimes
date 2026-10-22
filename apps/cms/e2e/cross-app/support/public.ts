@@ -6,6 +6,10 @@ export type PublicExpectation = { title: string; standfirst: string; bodyText: s
 
 /** What an anonymous reader sees on the real public site: Latest list card + article page (image rendered, no draft leakage). */
 export async function expectPublishedOnPublicSite(page: Page, cfg: XappConfig, e: PublicExpectation): Promise<{ cardImage: boolean }> {
+  // Diagnostics for a missing article image: every media file request that fails or answers >= 400.
+  const mediaProblems: string[] = []
+  page.on('requestfailed', (r) => { if (r.url().includes('/api/media/file/')) mediaProblems.push(`FAILED ${r.url()} ${r.failure()?.errorText}`) })
+  page.on('response', (r) => { if (r.url().includes('/api/media/file/') && r.status() >= 400) mediaProblems.push(`${r.status()} ${r.url()}`) })
   await page.goto(`${cfg.publicOrigin}/#latest`)
   const card = page.locator(`#cms-latest .newsroom-card[data-story-slug="${e.slug}"]`)
   await expect(card).toBeVisible({ timeout: 30_000 })
@@ -24,13 +28,24 @@ export async function expectPublishedOnPublicSite(page: Page, cfg: XappConfig, e
   // cold reload: the public host answers the clean URL itself (200, server-rendered title) before the SPA takes over
   const cold = await page.reload()
   expect(cold?.status(), 'clean article URL is served by the public host').toBe(200)
-  expect(await cold?.text(), 'initial HTML is server-rendered').toContain(`<h1>${e.title}</h1>`)
+  const coldHtml = (await cold?.text()) ?? ''
+  expect(coldHtml, 'initial HTML is server-rendered').toContain(`<h1>${e.title}</h1>`)
   const article = page.locator('#cms-report')
   await expect(article.locator('h1')).toHaveText(e.title)
   await expect(article.locator('.article-deck')).toHaveText(e.standfirst)
   await expect(article.locator('.newsroom-article-body')).toContainText(e.bodyText)
   if (e.imageAlt) {
     const img = article.locator('figure.cms-figure img.cms-image')
+    try {
+      await img.first().waitFor({ state: 'attached', timeout: 20_000 })
+    } catch {
+      const anon = await fetch(`${new URL(cfg.cmsUrl).origin}/api/articles?where[slug][equals]=${e.slug}&depth=1`).then((r) => r.json()).catch((err) => ({ error: String(err) }))
+      throw new Error(
+        `article hero image missing on the public page. server-rendered figure in the cold HTML: ${/<figure class="cms-figure/.test(coldHtml)}; ` +
+          `media file problems seen by the browser: ${JSON.stringify(mediaProblems)}; ` +
+          `anonymous API featuredImage: ${JSON.stringify(anon?.docs?.[0]?.featuredImage ?? anon)}`,
+      )
+    }
     await expect(img).toHaveAttribute('alt', e.imageAlt)
     await expect.poll(() => img.evaluate((i: HTMLImageElement) => i.complete && i.naturalWidth), { message: 'article hero image loads', timeout: 20_000 }).toBeGreaterThan(0)
     const src = await img.getAttribute('src')
