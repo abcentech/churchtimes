@@ -22,6 +22,7 @@ import { Submissions } from './collections/Submissions'
 import { Subscribers } from './collections/Subscribers'
 import { Users } from './collections/Users'
 import { previewArticleEndpoint } from './endpoints/previewArticle'
+import { startupSelfCheck } from './lib/health'
 import { publicContactEndpoint, publicContactPreflightEndpoint } from './endpoints/publicContact'
 import { newsletterEndpoints } from './endpoints/publicNewsletter'
 import {
@@ -93,6 +94,9 @@ if (isProd && !isBuildPhase) {
 }
 
 if (!isTest && !isBuildPhase) {
+  // Counts only: never names or values of settings.
+  const selfCheck = startupSelfCheck(process.env)
+  console.log(`[startup] self-check: ${selfCheck.passed}/${selfCheck.total} critical settings present`)
   for (const warning of turnstileActionWarnings(process.env)) console.warn(`[security] ${warning}`)
 }
 

@@ -72,10 +72,11 @@ COPY --from=build --chown=node:node /app/package.json /app/next.config.mjs /app/
 USER node
 EXPOSE 3000
 
-# Liveness: anonymous GET /api/users/me answers 200 once Payload is initialised and the database is
-# reachable. The first request also initialises Payload, hence the generous start period and timeout.
-HEALTHCHECK --interval=15s --timeout=15s --start-period=40s --retries=5 \
-  CMD ["node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/users/me').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+# Liveness: GET /api/health/live answers 200 as soon as Next is serving. It never touches Payload or the
+# database, so a database outage does not restart the container (readiness, /api/health/ready, is for
+# external monitors).
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \
+  CMD ["node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/health/live').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
 
 # Same as `npm run start` (its cross-env only sets NODE_OPTIONS, which is an ENV above), but without the
 # npm wrapper process, so SIGTERM from `docker stop` reaches Next directly.

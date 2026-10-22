@@ -549,9 +549,33 @@ Do this once a month and record the result. A backup you have not restored is no
 - Application logs: `journalctl -u churchtimes-cms -f` (systemd).
 - Reverse proxy access and error logs: Caddy or Nginx default locations. Keep at least 14 days.
 - PostgreSQL logs: `/var/log/postgresql/`. Watch for repeated authentication failures.
-- Uptime: an external monitor that calls `GET /api/categories` every minute and alerts the ops contact.
 - Disk: alert at 80% usage. The media directory and the backup directory both grow.
 - No log shipping, metrics or error tracking is configured yet.
+
+### 9.1 Health endpoints and external monitors
+
+Both endpoints are anonymous, `GET` or `HEAD` only, `Cache-Control: no-store`, with no CORS headers, and never include error text, versions or
+configuration. Expose them through the reverse proxy like the rest of `/api`.
+
+- **Liveness** `GET /api/health/live`: `200 {"status":"ok"}`. Cheap: does not touch Payload or PostgreSQL, so it only says the Node process is
+  serving. This is what the Docker `HEALTHCHECK` uses (a database outage must not restart the container).
+- **Readiness** `GET /api/health/ready`: `200 {"status":"ready","database":true,"migrations":true,"media":true}` or `503` with
+  `"status":"unavailable"` and the failing flag `false`. `database` = `select 1` answers within 2 s; `migrations` = every migration bundled in this
+  build is recorded in `payload_migrations` (a boolean only, never names); `media` = the media directory accepts a write (a temp entry is
+  created and removed). The result is cached for 5 s per process and each client address is limited to 300 requests per minute (`429` beyond that,
+  no detail), so polling it every minute is safe. A boot failure (for instance database down at start) also answers `503`.
+- Startup logs one line `[startup] self-check: N/M critical settings present` (counts only; no names or values). A value below M is expected on
+  a staging box without SMTP or Turnstile; investigate it on production, and read the `[security]` warnings printed next to it.
+
+| Monitor | Target | Interval | Alert when | Notes |
+| --- | --- | --- | --- | --- |
+| Liveness | `https://<cms-host>/api/health/live` (HTTP, keyword `"ok"`) | 1 min | non-200 for 2 checks | Process or proxy down |
+| Readiness | `https://<cms-host>/api/health/ready` (HTTP, keyword `"ready"`) | 1 to 5 min | non-200 for 2 checks | A `false` flag in the body says which part; check logs |
+| Public site keyword | `https://<public-site>/` keyword check on a stable word from the home page | 5 min | keyword missing | Catches a broken static deploy that still returns 200 |
+| Public content API | `GET /api/categories` returns 200 | 5 min | non-200 | Optional end-to-end read path |
+| Disk | host agent or cron: `/`, media dir and backup dir | 5 min | above 80% | Cron plus a mail or a heartbeat monitor |
+| Certificate expiry | TLS monitor on the CMS and public hostnames | daily | under 14 days left | Caddy renews at 30 days; a failure shows here first |
+| Backup freshness | heartbeat URL pinged at the end of the nightly DB and media backups | daily | no ping within 26 h | See §6; also check the newest dump is non-empty |
 
 ## 10. Security checklist
 

@@ -213,6 +213,13 @@ jobs:
           [ "$code" = "200" ]
           jq -e '.user == null' "$RUNNER_TEMP/me.json" >/dev/null
 
+          # 1b. Health surface: liveness 200 {"status":"ok"}, readiness 200 with booleans only, HEAD works, no-store.
+          curl -fsS --max-time 10 -D "$RUNNER_TEMP/live.headers" "$base/api/health/live" | jq -e '. == {"status":"ok"}' >/dev/null
+          grep -qi '^cache-control: no-store' "$RUNNER_TEMP/live.headers"
+          curl -fsS --max-time 10 -I "$base/api/health/live" >/dev/null
+          curl -fsS --max-time 30 "$base/api/health/ready" | jq -e '.status == "ready" and .database and .migrations and .media' >/dev/null
+          curl -fsS --max-time 30 -I "$base/api/health/ready" >/dev/null
+
           # 2. Admin UI: 200 or a redirect (empty DB redirects to create-first-user / login); the redirect target must load.
           code="$(curl -sS --max-time 60 -o /dev/null -w '%{http_code}' "$base/admin")"
           echo "GET /admin -> $code"
