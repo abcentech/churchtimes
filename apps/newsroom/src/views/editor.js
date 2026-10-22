@@ -21,9 +21,33 @@ import { showApiError } from '../components/notify.js';
 import { openMediaPicker, mediaImageProblem } from '../components/media-picker.js';
 import { markdownToHtml, countWords, imageToken, insertBlockLine, listImages, removeImageLine, stripImageLabels } from '../lexical.js';
 import { ApiError } from '../api/errors.js';
-import { STALE_MESSAGE, isStaleConflict } from '../stale-guard.js';
+import { STALE_MESSAGE, CONTENT_CONFLICT_MESSAGE, isStaleConflict } from '../stale-guard.js';
+import { saveLocalCopy, readLocalCopy, clearLocalCopy, copyDiffers } from '../draft-guard.js';
 import { escapeHtml, slugify, statusBadge, formatDate } from '../util.js';
 import { parseScheduleInput, isoToLocalInput, formatScheduled, defaultScheduleValue } from '../schedule.js';
+
+// Pointer to the editor currently on screen, used only by the page-unload guard below (story state stays in `states`).
+let activeEditor = null;
+
+function localStore() {
+  try { return window.sessionStorage; } catch { return null; }
+}
+
+if (typeof window !== 'undefined') {
+  // Closing / reloading the tab with unsaved edits: keep a local copy and make the browser ask first.
+  window.addEventListener('beforeunload', (e) => {
+    const c = activeEditor;
+    if (c && c.isConnected && isEditorDirty(c)) {
+      syncLocalCopy(c);
+      e.preventDefault();
+      e.returnValue = '';
+    }
+  });
+  window.addEventListener('pagehide', () => {
+    const c = activeEditor;
+    if (c && c.isConnected) syncLocalCopy(c);
+  });
+}
 
 const states = new WeakMap();
 const stateOf = container => states.get(container);
@@ -109,6 +133,7 @@ export async function renderEditor(container, storyId = null) {
     fromTip: false
   };
   states.set(container, st);
+  activeEditor = container;
 
   const editable = canEdit(story);
   const readonlyAttr = editable ? '' : 'readonly';
@@ -141,6 +166,16 @@ export async function renderEditor(container, storyId = null) {
     </div>
 
     <div id="editor-error" data-testid="editor-error" role="alert" class="validation-summary-alert" style="display:none; margin-bottom: 1rem;"></div>
+    <div id="editor-conflict" data-testid="editor-conflict" role="alert" class="validation-summary-alert" style="display:none; margin-bottom: 1rem;">
+      <p id="editor-conflict-text" style="margin: 0 0 0.5rem;"></p>
+      <button type="button" class="btn btn-outline btn-sm" id="btn-conflict-copy" data-testid="editor-conflict-copy">Copy my text</button>
+      <button type="button" class="btn btn-outline btn-sm" id="btn-conflict-reload" data-testid="editor-conflict-reload">Reload story</button>
+    </div>
+    <div id="editor-restore" data-testid="editor-restore" role="status" class="ethics-notice-box" style="display:none; margin-bottom: 1rem;">
+      <p id="editor-restore-text" style="margin: 0 0 0.5rem;"></p>
+      <button type="button" class="btn btn-secondary btn-sm" id="btn-restore-copy" data-testid="editor-restore-accept">Restore my text</button>
+      <button type="button" class="btn btn-outline btn-sm" id="btn-restore-discard" data-testid="editor-restore-discard">Discard it</button>
+    </div>
     <div id="schedule-panel" class="ethics-notice-box" data-testid="editor-schedule-panel" style="display:none; margin-bottom: 1rem;"></div>
     ${!editable ? `<div class="ethics-notice-box" data-testid="editor-readonly-note" style="margin-bottom:1rem;"><p style="margin:0;">You can read this story but not edit it in its current status.</p></div>` : ''}
     ${story.lossy ? `<div class="ethics-notice-box" data-testid="editor-lossy-note" style="margin-bottom:1rem;"><p style="margin:0;">This story contains elements the newsroom editor cannot represent (for example embedded video, nested lists, underline, alignment or links that open in a new tab). The body is read-only here so nothing is lost. Most imported (archive) articles can only have their body edited in the CMS admin; headline, standfirst and other fields can still be edited here.</p></div>` : ''}
@@ -233,6 +268,122 @@ export async function renderEditor(container, storyId = null) {
   renderBodyImages(container);
   bindEditorListeners(container);
   loadTipOrigin(container);
+  offerRestore(container);
+}
+
+/** Does the form hold edits that the server does not have yet? */
+export function isEditorDirty(container) {
+  const st = container && stateOf(container);
+  if (!st || !container.querySelector('#story-headline-input')) return false;
+  return Object.keys(computeChanges(st, formValues(container))).length > 0;
+}
+
+/** Keep the sessionStorage copy equal to the unsaved edits: write while dirty, remove once saved. Never stores credentials. */
+function syncLocalCopy(container) {
+  const st = stateOf(container);
+  const storage = localStore();
+  if (!st || !storage || !container.querySelector('#story-headline-input')) return;
+  if (isEditorDirty(container)) {
+    saveLocalCopy(storage, st.currentStory.id, formValues(container), {
+      userId: api.getCurrentUser()?.id ?? null, baseUpdatedAt: st.currentStory.updatedAt
+    });
+  } else {
+    clearLocalCopy(storage, st.currentStory.id);
+  }
+}
+
+function offerRestore(container) {
+  const st = stateOf(container);
+  const storage = localStore();
+  const box = container.querySelector('#editor-restore');
+  if (!st || !storage || !box || !canEdit(st.currentStory)) return;
+  const copy = readLocalCopy(storage, st.currentStory.id, { userId: api.getCurrentUser()?.id ?? null });
+  if (!copy) return;
+  const values = { ...copy.values, bodyMd: stripImageLabels(copy.values.bodyMd) };
+  if (st.currentStory.lossy) values.bodyMd = st.baseline.bodyMd;
+  if (!copyDiffers(values, st.baseline)) { clearLocalCopy(storage, st.currentStory.id); return; }
+  const changedOnServer = copy.baseUpdatedAt && st.currentStory.updatedAt && copy.baseUpdatedAt !== st.currentStory.updatedAt;
+  box.querySelector('#editor-restore-text').textContent =
+    'Unsaved text from your last session on this story was found in this browser tab.' +
+    (changedOnServer ? ' The story has changed on the server since then, so restoring it may overwrite newer edits.' : '');
+  box.style.display = 'block';
+  box.querySelector('#btn-restore-copy').addEventListener('click', () => {
+    container.querySelector('#story-headline-input').value = copy.values.title;
+    container.querySelector('#story-slug-input').value = copy.values.slug;
+    st.slugTouched = true;
+    container.querySelector('#story-standfirst-input').value = copy.values.standfirst;
+    container.querySelector('#story-byline-input').value = copy.values.bylineName;
+    if (!st.currentStory.lossy) container.querySelector('#story-body-input').value = copy.values.bodyMd;
+    const sel = container.querySelector('#story-category-select');
+    if (copy.values.categoryId && [...sel.options].some(o => o.value === copy.values.categoryId)) sel.value = copy.values.categoryId;
+    box.style.display = 'none';
+    triggerAutosave(container);
+    updatePreview(container);
+    updateWordCount(container);
+    renderBodyImages(container);
+  });
+  box.querySelector('#btn-restore-discard').addEventListener('click', () => {
+    clearLocalCopy(storage, st.currentStory.id);
+    box.style.display = 'none';
+  });
+}
+
+/**
+ * Called by the router before it leaves the editor. Flushes a pending autosave, then, if edits still are not on the server
+ * (new story, in review, failed or conflicting save), asks. Resolves false when the user chooses to stay.
+ */
+export async function confirmLeaveEditor(container) {
+  const st = container && stateOf(container);
+  if (!st) return true;
+  await flushEditor(container);
+  if (st.inflight) await st.inflight.catch(() => null);
+  if (!api.getCurrentUser()) return true; // session ended: the local copy is the safety net
+  if (!isEditorDirty(container)) return true;
+  syncLocalCopy(container);
+  return askConfirm({
+    title: 'Leave without saving?',
+    message: 'This story has changes that are not saved to the CMS. A copy is kept in this browser tab, but leaving now will not save it.',
+    confirmLabel: 'Leave without saving',
+    testid: 'leave-editor'
+  });
+}
+
+/** The address-bar hash of the editor on screen (a story saved for the first time has moved from #editor to #editor?id=N). */
+export function editorHash(container) {
+  const id = stateOf(container)?.currentStory?.id;
+  return id ? `editor?id=${encodeURIComponent(id)}` : 'editor';
+}
+
+function showConflict(container) {
+  const st = stateOf(container);
+  st.conflict = true;
+  clearTimeout(st.autosaveTimer);
+  st.autosavePending = false;
+  const panel = container.querySelector('#editor-conflict');
+  if (!panel) return;
+  panel.querySelector('#editor-conflict-text').textContent = CONTENT_CONFLICT_MESSAGE;
+  panel.style.display = 'block';
+}
+
+function hideConflict(container) {
+  const st = stateOf(container);
+  st.conflict = false;
+  const panel = container.querySelector('#editor-conflict');
+  if (panel) panel.style.display = 'none';
+}
+
+async function copyMyText(container) {
+  const v = formValues(container);
+  const text = [v.title, v.standfirst, '', v.bodyMd].join('\n');
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast('Your text was copied to the clipboard.', 'success');
+  } catch {
+    const body = container.querySelector('#story-body-input');
+    body?.focus();
+    body?.select();
+    showToast('Could not use the clipboard. The story text is selected: copy it with Ctrl+C.', 'info', 8000);
+  }
 }
 
 /** Called by the router before leaving the editor: stop timers and flush a pending autosave. */
@@ -329,6 +480,8 @@ async function doSave(container, { auto }) {
       st.currentStory = res.data;
       // Only move the address bar when this editor is still the one on screen.
       if (container.isConnected) history.replaceState(null, '', `#editor?id=${encodeURIComponent(st.currentStory.id)}`);
+      const storage = localStore();
+      if (storage) clearLocalCopy(storage, null); // the unsaved-new-story copy now lives under the real id (if still dirty)
     } else {
       const changes = computeChanges(st, vals);
       if (!Object.keys(changes).length) return { ok: true, changed: false };
@@ -348,15 +501,23 @@ async function doSave(container, { auto }) {
           { note }
         ];
       }
-      const res = await api.updateArticle(st.currentStory.id, changes);
+      const res = await api.updateArticle(st.currentStory.id, changes, { expectedUpdatedAt: st.currentStory.updatedAt });
       st.currentStory = res.data;
     }
     st.baseline = snapshot(st.currentStory);
     for (const [id, media] of Object.entries(st.currentStory.bodyMedia || {})) st.mediaCache.set(id, media);
     setInlineError(container, '');
+    hideConflict(container);
     updateStatusDisplay(container);
+    syncLocalCopy(container);
     return { ok: true, changed: true };
   } catch (err) {
+    if (container.isConnected) syncLocalCopy(container);
+    if (isStaleConflict(err) && st.currentStory.id) {
+      showConflict(container);
+      setInlineError(container, CONTENT_CONFLICT_MESSAGE);
+      return { ok: false };
+    }
     const msg = auto ? err.message : showApiError(err);
     setInlineError(container, msg);
     return { ok: false };
@@ -420,6 +581,13 @@ function bindEditorListeners(container) {
     }
   });
 
+  container.querySelector('#btn-conflict-copy').addEventListener('click', () => copyMyText(container));
+  container.querySelector('#btn-conflict-reload').addEventListener('click', async () => {
+    clearTimeout(st.autosaveTimer);
+    syncLocalCopy(container);
+    await renderEditor(container, st.currentStory.id);
+  });
+
   container.querySelector('#btn-save-draft').addEventListener('click', async () => {
     clearTimeout(st.autosaveTimer);
     st.autosavePending = false;
@@ -443,7 +611,8 @@ function triggerAutosave(container) {
   const dot = container.querySelector('#autosave-dot');
   const label = container.querySelector('#autosave-label');
   if (dot) dot.className = 'autosave-dot dirty';
-  const autosaveAllowed = st.currentStory.id && ['draft', 'changes_requested'].includes(st.currentStory.status) && canEdit(st.currentStory);
+  syncLocalCopy(container);
+  const autosaveAllowed = !st.conflict && st.currentStory.id && ['draft', 'changes_requested'].includes(st.currentStory.status) && canEdit(st.currentStory);
   if (label) label.textContent = autosaveAllowed ? 'Unsaved changes...' : 'Unsaved changes (use Save Draft)';
   clearTimeout(st.autosaveTimer);
   st.autosavePending = false;
