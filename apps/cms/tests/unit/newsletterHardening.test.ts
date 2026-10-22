@@ -99,14 +99,18 @@ describe('isPathInside (the import file must stay outside the repository)', () =
   })
 })
 
-describe('importer refuses unsubscribed and cleaned exports', () => {
-  it('UNSUB_TIME or CLEAN_TIME columns are refused, with or without --assume-subscribed', () => {
-    for (const col of ['UNSUB_TIME', 'CLEAN_TIME', 'Unsub Time']) {
-      const csv = `Email Address,Status,${col}\na@example.test,subscribed,2024-01-01 00:00:00`
-      for (const assumeSubscribed of [false, true]) {
-        const r = planMailchimpImport(csv, { assumeSubscribed })
-        expect(r.counts.refused, col).toBe('unsubscribed-or-cleaned-export')
-        expect(r.candidates).toEqual([])
+describe('importer turns unsubscribed and cleaned exports into blocking rows', () => {
+  it('UNSUB_TIME or CLEAN_TIME columns never produce a subscribed candidate, with or without --assume-subscribed', () => {
+    for (const [col, kind] of [['UNSUB_TIME', 'unsubscribed'], ['CLEAN_TIME', 'bounced'], ['Unsub Time', 'unsubscribed']] as const) {
+      for (const withStatus of [true, false]) {
+        const csv = withStatus
+          ? `Email Address,Status,${col}\na@example.test,subscribed,2024-01-01 00:00:00`
+          : `Email Address,${col}\na@example.test,2024-01-01 00:00:00`
+        for (const assumeSubscribed of [false, true]) {
+          const r = planMailchimpImport(csv, { assumeSubscribed })
+          expect(r.counts.refused, col).toBeUndefined()
+          expect(r.candidates.map((c) => c.kind), col).toEqual([kind])
+        }
       }
     }
   })

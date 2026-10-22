@@ -1,4 +1,4 @@
-# Church Times CMS — API contracts (v1.14)
+# Church Times CMS — API contracts (v1.15)
 
 Status: implemented on `agent/payload-core`. v1.1 added Turnstile, duplicate detection, staff auth/session
 contract and security hardening; v1.2 closes the verified security-review findings: media ownership, version
@@ -445,7 +445,8 @@ The CMS stores consent and subscribers; it does **not** send newsletters. Three 
   The mail is queued after the answer is built, so response time does not reveal whether the address existed.
 - **Neutral answer.** A new, an already-pending and an already-confirmed address all get the byte-identical
   `202 { "ok": true, "message": "If this address can be subscribed, we sent a confirmation email." }`. Pending: a fresh link replaces the old one.
-  Confirmed: nothing is sent or changed. **Unsubscribed or bounced: not re-added**; the row keeps its status, the same answer is returned, and a
+  Confirmed: nothing is sent or changed. An **imported row with no proven opt-in** (stored `pending`, `importedFrom = mailchimp-import-no-optin-time`) is
+  treated like any pending row (a fresh link; confirming records fresh consent now, under the wording version the person was shown). **Unsubscribed or bounced: not re-added**; the row keeps its status, the same answer is returned, and a
   fresh confirmation link is mailed. Opening it is the only way back (it also records fresh consent). A mail failure is logged and still answers `202`.
 - **Mail-bombing guards.** Beyond the 3 per hour per address: a resend cooldown `NEWSLETTER_RESEND_COOLDOWN_SECONDS` (600; inside it nothing is sent and the
   earlier link stays valid), a daily cap `NEWSLETTER_MAX_CONFIRM_MAILS_PER_DAY` (5 per rolling 24 h), and `bounced` addresses are never mailed automatically.
@@ -466,11 +467,13 @@ scanners that pre-fetch links change nothing.
   future newsletter can carry a working link). Sets `unsubscribed` and `unsubscribedAt`. Idempotent; an erased subscriber stays erased.
 - Both answer `200 { "ok": true }`. Any invalid, expired, used, forged or unknown token is the same `400 { "ok": false, "errors": [{ "message": "This link is no longer valid." }] }`.
 
-**Staff data.** `subscribers` (`/api/subscribers`, `admin` and `editor-in-chief` read; never anonymous, never in a public response): `email` (unique,
+**Staff data.** `subscribers` (`/api/subscribers`, **`admin` only** for read and update (the editor-in-chief cannot read subscriber data); never anonymous, never in a public response): `email` (unique,
 lower-cased), `name?`, `status` (`pending`, `confirmed`, `unsubscribed`, `bounced`, `erased`), `source`, `consentTextVersion`, `consentAt`, `confirmedAt?`,
-`unsubscribedAt?`, `ipHash`, `importedFrom?` (`web`, `mailchimp-import`); `confirmTokenHash` and `confirmTokenExpiresAt` exist but are invisible over REST
-and in the admin UI. Nothing can be created or deleted over REST; over REST staff may only move a status to `unsubscribed` or `bounced` (`confirmed` can
-only come from the double opt-in link or the import).
+`unsubscribedAt?`, `ipHash`, `importedFrom?` (`web`, `mailchimp-import`, `mailchimp-import-no-optin-time`); `confirmTokenHash` and `confirmTokenExpiresAt` exist but are invisible over REST
+and in the admin UI. Nothing can be created or deleted over REST; over REST an admin may only move a status to `unsubscribed` or `bounced` (`confirmed` can
+only come from the double opt-in link or the import). Such a change is audited (`subscriber.status-change`), stamps `unsubscribedAt` and clears any pending confirmation token.
+- **`GET /api/subscribers/:id/subject-data`** (`admin` only, audited as `subscriber.subject-export` without the address, `no-store`): everything held about one person for a
+  data-subject access request (no token hashes or mail counters); an erased row is `404`.
 - **`GET /api/subscribers/export?status=confirmed`**: CSV for `admin` only (401 anonymous, 403 others), `status` one of `pending`, `confirmed`
   (default), `unsubscribed`, `bounced` (else 400), `Cache-Control: no-store`, audited (`subscriber.export`, count only). Columns: `email,name,status,source,consentAt,confirmedAt,unsubscribedAt,importedFrom`.
   A cell starting with `=`, `+`, `-`, `@`, tab or CR is prefixed with `'`.
@@ -478,13 +481,23 @@ only come from the double opt-in link or the import).
   are cleared, `status` is `erased`. The row is a suppression record that the importer honours. Erasure does **not** touch `contact-messages` from the same
   address (an admin deletes those manually), and rotating `IP_HASH_SALT` breaks the suppression match.
 - **Import CLI** `npm run import:subscribers -- --file <csv> [--apply] [--assume-subscribed]` (server-side only, no endpoint). Dry run by default; output is
-  counts only, never an address. The file must be outside the repository. Only rows Mailchimp marks `subscribed` are imported, as `confirmed`,
-  `importedFrom = mailchimp-import`, `consentAt` = `OPTIN_TIME` (else `CONFIRM_TIME`, else the import time). Header names are matched loosely (`Email Address`,
-  `First Name`, `Last Name`, `OPTIN_TIME`, `CONFIRM_TIME`, `Status`). No Status column: refused unless `--assume-subscribed` (the "Subscribed" segment export).
-  A file with `UNSUB_TIME` or `CLEAN_TIME` columns (unsubscribed or cleaned export) is refused, even with `--assume-subscribed`. A row with no `OPTIN_TIME` is
-  imported with `consentAt` null and `importedFrom = mailchimp-import-no-optin-time`, and counted in the report (the import time is never used as consent
-  time). A path inside the repository is refused (real paths, case-insensitive on Windows). Errors print only class and code.
-  Existing rows and erased addresses are skipped, never overwritten. Commenters, form senders and every other source are never imported.
+  counts only, never an address. The file must be outside the repository. Header names are matched loosely (`Email Address`, `First Name`, `Last Name`,
+  `OPTIN_TIME`, `CONFIRM_TIME`, `Status`, `UNSUB_TIME`, `CLEAN_TIME`). Times must be exactly `YYYY-MM-DD HH:MM:SS` (UTC); any other shape, an impossible date or a
+  future time counts as no time.
+  - `subscribed` with an `OPTIN_TIME`: stored `confirmed`, `importedFrom = mailchimp-import`, `consentAt` = `OPTIN_TIME`, `confirmedAt` = `CONFIRM_TIME` **only** (null when absent; never copied from `OPTIN_TIME`).
+  - `subscribed` with **no valid `OPTIN_TIME`** (no proof of consent): stored **`pending`**, `consentAt` and `confirmedAt` null, `importedFrom = mailchimp-import-no-optin-time`. Such a row is
+    excluded from every send and from `GET /api/subscribers/export?status=confirmed` until the person confirms (re-permission below).
+  - `unsubscribed` or `cleaned` rows, and files with `UNSUB_TIME` / `CLEAN_TIME` columns, are imported as **blocking rows** (`unsubscribed` / `bounced`, `unsubscribedAt` set). An existing
+    confirmed or pending row that the export lists as unsubscribed or cleaned is moved to that status. Other existing rows and erased addresses are never overwritten.
+  - No Status column: refused unless `--assume-subscribed` (the "Subscribed" segment export), except UNSUB_TIME / CLEAN_TIME files which are always blocking.
+  - An `--apply` run writes one audit row `subscriber.import` (counts, file SHA-256, operator name; no personal data). A path inside the repository is refused. Errors print only class and code.
+- **Re-permission** `npm run newsletter:reconfirm -- --dry-run|--apply [--limit N] [--deadline YYYY-MM-DD] [--throttle-ms N]` (server-side, dry run by default, `--dry-run` with `--apply` is an error). For
+  the `pending` rows imported without an opt-in time and never mailed only: creates a confirmation token (valid until the end of the deadline day UTC, default 30 days), sets
+  `consentTextVersion = mailchimp-reconfirm-v1` and sends ONE plain-text mail through the configured mailer (throttled, default 1 s). Resumable (a row is stamped before sending; a failed send clears
+  the stamp so the next run retries it; 5 consecutive failures stop the run). Counts-only output and audit row (`subscriber.reconfirm-run`); no address or token is printed or logged.
+  Opening the link sets `confirmed`, `consentAt` = now and keeps the `mailchimp-reconfirm-v1` version, so consent is provable.
+- **Purge** `npm run newsletter:purge-unconfirmed -- --deadline YYYY-MM-DD --dry-run|--apply [--limit N] [--include-unsent]`: refuses until the deadline has passed. Reduces still-`pending` imported rows that were mailed
+  (with `--include-unsent` also those never mailed) to the salted-hash suppression record (as erase). Dry run by default; audited (`subscriber.purge-unconfirmed`, counts only).
 - Provider sync (Mailchimp API) is **not implemented** and off.
 
 ## 5. Staff authentication and sessions
@@ -900,6 +913,15 @@ proxy) and https-only `CMS_PUBLIC_URL`/CORS/CSRF settings (`docs/security.md`). 
 limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/operations.md` §4).
 
 ## 9. Changelog
+
+### v1.15: Newsletter consent hardening (NDPA)
+**Behaviour change** for the subscriber import and subscriber staff access; no public response changes (subscribe, confirm and unsubscribe answers are byte-identical to v1.14).
+- Import: rows with no valid `OPTIN_TIME` are stored `pending` (previously `confirmed`) and excluded from sends and the confirmed export; `confirmedAt` comes from `CONFIRM_TIME` only
+  (previously `CONFIRM_TIME ?? OPTIN_TIME`); times must be exactly `YYYY-MM-DD HH:MM:SS` UTC (previously other date formats were parsed); unsubscribed and cleaned exports are imported as blocking rows
+  (previously refused); an `--apply` run is audited. Confirming an imported `pending` row records fresh consent.
+- New server-side commands `npm run newsletter:reconfirm` and `npm run newsletter:purge-unconfirmed`; new consent version `mailchimp-reconfirm-v1`.
+- `/api/subscribers` read and update are now `admin` only (was admin and editor-in-chief); staff status changes are audited and set `unsubscribedAt`; new `GET /api/subscribers/:id/subject-data`.
+- No migration (existing enum values and columns are reused).
 
 ### v1.14: Go-live C3 advertising
 Go-live contract C3 (advertising). Additive, except that approving an ad campaign through the API requires `expectedUpdatedAt` (new collection, no existing client).

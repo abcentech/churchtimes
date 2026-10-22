@@ -51,7 +51,7 @@ export async function claimSubmissionForConversion(req: PayloadRequest, id: numb
  * observed status, the same token hash and an unexpired token, and it clears the token in the same statement. Of two
  * simultaneous confirms exactly one gets a row back (the other blocks on the row lock, re-evaluates the WHERE under
  * READ COMMITTED and matches nothing). Returns true for the single winner. A subscriber coming back from
- * `unsubscribed` or `bounced` also gets fresh consent (`consent_at`, `consent_text_version`); `unsubscribed_at` is cleared.
+ * `unsubscribed` or `bounced` also gets fresh consent (an imported `pending` row with no opt-in time too, since its consent was never proven) (`consent_at`, `consent_text_version`); `unsubscribed_at` is cleared.
  */
 export async function claimSubscriberConfirmation(
   req: PayloadRequest | { payload: PayloadRequest['payload'] },
@@ -64,8 +64,11 @@ export async function claimSubscriberConfirmation(
       "status" = 'confirmed',
       "confirmed_at" = now(),
       "unsubscribed_at" = null,
-      "consent_at" = case when "status" <> 'pending' then now() else "consent_at" end,
-      "consent_text_version" = case when "status" <> 'pending' then ${args.consentTextVersion} else "consent_text_version" end,
+      "consent_at" = case when "status" <> 'pending' or "imported_from"::text = 'mailchimp-import-no-optin-time' then now() else "consent_at" end,
+      "consent_text_version" = case
+        when "status" <> 'pending' then ${args.consentTextVersion}
+        when "imported_from"::text = 'mailchimp-import-no-optin-time' and "consent_text_version" = 'mailchimp-import-v1' then ${args.consentTextVersion}
+        else "consent_text_version" end,
       "confirm_token_hash" = null,
       "confirm_token_expires_at" = null,
       "updated_at" = now()

@@ -1,8 +1,9 @@
 import { Forbidden } from 'payload'
-import type { CollectionBeforeChangeHook, CollectionConfig } from 'payload'
+import type { CollectionAfterChangeHook, CollectionBeforeChangeHook, CollectionConfig } from 'payload'
 
-import { editorInChiefOnly } from '../access/roles'
-import { exportSubscribersEndpoint, eraseSubscriberEndpoint } from '../endpoints/subscriberStaff'
+import { adminOnly } from '../access/roles'
+import { writeAuditLog } from '../lib/audit'
+import { exportSubscribersEndpoint, eraseSubscriberEndpoint, subjectExportEndpoint } from '../endpoints/subscriberStaff'
 import { clampLimit } from '../lib/clampLimit'
 import { SUBSCRIBER_STATUSES } from '../lib/newsletter'
 import { isValidEmail } from '../lib/sanitize'
@@ -29,7 +30,42 @@ const guardStatusChange: CollectionBeforeChangeHook = ({ data, originalDoc, oper
 }
 
 /**
- * Newsletter subscribers (go-live contract C4.3). Staff-only: `admin` and `editor-in-chief` read; nobody anonymous,
+ * Staff status changes (REST, admin UI): audited, and a move to `unsubscribed` or `bounced` stamps `unsubscribedAt` (unsubscribed)
+ * and invalidates any pending confirmation token, so an old link cannot bring the person back. Done in afterChange with a
+ * system write because token and timestamp fields are not client-writable.
+ */
+const auditStaffStatusChange: CollectionAfterChangeHook = async ({ doc, previousDoc, operation, req }) => {
+  if (req.context?.subscriberSystemWrite || operation !== 'update' || !previousDoc) return doc
+  const from = previousDoc.status as string
+  const to = doc.status as string
+  if (from === to) return doc
+  if (to === 'unsubscribed' || to === 'bounced') {
+    await req.payload.update({
+      collection: 'subscribers',
+      id: doc.id,
+      data: {
+        ...(to === 'unsubscribed' ? { unsubscribedAt: new Date().toISOString() } : {}),
+        confirmTokenHash: null,
+        confirmTokenExpiresAt: null,
+      } as never,
+      overrideAccess: true,
+      context: { subscriberSystemWrite: true },
+      req,
+    })
+  }
+  await writeAuditLog(req, {
+    action: 'subscriber.status-change',
+    collection: 'subscribers',
+    docId: doc.id,
+    fromStatus: from,
+    toStatus: to,
+    summary: `Staff changed subscriber ${doc.id} from ${from} to ${to}`,
+  })
+  return doc
+}
+
+/**
+ * Newsletter subscribers (go-live contract C4.3). Staff-only: `admin` only (read and update; the editor-in-chief cannot read personal data); nobody anonymous,
  * never in a public response. Nothing is created or deleted over REST: sign-ups arrive through
  * POST /api/public/newsletter/subscribe (double opt-in) or the Mailchimp import CLI, and "delete" is the audited
  * erase action (POST /api/subscribers/:id/erase, admin only) that keeps a suppression record without the address.
@@ -39,14 +75,14 @@ export const Subscribers: CollectionConfig = {
   admin: {
     useAsTitle: 'email',
     defaultColumns: ['email', 'status', 'source', 'consentAt', 'confirmedAt'],
-    description: 'Newsletter subscribers. Export (admin only): GET /api/subscribers/export?status=confirmed.',
+    description: 'Newsletter subscribers (admin only). Export: GET /api/subscribers/export?status=confirmed. Per-person data export: GET /api/subscribers/:id/subject-data.',
   },
-  endpoints: [exportSubscribersEndpoint, eraseSubscriberEndpoint],
-  hooks: { beforeOperation: [clampLimit], beforeChange: [guardStatusChange] },
+  endpoints: [exportSubscribersEndpoint, eraseSubscriberEndpoint, subjectExportEndpoint],
+  hooks: { beforeOperation: [clampLimit], beforeChange: [guardStatusChange], afterChange: [auditStaffStatusChange] },
   access: {
-    read: editorInChiefOnly,
+    read: adminOnly,
     create: () => false,
-    update: editorInChiefOnly,
+    update: adminOnly,
     delete: () => false,
   },
   fields: [
