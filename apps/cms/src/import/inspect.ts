@@ -128,7 +128,7 @@ export async function runInspectCli(argv: readonly string[], io: CliIo, cwd: str
     return 2
   }
   const abs = path.resolve(cwd, file)
-  if (isInsideRepo(abs, cwd)) {
+  if (isInsideRepo(file, cwd) || isInsideRepo(abs, cwd)) {
     io.err('INSPECT_FILE_INSIDE_REPO')
     return 2
   }
