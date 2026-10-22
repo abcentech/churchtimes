@@ -24,6 +24,7 @@
     "import:wxr": "payload run src/seed/importWxr.ts --",
     "import:rollback": "payload run src/seed/importRollback.ts --",
     "import:rehearse": "tsx scripts/import-rehearse.ts",
+    "perf:read": "tsx scripts/perf-read-paths.ts",
     "import:redirects": "payload run src/scripts/importRedirects.ts --",
     "import:convert": "tsx src/scripts/convertHtmlReport.ts",
     "db:local": "node scripts/local-db.mjs",
