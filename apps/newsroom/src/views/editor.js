@@ -112,6 +112,7 @@ export async function renderEditor(container, storyId = null) {
 
   const editable = canEdit(story);
   const readonlyAttr = editable ? '' : 'readonly';
+  const slugLocked = story.publishedAt ? 'readonly' : '';
   const bodyReadonly = !editable || story.lossy ? 'readonly' : '';
 
   container.innerHTML = `
@@ -142,7 +143,7 @@ export async function renderEditor(container, storyId = null) {
     <div id="editor-error" data-testid="editor-error" role="alert" class="validation-summary-alert" style="display:none; margin-bottom: 1rem;"></div>
     <div id="schedule-panel" class="ethics-notice-box" data-testid="editor-schedule-panel" style="display:none; margin-bottom: 1rem;"></div>
     ${!editable ? `<div class="ethics-notice-box" data-testid="editor-readonly-note" style="margin-bottom:1rem;"><p style="margin:0;">You can read this story but not edit it in its current status.</p></div>` : ''}
-    ${story.lossy ? `<div class="ethics-notice-box" data-testid="editor-lossy-note" style="margin-bottom:1rem;"><p style="margin:0;">This story contains elements the newsroom editor cannot represent (for example embedded video, nested lists, underline, alignment or links that open in a new tab). The body is read-only here so nothing is lost; edit the body in the CMS admin.</p></div>` : ''}
+    ${story.lossy ? `<div class="ethics-notice-box" data-testid="editor-lossy-note" style="margin-bottom:1rem;"><p style="margin:0;">This story contains elements the newsroom editor cannot represent (for example embedded video, nested lists, underline, alignment or links that open in a new tab). The body is read-only here so nothing is lost. Most imported (archive) articles can only have their body edited in the CMS admin; headline, standfirst and other fields can still be edited here.</p></div>` : ''}
 
     <div id="review-notes-banner" class="ethics-notice-box" style="display:none; margin-bottom: 1rem;" data-testid="editor-review-notes">
       <h4 id="review-notes-title">Editorial Review Notes</h4>
@@ -173,7 +174,8 @@ export async function renderEditor(container, storyId = null) {
           <div class="form-group">
             <label for="story-slug-input" class="form-label">URL Slug</label>
             <input type="text" id="story-slug-input" data-testid="editor-slug" class="form-input" maxlength="160"
-              value="${escapeHtml(story.slug)}" placeholder="generated from the headline" ${readonlyAttr} />
+              value="${escapeHtml(story.slug)}" placeholder="generated from the headline" ${readonlyAttr || slugLocked} />
+            ${slugLocked ? `<div class="form-hint" data-testid="editor-slug-locked" style="font-size:0.75rem;color:var(--color-muted);margin-top:0.25rem;">Locked: this story is published, so its URL is fixed. Only the editor-in-chief or an admin can change it in the CMS admin (a redirect is created).</div>` : ''}
           </div>
         </div>
 
