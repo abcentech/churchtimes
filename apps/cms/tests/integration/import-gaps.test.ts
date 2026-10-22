@@ -57,19 +57,21 @@ afterAll(async () => {
 describe('importer gaps', () => {
   it('keeps one category per post and reports what the schema cannot hold', async () => {
     const before = await users()
-    const rep = await runImport(f.payload, { file: exportFile, manifestPath: manifestFile, dryRun: false })
+    const rep = await runImport(f.payload, { file: exportFile, manifestPath: manifestFile, dryRun: false, fallbackCategory: { slug: `${runId}-cat-fallback`, title: 'Gap fallback' } })
     expect(rep.articles.created).toBe(4)
 
     const docs = await articles()
     const catOf = async (legacyId: number) =>
       ((await f.payload.findByID({ collection: 'categories', id: byLegacy(docs, legacyId).category, depth: 0, overrideAccess: true })) as unknown as { slug: string }).slug
     expect(await catOf(ids.multi)).toBe(`${runId}-news`) // a real category beats Uncategorised
-    expect(await catOf(ids.plain)).toBe('uncategorised') // none given: the fallback
+    expect(await catOf(ids.plain)).toBe(`${runId}-cat-fallback`) // none given: the configured fallback
 
     // News is created once and shared; sport and faith (not kept) are never created; uncategorised is not created for the multi post
     const made = await f.payload.find({ collection: 'categories', where: { slug: { like: runId } }, limit: 20, depth: 0, overrideAccess: true })
     expect((made.docs as unknown as Array<{ slug: string }>).map((c) => c.slug).filter((s) => !s.includes('-cat-')).sort()).toEqual([`${runId}-news`])
     expect(rep.categories).toMatchObject({ postsWithExtraCategories: 1, extraCategoriesDropped: 3, fallbackUsed: 1 })
+    expect(rep.categories.bySource).toEqual({ wordpress: 3, yoastPrimary: 0, tagMap: 0, generic: 0, fallback: 1 })
+    expect(rep.seo.titleFrom.none).toBe(4)
 
     // the manifest records the created category ids exactly
     const m = readManifest(manifestFile)

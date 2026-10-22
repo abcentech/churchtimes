@@ -208,4 +208,15 @@ describe('cli arguments', () => {
     expect(parseImportArgs(['--file', 'a.xml', '--update'], {})).toMatchObject({ update: true, forceUpdate: false })
     expect(parseImportArgs(['--file', 'a.xml', '--force-update'], {})).toMatchObject({ update: true, forceUpdate: true })
   })
+
+  it('takes the category map and the fallback category from flags or the environment', () => {
+    expect(parseImportArgs(['--file', 'a.xml'], {})).toMatchObject({ categoryMapFile: undefined, fallbackCategory: undefined })
+    expect(parseImportArgs(['--file', 'a.xml', '--category-map', 'm.json'], {})?.categoryMapFile).toBe('m.json')
+    expect(parseImportArgs(['--file', 'a.xml'], { IMPORT_CATEGORY_MAP: 'env.json' })?.categoryMapFile).toBe('env.json')
+    expect(parseImportArgs(['--file', 'a.xml', '--fallback-category', 'general'], {})?.fallbackCategory).toEqual({ slug: 'general', title: 'general' })
+    expect(parseImportArgs(['--file', 'a.xml', '--fallback-category', 'general', '--fallback-category-name', 'General'], {})?.fallbackCategory).toEqual({ slug: 'general', title: 'General' })
+    expect(parseImportArgs(['--file', 'a.xml'], { IMPORT_FALLBACK_CATEGORY_NAME: 'Daily' })?.fallbackCategory).toEqual({ slug: 'news', title: 'Daily' })
+    expect(parseImportArgs(['--file', 'a.xml', '--fallback-category', 'Bad Slug'], {})).toBeNull()
+    expect(parseImportArgs(['--file', 'a.xml', '--category-map'], {})).toBeNull()
+  })
 })

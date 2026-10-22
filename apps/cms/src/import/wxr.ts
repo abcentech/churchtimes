@@ -83,6 +83,12 @@ export type WxrSeo = {
   rankMathDescription: string | null
   yoastTitle: string | null
   yoastDescription: string | null
+  /** Further Yoast values: the schema has no field for canonical, noindex or social text, so the importer only counts them. */
+  yoastCanonical: string | null
+  yoastNoindex: string | null
+  yoastPrimaryCategory: string | null
+  yoastSocialTitle: string | null
+  yoastSocialDescription: string | null
 }
 
 export type WxrItem = {
@@ -173,6 +179,13 @@ const META_KEYS = new Set([
   'rank_math_description',
   '_yoast_wpseo_title',
   '_yoast_wpseo_metadesc',
+  '_yoast_wpseo_canonical',
+  '_yoast_wpseo_meta-robots-noindex',
+  '_yoast_wpseo_primary_category',
+  '_yoast_wpseo_opengraph-title',
+  '_yoast_wpseo_opengraph-description',
+  '_yoast_wpseo_twitter-title',
+  '_yoast_wpseo_twitter-description',
   '_wp_attachment_image_alt',
   '_wp_attached_file',
 ])
@@ -289,6 +302,11 @@ function finalizeItem(d: ItemDraft): WxrItem {
       rankMathDescription: orNull(m.get('rank_math_description')),
       yoastTitle: orNull(m.get('_yoast_wpseo_title')),
       yoastDescription: orNull(m.get('_yoast_wpseo_metadesc')),
+      yoastCanonical: orNull(m.get('_yoast_wpseo_canonical')),
+      yoastNoindex: orNull(m.get('_yoast_wpseo_meta-robots-noindex')),
+      yoastPrimaryCategory: orNull(m.get('_yoast_wpseo_primary_category')),
+      yoastSocialTitle: orNull(m.get('_yoast_wpseo_opengraph-title') ?? m.get('_yoast_wpseo_twitter-title')),
+      yoastSocialDescription: orNull(m.get('_yoast_wpseo_opengraph-description') ?? m.get('_yoast_wpseo_twitter-description')),
     },
     hasPassword: (f.password ?? '') !== '',
     parentId: toInt(f.parent),
