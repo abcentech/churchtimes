@@ -13,6 +13,7 @@ import * as migration_20261020_144045_ad_campaigns from './20261020_144045_ad_ca
 import * as migration_20261021_100000_article_legacy_id_unique from './20261021_100000_article_legacy_id_unique';
 import * as migration_20261021_110000_submission_consent from './20261021_110000_submission_consent';
 import * as migration_20261022_125053_audit_actor_snapshot from './20261022_125053_audit_actor_snapshot';
+import * as migration_20261022_141856_article_list_index from './20261022_141856_article_list_index';
 
 export const migrations = [
   {
@@ -89,5 +90,10 @@ export const migrations = [
     up: migration_20261022_125053_audit_actor_snapshot.up,
     down: migration_20261022_125053_audit_actor_snapshot.down,
     name: '20261022_125053_audit_actor_snapshot',
+  },
+  {
+    up: migration_20261022_141856_article_list_index.up,
+    down: migration_20261022_141856_article_list_index.down,
+    name: '20261022_141856_article_list_index'
   },
 ];

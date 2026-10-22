@@ -15,6 +15,8 @@ export type LargeOptions = {
   /** Prefix for slugs and categories, so a shared database can tell the rows apart. */
   prefix: string
   seed?: number
+  /** Comments per post are 0..maxComments-1 (default 5). */
+  maxComments?: number
 }
 
 export const IMAGE_DIR = '2097/05'
@@ -97,7 +99,7 @@ export function largeWxr(o: LargeOptions): LargeExport {
     if (i % 29 === 0) parts.push(`<p><a href="https://old.example.test/${o.prefix}-story-${Math.max(0, i - 1)}/">sister</a> <a href="javascript:alert(1)">bad link</a></p>`)
 
     const comments: FixtureComment[] = []
-    const nComments = Math.floor(rand() * 5)
+    const nComments = Math.floor(rand() * (o.maxComments ?? 5))
     for (let c = 0; c < nComments; c++) {
       const cid = commentId++
       comments.push({
