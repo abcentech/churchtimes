@@ -13,7 +13,8 @@ import { ApiError, toApiError } from './errors.js';
 import { createCountCache } from './count-cache.js';
 import { liveUpdatePayload } from '../live-photo.js';
 import { loadLiveTimeline } from '../live-timeline.js';
-import { liveStatusBody, transitionBody } from '../stale-guard.js';
+import { liveStatusBody, transitionBody, contentPatchBody } from '../stale-guard.js';
+import { withTimeout, RequestTimeoutError, timeoutFor } from '../http-guard.js';
 
 const ID_RE = /^\d+$/;
 
@@ -191,19 +192,45 @@ export class CmsAdapter {
     } else if (form) {
       init.body = form; // multipart: let the browser set the boundary
     }
-    let res;
     try {
-      res = await fetch(url, init);
-    } catch {
-      throw new ApiError('Cannot reach the CMS. Check your connection and try again.', { status: 0, network: true });
-    }
-    if (!res.ok) {
-      const err = await toApiError(res);
-      if (res.status === 401 && auth) this.handleUnauthorized();
+      return await withTimeout(timeoutFor({ form }), async (signal) => {
+        init.signal = signal;
+        let res;
+        try {
+          res = await fetch(url, init);
+        } catch (err) {
+          if (err?.name === 'AbortError') throw err;
+          throw new ApiError('Cannot reach the CMS. Check your connection and try again.', { status: 0, network: true });
+        }
+        this.emit('network', true);
+        if (!res.ok) {
+          const err = await toApiError(res);
+          if (res.status === 401 && auth) this.handleUnauthorized();
+          if (res.status === 403 && auth && method !== 'GET') {
+            // A revoked/expired session can look like a permission refusal: confirm before saying "not permitted".
+            if (!(await this.verifySession())) {
+              throw new ApiError('Your session has ended. Please sign in again. Your unsaved text is kept on this device.', { status: 401 });
+            }
+          }
+          throw err;
+        }
+        if (res.status === 204) return null;
+        try { return await res.json(); } catch { return null; }
+      });
+    } catch (err) {
+      if (err instanceof RequestTimeoutError) {
+        this.emit('network', false);
+        throw new ApiError('The CMS took too long to respond. Check your connection and try again.', { status: 0, network: true });
+      }
+      if (err?.network) this.emit('network', false);
       throw err;
     }
-    if (res.status === 204) return null;
-    try { return await res.json(); } catch { return null; }
+  }
+
+  /** Extend the 8 hour session. Called periodically while the user is active; failures other than 401 are ignored. */
+  async refreshSession() {
+    if (!this.currentUser) return false;
+    try { await this.request('/users/refresh', { method: 'POST' }); return true; } catch { return false; }
   }
 
   handleUnauthorized() {
@@ -369,9 +396,10 @@ export class CmsAdapter {
   }
 
   /** PATCH only the supplied (changed) fields. */
-  async updateArticle(id, changes) {
-    const body = CmsAdapter.toCmsFields(changes);
-    if (!Object.keys(body).length) return this.getArticle(id);
+  async updateArticle(id, changes, { expectedUpdatedAt } = {}) {
+    const fields = CmsAdapter.toCmsFields(changes);
+    if (!Object.keys(fields).length) return this.getArticle(id);
+    const body = contentPatchBody(fields, expectedUpdatedAt);
     try {
       const data = await this.request(`/articles/${encodeURIComponent(safeId(id))}`, {
         method: 'PATCH', json: body, query: { depth: '1' }

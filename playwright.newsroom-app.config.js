@@ -48,6 +48,7 @@ export default defineConfig({
   testMatch: ['newsroom.spec.js', 'newsroom-security.spec.js'],
   fullyParallel: false,
   workers: 1,
+  retries: process.env.CI ? 1 : 0,
   reporter: [['list']],
   use: {
     baseURL: `http://127.0.0.1:${mockPort}/`,
