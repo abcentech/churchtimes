@@ -242,14 +242,14 @@ export async function runWxrReportCli(argv: readonly string[], io: CliIo, cwd: s
     return 2
   }
   const abs = path.resolve(cwd, file)
-  if (isInsideRepo(abs, cwd)) {
+  if (isInsideRepo(file, cwd) || isInsideRepo(abs, cwd)) {
     io.err('REPORT_FILE_INSIDE_REPO')
     return 2
   }
   let detailAbs: string | undefined
   if (detail) {
     detailAbs = path.resolve(cwd, detail)
-    if (isInsideRepo(detailAbs, cwd)) {
+    if (isInsideRepo(detail, cwd) || isInsideRepo(detailAbs, cwd)) {
       io.err('REPORT_DETAIL_INSIDE_REPO')
       return 2
     }
