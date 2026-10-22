@@ -21,6 +21,9 @@ export type ValidSubmission = {
   body: string
   categorySuggestion?: string
   location?: string
+  /** True only when the client sent consent === true. */
+  consent?: boolean
+  consentTextVersion?: string
 }
 
 export type ValidationResult =
@@ -32,7 +35,15 @@ export type ValidationResult =
  * Pure validation + sanitising of the raw JSON body. Only whitelisted fields are copied;
  * unknown fields (including `status`, `reference`, ...) are ignored.
  */
-export function validateSubmissionInput(raw: unknown): ValidationResult {
+/** SUBMISSIONS_REQUIRE_CONSENT=true|1 makes consent: true mandatory (400 field consent). Default false. */
+export function isConsentRequired(env: Record<string, string | undefined> = process.env): boolean {
+  return /^(true|1)$/i.test((env.SUBMISSIONS_REQUIRE_CONSENT ?? '').trim())
+}
+
+export function validateSubmissionInput(
+  raw: unknown,
+  opts: { requireConsent?: boolean } = {},
+): ValidationResult {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     return { ok: false, errors: [{ message: 'Request body must be a JSON object.' }] }
   }
@@ -75,6 +86,16 @@ export function validateSubmissionInput(raw: unknown): ValidationResult {
   if (!email) errors.push({ field: 'email', message: 'Email is required.' })
   else if (!isValidEmail(email)) errors.push({ field: 'email', message: 'Enter a valid email address.' })
 
+  let consent = false
+  if (input.consent !== undefined && input.consent !== null) {
+    if (typeof input.consent !== 'boolean') errors.push({ field: 'consent', message: 'Consent must be true or false.' })
+    else consent = input.consent
+  }
+  if (!consent && (opts.requireConsent ?? isConsentRequired()) && !errors.some((e) => e.field === 'consent')) {
+    errors.push({ field: 'consent', message: 'You must agree to the terms to submit your story.' })
+  }
+  const consentTextVersion = consent ? cleanText(input.consentTextVersion, { max: 80 }) : ''
+
   if (errors.length) return { ok: false, errors }
 
   return {
@@ -88,6 +109,8 @@ export function validateSubmissionInput(raw: unknown): ValidationResult {
       ...(phone ? { phone } : {}),
       ...(categorySuggestion ? { categorySuggestion } : {}),
       ...(location ? { location } : {}),
+      ...(consent ? { consent: true } : {}),
+      ...(consentTextVersion ? { consentTextVersion } : {}),
     },
   }
 }
@@ -292,7 +315,24 @@ export const publicSubmissionsEndpoint: Endpoint = {
     try {
       const doc = await req.payload.create({
         collection: 'submissions',
-        data: { ...result.data, status: 'new', reference, ipHash, userAgent, contentHash } as never,
+        data: {
+          name: result.data.name,
+          email: result.data.email,
+          phone: result.data.phone,
+          title: result.data.title,
+          body: result.data.body,
+          categorySuggestion: result.data.categorySuggestion,
+          location: result.data.location,
+          // Server time, never client-supplied. Absent when the client sent no consent.
+          ...(result.data.consent
+            ? { consentAt: new Date().toISOString(), consentTextVersion: result.data.consentTextVersion }
+            : {}),
+          status: 'new',
+          reference,
+          ipHash,
+          userAgent,
+          contentHash,
+        } as never,
         overrideAccess: true,
       })
       await writeAuditLog(req, {

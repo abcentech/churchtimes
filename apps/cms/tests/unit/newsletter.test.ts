@@ -186,17 +186,22 @@ describe('planMailchimpImport (synthetic data)', () => {
     const { counts, candidates } = planMailchimpImport(file, { now: NOW })
     expect(counts).toMatchObject({
       rowsRead: 9,
-      candidates: 4,
-      skippedNotSubscribed: 3,
+      candidates: 6,
+      blockingCandidates: 2,
+      skippedNotSubscribed: 1,
       skippedInvalidEmail: 1,
       skippedDuplicateInFile: 1,
     })
     expect(candidates.map((c) => c.email)).toEqual([
       'ada@example.test',
       'bola@example.test',
+      'cleaned@example.test',
+      'gone@example.test',
       'chi@example.test',
       'future@example.test',
     ])
+    expect(candidates.find((c) => c.email === 'cleaned@example.test')!.kind).toBe('bounced')
+    expect(candidates.find((c) => c.email === 'gone@example.test')!.kind).toBe('unsubscribed')
   })
 
   it('uses the Mailchimp OPTIN_TIME as consentAt and stores nothing when it is missing (never the import time)', () => {
@@ -207,7 +212,7 @@ describe('planMailchimpImport (synthetic data)', () => {
       consentAt: '2024-03-01T09:30:00.000Z',
       confirmedAt: '2024-03-01T09:31:00.000Z',
     })
-    // confirm time only: confirmedAt is known, consent time is not
+    // confirm time only: carried as confirmedAt, but with no opt-in time the importer stores the row pending (see integration tests)
     expect(by['bola@example.test']).toMatchObject({ name: 'Bola', confirmedAt: '2024-04-02T10:00:00.000Z' })
     expect('consentAt' in by['bola@example.test']!).toBe(false)
     // neither time: nothing is invented
@@ -239,9 +244,9 @@ describe('planMailchimpImport (synthetic data)', () => {
     expect(JSON.stringify(planMailchimpImport(file, { now: NOW }).counts)).not.toContain('@')
   })
 
-  it('parseMailchimpTime reads UTC "YYYY-MM-DD HH:MM:SS" and ISO, and drops junk', () => {
+  it('parseMailchimpTime reads UTC "YYYY-MM-DD HH:MM:SS" and nothing else', () => {
     expect(parseMailchimpTime('2024-03-01 09:30:00', NOW)).toBe('2024-03-01T09:30:00.000Z')
-    expect(parseMailchimpTime('2024-03-01T09:30:00Z', NOW)).toBe('2024-03-01T09:30:00.000Z')
+    expect(parseMailchimpTime('2024-03-01T09:30:00Z', NOW)).toBeUndefined() // only the exact Mailchimp format is a time
     expect(parseMailchimpTime('garbage', NOW)).toBeUndefined()
     expect(parseMailchimpTime('', NOW)).toBeUndefined()
   })

@@ -10,6 +10,7 @@ import {
   firstConfirmMailCounters,
   generateConfirmToken,
   hashToken,
+  IMPORT_NO_OPTIN_MARKER,
   INVALID_LINK_MESSAGE,
   isPlausibleToken,
   NEUTRAL_SUBSCRIBE_MESSAGE,
@@ -44,6 +45,7 @@ type SubscriberDoc = {
   id: number
   email: string
   status: 'pending' | 'confirmed' | 'unsubscribed' | 'bounced' | 'erased'
+  importedFrom?: string | null
   lastConfirmMailAt?: string | null
   confirmMailsDayStart?: string | null
   confirmMailsInDay?: number | null
@@ -174,7 +176,12 @@ async function subscribe(req: PayloadRequest, data: ValidSubscribe, ipHash: stri
   await payload.update({
     collection: 'subscribers',
     id: existing.id,
-    data: { ...tokenFields, ...decision.counters } as never,
+    data: {
+      ...tokenFields,
+      ...decision.counters,
+      // An imported row with no proof of opt-in is re-permissioned by this form: the wording the person just ticked is the consent on record.
+      ...(existing.importedFrom === IMPORT_NO_OPTIN_MARKER ? { consentTextVersion: NEWSLETTER_CONSENT_VERSION } : {}),
+    } as never,
     overrideAccess: true,
     context: internal,
   })

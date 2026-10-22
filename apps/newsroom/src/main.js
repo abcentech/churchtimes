@@ -11,7 +11,9 @@ import { store } from './store.js';
 import { showToast } from './components/toast.js';
 import { renderLogin } from './views/login.js';
 import { renderDashboard } from './views/dashboard.js';
-import { renderEditor, flushEditor } from './views/editor.js';
+import { renderEditor, confirmLeaveEditor, editorHash } from './views/editor.js';
+import { clearAllLocalCopies } from './draft-guard.js';
+import { createConnectionState, shouldRefreshSession } from './http-guard.js';
 import { renderReview } from './views/review.js';
 import { renderLive, stopLivePolling } from './views/live.js';
 import { renderMedia } from './views/media.js';
@@ -28,6 +30,7 @@ class NewsroomApp {
     this.host = null;
     this.loginNotice = '';
     this.returnHash = '';
+    this.currentHash = ''; // the hash of the last route that rendered (used to undo a cancelled navigation)
     this.navToken = 0; // incremented by every route() call; older (stale) calls stop after their next await
   }
 
@@ -36,6 +39,8 @@ class NewsroomApp {
     this.initNavLinks();
     this.initKeyboardShortcuts();
     this.initPublicLink();
+    this.initSkipLink();
+    this.initOfflineBanner();
 
     try {
       await initApi();
@@ -46,9 +51,11 @@ class NewsroomApp {
     }
 
     this.updateModeBanner();
-    api.subscribe((event) => {
+    api.subscribe((event, data) => {
       if (event === 'unauthorized') this.onSessionLost('Your session has ended. Please sign in again.', { keepReturn: true });
+      else if (event === 'network') this.connection?.[data ? 'reportSuccess' : 'reportFailure']();
       else if (event === 'session') {
+        this.lastRefresh = Date.now();
         this.updateSessionDisplay();
         getDevUi()?.syncMockRolePicker(api);
       }
@@ -67,6 +74,7 @@ class NewsroomApp {
     }
 
     window.addEventListener('hashchange', () => this.route());
+    this.initKeepAlive();
     store.subscribe((event, data) => {
       if (event === 'view_changed') {
         const id = data.payload?.storyId;
@@ -117,6 +125,7 @@ class NewsroomApp {
       </div>
       <button type="button" class="btn btn-outline btn-xs" id="btn-staff-logout" data-testid="logout" aria-label="Sign out of newsroom session">Log out</button>`;
     this.sessionChipEl.querySelector('#btn-staff-logout').addEventListener('click', async () => {
+      try { clearAllLocalCopies(window.sessionStorage); } catch { /* storage unavailable */ }
       const result = await api.logout();
       if (result && result.ok === false) {
         showToast('Signed out in this browser, but the CMS did not confirm the logout. The server session may still be active: close this browser window or sign out from another device.', 'error', 9000);
@@ -207,6 +216,46 @@ class NewsroomApp {
     });
   }
 
+  /** The skip link targets the <main> landmark, not a route: never let the hash router see it. */
+  initSkipLink() {
+    document.querySelector('.skip-link')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      this.mainEl?.focus();
+    });
+  }
+
+  /** Banner shown while the browser is offline or the CMS cannot be reached. */
+  initOfflineBanner() {
+    const banner = document.createElement('div');
+    banner.id = 'offline-banner';
+    banner.className = 'offline-banner';
+    banner.setAttribute('role', 'status');
+    banner.setAttribute('data-testid', 'offline-banner');
+    banner.hidden = true;
+    banner.textContent = 'You are offline or the CMS cannot be reached. Changes are not being saved. Your text stays on this page and in this tab; keep it open and it will retry when you save again.';
+    document.body.prepend(banner);
+    this.connection = createConnectionState(online => { banner.hidden = online; }, navigator.onLine !== false);
+    banner.hidden = this.connection.isOnline();
+    window.addEventListener('online', () => this.connection.setBrowserOnline(true));
+    window.addEventListener('offline', () => this.connection.setBrowserOnline(false));
+  }
+
+  /** The session cookie lasts 8 hours: extend it periodically while the user is active (typing, clicking, tapping). */
+  initKeepAlive() {
+    let lastActivity = Date.now();
+    this.lastRefresh = Date.now();
+    const touch = () => { lastActivity = Date.now(); };
+    ['pointerdown', 'keydown', 'touchstart'].forEach(ev => document.addEventListener(ev, touch, { passive: true }));
+    setInterval(async () => {
+      if (!api.getCurrentUser()) return;
+      const now = Date.now();
+      if (shouldRefreshSession({ now, lastActivity, lastRefresh: this.lastRefresh })) {
+        this.lastRefresh = now;
+        await api.refreshSession();
+      }
+    }, 60_000);
+  }
+
   initKeyboardShortcuts() {
     document.addEventListener('keydown', (e) => {
       if (!api.getCurrentUser()) return;
@@ -228,14 +277,29 @@ class NewsroomApp {
     // create a host or render; every earlier call returns as soon as it resumes from an await.
     const token = ++this.navToken;
     const isStale = () => token !== this.navToken;
-    const hash = window.location.hash.slice(1) || 'dashboard';
+    let hash = window.location.hash.slice(1) || 'dashboard';
+    if (hash === 'main-content') { // skip-link target (never a route): stay where we were
+      if (this.currentHash) {
+        if (this.lastView === 'editor' && this.host) this.currentHash = editorHash(this.host);
+        history.replaceState(null, '', `#${this.currentHash}`);
+        this.mainEl?.focus();
+        return;
+      }
+      hash = 'dashboard';
+    }
     const [viewName, queryString] = hash.split('?');
     const params = new URLSearchParams(queryString || '');
 
     // Leaving the editor: stop timers and flush a pending autosave while its DOM still exists.
     if (this.lastView === 'editor') {
-      if (this.host) await flushEditor(this.host);
+      const leave = this.host ? await confirmLeaveEditor(this.host) : true;
       if (isStale()) return;
+      if (!leave) { // the user chose to keep editing: put the address bar back and leave the editor untouched
+        this.currentHash = editorHash(this.host);
+        store.currentView = 'editor';
+        history.replaceState(null, '', `#${this.currentHash}`);
+        return;
+      }
     }
     stopLivePolling();
 
@@ -273,6 +337,7 @@ class NewsroomApp {
     const host = this.newHost();
     this.host = host;
     this.lastView = viewName;
+    this.currentHash = hash;
     store.currentView = viewName;
     this.updateNavActiveStates(viewName);
 

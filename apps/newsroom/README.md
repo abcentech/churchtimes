@@ -51,6 +51,15 @@ builds the app and asserts the bundle contains no demo password, mock data, role
 - Body is edited as a markdown subset and stored as Lexical JSON in `content` (`src/lexical.js`): paragraphs, h2/h3,
   bold, italic, quotes, bullet and numbered lists, `http(s)`/`mailto` links, and images. Stories containing anything
   else (embeds, nested lists, underline, uploads carrying extra data, ...) open with a read-only body so nothing is lost.
+- **Imported (archive) articles are mostly read-only here.** Bodies imported from WordPress usually contain YouTube embeds,
+  tables, h4 headings, new-tab links or uploads with extra data. Those open with a read-only body (the notice says so) and
+  the body can only be edited in the CMS admin; a title/standfirst edit sends only those fields, so the stored body is never
+  rewritten (fixture test in `test/lexical.test.js`). The review inspect modal shows a warning banner for such stories
+  ("body contains video/table content not shown; open in CMS admin before approving") and Approve asks for confirmation.
+- **Slug of a published story is read-only.** Once a story has `publishedAt` the URL slug cannot be edited here; the CMS
+  refuses a slug change on a published article (403) unless the user is editor-in-chief or admin (audit action
+  `article.slug-change`). An authorised change in the CMS admin creates a 301 redirect old -> new in the `redirects`
+  collection and re-points rules that targeted the old address. The archive importer is exempt.
 - Images inside the body: "Insert image" (body toolbar) opens the media picker (library or upload; alt text is required)
   and puts `![alt](media:<id>)` on a line of its own at the cursor. That line is stored as a Lexical upload node
   `{ type: 'upload', relationTo: 'media', value: <numeric id>, fields: null, format: '', id, version: 3 }` and read back

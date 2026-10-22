@@ -1,4 +1,4 @@
-# Church Times CMS — API contracts (v1.14)
+# Church Times CMS — API contracts (v1.17)
 
 Status: implemented on `agent/payload-core`. v1.1 added Turnstile, duplicate detection, staff auth/session
 contract and security hardening; v1.2 closes the verified security-review findings: media ownership, version
@@ -253,6 +253,8 @@ the widget's `action` must be one of the entries, otherwise 403.
   "body": "What happened…",           // required, 30–20 000, plain text
   "categorySuggestion": "News",       // optional, ≤ 100
   "location": "Ibadan",               // optional, ≤ 120
+  "consent": true,                    // optional boolean (v1.16); required when SUBMISSIONS_REQUIRE_CONSENT=true (400, field "consent")
+  "consentTextVersion": "2026-10",    // optional, ≤ 80; stored only together with consent: true
   "website": "",                      // honeypot — must be empty or absent
   "turnstileToken": "0.xxxx"          // REQUIRED: Cloudflare Turnstile token from the widget (≤ 2048 chars)
 }
@@ -445,7 +447,8 @@ The CMS stores consent and subscribers; it does **not** send newsletters. Three 
   The mail is queued after the answer is built, so response time does not reveal whether the address existed.
 - **Neutral answer.** A new, an already-pending and an already-confirmed address all get the byte-identical
   `202 { "ok": true, "message": "If this address can be subscribed, we sent a confirmation email." }`. Pending: a fresh link replaces the old one.
-  Confirmed: nothing is sent or changed. **Unsubscribed or bounced: not re-added**; the row keeps its status, the same answer is returned, and a
+  Confirmed: nothing is sent or changed. An **imported row with no proven opt-in** (stored `pending`, `importedFrom = mailchimp-import-no-optin-time`) is
+  treated like any pending row (a fresh link; confirming records fresh consent now, under the wording version the person was shown). **Unsubscribed or bounced: not re-added**; the row keeps its status, the same answer is returned, and a
   fresh confirmation link is mailed. Opening it is the only way back (it also records fresh consent). A mail failure is logged and still answers `202`.
 - **Mail-bombing guards.** Beyond the 3 per hour per address: a resend cooldown `NEWSLETTER_RESEND_COOLDOWN_SECONDS` (600; inside it nothing is sent and the
   earlier link stays valid), a daily cap `NEWSLETTER_MAX_CONFIRM_MAILS_PER_DAY` (5 per rolling 24 h), and `bounced` addresses are never mailed automatically.
@@ -466,11 +469,13 @@ scanners that pre-fetch links change nothing.
   future newsletter can carry a working link). Sets `unsubscribed` and `unsubscribedAt`. Idempotent; an erased subscriber stays erased.
 - Both answer `200 { "ok": true }`. Any invalid, expired, used, forged or unknown token is the same `400 { "ok": false, "errors": [{ "message": "This link is no longer valid." }] }`.
 
-**Staff data.** `subscribers` (`/api/subscribers`, `admin` and `editor-in-chief` read; never anonymous, never in a public response): `email` (unique,
+**Staff data.** `subscribers` (`/api/subscribers`, **`admin` only** for read and update (the editor-in-chief cannot read subscriber data); never anonymous, never in a public response): `email` (unique,
 lower-cased), `name?`, `status` (`pending`, `confirmed`, `unsubscribed`, `bounced`, `erased`), `source`, `consentTextVersion`, `consentAt`, `confirmedAt?`,
-`unsubscribedAt?`, `ipHash`, `importedFrom?` (`web`, `mailchimp-import`); `confirmTokenHash` and `confirmTokenExpiresAt` exist but are invisible over REST
-and in the admin UI. Nothing can be created or deleted over REST; over REST staff may only move a status to `unsubscribed` or `bounced` (`confirmed` can
-only come from the double opt-in link or the import).
+`unsubscribedAt?`, `ipHash`, `importedFrom?` (`web`, `mailchimp-import`, `mailchimp-import-no-optin-time`); `confirmTokenHash` and `confirmTokenExpiresAt` exist but are invisible over REST
+and in the admin UI. Nothing can be created or deleted over REST; over REST an admin may only move a status to `unsubscribed` or `bounced` (`confirmed` can
+only come from the double opt-in link or the import). Such a change is audited (`subscriber.status-change`), stamps `unsubscribedAt` and clears any pending confirmation token.
+- **`GET /api/subscribers/:id/subject-data`** (`admin` only, audited as `subscriber.subject-export` without the address, `no-store`): everything held about one person for a
+  data-subject access request (no token hashes or mail counters); an erased row is `404`.
 - **`GET /api/subscribers/export?status=confirmed`**: CSV for `admin` only (401 anonymous, 403 others), `status` one of `pending`, `confirmed`
   (default), `unsubscribed`, `bounced` (else 400), `Cache-Control: no-store`, audited (`subscriber.export`, count only). Columns: `email,name,status,source,consentAt,confirmedAt,unsubscribedAt,importedFrom`.
   A cell starting with `=`, `+`, `-`, `@`, tab or CR is prefixed with `'`.
@@ -478,13 +483,23 @@ only come from the double opt-in link or the import).
   are cleared, `status` is `erased`. The row is a suppression record that the importer honours. Erasure does **not** touch `contact-messages` from the same
   address (an admin deletes those manually), and rotating `IP_HASH_SALT` breaks the suppression match.
 - **Import CLI** `npm run import:subscribers -- --file <csv> [--apply] [--assume-subscribed]` (server-side only, no endpoint). Dry run by default; output is
-  counts only, never an address. The file must be outside the repository. Only rows Mailchimp marks `subscribed` are imported, as `confirmed`,
-  `importedFrom = mailchimp-import`, `consentAt` = `OPTIN_TIME` (else `CONFIRM_TIME`, else the import time). Header names are matched loosely (`Email Address`,
-  `First Name`, `Last Name`, `OPTIN_TIME`, `CONFIRM_TIME`, `Status`). No Status column: refused unless `--assume-subscribed` (the "Subscribed" segment export).
-  A file with `UNSUB_TIME` or `CLEAN_TIME` columns (unsubscribed or cleaned export) is refused, even with `--assume-subscribed`. A row with no `OPTIN_TIME` is
-  imported with `consentAt` null and `importedFrom = mailchimp-import-no-optin-time`, and counted in the report (the import time is never used as consent
-  time). A path inside the repository is refused (real paths, case-insensitive on Windows). Errors print only class and code.
-  Existing rows and erased addresses are skipped, never overwritten. Commenters, form senders and every other source are never imported.
+  counts only, never an address. The file must be outside the repository. Header names are matched loosely (`Email Address`, `First Name`, `Last Name`,
+  `OPTIN_TIME`, `CONFIRM_TIME`, `Status`, `UNSUB_TIME`, `CLEAN_TIME`). Times must be exactly `YYYY-MM-DD HH:MM:SS` (UTC); any other shape, an impossible date or a
+  future time counts as no time.
+  - `subscribed` with an `OPTIN_TIME`: stored `confirmed`, `importedFrom = mailchimp-import`, `consentAt` = `OPTIN_TIME`, `confirmedAt` = `CONFIRM_TIME` **only** (null when absent; never copied from `OPTIN_TIME`).
+  - `subscribed` with **no valid `OPTIN_TIME`** (no proof of consent): stored **`pending`**, `consentAt` and `confirmedAt` null, `importedFrom = mailchimp-import-no-optin-time`. Such a row is
+    excluded from every send and from `GET /api/subscribers/export?status=confirmed` until the person confirms (re-permission below).
+  - `unsubscribed` or `cleaned` rows, and files with `UNSUB_TIME` / `CLEAN_TIME` columns, are imported as **blocking rows** (`unsubscribed` / `bounced`, `unsubscribedAt` set). An existing
+    confirmed or pending row that the export lists as unsubscribed or cleaned is moved to that status. Other existing rows and erased addresses are never overwritten.
+  - No Status column: refused unless `--assume-subscribed` (the "Subscribed" segment export), except UNSUB_TIME / CLEAN_TIME files which are always blocking.
+  - An `--apply` run writes one audit row `subscriber.import` (counts, file SHA-256, operator name; no personal data). A path inside the repository is refused. Errors print only class and code.
+- **Re-permission** `npm run newsletter:reconfirm -- --dry-run|--apply [--limit N] [--deadline YYYY-MM-DD] [--throttle-ms N]` (server-side, dry run by default, `--dry-run` with `--apply` is an error). For
+  the `pending` rows imported without an opt-in time and never mailed only: creates a confirmation token (valid until the end of the deadline day UTC, default 30 days), sets
+  `consentTextVersion = mailchimp-reconfirm-v1` and sends ONE plain-text mail through the configured mailer (throttled, default 1 s). Resumable (a row is stamped before sending; a failed send clears
+  the stamp so the next run retries it; 5 consecutive failures stop the run). Counts-only output and audit row (`subscriber.reconfirm-run`); no address or token is printed or logged.
+  Opening the link sets `confirmed`, `consentAt` = now and keeps the `mailchimp-reconfirm-v1` version, so consent is provable.
+- **Purge** `npm run newsletter:purge-unconfirmed -- --deadline YYYY-MM-DD --dry-run|--apply [--limit N] [--include-unsent]`: refuses until the deadline has passed. Reduces still-`pending` imported rows that were mailed
+  (with `--include-unsent` also those never mailed) to the salted-hash suppression record (as erase). Dry run by default; audited (`subscriber.purge-unconfirmed`, counts only).
 - Provider sync (Mailchimp API) is **not implemented** and off.
 
 ## 5. Staff authentication and sessions
@@ -678,6 +693,45 @@ new `file` to replace the file):
   unchanged. **Caching:** do not put a long-lived shared cache in front of `/api/media/file/*` without revalidation: a file
   stops being public when its article is unpublished. A media file that was public stays reachable by anyone who has already
   downloaded it, obviously. Note the freeze above still includes `scheduled` articles (their media is frozen but private).
+
+### Go-live A12: legacy media map (offline export)
+
+Not an HTTP endpoint. The public host must serve `/wp-content/uploads/*` from an exact, privately provisioned map, with no anonymous
+media scan and no staff credential on the public host. The CMS side is an offline export run by the owner:
+`npm run export:media-map -- [--out <file>] [--aliases <json>] [--detail-file <path>]` (`apps/cms/src/lib/mediaMapExport.ts`, `mediaMapData.ts`, `mediaMapCli.ts`).
+
+- **Privacy.** A media is exported only if an ANONYMOUS reader can read it at export time under the media read rule (§3: media of a published
+  article, an approved live update of a live/ended event, a delivered ad creative). The exporter asks the CMS with `overrideAccess: false`
+  and no user, so drafts, in-review, scheduled, archived/withdrawn and unreferenced media are never listed. `legacyPath` (staff-only) is
+  read by a trusted second read of every media that has one. The file carries no ids, alt, caption, credit, uploader or any staff field, and no
+  count of private media (that count, `notAnonymous`, is printed by the CLI only).
+- **Format** (`media-map/1`, JSON, UTF-8): `{ version, generatedAt, counts: { entries, aliases }, contentSha256, entries, aliases }`.
+  `entries[]` = `{ path, file, mime, size }`: `path` is the legacy path after `/wp-content/uploads/` (NFC, percent-decoded once, no duplicate,
+  leading or trailing slash, no `.`/`..`, case-sensitive, exact match); `file` is the CMS public file URL path, matching
+  `^/api/media/file/[A-Za-z0-9][A-Za-z0-9._-]*$`; `mime` is `image/jpeg|png|webp`; `size` is bytes. Sorted by `path` in code-unit order.
+  `aliases[]` = `{ alias, path }`, sorted by `alias`.
+  **This differs from the flat proposal in PR #58** (`entries[{legacyPath, mediaPath, mimeType}]` with aliases as ordinary entries, plus `revision`):
+  #58 must be updated to this contract, or the host must adapt. The host must validate every entry at load itself (`validateMediaMapBody` is a reference).
+- **Limits** (aligned with #58): at most 50,000 entries counting map entries plus aliases, and 8 MiB serialised. The export fails with
+  `media-map-too-many-entries` / `media-map-too-large` and writes nothing.
+- **Aliases.** A size-suffix alias (`photo-300x200.jpg` -> `photo.jpg`) exists only when it is recorded in the owner's `--aliases` JSON
+  (`[{ "alias": ..., "path": ... }]`) AND the alias equals the original with exactly one `-WxH` suffix before the extension AND the original is an
+  exported entry AND no media at all (exported or not) claims the alias as its own exact path. Otherwise it is dropped and itemised in the detail file.
+  The host tries the exact entry first, then the alias; it never strips suffixes itself.
+- **Ambiguity.** Two media (any visibility: draft, private, withdrawn included) claiming one normalised path are ambiguous: neither is exported.
+- **Digests.** `file-sha256` is the sha256 of the EXACT bytes of the map file; it is the provisioning check, printed by the CLI and written next to
+  the map as `<out>.sha256` (`<hex>  <file name>`, `sha256sum -c` compatible). `contentSha256` (inside the file) is only a stable content id: it ignores
+  `generatedAt` and formatting, so the same content gives the same id on every run. The digest detects accidental damage; it is not a signature.
+- **CLI.** Without `--out` it is a dry run printing counts and both digests only. `--out` and `--detail-file` must be outside the repository
+  (refused with exit 2, also when reached through a symlink or junction). Files are written to a temp file in the target folder, then renamed over the
+  target, mode `0600` (no effect on Windows: protect the folder with its permissions there). `--detail-file` itemises ambiguities and rejected aliases
+  (it names paths and media ids). Output never prints a path or file name.
+- **Withdrawal.** The public host is designed (#58) as no-store with an anonymous CMS check on every request, so revocation is immediate: once media
+  stops being anonymously readable the CMS file URL answers 403/404 and the host serves 404, before any re-export. Re-export (and replacing the map
+  atomically) then removes the entry and the alias, so it stops being mapped at all. Notes: an ad creative stops being public when its campaign
+  ends; media still used by another published article stays public and stays mapped. Images already downloaded cannot be recalled. If a bounded
+  cache is ever introduced the staleness window is export time + host reload + cache lifetime; #58 keeps no-store.
+- Not covered: aliases are not recorded on the media document (no schema change); the owner supplies them. `HEAD`/range behaviour belongs to the host.
 
 ## 7. Error shape
 
@@ -900,6 +954,26 @@ proxy) and https-only `CMS_PUBLIC_URL`/CORS/CSRF settings (`docs/security.md`). 
 limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/operations.md` §4).
 
 ## 9. Changelog
+
+### v1.17: Newsletter consent hardening (NDPA)
+**Behaviour change** for the subscriber import and subscriber staff access; no public response changes (subscribe, confirm and unsubscribe answers are byte-identical to v1.14).
+- Import: rows with no valid `OPTIN_TIME` are stored `pending` (previously `confirmed`) and excluded from sends and the confirmed export; `confirmedAt` comes from `CONFIRM_TIME` only
+  (previously `CONFIRM_TIME ?? OPTIN_TIME`); times must be exactly `YYYY-MM-DD HH:MM:SS` UTC (previously other date formats were parsed); unsubscribed and cleaned exports are imported as blocking rows
+  (previously refused); an `--apply` run is audited. Confirming an imported `pending` row records fresh consent.
+- New server-side commands `npm run newsletter:reconfirm` and `npm run newsletter:purge-unconfirmed`; new consent version `mailchimp-reconfirm-v1`.
+- `/api/subscribers` read and update are now `admin` only (was admin and editor-in-chief); staff status changes are audited and set `unsubscribedAt`; new `GET /api/subscribers/:id/subject-data`.
+- No migration (existing enum values and columns are reused).
+
+### v1.16: submission consent
+Additive. `POST /api/public/submissions` accepts optional boolean `consent` (non-boolean → 400 field `consent`) and `consentTextVersion`.
+When `consent` is `true` the CMS stores `submissions.consentAt` (server time, never client-supplied) and `consentTextVersion`; both are readable by
+staff only. New env `SUBMISSIONS_REQUIRE_CONSENT` (default `false`): when `true`, a missing or false `consent` is a 400 on field `consent`.
+Migration `20261021_110000_submission_consent` (nullable columns). Submitter `email`/`phone` stay readable by every editor role (admin,
+editor-in-chief, section-editor): the newsroom review queue displays them and verifying a tip needs them. Restricting them to editor-in-chief/admin is a
+product decision recorded here, not made.
+
+### v1.15: Go-live A12 legacy media map
+Additive, no schema change. New offline command `npm run export:media-map` and the `media-map/1` file format (§ "Go-live A12: legacy media map (offline export)"). No new HTTP route; media read access is unchanged.
 
 ### v1.14: Go-live C3 advertising
 Go-live contract C3 (advertising). Additive, except that approving an ad campaign through the API requires `expectedUpdatedAt` (new collection, no existing client).

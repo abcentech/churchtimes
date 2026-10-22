@@ -464,6 +464,8 @@ export interface Submission {
   article?: (number | null) | Article;
   ipHash?: string | null;
   contentHash?: string | null;
+  consentAt?: string | null;
+  consentTextVersion?: string | null;
   userAgent?: string | null;
   updatedAt: string;
   createdAt: string;
@@ -877,6 +879,8 @@ export interface SubmissionsSelect<T extends boolean = true> {
   article?: T;
   ipHash?: T;
   contentHash?: T;
+  consentAt?: T;
+  consentTextVersion?: T;
   userAgent?: T;
   updatedAt?: T;
   createdAt?: T;

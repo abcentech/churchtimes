@@ -40,6 +40,7 @@ import {
   isArticleStatus,
 } from '../workflow/articleWorkflow'
 import { reconcileCorrections } from '../workflow/corrections'
+import { articlePath, resolveArticlePathTemplate } from '../lib/redirectPaths'
 
 export { ARTICLE_STATUSES }
 
@@ -396,6 +397,80 @@ const enforceWorkflow: CollectionBeforeChangeHook = async ({ data, originalDoc, 
   return data
 }
 
+/**
+ * A published article's slug is its public address. Changing it breaks every link, bookmark and search result for the
+ * old URL, so after `publishedAt` is set only an editor-in-chief or admin may change it (403 otherwise). Server-side
+ * callers (seed, archive importer, scheduler) are exempt: the importer owns its own slugs and redirects.
+ */
+const slugGuardExempt = (req: { context?: unknown }): boolean => {
+  const ctx = (req.context ?? {}) as { seed?: boolean; import?: boolean; systemTransition?: boolean }
+  return ctx.seed === true || ctx.import === true || ctx.systemTransition === true
+}
+
+const guardPublishedSlug: CollectionBeforeChangeHook = async ({ data, originalDoc, operation, req }) => {
+  if (operation === 'create' || slugGuardExempt(req)) return data
+  const orig = (originalDoc ?? {}) as Doc
+  if (!orig.publishedAt || typeof data.slug !== 'string' || data.slug === orig.slug) return data
+  if (!isEditorInChief(asUser(req.user))) {
+    return fail(403, 'The URL slug of a published story can only be changed by the editor-in-chief or an admin.')
+  }
+  return data
+}
+
+/**
+ * Audit a slug change on a published article and keep the old URL alive: a 301 rule old -> new in `redirects` (C7).
+ * Rules already pointing at the old address are re-pointed at the new one (no chains), and a stale rule sending the new
+ * address back to the old one is removed. Runs in the request transaction: if the redirect cannot be written (for example
+ * a conflicting rule) the whole slug change is rolled back with an error.
+ */
+const redirectOnSlugChange: CollectionAfterChangeHook = async ({ doc, previousDoc, operation, req }) => {
+  if (operation !== 'update' || slugGuardExempt(req)) return doc
+  const prev = (previousDoc ?? {}) as Doc
+  const next = doc as Doc
+  if (!prev.publishedAt || typeof prev.slug !== 'string' || typeof next.slug !== 'string' || prev.slug === next.slug) return doc
+
+  const template = resolveArticlePathTemplate()
+  const oldPath = articlePath(template, prev.slug)
+  const newPath = articlePath(template, next.slug)
+  const opts = { overrideAccess: true, req, depth: 0, limit: 100 } as const
+
+  const back = await req.payload.find({ collection: 'redirects', where: { and: [{ from: { equals: newPath } }, { to: { equals: oldPath } }] }, ...opts })
+  for (const r of back.docs) await req.payload.delete({ collection: 'redirects', id: r.id, overrideAccess: true, req })
+
+  const pointing = await req.payload.find({ collection: 'redirects', where: { to: { equals: oldPath } }, ...opts })
+  for (const r of pointing.docs) {
+    await req.payload.update({ collection: 'redirects', id: r.id, data: { to: newPath }, overrideAccess: true, req })
+  }
+
+  const existing = await req.payload.find({ collection: 'redirects', where: { from: { equals: oldPath } }, ...opts })
+  const note = `Slug of article ${String(doc.id)} changed from "${prev.slug}" to "${next.slug}"`
+  if (existing.docs[0]) {
+    await req.payload.update({
+      collection: 'redirects',
+      id: existing.docs[0].id,
+      data: { to: newPath, status: 301, note },
+      overrideAccess: true,
+      req,
+    })
+  } else {
+    await req.payload.create({
+      collection: 'redirects',
+      data: { from: oldPath, to: newPath, status: 301, source: 'manual', note },
+      overrideAccess: true,
+      req,
+    })
+  }
+  await writeAuditLog(req, {
+    action: 'article.slug-change',
+    collection: 'articles',
+    docId: doc.id,
+    toStatus: next.status as string,
+    summary: `Slug changed: ${prev.slug} -> ${next.slug}`,
+    details: { before: prev.slug, after: next.slug, redirect: `${oldPath} -> ${newPath}` },
+  })
+  return doc
+}
+
 const auditChanges: CollectionAfterChangeHook = async ({ doc, previousDoc, operation, req }) => {
   const ctx = (req.context ?? {}) as {
     seed?: boolean
@@ -520,9 +595,9 @@ export const Articles: CollectionConfig = {
   hooks: {
     beforeOperation: [clampLimit, markRestore, captureExpectedUpdatedAt],
     beforeValidate: [autoSlug, normalizeSeoFields, validateEmbeds, validateBodyImages],
-    beforeChange: [assertExpectedUpdatedAt('articles'), deriveBodyMedia, enforceWorkflow],
+    beforeChange: [assertExpectedUpdatedAt('articles'), deriveBodyMedia, guardPublishedSlug, enforceWorkflow],
     beforeDelete: [refuseDeleteWithLegacyComments],
-    afterChange: [auditChanges],
+    afterChange: [auditChanges, redirectOnSlugChange],
     afterDelete: [auditDelete],
   },
   fields: [

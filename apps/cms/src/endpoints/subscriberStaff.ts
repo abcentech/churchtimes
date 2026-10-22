@@ -78,6 +78,50 @@ export const exportSubscribersEndpoint: Endpoint = {
 }
 
 /**
+ * GET /api/subscribers/:id/subject-data (admin only, audited without the address): everything held about ONE person, for a
+ * data-subject access request. Token hashes and mail counters are internal and omitted. Erased rows hold only a hash: 404.
+ */
+const SUBJECT_FIELDS = [
+  'email',
+  'name',
+  'status',
+  'source',
+  'consentTextVersion',
+  'consentAt',
+  'confirmedAt',
+  'unsubscribedAt',
+  'importedFrom',
+  'ipHash',
+  'createdAt',
+  'updatedAt',
+] as const
+
+export const subjectExportEndpoint: Endpoint = {
+  path: '/:id/subject-data',
+  method: 'get',
+  handler: guarded('subscriber subject export', async (req: PayloadRequest) => {
+    const user = req.user as UserLike | null
+    if (!user) return err(401, 'Authentication required.')
+    if (!isAdmin(user)) return err(403, 'Only an admin can export the data held about a subscriber.')
+    const id = String(req.routeParams?.id ?? '')
+    if (!/^[0-9]{1,18}$/.test(id)) return err(404, 'Subscriber not found.')
+    const doc = (await req.payload
+      .findByID({ collection: 'subscribers', id, depth: 0, overrideAccess: true, req })
+      .catch(() => null)) as Record<string, unknown> | null
+    if (!doc || doc.status === 'erased') return err(404, 'Subscriber not found.')
+    const data: Record<string, unknown> = {}
+    for (const k of SUBJECT_FIELDS) data[k] = doc[k] ?? null
+    await writeAuditLog(req, {
+      action: 'subscriber.subject-export',
+      collection: 'subscribers',
+      docId: id,
+      summary: `Data-subject export of subscriber ${id}`,
+    })
+    return Response.json({ ok: true, subscriber: data }, { headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } })
+  }),
+}
+
+/**
  * POST /api/subscribers/:id/erase (admin only). Replaces the address with its salted hash, clears the name,
  * the IP hash and any pending token, and sets `erased`. The row stays as a suppression record: it proves the
  * person asked to be forgotten (the importer will not bring the address back) without keeping the address.
