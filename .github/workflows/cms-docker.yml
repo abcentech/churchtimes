@@ -26,6 +26,7 @@ concurrency:
 
 env:
   IMAGE: churchtimes-cms:ci
+  MIGRATOR_IMAGE: churchtimes-cms-migrator:ci
   NETWORK: ctcms-ci
   PG_CONTAINER: ctcms-ci-postgres
   CMS_CONTAINER: ctcms-ci-cms
@@ -84,11 +85,23 @@ jobs:
         with:
           context: apps/cms
           file: apps/cms/Dockerfile
+          target: runtime
           load: true
           push: false
           tags: ${{ env.IMAGE }}
           cache-from: type=gha,scope=cms-docker
           cache-to: type=gha,scope=cms-docker,mode=max,ignore-error=true
+
+      - name: Build migrator image
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/cms
+          file: apps/cms/Dockerfile
+          target: migrator
+          load: true
+          push: false
+          tags: ${{ env.MIGRATOR_IMAGE }}
+          cache-from: type=gha,scope=cms-docker
 
       - name: Image hygiene (non-root user, no secrets baked in)
         run: |
@@ -130,7 +143,7 @@ jobs:
           docker network create "$NETWORK"
           docker run -d --name "$PG_CONTAINER" --network "$NETWORK" \
             -e POSTGRES_USER=churchtimes -e POSTGRES_PASSWORD="$PG_PASSWORD" -e POSTGRES_DB=churchtimes_ci \
-            postgres:16
+            postgres:16-bookworm
           for i in $(seq 1 30); do
             if docker exec "$PG_CONTAINER" pg_isready -U churchtimes -d churchtimes_ci -h 127.0.0.1 >/dev/null 2>&1; then
               echo "postgres ready after ${i} attempt(s)"; exit 0
@@ -143,7 +156,8 @@ jobs:
         # The container does not migrate on start (see the Dockerfile header); releases run this step first.
         run: |
           set -euo pipefail
-          docker run --rm --network "$NETWORK" --env-file "$ENV_FILE" "$IMAGE" npm run migrate
+          # Production migrates with the migrator target (full dependency tree), read-only and without capabilities.
+          docker run --rm --network "$NETWORK" --env-file "$ENV_FILE" -e SCHEDULER_ENABLED=false             --read-only --cap-drop ALL --security-opt no-new-privileges:true             --tmpfs /tmp:size=256m,mode=1777 --tmpfs /app/.next/cache:size=256m,uid=1000,gid=1000,mode=0755             "$MIGRATOR_IMAGE"
           echo "tables after migrate:"
           docker exec "$PG_CONTAINER" psql -U churchtimes -d churchtimes_ci -Atc \
             "select count(*) from information_schema.tables where table_schema='public'"
@@ -153,8 +167,18 @@ jobs:
       - name: Start CMS container
         run: |
           set -euo pipefail
+          # Same hardening as docker-compose.production.yml: read-only root, tmpfs scratch, no capabilities, uid 1000,
+          # memory limit and V8 heap cap. A bind mount stands in for /srv/churchtimes/media (owned by uid 1000).
+          mkdir -p "$RUNNER_TEMP/media" && sudo chown 1000:1000 "$RUNNER_TEMP/media"
           docker run -d --name "$CMS_CONTAINER" --network "$NETWORK" --init \
+            --user 1000:1000 --read-only --cap-drop ALL --security-opt no-new-privileges:true \
+            --tmpfs /tmp:size=256m,mode=1777 --tmpfs /app/.next/cache:size=256m,uid=1000,gid=1000,mode=0755 \
+            --memory 1280m --memory-swap 1280m \
+            -e NODE_OPTIONS="--no-deprecation --max-old-space-size=960" \
+            -v "$RUNNER_TEMP/media:/app/media" \
             --env-file "$ENV_FILE" -p "127.0.0.1:${CMS_PORT}:3000" "$IMAGE"
+          [ "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' "$CMS_CONTAINER")" = "true" ]
+          [ "$(docker inspect -f '{{json .HostConfig.CapDrop}}' "$CMS_CONTAINER")" = '["ALL"]' ]
 
       - name: Wait for the CMS to answer
         run: |
@@ -221,6 +245,20 @@ jobs:
           done
           echo "smoke OK"
 
+      - name: Validate the production compose file
+        working-directory: apps/cms
+        # Syntax and interpolation only (placeholder values, nothing is started). Docker is the only place this can run.
+        run: |
+          set -euo pipefail
+          umask 077
+          echo "ci-only-not-a-secret" > "$RUNNER_TEMP/pgpass"
+          : > "$RUNNER_TEMP/dummy.env"
+          export CMS_IMAGE=example.invalid/cms@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          export CMS_MIGRATOR_IMAGE="$CMS_IMAGE" CMS_ENV_FILE="$RUNNER_TEMP/dummy.env" POSTGRES_PASSWORD_FILE_PATH="$RUNNER_TEMP/pgpass"
+          docker compose -f docker-compose.production.yml --profile ops config > "$RUNNER_TEMP/compose.rendered.yml"
+          # Postgres must never publish a port.
+          ! docker compose -f docker-compose.production.yml config --format json | jq -e '.services.postgres.ports // empty | length > 0' >/dev/null
+
       - name: Container logs (on failure)
         if: failure()
         run: |
@@ -233,5 +271,52 @@ jobs:
         if: always()
         run: |
           docker rm -f "$CMS_CONTAINER" "$PG_CONTAINER" >/dev/null 2>&1 || true
+          sudo rm -rf "$RUNNER_TEMP/media" 2>/dev/null || true
           docker network rm "$NETWORK" >/dev/null 2>&1 || true
           rm -f "$RUNNER_TEMP/cms.env" "$RUNNER_TEMP"/image-env.txt "$RUNNER_TEMP"/image-history.txt "$RUNNER_TEMP"/cms.log "$RUNNER_TEMP"/me.* "$RUNNER_TEMP"/articles.json
+
+  # Publishes the two images to GHCR after the smoke job passed, on pushes to feat/newsroom-mvp only (never on pull requests,
+  # so fork PRs cannot reach it). Uses the workflow's own GITHUB_TOKEN: no repository secret is added. `packages: write` is
+  # granted to THIS job only. The digests are printed in the job summary: pin them in CMS_IMAGE / CMS_MIGRATOR_IMAGE.
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/feat/newsroom-mvp'
+    needs: docker-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push runtime image
+        id: runtime
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/cms
+          file: apps/cms/Dockerfile
+          target: runtime
+          push: true
+          tags: ghcr.io/abcentech/churchtimes-cms:sha-${{ github.sha }}
+          cache-from: type=gha,scope=cms-docker
+      - name: Build and push migrator image
+        id: migrator
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/cms
+          file: apps/cms/Dockerfile
+          target: migrator
+          push: true
+          tags: ghcr.io/abcentech/churchtimes-cms-migrator:sha-${{ github.sha }}
+          cache-from: type=gha,scope=cms-docker
+      - name: Print digests
+        run: |
+          {
+            echo "CMS_IMAGE=ghcr.io/abcentech/churchtimes-cms@${{ steps.runtime.outputs.digest }}"
+            echo "CMS_MIGRATOR_IMAGE=ghcr.io/abcentech/churchtimes-cms-migrator@${{ steps.migrator.outputs.digest }}"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
