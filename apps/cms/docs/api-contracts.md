@@ -942,18 +942,16 @@ limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/op
 
 ## 9. Changelog
 
-<<<<<<< HEAD
-### v1.15: submission consent
+### v1.16: submission consent
 Additive. `POST /api/public/submissions` accepts optional boolean `consent` (non-boolean → 400 field `consent`) and `consentTextVersion`.
 When `consent` is `true` the CMS stores `submissions.consentAt` (server time, never client-supplied) and `consentTextVersion`; both are readable by
 staff only. New env `SUBMISSIONS_REQUIRE_CONSENT` (default `false`): when `true`, a missing or false `consent` is a 400 on field `consent`.
 Migration `20261021_110000_submission_consent` (nullable columns). Submitter `email`/`phone` stay readable by every editor role (admin,
 editor-in-chief, section-editor): the newsroom review queue displays them and verifying a tip needs them. Restricting them to editor-in-chief/admin is a
 product decision recorded here, not made.
-=======
+
 ### v1.15: Go-live A12 legacy media map
 Additive, no schema change. New offline command `npm run export:media-map` and the `media-map/1` file format (§ "Go-live A12: legacy media map (offline export)"). No new HTTP route; media read access is unchanged.
->>>>>>> origin/feat/newsroom-mvp
 
 ### v1.14: Go-live C3 advertising
 Go-live contract C3 (advertising). Additive, except that approving an ad campaign through the API requires `expectedUpdatedAt` (new collection, no existing client).
