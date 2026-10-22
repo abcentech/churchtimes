@@ -162,7 +162,7 @@ code (`IMPORT_USAGE`, `IMPORT_FILE_INSIDE_REPO`, `IMPORT_FILE_UNREADABLE`, `IMPO
 
 - Posts with status `publish` and no password. Everything else is counted, never written: password-protected posts
   (`passwordProtected`), other statuses (`status-draft`, ...), missing id, date or title.
-- Article: title, slug (from `wp:post_name`; on a clash `-<wp id>`, then a number, is added; every candidate is checked, and links between articles use the FINAL slug), excerpt (plain text), body (converted),
+- Article: title, slug (from `wp:post_name`; on a clash `-<wp id>`, then a number, is added; every candidate is checked, and links between articles use the FINAL slug. Articles live at `/{slug}/` (owner decision D1), so a slug that equals a reserved route name such as `admin`, `api`, `search`, `category`, `newsletter` or `wp-json` (`src/lib/reservedSlugs.ts`) is never used: the post gets the `-<wp id>` form and the report line "slug is a reserved route name, renamed with the post id" counts it). Because the new address equals the WordPress address, an imported post with an unchanged slug needs NO redirect rule; rewritten internal links use `/{slug}/`, excerpt (plain text), body (converted),
   ONE category (see "Categories and authors" below), featured image (`_thumbnail_id`), byline text (see below), `publishedAt` (the GMT date), `legacyUrl` (the old permalink, see below), `legacyId`, Rank Math / Yoast title and description
   (dropped when they hold `%variables%` or are over the length limits, C2). Imported articles are `published`.
 - Approved ordinary comments through `toLegacyCommentData`, plus a second email-shaped-text pass over names and bodies
