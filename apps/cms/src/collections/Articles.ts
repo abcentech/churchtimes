@@ -583,6 +583,9 @@ export const Articles: CollectionConfig = {
     defaultColumns: ['title', 'status', 'category', 'updatedAt'],
     listSearchableFields: ['title', 'slug'],
   },
+  // Public list (status = published, newest first): a composite index lets Postgres read
+  // the page from the index (scanned backwards) instead of sorting every article row. See docs/performance.md.
+  indexes: [{ fields: ['status', 'publishedAt', 'createdAt'] }],
   versions: { maxPerDoc: 50 },
   endpoints: [articlePreviewTokenEndpoint],
   access: {

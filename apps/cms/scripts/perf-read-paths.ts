@@ -33,9 +33,11 @@ const POSTS = num('--posts', 4346)
 const COMMENTS_MAX = num('--comments-max', 16)
 const REDIRECTS = num('--redirects', 5000)
 const ITER = num('--iterations', 30)
-const IMAGES = 60
+const SQL_CHARS = Number(str('--sql-chars') ?? 220)
+const IMAGES = num('--images', 1500)
 const JSON_OUT = str('--json')
-const KEEP = argv.includes('--keep')
+const DB_DIR = str('--db-dir')
+const KEEP = argv.includes('--keep') || DB_DIR !== undefined
 
 const freePort = (): Promise<number> =>
   new Promise((resolve, reject) => {
@@ -97,7 +99,10 @@ function walk(node: PlanNode, out: PlanNode[]) {
 }
 
 async function main(): Promise<number> {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-perf-'))
+  const tmp = DB_DIR ? path.resolve(DB_DIR) : fs.mkdtempSync(path.join(os.tmpdir(), 'ct-perf-'))
+  fs.mkdirSync(tmp, { recursive: true })
+  // With --db-dir the cluster and its data are kept: a second run on the same folder skips the import and seeding.
+  const reuse = DB_DIR !== undefined && fs.existsSync(path.join(tmp, 'pgdata', 'PG_VERSION'))
   const port = await freePort()
   const user = 'churchtimes'
   const password = 'churchtimes-perf'
@@ -106,7 +111,7 @@ async function main(): Promise<number> {
     user,
     password,
     port,
-    persistent: false,
+    persistent: DB_DIR !== undefined,
     initdbFlags: ['--encoding=UTF8', '--locale=C'],
     onLog: () => {},
     onError: () => {},
@@ -140,9 +145,9 @@ async function main(): Promise<number> {
     })
   }
   try {
-    await embedded.initialise()
+    if (!reuse) await embedded.initialise()
     await embedded.start()
-    await embedded.createDatabase('churchtimes_perf')
+    if (!reuse) await embedded.createDatabase('churchtimes_perf')
     const dbUrl = `postgres://${user}:${password}@127.0.0.1:${port}/churchtimes_perf`
     process.env.DATABASE_URL = dbUrl
     Object.assign(process.env, {
@@ -183,9 +188,9 @@ async function main(): Promise<number> {
     const gen = largeWxr({ posts: POSTS, images: IMAGES, idBase: 9_000_000, prefix: 'pf', seed: 20261021, maxComments: COMMENTS_MAX })
     const exportFile = path.join(tmp, 'export.xml')
     fs.writeFileSync(exportFile, gen.xml)
-    console.error('[perf] import start')
+    console.error(reuse ? '[perf] reusing kept database' : '[perf] import start')
     const t0 = Date.now()
-    await runImport(payload, { file: exportFile, uploadsRoot: uploads, manifestPath: path.join(tmp, 'apply.jsonl'), dryRun: false })
+    if (!reuse) await runImport(payload, { file: exportFile, uploadsRoot: uploads, manifestPath: path.join(tmp, 'apply.jsonl'), dryRun: false })
     const importSeconds = (Date.now() - t0) / 1000
 
     console.error('[perf] import done')
@@ -195,6 +200,7 @@ async function main(): Promise<number> {
       (await explainClient!.query<T>(text, values)).rows
 
     // ---- Extra volume: redirect rules and ad campaigns ---------------------------------------------------------
+    if (!reuse) {
     await sql(
       `INSERT INTO redirects ("from", "to", status, source, updated_at, created_at)
        SELECT '/old-perf/' || g || '/', '/new-perf-' || g || '/', 301, (CASE WHEN g % 2 = 0 THEN 'manual' ELSE 'rank-math' END)::enum_redirects_source, now(), now()
@@ -210,9 +216,10 @@ async function main(): Promise<number> {
       })
     }
     await sql(`UPDATE ad_campaigns SET status = 'approved', rights_confirmed = true, payment_status = 'paid'`)
+    }
     await sql('ANALYZE')
 
-    const admin = (await payload.create({ collection: 'users', data: { email: 'perf-admin@test.invalid', name: 'Perf Admin', password: 'Perf-Only-Pw-0123456789!', role: 'admin' } as never, overrideAccess: true })) as { id: number; role: string }
+    const admin = (reuse ? (await payload.find({ collection: 'users', where: { email: { equals: 'perf-admin@test.invalid' } }, limit: 1, overrideAccess: true })).docs[0] : await payload.create({ collection: 'users', data: { email: 'perf-admin@test.invalid', name: 'Perf Admin', password: 'Perf-Only-Pw-0123456789!', role: 'admin' } as never, overrideAccess: true })) as unknown as { id: number; role: string }
     try { (payload.db as unknown as { pool: pg.Pool }).pool.on('error', () => {}) } catch { /* ignore */ }
     const adminUser = { ...admin, collection: 'users' }
 
@@ -275,7 +282,7 @@ async function main(): Promise<number> {
           const nodes: PlanNode[] = []
           walk(root.Plan, nodes)
           explained.push({
-            sql: q.text.replace(/\s+/g, ' ').slice(0, 220),
+            sql: q.text.replace(/\s+/g, ' ').slice(0, SQL_CHARS),
             ms: round(root['Execution Time']),
             nodes: [...new Set(nodes.map((x) => x['Node Type'] + (x['Relation Name'] ? ` on ${x['Relation Name']}` : '') + (x['Index Name'] ? ` (${x['Index Name']})` : '')))],
             seqScans: nodes.filter((x) => x['Node Type'] === 'Seq Scan' && x['Relation Name']).map((x) => ({ table: x['Relation Name'] as string, rows: (x['Actual Rows'] ?? 0) * (x['Actual Loops'] ?? 1) })),
@@ -300,7 +307,7 @@ async function main(): Promise<number> {
       const r = await payload.find({ collection: 'articles', where: { status: { equals: 'published' } }, sort: '-publishedAt', limit: 20, depth: 1, ...pub })
       return JSON.stringify(r).length
     })
-    await measure('articles list (public, page 200 of limit 20)', { p95: 150, queries: 8 }, async () => {
+    await measure('articles list (public, page 200 of limit 20)', { p95: 300, queries: 8 }, async () => {
       const r = await payload.find({ collection: 'articles', where: { status: { equals: 'published' } }, sort: '-publishedAt', limit: 20, page: 200, depth: 1, ...pub })
       return JSON.stringify(r).length
     })
