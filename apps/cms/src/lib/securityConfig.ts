@@ -79,6 +79,17 @@ export function insecureLocalStaging(env: NodeJS.ProcessEnv): InsecureLocalStagi
 }
 
 
+/**
+ * POST /api/users/first-register creates an admin from an unauthenticated request when the users table is empty. Outside
+ * production that is the normal bootstrap. In production it is refused unless ALLOW_FIRST_REGISTER=true (a deliberate,
+ * short-lived opt-in) or disposable loopback staging is on: create the first admin on the server instead
+ * (, docs/operations.md), before the reverse proxy exposes the site.
+ */
+export function firstRegisterAllowed(env: NodeJS.ProcessEnv): boolean {
+  if (env.NODE_ENV !== 'production') return true
+  return env.ALLOW_FIRST_REGISTER === 'true' || insecureLocalStaging(env).enabled
+}
+
 export type OriginCheckOptions = {
   name: string
   production: boolean
