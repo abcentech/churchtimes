@@ -118,6 +118,7 @@ message listing every problem (missing secrets, http or wildcard origins, dummy 
 | `PUBLIC_SUBMISSION_ORIGINS` | yes | `https://www.example.org` | Origins allowed to POST `/api/public/submissions`. If empty in production, browser submissions are rejected. |
 | `SUBMISSION_RATE_LIMIT` / `SUBMISSION_RATE_WINDOW_SECONDS` | no | `5` / `900` | Submissions per IP per window. |
 | `SUBMISSION_EMAIL_RATE_LIMIT` / `SUBMISSION_EMAIL_RATE_WINDOW_SECONDS` | no | `3` / `3600` | Submissions per e-mail address per window. |
+| `SUBMISSIONS_REQUIRE_CONSENT` | no | `false` | `true`/`1`: a story submission without `consent: true` is rejected (400, field `consent`). Keep false until the public form sends the checkbox; switch on after the public site is deployed with it. When consent is sent its server time is always stored. |
 | `SUBMISSION_DUPLICATE_WINDOW_HOURS` | no | `72` | Identical email+title+body inside this window is rejected (409). |
 | `CONTACT_RATE_LIMIT` / `CONTACT_RATE_WINDOW_SECONDS` | no | `5` / `900` | Contact messages per IP per window (`POST /api/public/contact`). Per e-mail address the limit is fixed at 3 per hour. |
 | `CONTACT_NOTIFY_TO` | recommended | `desk@example.org,editor@example.org` | Comma list (max 10) of staff addresses e-mailed for each contact message, with `Reply-To` set to the sender. Server-side only: never returned to a browser or written to logs. An invalid entry stops startup in production. Needs SMTP; without either, messages are still stored and show `notifyStatus: not-configured` in CMS > Contact messages. |

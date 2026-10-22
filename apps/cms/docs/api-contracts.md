@@ -1,4 +1,4 @@
-# Church Times CMS — API contracts (v1.14)
+# Church Times CMS — API contracts (v1.15)
 
 Status: implemented on `agent/payload-core`. v1.1 added Turnstile, duplicate detection, staff auth/session
 contract and security hardening; v1.2 closes the verified security-review findings: media ownership, version
@@ -253,6 +253,8 @@ the widget's `action` must be one of the entries, otherwise 403.
   "body": "What happened…",           // required, 30–20 000, plain text
   "categorySuggestion": "News",       // optional, ≤ 100
   "location": "Ibadan",               // optional, ≤ 120
+  "consent": true,                    // optional boolean (v1.15); required when SUBMISSIONS_REQUIRE_CONSENT=true (400, field "consent")
+  "consentTextVersion": "2026-10",    // optional, ≤ 80; stored only together with consent: true
   "website": "",                      // honeypot — must be empty or absent
   "turnstileToken": "0.xxxx"          // REQUIRED: Cloudflare Turnstile token from the widget (≤ 2048 chars)
 }
@@ -900,6 +902,14 @@ proxy) and https-only `CMS_PUBLIC_URL`/CORS/CSRF settings (`docs/security.md`). 
 limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/operations.md` §4).
 
 ## 9. Changelog
+
+### v1.15: submission consent
+Additive. `POST /api/public/submissions` accepts optional boolean `consent` (non-boolean → 400 field `consent`) and `consentTextVersion`.
+When `consent` is `true` the CMS stores `submissions.consentAt` (server time, never client-supplied) and `consentTextVersion`; both are readable by
+staff only. New env `SUBMISSIONS_REQUIRE_CONSENT` (default `false`): when `true`, a missing or false `consent` is a 400 on field `consent`.
+Migration `20261021_110000_submission_consent` (nullable columns). Submitter `email`/`phone` stay readable by every editor role (admin,
+editor-in-chief, section-editor): the newsroom review queue displays them and verifying a tip needs them. Restricting them to editor-in-chief/admin is a
+product decision recorded here, not made.
 
 ### v1.14: Go-live C3 advertising
 Go-live contract C3 (advertising). Additive, except that approving an ad campaign through the API requires `expectedUpdatedAt` (new collection, no existing client).
