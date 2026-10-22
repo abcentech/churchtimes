@@ -366,3 +366,7 @@ public legacy path. `0600` has no effect on Windows; protect the folder with its
   downloaded cannot be recalled.
 - **Aliases.** Thumbnail addresses (`photo-300x200.jpg`) are served only when recorded in the `--aliases` JSON as
   `[{"alias":"2023/10/photo-300x200.jpg","path":"2023/10/photo.jpg"}]`; they are never guessed, and an alias never overrides a real file with that name.
+
+## Running the rehearsal on a clean CI runner
+
+`.github/workflows/import-rehearsal.yml` (manual: Actions, "Import rehearsal", Run workflow) runs `npm run import:rehearse` on a GitHub runner with a throwaway embedded PostgreSQL and a large synthetic export. Defaults are the real archive size (4,346 posts, 200 images). The counts-only result, timings and PASS/FAIL checks appear in the job summary. It uses no repository secrets and reads no real data.
