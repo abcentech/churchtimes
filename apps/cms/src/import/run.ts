@@ -8,6 +8,7 @@ import { legacyPathFromUrl } from '../lib/legacyMediaPath'
 import { cleanText, slugify } from '../lib/sanitize'
 import { hasTemplateVariable, SEO_DESCRIPTION_MAX, SEO_TITLE_MAX } from '../lib/seoFields'
 import { safeErrorSummary } from '../lib/safeLog'
+import { bylineFor, chooseCategory, cleanLegacyUrl } from './mapping'
 import { cleanDisplayName, prepareComments, writeComments } from './comments'
 import { HtmlConversionError, htmlToLexical, type ConversionReport } from './htmlToLexical'
 import { openManifest, type ManifestSink } from './manifest'
@@ -109,6 +110,8 @@ type Ctx = {
   manifest: ManifestSink | undefined
   media: MediaResolver
   categories: Map<string, number>
+  /** Distinct `dc:creator` keys seen, and whether each got a byline (for the report only; never printed). */
+  authorKeys: Map<string, boolean>
   /** Media ids created for the post being written (to find their `upload` audit rows). */
   postMedia: number[]
 }
@@ -211,8 +214,33 @@ async function pass1(file: string, payload: Payload, req: PayloadRequest, report
   return out
 }
 
+/** Byline text for the post (never an account) and the distinct-author counts. Called once per written article. */
+function noteAuthor(ctx: Ctx, item: WxrItem, authors: Map<string, string>): string {
+  const display = authors.get(item.author)
+  const a = bylineFor(item.author, display ? plain(display, 120) : undefined, (s) => cleanDisplayName(plain(s, 120)))
+  const rep = ctx.report.authors
+  if (!a) {
+    rep.postsWithoutByline++
+    return ''
+  }
+  const has = a.byline !== ''
+  if (!ctx.authorKeys.has(a.key)) {
+    ctx.authorKeys.set(a.key, has)
+    rep.distinct++
+    if (has) rep.withByline++
+    else rep.unmapped++
+  }
+  if (!has) rep.postsWithoutByline++
+  return a.byline
+}
+
 async function categoryFor(ctx: Ctx, item: WxrItem): Promise<number> {
-  const first = item.categories.find((c) => c.nicename)
+  const choice = chooseCategory(item.categories)
+  const first = choice.primary
+  if (choice.dropped > 0) {
+    ctx.report.categories.postsWithExtraCategories++
+    ctx.report.categories.extraCategoriesDropped += choice.dropped
+  }
   const slug = first ? slugify(first.nicename, 100, FALLBACK_CATEGORY.slug) : FALLBACK_CATEGORY.slug
   const title = first ? plain(first.name || first.nicename, 120) || slug : FALLBACK_CATEGORY.title
   if (!first) ctx.report.categories.fallbackUsed++
@@ -358,7 +386,7 @@ export async function runImport(payload: Payload, opts: ImportOptions): Promise<
         postMedia.push(id)
       },
     })
-    const ctx: Ctx = { payload, req, opts, report, manifest, media, categories: new Map(), postMedia }
+    const ctx: Ctx = { payload, req, opts, report, manifest, media, categories: new Map(), authorKeys: new Map(), postMedia }
 
     const seenLegacyIds: number[] = []
     const seenArticleIds: number[] = []
@@ -485,6 +513,7 @@ async function importOne(
   const { payload, opts, report, manifest } = ctx
   const legacyId = item.wpId as number
   const snapshot = structuredClone(report)
+  const authorKeysSnapshot = new Map(ctx.authorKeys)
   const baseReq = ctx.req
 
   // One transaction per post (not in a dry run, which writes nothing).
@@ -517,6 +546,7 @@ async function importOne(
     // The rolled-back rows no longer exist: forget what was cached about them.
     Object.assign(report, snapshot)
     ctx.categories.clear()
+    ctx.authorKeys = authorKeysSnapshot
     ctx.media.reset()
     throw err
   } finally {
@@ -580,7 +610,7 @@ async function importPost(
     addConversionStats(report, converted.report)
     const featuredImage = await featuredImageFor(ctx, item, first.attachments)
     const excerpt = plain(item.excerptHtml, 600, true)
-    const byline = item.author ? cleanDisplayName(plain(first.authors.get(item.author) ?? '', 120)) : ''
+    const byline = noteAuthor(ctx, item, first.authors)
     const fields = {
       title,
       excerpt: excerpt || undefined,
@@ -589,7 +619,7 @@ async function importPost(
       bylineName: byline || undefined,
       seoTitle: seoValue(item.seo.rankMathTitle ?? item.seo.yoastTitle, SEO_TITLE_MAX),
       seoDescription: seoValue(item.seo.rankMathDescription ?? item.seo.yoastDescription, SEO_DESCRIPTION_MAX),
-      legacyUrl: /^https?:\/\//i.test(item.link) ? item.link.slice(0, 1000) : undefined,
+      legacyUrl: cleanLegacyUrl(item.link),
       legacyId,
     }
     if (existing) {
