@@ -109,7 +109,11 @@ Layout on the host:
 | `/srv/churchtimes/app` | A checkout of this repository, only for `apps/cms/docker-compose.production.yml` (no build on the server) | deploy user |
 | Docker volume `pgdata` | PostgreSQL data | managed by Docker |
 
-Uid 1000 is the `node` user inside the image and the compose file runs the container as `1000:1000` with a read-only root filesystem, so the media directory MUST be owned by uid/gid 1000 (`sudo install -d -o 1000 -g 1000 -m 750 /srv/churchtimes/media`). If it is not, uploads fail with a permission error. Writable scratch space is limited to two `tmpfs` mounts (`/tmp` and `/app/.next/cache`, 256 MB each). The env file is read by the Docker daemon (root), so mode `600` root-owned is enough.
+Uid 1000 is the `node` user inside the image and the compose file runs the container as `1000:1000` with a read-only root filesystem, so the media directory MUST be owned by uid/gid 1000 (`sudo install -d -o 1000 -g 1000 -m 750 /srv/churchtimes/media`). If it is not, uploads fail with a permission error. Writable scratch space is limited to two `tmpfs` mounts (`/tmp` 64 MB and `/app/.next/cache` 128 MB; the one-off `migrate` service uses 64 MB each).
+
+**Who reads the secrets.** `env_file`, the `postgres_password` secret file and the `> dump` redirect in the release procedure are read by the Compose **client** (the shell that runs `docker compose`), not by the Docker daemon. So either run every `docker compose` command with `sudo` (simplest, and keep `cms.env` `root:root 600`), or make the files `root:<deploy-group> 640` and run compose as a member of that group. Membership of the `docker` group is root-equivalent on the host (anyone in it can mount `/` into a container and read every secret): add only people you would give `sudo`, and do not use the group as a way to share the env file.
+
+**Env file rules.** `cms.env` is parsed by Compose, not by a shell. (a) Compose interpolates `$` in unquoted and double-quoted values: single-quote any value that contains `$` (`SMTP_PASS='ab$cd'`) or Compose will silently replace part of it. (b) `DATABASE_URL` is a URL: use a hex or base64url database password (`openssl rand -hex 24`), or percent-encode special characters (`@`, `:`, `/`, `#`, `%`). (c) `POSTGRES_PASSWORD_FILE` is only read when the data directory is first initialised. Changing `secrets/postgres_password` later does NOT change the role: run `$C exec -T postgres psql -U churchtimes -d churchtimes -c "ALTER ROLE churchtimes PASSWORD '<new>'"` (on a quiet system), update `DATABASE_URL` in `cms.env` to match, then `$C up -d cms`.
 
 #### Host setup (once)
 
@@ -139,28 +143,46 @@ Docker publishes ports by editing iptables directly and can bypass ufw, which is
 
 Then create the env file and the secret (never in git), run `docker login ghcr.io` with a read-only token if the package is private, and add the Caddyfile below.
 
+#### First administrator (before Caddy exposes the site)
+
+On an empty database `POST /api/users/first-register` would hand an administrator account to whoever calls it first. In production the app therefore **refuses** it (403) unless `ALLOW_FIRST_REGISTER=true`, and the Caddyfile below also answers 404 for it and for `/admin/create-first-user`. Create the first administrator on the server **before** the Caddy site block is enabled (or before DNS points at the VPS), using the migrator image, which contains the script and the tooling it needs (`tsx`, `payload`):
+
+```sh
+C="sudo -E docker compose -f docker-compose.production.yml"
+$C up -d postgres
+$C --profile ops run --rm migrate
+$C --profile ops run --rm -e ADMIN_EMAIL=editor@example.org -e ADMIN_NEW_PASSWORD='<throw-away passphrase, 12+ chars>' migrate npm run admin:create
+```
+
+`admin:create` (`src/seed/createAdmin.ts`) refuses to run when any user exists and applies the password policy; sign in and change the password at once. Leave `ALLOW_FIRST_REGISTER` unset. (The pruned `runtime` image has no `tsx`, so `payload run` scripts only work in the migrator image: always use the `migrate` service for them.)
+
 #### Memory and OOM behaviour
 
-`cms` has `mem_limit: 1280m`, `NODE_OPTIONS=--max-old-space-size=960` and `oom_score_adj: 500`; `postgres` has `mem_limit: 1g`, `shared_buffers=256MB` and `oom_score_adj: -500`. If the host runs short of memory the kernel kills Node first (it restarts through `restart: unless-stopped`), not the database. Watch `docker stats` during the first import and adjust the limits together.
+`cms` has `mem_limit: 1280m`, `NODE_OPTIONS=--max-old-space-size=960` and `oom_score_adj: 500`; `postgres` has `mem_limit: 1g`, `shm_size: 256m`, `shared_buffers=256MB` and `oom_score_adj: -500`; the one-off `migrate` has `mem_limit: 768m`, `--max-old-space-size=512` and `oom_score_adj: 0`. If the host runs short of memory the kernel kills Node first (it restarts through `restart: unless-stopped`), not the database. Watch `docker stats` during the first import and adjust the limits together.
 
 #### Release procedure
 
 Run from `/srv/churchtimes/app/apps/cms`.
 
 ```sh
-C="docker compose -f docker-compose.production.yml"
+C="sudo -E docker compose -f docker-compose.production.yml"
 
 # 1. Take the image digests from the CI "publish" job summary (same commit for both images). Note the CURRENT digests for rollback.
 $C config | grep -E 'image:'
 export CMS_IMAGE=ghcr.io/abcentech/churchtimes-cms@sha256:<new digest>
 export CMS_MIGRATOR_IMAGE=ghcr.io/abcentech/churchtimes-cms-migrator@sha256:<new digest>
 
-# 2. Dump the database BEFORE migrating (custom format, written on the host; copy it off-site, section 6).
+# 2. Dump the database BEFORE migrating (custom format, written on the host; copy it off-site, section 6). Stop on any failure:
+#    a redirect hides pg_dump errors, so the dump must also exist, be non-empty and be readable by pg_restore.
+set -euo pipefail
 $C up -d postgres
-$C exec -T postgres pg_dump -U churchtimes -Fc churchtimes > /var/backups/churchtimes/pre-deploy-$(date -u +%Y%m%dT%H%M%SZ).dump
+dump=/var/backups/churchtimes/pre-deploy-$(date -u +%Y%m%dT%H%M%SZ).dump
+$C exec -T postgres pg_dump -U churchtimes -Fc churchtimes > "$dump"
+test -s "$dump" || { echo "pre-deploy dump is empty, stopping" >&2; exit 1; }
+$C exec -T postgres pg_restore -l < "$dump" > /dev/null
 
 # 3. Pull and migrate with the one-off migrator (it never runs the scheduler).
-$C pull cms migrate
+$C --profile ops pull cms migrate
 $C --profile ops run --rm migrate
 
 # 4. Start the new release and check it.
@@ -176,7 +198,21 @@ Persist `CMS_IMAGE` and `CMS_MIGRATOR_IMAGE` in `apps/cms/.env` next to the comp
 **Rollback.**
 
 1. Code only (the migration was additive): set `CMS_IMAGE` back to the previous digest and run `$C up -d cms`.
-2. Schema incompatible: `$C stop cms`, restore the pre-deploy dump (`$C exec -T postgres pg_restore -U churchtimes -d churchtimes --clean --if-exists --no-owner < pre-deploy-....dump`), set the previous digest, `$C up -d cms`. Content created after the dump is lost, so tell the newsroom first.
+2. Schema incompatible: `$C stop cms`, restore the pre-deploy dump into a NEW database, check it, then swap names (a `pg_restore --clean --if-exists` into the live database leaves a half-old, half-new schema when it fails midway; never do that). Content created after the dump is lost, so tell the newsroom first.
+
+   ```sh
+   set -euo pipefail
+   $C stop cms
+   D=/var/backups/churchtimes/pre-deploy-<timestamp>.dump
+   $C exec -T postgres createdb -U churchtimes -E UTF8 -T template0 -O churchtimes churchtimes_rb
+   $C exec -T postgres pg_restore -U churchtimes -d churchtimes_rb --no-owner --single-transaction --exit-on-error < "$D"
+   $C exec -T postgres psql -U churchtimes -d churchtimes_rb -Atc "select count(*) from articles; select count(*) from users; select count(*) from payload_migrations"   # sanity check
+   $C exec -T postgres psql -U churchtimes -d postgres -c "ALTER DATABASE churchtimes RENAME TO churchtimes_failed" -c "ALTER DATABASE churchtimes_rb RENAME TO churchtimes"
+   # set CMS_IMAGE to the previous digest, then:
+   $C up -d cms
+   ```
+
+   `--single-transaction --exit-on-error` makes the restore all-or-nothing; if it fails, `churchtimes` is untouched: drop `churchtimes_rb` (`dropdb --force`) and investigate. Keep `churchtimes_failed` until the newsroom confirms, then `dropdb --force churchtimes_failed`. If you cannot keep two copies for lack of disk, the blunt alternative is `$C stop cms`, `dropdb --force churchtimes`, `createdb -E UTF8 -T template0 -O churchtimes churchtimes`, then the same `pg_restore --no-owner --single-transaction --exit-on-error`.
 3. Re-run the health check and open one article in `/admin`.
 
 #### Scheduler: single instance
@@ -197,13 +233,27 @@ cms.example.org {
 
 	header -Server
 
-	# OPTIONAL: restrict the staff admin UI to a fixed IP or your Tailscale range. The public API stays open for the website.
-	# Staff then log in through the VPN. Keep a break-glass route (section 4.3). Delete this block to leave /admin public.
+	# ALWAYS: the first-administrator endpoints are never reachable through the proxy (the app also refuses them in production).
+	@first_user path /api/users/first-register /admin/create-first-user
+	respond @first_user 404
+
+	# OPTIONAL: restrict the staff admin UI pages to a fixed IP or your Tailscale range. Keep a break-glass route (section 4.3).
+	# Delete this block to leave /admin public.
 	@admin_blocked {
 		path /admin /admin/*
 		not remote_ip 100.64.0.0/10 203.0.113.10
 	}
 	respond @admin_blocked "Not found" 404
+
+	# OPTIONAL, stricter: also keep the staff account API (login, password reset, user management) off the internet.
+	# Everything else under /api stays open for the public site. Only enable this when ALL staff, including the newsroom UI
+	# at its own origin, reach the CMS through the VPN or the fixed IP; /api/users/me and /logout stay open.
+	# @staff_api {
+	# 	path /api/users /api/users/*
+	# 	not path /api/users/me /api/users/logout
+	# 	not remote_ip 100.64.0.0/10 203.0.113.10
+	# }
+	# respond @staff_api 404
 
 	reverse_proxy 127.0.0.1:3000 {
 		header_up X-Forwarded-For {remote_host}
@@ -216,7 +266,7 @@ cms.example.org {
 }
 ```
 
-`100.64.0.0/10` is Tailscale's range; replace `203.0.113.10` with your office or VPN exit address. The allowlist hides the admin UI only (the API it calls stays reachable and protected by authentication), so it complements login, lockout and rate limits and does not replace them. Reload with `sudo systemctl reload caddy`.
+`203.0.113.10` is a placeholder: use your office or VPN exit address. What the allowlist covers, plainly: only requests whose path starts with `/admin`. It does NOT cover `/api/*`, so staff login (`POST /api/users/login`), password reset and every other API call remain reachable from anywhere, protected only by authentication, lockout and rate limits. The optional `@staff_api` block closes the account API too (at the cost that staff cannot sign in from outside the allowlist, including the newsroom UI). `100.64.0.0/10` is Tailscale's address range and only matches when the request really arrives over the tailnet, that is, when staff browse to the VPS's Tailscale address or MagicDNS name and Caddy also listens there (add a `cms.<tailnet>.ts.net` site block or open the public name only to Tailscale). If staff use the public hostname, their source address is their ordinary public IP, the `100.64.0.0/10` entry never matches and they are locked out: use a fixed IP in that case. The first-administrator block must stay in every variant (Cloudflare included). Reload with `sudo systemctl reload caddy`.
 
 **Cloudflare variant.** With the orange cloud on, Cloudflare terminates the visitor's TLS and connects to Caddy. Set `TRUST_PROXY=true`, `TRUST_PROXY_HOPS=1` and `CLIENT_IP_HEADER=cf-connecting-ip` in `cms.env`. Restrict ports 80 and 443 in ufw to Cloudflare's published ranges (https://www.cloudflare.com/ips/), otherwise anyone can reach the origin directly and forge `CF-Connecting-IP`. Use SSL mode "Full (strict)" with a Cloudflare Origin CA certificate (or Caddy's DNS-challenge ACME). In the Caddyfile replace the `header_up X-Real-IP` line with `header_up CF-Connecting-IP {http.request.header.CF-Connecting-IP}`. The `remote_ip` allowlist then sees Cloudflare's addresses, so drop it and protect `/admin*` with Cloudflare Access instead.
 
@@ -243,6 +293,7 @@ Startup validation (`NODE_ENV=production`) refuses to start when a "required" ro
 | `PUBLIC_SITE_URL` | for the newsletter | https origin of the public site (sign-up answers 503 while unset) |
 | `SCHEDULER_ENABLED` | `true` on exactly one instance | `false` on `migrate` |
 | `PAYLOAD_DB_PUSH` | `false` | schema changes only through migrations |
+| `ALLOW_FIRST_REGISTER` | unset | In production `POST /api/users/first-register` is refused (403) unless this is exactly `true`. Leave it unset and create the first admin with `npm run admin:create` (see "First administrator") |
 | `CMS_ALLOW_INSECURE_LOCAL_STAGING` | unset | disposable loopback staging only; with public origins it stops the app |
 
 ## 4. Environment variables
@@ -349,8 +400,19 @@ ADMIN_EMAIL=someone@example.org ADMIN_NEW_PASSWORD='<throw-away passphrase, 12+ 
 ```
 
 It applies the password policy, clears the lockout and ends all sessions of that user. Sign in and change the password at once.
-If **no user exists at all**, open `/admin` over https and create the first admin (`/api/users/first-register`); that endpoint is
-refused as soon as one user exists.
+If **no user exists at all**, create the first admin on the server with `ADMIN_EMAIL=... ADMIN_NEW_PASSWORD='...' npm run admin:create`
+(it refuses to run once any user exists). The public `/api/users/first-register` endpoint is refused in production unless
+`ALLOW_FIRST_REGISTER=true`, and is refused for everyone as soon as one user exists.
+
+**Docker deployment.** Run the scripts with the one-off migrator service (the pruned runtime image has no `tsx`); both `npm run admin:set-password`
+and `npm run admin:create` exist in that image:
+
+```sh
+cd /srv/churchtimes/app/apps/cms
+sudo -E docker compose -f docker-compose.production.yml --profile ops run --rm \
+  -e ADMIN_EMAIL=someone@example.org -e ADMIN_NEW_PASSWORD='<throw-away passphrase, 12+ chars>' \
+  migrate npm run admin:set-password
+```
 
 Changing `PAYLOAD_SECRET` signs every user out. Changing `PREVIEW_SECRET` invalidates all outstanding preview links.
 Changing `IP_HASH_SALT` makes older IP hashes incomparable. Rotating `TURNSTILE_SECRET_KEY` or `SMTP_PASS` needs a restart.
@@ -418,7 +480,7 @@ server {
     ssl_certificate     /etc/letsencrypt/live/cms.example.org/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/cms.example.org/privkey.pem;
     ssl_protocols       TLSv1.2 TLSv1.3;
-    add_header Strict-Transport-Security "max-age=15552000" always;
+    # HSTS is sent by the application itself in production; do not add a second header here.
     server_tokens off;
 
     # Largest accepted request body (413 above it). Keep request buffering on (the default): nginx then
@@ -434,6 +496,10 @@ server {
     # Option B (Cloudflare in front): trust Cloudflare's ranges only, then $remote_addr is the visitor.
     #   set_real_ip_from 173.245.48.0/20;   # ...all ranges from https://www.cloudflare.com/ips-v4 and -v6
     #   real_ip_header   CF-Connecting-IP;
+
+    # The first-administrator endpoints are never reachable through the proxy.
+    location = /api/users/first-register { return 404; }
+    location = /admin/create-first-user { return 404; }
 
     location / {
         proxy_pass http://127.0.0.1:3000;
@@ -633,11 +699,11 @@ PostgreSQL 16, not the production server.
 
 ## 7. Rollback
 
-0. **Docker production:** use the rollback procedure in section 3.2 (previous image digest; dump restore with `docker compose exec -T postgres pg_restore`).
+0. **Docker production:** use the rollback procedure in section 3.2 (previous image digest; dump restored into a new database, then renamed).
 1. **Code rollback (systemd setup):** check out the previous release tag or commit, run `npm ci && npm run build`, and restart the
    service. Do not roll back code without considering the database.
 2. **Database rollback:**
-   - Preferred: stop the app, then restore the pre-deploy dump taken in §3 step 1 (`pg_restore --clean --if-exists`).
+   - Preferred: stop the app, then restore the pre-deploy dump taken in §3 step 1 into a NEW database and swap it in, as in §3.2 (`pg_restore --no-owner --single-transaction --exit-on-error`). Never `pg_restore --clean --if-exists` into the live database: a failure midway leaves a half-old, half-new schema.
      Any content created after that dump is lost, so communicate with the newsroom before doing this.
    - Targeted: Payload's migration tooling can revert the most recent migration with `npx payload migrate:down`.
      This is not a package.json script yet. Confirm it works on a restored copy before using it in production.
@@ -690,7 +756,7 @@ configuration. Expose them through the reverse proxy like the rest of `/api`.
 
 Confirm each item before go-live and again after any change to the server:
 
-- [ ] HTTPS only, with a valid certificate. HTTP redirects to HTTPS. HSTS enabled at the proxy.
+- [ ] HTTPS only, with a valid certificate. HTTP redirects to HTTPS. HSTS is sent by the app (not duplicated at the proxy).
 - [ ] `CMS_PUBLIC_URL`, `CMS_CORS_ORIGINS` and `CMS_CSRF_ORIGINS` list only the production origins.
 - [ ] Session cookies are `Secure` (automatic in production) and `HttpOnly`.
 - [ ] `PAYLOAD_SECRET`, `PREVIEW_SECRET` and `IP_HASH_SALT` are random, different, and not the example values.

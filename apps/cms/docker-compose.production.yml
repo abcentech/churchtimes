@@ -14,6 +14,9 @@
 #   /srv/churchtimes/media                         uploads, must be owned by uid:gid 1000:1000 (`chown 1000:1000`, mode 750).
 #                                                  1000 is the `node` user inside the image; Postgres data lives in the named volume `pgdata`.
 #
+# Run compose as root (sudo) or as a user whose group can read cms.env: env_file, the secret file and a dump redirect are read
+# by the Compose CLIENT, not the daemon. Docker-group membership is root-equivalent: treat it like sudo.
+#
 # Hardening summary: image pinned by digest; non-root uid 1000; read-only root filesystem with tmpfs for the only
 # two scratch paths; all capabilities dropped; no-new-privileges; Postgres on an internal network and never published;
 # memory limits plus oom_score_adj so a memory squeeze kills Node, not the database; rotated local logs.
@@ -68,6 +71,8 @@ services:
       - SETGID
     security_opt:
       - no-new-privileges:true
+    # Default /dev/shm is 64 MB; parallel queries and large sorts use shared memory.
+    shm_size: 256m
     mem_limit: 1g
     memswap_limit: 1g
     # Negative = the kernel avoids killing the database. The CMS (positive) is killed first.
@@ -102,8 +107,8 @@ services:
       - web
     read_only: true
     tmpfs:
-      - /tmp:size=256m,mode=1777
-      - /app/.next/cache:size=256m,uid=1000,gid=1000,mode=0755
+      - /tmp:size=64m,mode=1777
+      - /app/.next/cache:size=128m,uid=1000,gid=1000,mode=0755
     cap_drop:
       - ALL
     security_opt:
@@ -115,11 +120,11 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/users/me').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health/live').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
       interval: 15s
-      timeout: 15s
+      timeout: 5s
       retries: 5
-      start_period: 60s
+      start_period: 30s
     logging: *default-logging
 
   # One-off: `docker compose -f docker-compose.production.yml --profile ops run --rm migrate`. Uses the MIGRATOR image (full
@@ -132,21 +137,22 @@ services:
     env_file: ${CMS_ENV_FILE:-/etc/churchtimes/cms.env}
     environment:
       SCHEDULER_ENABLED: "false"
-      NODE_OPTIONS: "--no-deprecation --max-old-space-size=960"
+      NODE_OPTIONS: "--no-deprecation --max-old-space-size=512"
     command: ["npm", "run", "migrate"]
     networks:
       - db
     read_only: true
     tmpfs:
-      - /tmp:size=256m,mode=1777
-      - /app/.next/cache:size=256m,uid=1000,gid=1000,mode=0755
+      - /tmp:size=64m,mode=1777
+      - /app/.next/cache:size=64m,uid=1000,gid=1000,mode=0755
     cap_drop:
       - ALL
     security_opt:
       - no-new-privileges:true
-    mem_limit: 1280m
-    memswap_limit: 1280m
-    oom_score_adj: 500
+    mem_limit: 768m
+    memswap_limit: 768m
+    # 0 (default): a one-off. The long-lived cms (+500) is killed before it, postgres (-500) never.
+    oom_score_adj: 0
     depends_on:
       postgres:
         condition: service_healthy

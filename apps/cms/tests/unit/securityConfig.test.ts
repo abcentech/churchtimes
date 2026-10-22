@@ -4,6 +4,7 @@ import {
   checkOriginList,
   normaliseOrigin,
   parseOrigin,
+  firstRegisterAllowed,
   validateProductionEnv,
 } from '../../src/lib/securityConfig'
 
@@ -258,5 +259,35 @@ describe('CONTACT_NOTIFY_TO (C5)', () => {
     const bad = validateProductionEnv({ ...good, CONTACT_NOTIFY_TO: 'a@example.test, not-an-address' }).problems
     expect(bad.join()).toMatch(/CONTACT_NOTIFY_TO/)
     expect(bad.join()).not.toMatch(/not-an-address/)
+  })
+})
+
+describe('firstRegisterAllowed (first-admin takeover guard)', () => {
+  it('is allowed outside production (development bootstrap)', () => {
+    expect(firstRegisterAllowed({ NODE_ENV: 'development' } as NodeJS.ProcessEnv)).toBe(true)
+    expect(firstRegisterAllowed({ NODE_ENV: 'test' } as NodeJS.ProcessEnv)).toBe(true)
+    expect(firstRegisterAllowed({} as NodeJS.ProcessEnv)).toBe(true)
+  })
+
+  it('is refused in production unless ALLOW_FIRST_REGISTER is exactly "true"', () => {
+    expect(firstRegisterAllowed(good)).toBe(false)
+    for (const v of ['', 'TRUE', '1', 'yes', 'false']) {
+      expect(firstRegisterAllowed({ ...good, ALLOW_FIRST_REGISTER: v }), v).toBe(false)
+    }
+    expect(firstRegisterAllowed({ ...good, ALLOW_FIRST_REGISTER: 'true' })).toBe(true)
+  })
+
+  it('is allowed for disposable loopback staging (which the e2e stacks use)', () => {
+    const staging = {
+      ...good,
+      CMS_ALLOW_INSECURE_LOCAL_STAGING: 'true',
+      CMS_PUBLIC_URL: 'http://cms.churchtimes.localhost:3100',
+      CMS_CORS_ORIGINS: 'http://www.churchtimes.localhost:5173',
+      CMS_CSRF_ORIGINS: 'http://newsroom.churchtimes.localhost:5174',
+      PUBLIC_SUBMISSION_ORIGINS: 'http://www.churchtimes.localhost:5173',
+    } as NodeJS.ProcessEnv
+    expect(firstRegisterAllowed(staging)).toBe(true)
+    // the flag next to a public https origin is not staging: still refused (and startup fails separately)
+    expect(firstRegisterAllowed({ ...good, CMS_ALLOW_INSECURE_LOCAL_STAGING: 'true' })).toBe(false)
   })
 })

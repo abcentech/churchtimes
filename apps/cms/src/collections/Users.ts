@@ -22,6 +22,7 @@ import { writeAuditLog } from '../lib/audit'
 import { authRateLimitHook } from '../lib/authRateLimit'
 import { clampLimit } from '../lib/clampLimit'
 import { checkPasswordPolicy } from '../lib/passwordPolicy'
+import { firstRegisterAllowed } from '../lib/securityConfig'
 import { verifyStoredPassword } from '../lib/passwordVerify'
 
 const isProd = process.env.NODE_ENV === 'production'
@@ -176,6 +177,12 @@ const enforcePasswordAndBootstrap: CollectionBeforeValidateHook = async ({
   if (operation === 'create' && !req.user && req.payloadAPI === 'REST') {
     const existing = await req.payload.count({ collection: 'users', overrideAccess: true, req })
     if (existing.totalDocs === 0) {
+      if (!firstRegisterAllowed(process.env)) {
+        throw new APIError(
+          'First-account registration is disabled in production. Create the first administrator on the server (npm run admin:create).',
+          403,
+        )
+      }
       data.role = 'admin'
       data.sections = []
     }
