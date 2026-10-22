@@ -465,6 +465,9 @@ export interface Submission {
   ipHash?: string | null;
   contentHash?: string | null;
   consentAt?: string | null;
+  /**
+   * Version of the consent wording shown on the public form.
+   */
   consentTextVersion?: string | null;
   userAgent?: string | null;
   updatedAt: string;
@@ -495,7 +498,7 @@ export interface ContactMessage {
   createdAt: string;
 }
 /**
- * Newsletter subscribers. Export (admin only): GET /api/subscribers/export?status=confirmed.
+ * Newsletter subscribers (admin only). Export: GET /api/subscribers/export?status=confirmed. Per-person data export: GET /api/subscribers/:id/subject-data.
  *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "subscribers".
@@ -594,6 +597,7 @@ export interface AuditLog {
   docId: string;
   actor?: (number | null) | User;
   actorRole?: string | null;
+  actorIdSnapshot?: string | null;
   fromStatus?: string | null;
   toStatus?: string | null;
   summary?: string | null;
@@ -1052,6 +1056,7 @@ export interface AuditLogsSelect<T extends boolean = true> {
   docId?: T;
   actor?: T;
   actorRole?: T;
+  actorIdSnapshot?: T;
   fromStatus?: T;
   toStatus?: T;
   summary?: T;

@@ -1,6 +1,7 @@
 import type { CollectionConfig } from 'payload'
 
 import { editorInChiefOnly } from '../access/roles'
+import { auditDeleteHook } from '../lib/audit'
 import { clampLimit } from '../lib/clampLimit'
 
 // Server-owned: only the public endpoint (overrideAccess) writes these.
@@ -18,7 +19,7 @@ export const ContactMessages: CollectionConfig = {
     defaultColumns: ['reference', 'topic', 'name', 'status', 'notifyStatus', 'createdAt'],
     description: 'Messages sent through the public contact form. Reply by email; mark the status as you go.',
   },
-  hooks: { beforeOperation: [clampLimit] },
+  hooks: { beforeOperation: [clampLimit], afterDelete: [auditDeleteHook('contact-messages', (d) => (d.reference ? String(d.reference) : undefined))] },
   access: {
     read: editorInChiefOnly,
     create: () => false,
