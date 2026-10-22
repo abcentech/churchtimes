@@ -147,6 +147,8 @@ describe('turnstileActionWarnings (contact-message and newsletter-subscribe must
       TURNSTILE_SECRET_KEY: '0x4AAAAAAAreal-looking-secret',
       TURNSTILE_ALLOWED_HOSTNAMES: 'www.example.org',
       TURNSTILE_EXPECTED_ACTION: 'submit-story',
+      SMTP_HOST: 'smtp.example.org',
+      EMAIL_FROM_ADDRESS: 'cms@example.org',
       CMS_PUBLIC_URL: 'https://cms.example.org',
       CMS_CORS_ORIGINS: 'https://www.example.org',
       CMS_CSRF_ORIGINS: 'https://cms.example.org',

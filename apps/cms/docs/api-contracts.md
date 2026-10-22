@@ -1,4 +1,4 @@
-# Church Times CMS — API contracts (v1.15)
+# Church Times CMS — API contracts (v1.17)
 
 Status: implemented on `agent/payload-core`. v1.1 added Turnstile, duplicate detection, staff auth/session
 contract and security hardening; v1.2 closes the verified security-review findings: media ownership, version
@@ -692,6 +692,45 @@ new `file` to replace the file):
   stops being public when its article is unpublished. A media file that was public stays reachable by anyone who has already
   downloaded it, obviously. Note the freeze above still includes `scheduled` articles (their media is frozen but private).
 
+### Go-live A12: legacy media map (offline export)
+
+Not an HTTP endpoint. The public host must serve `/wp-content/uploads/*` from an exact, privately provisioned map, with no anonymous
+media scan and no staff credential on the public host. The CMS side is an offline export run by the owner:
+`npm run export:media-map -- [--out <file>] [--aliases <json>] [--detail-file <path>]` (`apps/cms/src/lib/mediaMapExport.ts`, `mediaMapData.ts`, `mediaMapCli.ts`).
+
+- **Privacy.** A media is exported only if an ANONYMOUS reader can read it at export time under the media read rule (§3: media of a published
+  article, an approved live update of a live/ended event, a delivered ad creative). The exporter asks the CMS with `overrideAccess: false`
+  and no user, so drafts, in-review, scheduled, archived/withdrawn and unreferenced media are never listed. `legacyPath` (staff-only) is
+  read by a trusted second read of every media that has one. The file carries no ids, alt, caption, credit, uploader or any staff field, and no
+  count of private media (that count, `notAnonymous`, is printed by the CLI only).
+- **Format** (`media-map/1`, JSON, UTF-8): `{ version, generatedAt, counts: { entries, aliases }, contentSha256, entries, aliases }`.
+  `entries[]` = `{ path, file, mime, size }`: `path` is the legacy path after `/wp-content/uploads/` (NFC, percent-decoded once, no duplicate,
+  leading or trailing slash, no `.`/`..`, case-sensitive, exact match); `file` is the CMS public file URL path, matching
+  `^/api/media/file/[A-Za-z0-9][A-Za-z0-9._-]*$`; `mime` is `image/jpeg|png|webp`; `size` is bytes. Sorted by `path` in code-unit order.
+  `aliases[]` = `{ alias, path }`, sorted by `alias`.
+  **This differs from the flat proposal in PR #58** (`entries[{legacyPath, mediaPath, mimeType}]` with aliases as ordinary entries, plus `revision`):
+  #58 must be updated to this contract, or the host must adapt. The host must validate every entry at load itself (`validateMediaMapBody` is a reference).
+- **Limits** (aligned with #58): at most 50,000 entries counting map entries plus aliases, and 8 MiB serialised. The export fails with
+  `media-map-too-many-entries` / `media-map-too-large` and writes nothing.
+- **Aliases.** A size-suffix alias (`photo-300x200.jpg` -> `photo.jpg`) exists only when it is recorded in the owner's `--aliases` JSON
+  (`[{ "alias": ..., "path": ... }]`) AND the alias equals the original with exactly one `-WxH` suffix before the extension AND the original is an
+  exported entry AND no media at all (exported or not) claims the alias as its own exact path. Otherwise it is dropped and itemised in the detail file.
+  The host tries the exact entry first, then the alias; it never strips suffixes itself.
+- **Ambiguity.** Two media (any visibility: draft, private, withdrawn included) claiming one normalised path are ambiguous: neither is exported.
+- **Digests.** `file-sha256` is the sha256 of the EXACT bytes of the map file; it is the provisioning check, printed by the CLI and written next to
+  the map as `<out>.sha256` (`<hex>  <file name>`, `sha256sum -c` compatible). `contentSha256` (inside the file) is only a stable content id: it ignores
+  `generatedAt` and formatting, so the same content gives the same id on every run. The digest detects accidental damage; it is not a signature.
+- **CLI.** Without `--out` it is a dry run printing counts and both digests only. `--out` and `--detail-file` must be outside the repository
+  (refused with exit 2, also when reached through a symlink or junction). Files are written to a temp file in the target folder, then renamed over the
+  target, mode `0600` (no effect on Windows: protect the folder with its permissions there). `--detail-file` itemises ambiguities and rejected aliases
+  (it names paths and media ids). Output never prints a path or file name.
+- **Withdrawal.** The public host is designed (#58) as no-store with an anonymous CMS check on every request, so revocation is immediate: once media
+  stops being anonymously readable the CMS file URL answers 403/404 and the host serves 404, before any re-export. Re-export (and replacing the map
+  atomically) then removes the entry and the alias, so it stops being mapped at all. Notes: an ad creative stops being public when its campaign
+  ends; media still used by another published article stays public and stays mapped. Images already downloaded cannot be recalled. If a bounded
+  cache is ever introduced the staleness window is export time + host reload + cache lifetime; #58 keeps no-store.
+- Not covered: aliases are not recorded on the media document (no schema change); the owner supplies them. `HEAD`/range behaviour belongs to the host.
+
 ## 7. Error shape
 
 Payload-native routes return Payload's `{ errors: [{ message, ... }] }`. Custom endpoints in §4 and §6 return
@@ -914,7 +953,7 @@ limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/op
 
 ## 9. Changelog
 
-### v1.15: Newsletter consent hardening (NDPA)
+### v1.17: Newsletter consent hardening (NDPA)
 **Behaviour change** for the subscriber import and subscriber staff access; no public response changes (subscribe, confirm and unsubscribe answers are byte-identical to v1.14).
 - Import: rows with no valid `OPTIN_TIME` are stored `pending` (previously `confirmed`) and excluded from sends and the confirmed export; `confirmedAt` comes from `CONFIRM_TIME` only
   (previously `CONFIRM_TIME ?? OPTIN_TIME`); times must be exactly `YYYY-MM-DD HH:MM:SS` UTC (previously other date formats were parsed); unsubscribed and cleaned exports are imported as blocking rows
@@ -922,6 +961,9 @@ limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/op
 - New server-side commands `npm run newsletter:reconfirm` and `npm run newsletter:purge-unconfirmed`; new consent version `mailchimp-reconfirm-v1`.
 - `/api/subscribers` read and update are now `admin` only (was admin and editor-in-chief); staff status changes are audited and set `unsubscribedAt`; new `GET /api/subscribers/:id/subject-data`.
 - No migration (existing enum values and columns are reused).
+
+### v1.15: Go-live A12 legacy media map
+Additive, no schema change. New offline command `npm run export:media-map` and the `media-map/1` file format (§ "Go-live A12: legacy media map (offline export)"). No new HTTP route; media read access is unchanged.
 
 ### v1.14: Go-live C3 advertising
 Go-live contract C3 (advertising). Additive, except that approving an ad campaign through the API requires `expectedUpdatedAt` (new collection, no existing client).
