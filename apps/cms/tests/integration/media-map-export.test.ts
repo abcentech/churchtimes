@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -6,7 +7,7 @@ import sharp from 'sharp'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { runMediaMapExport } from '../../src/lib/mediaMapCli'
-import { verifyMediaMapBody, type MediaMap } from '../../src/lib/mediaMapExport'
+import { validateMediaMapBody, type MediaMap } from '../../src/lib/mediaMapExport'
 import { api, newRunId, setupFixtures, type Fixtures } from './helpers'
 
 /**
@@ -69,9 +70,13 @@ describe('export:media-map', () => {
     const first = await run('--out', out, '--aliases', aliasFile)
     expect(first.code).toBe(0)
     expect(first.text).not.toContain(runId)
-    expect(readdirSync(path.dirname(out))).toEqual(['media-map.json'])
+    expect(readdirSync(path.dirname(out)).sort()).toEqual(['media-map.json', 'media-map.json.sha256'])
     const body = readFileSync(out, 'utf8')
-    expect(verifyMediaMapBody(body)).toEqual({ ok: true })
+    expect(validateMediaMapBody(body)).toEqual({ ok: true })
+    const sidecar = readFileSync(`${out}.sha256`, 'utf8')
+    expect(sidecar).toBe(`${createHash('sha256').update(readFileSync(out)).digest('hex')}  media-map.json
+`)
+    expect(first.text).toContain(sidecar.slice(0, 64))
     const map = JSON.parse(body) as MediaMap
     const mine = map.entries.filter((e) => e.path.startsWith(`2099/${runId}/`))
     expect(mine.map((e) => e.path)).toEqual([`2099/${runId}/published.png`])
@@ -93,7 +98,7 @@ describe('export:media-map', () => {
     const after = JSON.parse(readFileSync(out, 'utf8')) as MediaMap
     expect(after.entries.filter((e) => e.path.startsWith(`2099/${runId}/`))).toEqual([])
     expect(after.aliases.filter((a) => a.path.startsWith(`2099/${runId}/`))).toEqual([])
-    expect(after.sha256).not.toBe(map.sha256)
+    expect(after.contentSha256).not.toBe(map.contentSha256)
   })
 
   it('refuses an --out inside the repository', async () => {
