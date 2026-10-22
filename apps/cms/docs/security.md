@@ -152,6 +152,22 @@ Test files are in `tests/integration/security.test.ts` (S) and `tests/unit/*` (U
 17. **Request-size limits rely on `Content-Length`.** `src/proxy.ts` rejects declared sizes; for chunked uploads the reverse proxy limit (12 MB) and
     Next's body buffer limit (`experimental.proxyClientMaxBodySize: 12mb`, bodies beyond it are truncated, not rejected) are the backstops. The 411 rule
     applies to `/api/users/*` only.
+18. **Security audit follow-ups (fixed):** per-IP rate-limit keys use the IPv4 address or the /64 of an IPv6 address (IPv4-mapped IPv6 counts as
+    IPv4), and a full limiter never evicts a blocked bucket (new keys fail closed when every bucket is blocked); uploads are re-encoded through
+    sharp so stored originals carry no EXIF / GPS (orientation applied, ICC kept) and are refused above 40 megapixels; deletes of users, submissions,
+    live updates, live events, categories and contact messages are audited without personal data, user audit summaries carry ids not e-mail
+    addresses, and `audit-logs.actorIdSnapshot` keeps the actor id when the user row is later deleted (`actor` stays ON DELETE SET NULL);
+    Lexical link nodes are limited to http, https, mailto, relative paths and fragments; the preview payload no longer exposes `legacyPath` or
+    `adCampaignCreatives`; free-text fields have length caps (byline 200, media caption 1000 / credit 300, reviewer notes 5000, category
+    description 1000).
+19. **Known limitation (audit L3): `/admin` is reachable by anyone who can reach the host.** Login is rate limited and locked out, but the panel is
+    exposed. Mitigation: restrict `/admin` by IP allowlist at the reverse proxy or put it behind Cloudflare Access.
+20. **Known limitation (audit L4): every editor role, section editors included, can read all submissions** (names, e-mail, phone, tip text; see
+    the Submissions collection note). Mitigation: restrict contact fields to editor-in-chief / admin via field access, or split the triage view,
+    once the product owner accepts the workflow cost.
+21. **Known limitation (audit L6): `CLIENT_IP_HEADER` is trusted blindly.** When set (`cf-connecting-ip`, `x-real-ip`), any client that can reach
+    the app directly can choose its rate-limit bucket. Mitigation: firewall the app port so only the proxy can connect, and make the proxy
+    overwrite the header on every request.
 
 ## 5. Review fixes (contract v1.2)
 

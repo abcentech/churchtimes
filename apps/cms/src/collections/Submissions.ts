@@ -2,7 +2,7 @@ import type { Access, CollectionConfig } from 'payload'
 
 import { isEditorInChief, isEditorRole, type UserLike } from '../access/roles'
 import { convertSubmissionEndpoint } from '../endpoints/convertSubmission'
-import { writeAuditLog } from '../lib/audit'
+import { auditDeleteHook, writeAuditLog } from '../lib/audit'
 import { clampLimit } from '../lib/clampLimit'
 
 const editorsOnly: Access = ({ req }) => isEditorRole(req.user as UserLike | null)
@@ -28,6 +28,7 @@ export const Submissions: CollectionConfig = {
   },
   hooks: {
     beforeOperation: [clampLimit],
+    afterDelete: [auditDeleteHook('submissions', (d) => (d.reference ? `${d.reference}, status ${d.status}` : undefined))],
     afterChange: [
       async ({ doc, previousDoc, operation, req }) => {
         if (operation === 'update' && previousDoc?.status !== doc.status) {
@@ -71,7 +72,7 @@ export const Submissions: CollectionConfig = {
         value: s,
       })),
     },
-    { name: 'reviewerNotes', type: 'textarea' },
+    { name: 'reviewerNotes', type: 'textarea', maxLength: 5000 },
     { name: 'article', type: 'relationship', relationTo: 'articles' },
     { name: 'ipHash', type: 'text', admin: { readOnly: true }, access: noClientWrite },
     {

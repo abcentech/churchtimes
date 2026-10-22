@@ -121,6 +121,30 @@ describe('C1.1 youtubeEmbed block in articles.content', () => {
     expect(markup.status).toBe(400)
   })
 
+  it('L1: refuses link nodes with a javascript: / data: URL and accepts http, mailto, relative and fragment links', async () => {
+    const link = (url: string) => ({
+      type: 'paragraph',
+      format: '',
+      indent: 0,
+      version: 1,
+      direction: 'ltr',
+      textFormat: 0,
+      children: [{ type: 'link', version: 3, format: '', indent: 0, direction: 'ltr', fields: { linkType: 'custom', newTab: false, url }, children: [{ type: 'text', text: 'x', format: 0, detail: 0, mode: 'normal', style: '', version: 1 }] }],
+    })
+    for (const url of ['javascript:alert(1)', 'data:text/html,x', 'java	script:alert(1)']) {
+      const res = await f.createArticle(f.tokens.eic, { content: body(link(url)) })
+      expect(res.status, url).toBe(400)
+      expect(errorText(res)).toMatch(/http, https or mailto/i)
+    }
+    for (const url of ['https://example.org/x', 'mailto:desk@example.org', '/news/a', '#top']) {
+      const res = await f.createArticle(f.tokens.eic, { content: body(link(url)) })
+      expect(res.status, url + ' ' + errorText(res)).toBe(201)
+    }
+    const ok = await f.createArticle(f.tokens.eic, { content: body(link('https://example.org')) })
+    const bad = await patch(f.tokens.eic, ok.id!, body(link('javascript:alert(1)')))
+    expect(bad.status).toBe(400)
+  })
+
   it('refuses raw embed nodes (the old importer shape), iframe-like nodes and unknown blocks', async () => {
     const nodes: Record<string, unknown> = {
       embed: { type: 'embed', version: 1, embedType: 'iframe', url: 'https://evil.example.test/frame' },

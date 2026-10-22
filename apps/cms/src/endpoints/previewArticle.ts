@@ -9,7 +9,14 @@ const fail = (status: number, message: string) =>
 
 const MEDIA_PATH = '/api/media/file/'
 /** Fields that exist on a media document for staff / access decisions and must never reach a preview holder. */
-const MEDIA_PRIVATE_KEYS = ['uploadedBy', 'publishedAsFeatured', 'publishedInBody', 'liveUpdateImages']
+const MEDIA_PRIVATE_KEYS = [
+  'uploadedBy',
+  'publishedAsFeatured',
+  'publishedInBody',
+  'liveUpdateImages',
+  'legacyPath',
+  'adCampaignCreatives',
+]
 
 const isMediaUrl = (value: string): boolean => {
   try {

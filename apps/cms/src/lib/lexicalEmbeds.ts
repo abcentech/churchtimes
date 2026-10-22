@@ -60,6 +60,26 @@ export const validateVideoId = (value: unknown): true | string =>
 
 export const validateYoutubeTitle = (value: unknown): true | string => youtubeTitleProblem(value) ?? true
 
+export const UNSAFE_LINK_MESSAGE = 'Links must use http, https or mailto addresses (or a relative path or #fragment).'
+
+const SAFE_LINK_SCHEMES = new Set(['http', 'https', 'mailto'])
+
+/**
+ * True when a link target is acceptable: an http(s) or mailto address, a relative path, a query or a #fragment.
+ * Browsers strip tabs, newlines and leading control characters / spaces before reading the scheme, so they are
+ * stripped here too ("java<TAB>script:" is javascript:). Anything with another scheme (javascript:, data:, vbscript:,
+ * file:, tel:, ...) is refused.
+ */
+export function isSafeLinkUrl(value: unknown): boolean {
+  if (value === undefined || value === null || value === '') return true
+  if (typeof value !== 'string') return false
+  // eslint-disable-next-line no-control-regex
+  const v = value.replace(/[\u0000-\u0020\u007F-\u009F]+/g, '')
+  const scheme = /^([A-Za-z][A-Za-z0-9+.-]*):/.exec(v)
+  if (!scheme) return true
+  return SAFE_LINK_SCHEMES.has(scheme[1].toLowerCase())
+}
+
 /**
  * Returns the first problem found in the body (a message suitable for a 400), or `null` when every embed-like
  * node is a well-formed `youtubeEmbed` block. Absent content returns `null` (nothing to check).
@@ -110,6 +130,13 @@ export function findEmbedProblem(content: unknown): string | null {
         }
         problem = youtubeTitleProblem(fields.title)
         return // a valid block has no children to inspect
+      }
+      if (type === 'link' || type === 'autolink') {
+        const f = rec.fields !== null && typeof rec.fields === 'object' ? (rec.fields as Record<string, unknown>) : {}
+        if (!isSafeLinkUrl(f.url) || !isSafeLinkUrl(rec.url)) {
+          problem = UNSAFE_LINK_MESSAGE
+          return
+        }
       }
       if (EMBED_LIKE_TYPE_RE.test(type)) {
         problem = EMBED_REFUSED_MESSAGE

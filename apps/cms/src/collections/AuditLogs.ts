@@ -31,6 +31,9 @@ export const AuditLogs: CollectionConfig = {
     { name: 'docId', type: 'text', required: true, index: true, admin: ro },
     { name: 'actor', type: 'relationship', relationTo: 'users', admin: ro },
     { name: 'actorRole', type: 'text', admin: ro },
+    // Immutable copy of the actor id written with the row: `actor` is ON DELETE SET NULL, so deleting a user would
+    // otherwise strip the identity from every past row.
+    { name: 'actorIdSnapshot', type: 'text', index: true, admin: ro },
     { name: 'fromStatus', type: 'text', admin: ro },
     { name: 'toStatus', type: 'text', admin: ro },
     { name: 'summary', type: 'textarea', admin: ro },

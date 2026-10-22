@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   BODY_TOO_DEEP_MESSAGE,
   EMBED_REFUSED_MESSAGE,
+  UNSAFE_LINK_MESSAGE,
   YOUTUBE_TITLE_MAX,
   collectYoutubeIds,
   findEmbedProblem,
@@ -201,5 +202,56 @@ describe('collectYoutubeIds', () => {
       ),
     ).toEqual(['dQw4w9WgXcQ', 'aaaaaaaaaaa'])
     expect(collectYoutubeIds(undefined)).toEqual([])
+  })
+})
+
+describe('link URL scheme check', () => {
+  const link = (url: unknown, fields: Record<string, unknown> = {}) => ({
+    type: 'link',
+    version: 3,
+    fields: { linkType: 'custom', newTab: false, url, ...fields },
+    children: [{ type: 'text', text: 'x' }],
+  })
+
+  it('accepts http, https, mailto, relative paths, queries and fragments', () => {
+    for (const ok of [
+      'https://example.org/a?b=c#d',
+      'http://example.org',
+      'HTTPS://EXAMPLE.ORG',
+      'mailto:desk@example.org',
+      '/news/story',
+      'story',
+      '#section',
+      '?page=2',
+      '//cdn.example.org/x',
+      '',
+    ]) {
+      expect(findEmbedProblem(body({ type: 'paragraph', children: [link(ok)] })), ok).toBeNull()
+    }
+    expect(findEmbedProblem(body({ type: 'paragraph', children: [link(undefined, { linkType: 'internal', doc: { value: 1 } })] }))).toBeNull()
+  })
+
+  it('refuses javascript:, data:, vbscript:, file:, tel: and obfuscated schemes', () => {
+    for (const bad of [
+      'javascript:alert(1)',
+      'JaVaScRiPt:alert(1)',
+      ' javascript:alert(1)',
+      'java\tscript:alert(1)',
+      'java\nscript:alert(1)',
+      '\u0001javascript:alert(1)',
+      'data:text/html;base64,PHNjcmlwdD4=',
+      'vbscript:msgbox(1)',
+      'file:///etc/passwd',
+      'tel:+441234',
+      'ftp://example.org',
+    ]) {
+      expect(findEmbedProblem(body({ type: 'paragraph', children: [link(bad)] })), bad).toBe(UNSAFE_LINK_MESSAGE)
+    }
+    expect(findEmbedProblem(body({ type: 'paragraph', children: [link(123)] }))).toBe(UNSAFE_LINK_MESSAGE)
+  })
+
+  it('checks autolinks and a url carried on the node itself', () => {
+    expect(findEmbedProblem(body({ type: 'paragraph', children: [{ type: 'autolink', fields: { url: 'javascript:1' }, children: [] }] }))).toBe(UNSAFE_LINK_MESSAGE)
+    expect(findEmbedProblem(body({ type: 'paragraph', children: [{ type: 'link', url: 'javascript:1', children: [] }] }))).toBe(UNSAFE_LINK_MESSAGE)
   })
 })
