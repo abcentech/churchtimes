@@ -1,5 +1,14 @@
 /**
  * `npm run import:rehearse -- [--posts 1000] [--images 60] [--seed N] [--keep]`
+ * `npm run import:rehearse -- --file <real export.xml> [--uploads <dir>] [--uploads-detail-file <path>] [--dry-run-only] [--detail-file <path>] [--keep]
+ *    [--category-mode strict|rules] [--category-review <csv outside the repo>]`
+ * With `--uploads` the uploads folder is checked first (same counts as `import:uploads-check`; `--uploads-detail-file` receives per-file detail).
+ *
+ * With `--file` the same throwaway database and temp media folder are used, but the export is a REAL one given by
+ * the owner (read-only, outside every repository): inspect stats, conversion stats, loader dry run and, unless
+ * `--dry-run-only`, apply, second apply (must change nothing) and rollback. COUNTS ONLY are printed; `--detail-file`
+ * (outside every repository) receives legacy ids of posts needing attention. Without `--uploads` every image is
+ * reported as unresolved: that is expected, not a failure.
  *
  * Full rehearsal of the WordPress import on a THROWAWAY embedded PostgreSQL (free port, temp data directory) with a
  * LARGE SYNTHETIC export generated into a temp folder outside the repository: dry run, apply, second apply (must be
@@ -16,6 +25,12 @@ import EmbeddedPostgres from 'embedded-postgres'
 import pg from 'pg'
 import sharp from 'sharp'
 
+import { convertWxrStats, formatConvertStats } from '../src/import/convertStats'
+import { formatInspectReport, inspectWxr } from '../src/import/inspect'
+import { formatImportReport, reconcile } from '../src/import/qa'
+import { isInsideRepo } from '../src/import/safePaths'
+import { checkUploads, formatUploadsCheck } from '../src/import/uploadsCheck'
+import { readWxrFile } from '../src/import/wxr'
 import { IMAGE_DIR, imageName, largeWxr } from '../tests/fixtures/wxr/large'
 
 const argv = process.argv.slice(2)
@@ -29,6 +44,20 @@ const POSTS = num('--posts', 1000)
 const IMAGES = num('--images', 60)
 const SEED = num('--seed', 20261021)
 const KEEP = argv.includes('--keep')
+const strArg = (name: string): string | undefined => {
+  const i = argv.indexOf(name)
+  const v = i >= 0 ? argv[i + 1] : undefined
+  if (i >= 0 && (!v || v.startsWith('--'))) throw new Error(`bad ${name}`)
+  return v
+}
+const FILE = strArg('--file')
+const UPLOADS = strArg('--uploads')
+const DETAIL = strArg('--detail-file')
+const UPLOADS_DETAIL = strArg('--uploads-detail-file')
+const DRY_ONLY = argv.includes('--dry-run-only')
+const CATEGORY_MODE = strArg('--category-mode')
+const CATEGORY_REVIEW = strArg('--category-review')
+if (CATEGORY_MODE !== undefined && CATEGORY_MODE !== 'strict' && CATEGORY_MODE !== 'rules') throw new Error('bad --category-mode')
 
 const freePort = (): Promise<number> =>
   new Promise((resolve, reject) => {
@@ -70,7 +99,120 @@ async function timed<T>(name: string, posts: number, fn: () => Promise<T>): Prom
   }
 }
 
+type Real = {
+  payload: unknown
+  runImport: typeof import('../src/import/run').runImport
+  runRollback: typeof import('../src/import/rollback').runRollback
+  readManifest: typeof import('../src/import/manifest').readManifest
+  manifestOf: (n: string) => string
+  mediaDir: string
+}
+
+/** The real export: counts only. Every private value stays in the file; ids go to the detail file only. */
+async function realRehearsal(r: Real): Promise<number> {
+  const file = path.resolve(FILE as string)
+  const uploadsRoot = UPLOADS ? path.resolve(UPLOADS) : undefined
+  const payload = r.payload as Parameters<typeof r.runImport>[0]
+  const counter = r.payload as { count: (a: object) => Promise<{ totalDocs: number }> }
+  const count = async (collection: string) => (await counter.count({ collection, overrideAccess: true })).totalDocs
+  const dbCounts = async () => ({ articles: await count('articles'), comments: await count('legacy-comments'), media: await count('media'), categories: await count('categories') })
+  const same = (a: object, b: object) => JSON.stringify(a) === JSON.stringify(b)
+  const zero = { articles: 0, comments: 0, media: 0, categories: 0 }
+  console.log(`Import rehearsal against a REAL export (throwaway database, counts only). Export ${mb(fs.statSync(file).size)} MB; uploads folder: ${uploadsRoot ? 'given' : 'not given (images are reported as unresolved, expected)'}`)
+  console.log('')
+  console.log(formatInspectReport(await inspectWxr(readWxrFile(file))))
+  console.log('')
+  if (uploadsRoot) {
+    // Read-only: the same counts as `npm run import:uploads-check`, so the folder is judged before anything is loaded.
+    let fd: number | undefined
+    if (UPLOADS_DETAIL) {
+      fs.mkdirSync(path.dirname(path.resolve(UPLOADS_DETAIL)), { recursive: true })
+      fd = fs.openSync(UPLOADS_DETAIL, 'w', 0o600)
+    }
+    try {
+      const uc = await checkUploads(uploadsRoot, file, fd === undefined ? undefined : (l) => fs.writeSync(fd as number, `${JSON.stringify(l)}
+`))
+      console.log(formatUploadsCheck(uc))
+    } finally {
+      if (fd !== undefined) fs.closeSync(fd)
+    }
+    console.log('')
+  }
+  const conv = await timed('conversion stats', 0, () => convertWxrStats(() => readWxrFile(file), { assumeImages: false }))
+  console.log(formatConvertStats(conv.stats))
+  if (DETAIL) {
+    fs.mkdirSync(path.dirname(path.resolve(DETAIL)), { recursive: true })
+    fs.writeFileSync(DETAIL, `${JSON.stringify(conv.detail, null, 1)}\n`, { mode: 0o600 })
+    console.log('Legacy ids of posts needing attention written to the detail file.')
+  }
+  console.log('')
+  // Failed writes: a tally of error class, code and invalid field names (never values); the post ids go to the detail file only.
+  const failTally: Record<string, number> = {}
+  const failedIds: number[] = []
+  const progress = (line: string) => {
+    const m = /^article failed: (.*) id=(-?[0-9]+|null)$/.exec(line)
+    if (!m) return
+    failTally[m[1]] = (failTally[m[1]] ?? 0) + 1
+    if (m[2] !== 'null') failedIds.push(Number(m[2]))
+  }
+  const base = { file, uploadsRoot, progress, categoryMode: CATEGORY_MODE as 'strict' | 'rules' | undefined }
+  const dry = await timed('dry-run', 0, () => r.runImport(payload, { ...base, dryRun: true, categoryReviewFile: CATEGORY_REVIEW }))
+  phases[phases.length - 1].posts = dry.articles.created
+  console.log(formatImportReport(dry))
+  check('dry run wrote nothing', same(await dbCounts(), zero))
+  check('every published post accounted for', reconcile(dry).difference === 0)
+  check('no conversion or write failures in the dry run', !Object.keys(dry.articles.skipped).some((k) => k === 'write-failed' || k.startsWith('conversion-')))
+  if (!DRY_ONLY) {
+    const total = dry.articles.created
+    const applied = await timed('apply', total, () => r.runImport(payload, { ...base, manifestPath: r.manifestOf('apply'), dryRun: false }))
+    const afterApply = await dbCounts()
+    console.log('')
+    console.log(formatImportReport(applied))
+    console.log(`Failed article writes by error (class, SQLSTATE, invalid fields): ${JSON.stringify(failTally)}`)
+    if (DETAIL && failedIds.length > 0) {
+      const prev = JSON.parse(fs.readFileSync(DETAIL, 'utf8')) as Record<string, unknown>
+      fs.writeFileSync(DETAIL, `${JSON.stringify({ ...prev, applyFailed: failedIds }, null, 1)}
+`, { mode: 0o600 })
+    }
+    const m1 = r.readManifest(r.manifestOf('apply'))
+    check('apply matches the dry run (articles, comments, media)', dry.articles.created === applied.articles.created && dry.comments.created === applied.comments.created && dry.media.created === applied.media.created)
+    check('apply verified in the database', applied.verified?.articlesInDatabase === applied.articles.created && afterApply.articles === applied.articles.created)
+    check('apply wrote no failed posts', !applied.articles.skipped['write-failed'])
+    check('manifest complete and matches the database', m1.complete && m1.articles.created.length === afterApply.articles && m1.comments.length === afterApply.comments)
+    const second = await timed('apply again', total, () => r.runImport(payload, { ...base, manifestPath: r.manifestOf('apply2'), dryRun: false }))
+    const m2 = r.readManifest(r.manifestOf('apply2'))
+    check('second apply changed nothing', same(await dbCounts(), afterApply) && second.articles.created === 0 && second.media.created === 0 && second.comments.created === 0)
+    check('second apply manifest lists no ids', m2.articles.created.length + m2.articles.updated.length + m2.media.length + m2.comments.length + m2.categories.length + m2.audits.length === 0)
+    const rbDry = await timed('rollback dry run', total, () => r.runRollback(payload, { manifestPath: r.manifestOf('apply'), force: true }))
+    check('rollback dry run deleted nothing', same(await dbCounts(), afterApply))
+    const rb = await timed('rollback apply', total, () => r.runRollback(payload, { manifestPath: r.manifestOf('apply'), apply: true, force: true }))
+    check('rollback removed every created row', same(await dbCounts(), zero))
+    check('rollback matched its dry run', rbDry.articles.wouldDelete === rb.articles.deleted && rbDry.comments.wouldDelete === rb.comments.deleted)
+    check('rollback had no failures', rb.articles.failed + rb.comments.failed + rb.media.failed + rb.categories.failed === 0)
+    const leftover = fs.existsSync(r.mediaDir) ? fs.readdirSync(r.mediaDir) : []
+    check('media files removed with their documents', leftover.length === 0)
+    console.log('')
+    console.log(`Imported (apply): articles ${afterApply.articles}, comments ${afterApply.comments}, media ${afterApply.media}, categories ${afterApply.categories}`)
+    console.log(`Rollback: articles ${rb.articles.deleted}, comments ${rb.comments.deleted}, media ${rb.media.deleted}, categories ${rb.categories.deleted}`)
+    console.log('Second apply:', JSON.stringify({ articlesCreated: second.articles.created, unchanged: second.articles.unchanged, mediaCreated: second.media.created, commentsCreated: second.comments.created, commentsExisting: second.comments.existing }))
+  }
+  console.log('Phase                 seconds   queries  peak RSS MB')
+  for (const p of phases) console.log(`${p.name.padEnd(20)} ${p.seconds.toFixed(1).padStart(8)} ${String(p.queries).padStart(9)} ${String(p.peakRssMb).padStart(12)}`)
+  console.log(`Process peak RSS: ${mb(process.resourceUsage().maxRSS * 1024)} MB`)
+  for (const c of checks) console.log(`${c.ok ? 'PASS' : 'FAIL'}  ${c.name}`)
+  const failed = checks.filter((c) => !c.ok).length
+  console.log(failed === 0 ? 'Rehearsal passed.' : `Rehearsal FAILED (${failed} checks).`)
+  return failed === 0 ? 0 : 1
+}
+
 async function main(): Promise<number> {
+  if (FILE) {
+    if (!fs.existsSync(FILE) || !fs.statSync(FILE).isFile()) throw new Error('REHEARSAL_FILE_UNREADABLE')
+    if (isInsideRepo(FILE) || (UPLOADS && isInsideRepo(UPLOADS)) || (DETAIL && isInsideRepo(DETAIL))) throw new Error('REHEARSAL_PATH_INSIDE_REPO')
+    if (UPLOADS && (!fs.existsSync(UPLOADS) || !fs.statSync(UPLOADS).isDirectory())) throw new Error('REHEARSAL_UPLOADS_UNREADABLE')
+    if (DETAIL && fs.existsSync(DETAIL)) throw new Error('REHEARSAL_DETAIL_EXISTS')
+    if (UPLOADS_DETAIL && (isInsideRepo(UPLOADS_DETAIL) || fs.existsSync(UPLOADS_DETAIL))) throw new Error('REHEARSAL_DETAIL_EXISTS')
+  }
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-rehearse-'))
   const dataDir = path.join(tmp, 'pgdata')
   const uploads = path.join(tmp, 'uploads')
@@ -111,6 +253,12 @@ async function main(): Promise<number> {
     }
     if (!KEEP) fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
   }
+  // Stopping PostgreSQL under an idle pool connection emits one late socket error: harmless once cleanup has started.
+  process.on('uncaughtException', (err) => {
+    if (cleaned && /Connection terminated|ECONNRESET/.test(err.message)) return
+    console.error(`REHEARSAL_FAILED ${err.name}`)
+    process.exit(1)
+  })
   // Ctrl+C or a termination request: stop PostgreSQL and remove the temp folder, then leave.
   for (const sig of ['SIGINT', 'SIGTERM'] as const) {
     process.once(sig, () => {
@@ -149,6 +297,8 @@ async function main(): Promise<number> {
     const payload = await getPayload({ config: resolved })
     payloadRef = payload
     await payload.db.migrate({ migrations: migrations as never })
+
+    if (FILE) return await realRehearsal({ payload, runImport, runRollback, readManifest, manifestOf, mediaDir })
 
     // Synthetic uploads and export.
     fs.mkdirSync(path.join(uploads, ...IMAGE_DIR.split('/')), { recursive: true })
@@ -229,7 +379,7 @@ main().then(
   (code) => process.exit(code),
   (err) => {
     // Never print the message (a database error carries its query and values).
-    console.error(`REHEARSAL_FAILED ${err instanceof Error ? err.name : 'Error'}`)
+    console.error(`REHEARSAL_FAILED ${err instanceof Error ? (/^REHEARSAL_[A-Z_]+$/.test(err.message) ? err.message : err.name) : 'Error'}`)
     process.exit(1)
   },
 )

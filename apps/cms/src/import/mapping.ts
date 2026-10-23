@@ -1,5 +1,6 @@
 import { cleanText } from '../lib/sanitize'
 import { hasTemplateVariable } from '../lib/seoFields'
+import type { Classification } from './categoryRules'
 import type { WxrTerm } from './wxr'
 
 /**
@@ -202,7 +203,7 @@ export function validCanonical(value: string | null | undefined, siteHosts: read
 // Category fallback chain
 // ---------------------------------------------------------------------------------------------
 
-export type CategoryStep = 'wordpress' | 'yoast-primary' | 'tag-map' | 'generic' | 'fallback'
+export type CategoryStep = 'wordpress' | 'yoast-primary' | 'tag-map' | 'rules' | 'generic' | 'fallback'
 
 export type CategoryChain = {
   step: CategoryStep
@@ -213,6 +214,8 @@ export type CategoryChain = {
   dropped: number
   /** The post names a Yoast primary category that is not among the export's categories. */
   primaryUnresolved: boolean
+  /** Rule classifier outcome (rules mode only): the provenance of a `rules` choice, or the low-confidence suggestion left in the fallback. */
+  rule?: Classification
 }
 
 export type CategorySources = {
@@ -220,6 +223,8 @@ export type CategorySources = {
   tags: readonly WxrTerm[]
   /** `_yoast_wpseo_primary_category` (a term id as text). */
   primaryCategory: string | null
+  /** Rules mode only: classifies the post's text (lazy, so the strict mode never pays for it). */
+  classify?: () => Classification
 }
 
 export type CategoryLookups = {
@@ -236,7 +241,8 @@ const isGeneric = (t: WxrTerm): boolean => GENERIC_CATEGORY_SLUGS.has(t.nicename
 /**
  * Deterministic chain: (1) the post's WordPress categories (a real one; the generic "Uncategorised" only counts if nothing
  * later applies), (2) the Yoast primary category when its term id is a category of the export, (3) the first tag with an entry in
- * the supplied tag-to-category map, (4) the generic category if the post had it, else the configured fallback category.
+ * the supplied tag-to-category map, (4) only in rules mode: the rule classifier's category when it is confident, (5) the generic
+ * category if the post had it, else the configured fallback category.
  */
 export function chooseCategoryChain(src: CategorySources, lookups: CategoryLookups): CategoryChain {
   const wp = chooseCategory(src.categories)
@@ -257,8 +263,14 @@ export function chooseCategoryChain(src: CategorySources, lookups: CategoryLooku
     if (known && !isGeneric(known)) return { ...base, step: 'tag-map', term: known, primaryUnresolved }
     return { ...base, step: 'tag-map', term: { nicename: target, name: target }, mustExist: true, primaryUnresolved }
   }
-  if (wp.primary) return { ...base, step: 'generic', term: wp.primary, primaryUnresolved }
-  return { ...base, step: 'fallback', term: undefined, primaryUnresolved }
+  const rule = src.classify?.()
+  if (rule?.confident && rule.category && !GENERIC_CATEGORY_SLUGS.has(rule.category)) {
+    const known = lookups.byNicename.get(rule.category)
+    if (known && !isGeneric(known)) return { ...base, step: 'rules', term: known, primaryUnresolved, rule }
+    return { ...base, step: 'rules', term: { nicename: rule.category, name: rule.category }, mustExist: true, primaryUnresolved, rule }
+  }
+  if (wp.primary) return { ...base, step: 'generic', term: wp.primary, primaryUnresolved, ...(rule ? { rule } : {}) }
+  return { ...base, step: 'fallback', term: undefined, primaryUnresolved, ...(rule ? { rule } : {}) }
 }
 
 const CATEGORY_SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/

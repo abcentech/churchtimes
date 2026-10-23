@@ -277,7 +277,21 @@ const UNSAFE_URL_CHARS_RE = /[\u0000- \u007F-\u009F\\]/
 
 const safeHash = (hash: string): string => (hash && !UNSAFE_URL_CHARS_RE.test(hash) ? hash : '')
 
+/**
+ * A web address that WordPress let through with a space inside (a pasted title, a typo) is kept, but written the way a
+ * browser sends it (`%20`): the editor's link validation rejects an address with a space, which would stop the whole
+ * article from being saved. Tabs and line breaks inside an address are dropped, as the URL parser does.
+ */
 function decide(raw: string, opts: LinkOptions, report: LinkReport): Decision {
+  const d = decideInner(raw, opts, report)
+  if (d.action !== 'keep') return d
+  const url = raw.trim()
+  if (!/^(https?:\/\/|\/)/i.test(url) || !/[ \t\n\r]/.test(url)) return d
+  const fixed = url.replace(/[ \t\n\r]/g, (c) => (c === ' ' ? '%20' : ''))
+  return UNSAFE_URL_CHARS_RE.test(fixed) ? { action: 'text', reason: 'unsafe characters in link' } : { action: 'rewrite', url: fixed }
+}
+
+function decideInner(raw: string, opts: LinkOptions, report: LinkReport): Decision {
   const url = raw.trim()
   if (url === '') return { action: 'text', reason: 'empty link' }
   if (url.startsWith('//')) return { action: 'text', reason: 'protocol-relative link' }

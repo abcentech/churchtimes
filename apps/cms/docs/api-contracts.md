@@ -1,4 +1,4 @@
-# Church Times CMS — API contracts (v1.18)
+# Church Times CMS — API contracts (v1.20)
 
 Status: implemented on `agent/payload-core`. v1.1 added Turnstile, duplicate detection, staff auth/session
 contract and security hardening; v1.2 closes the verified security-review findings: media ownership, version
@@ -130,7 +130,7 @@ update that sends `content`.
 Seeded: News, Features, Opinion, Columnists, Interviews, Business, Education, Health, Publisher's Note.
 
 ### Media (`/api/media`) — `{ id, alt, caption?, credit?, url, filename, mimeType, width, height, sizes }`
-Accepted uploads: `image/jpeg`, `image/png`, `image/webp`. Max 10 MB. SVG and HTML are rejected.
+Accepted uploads: `image/jpeg`, `image/png`, `image/webp` (max 10 MB) and, since v1.19, audio/video for the `audioVideo` article block: `video/mp4`, `video/webm`, `audio/mpeg`, `audio/mp4`, `audio/ogg` (max `MEDIA_AV_MAX_MB`, default 100, see v1.19). SVG, HTML, scripts and every other type are rejected.
 Upload is staff-only, as `multipart/form-data` (§6.3). Staff-only, server-set field: `uploadedBy` (user id of the
 uploader; `null` for media uploaded before v1.2). Not client-writable and never returned to anonymous readers.
 Editing is restricted, see §6.3.
@@ -192,8 +192,43 @@ Serialized shape (the `version` of the wrapper is whatever Payload's block featu
   A body nested deeper than 64 object/array levels (about 15 nested list levels) is **refused with `400`**
   (*The article body is nested too deeply ...*): the check never silently skips what it cannot inspect.
   Anonymous readers get the block as stored, on published articles only (like all of `content`).
+- (v1.19) A second block, `audioVideo`, is accepted for self-hosted audio and video; see "Audio/video block" below. Everything else stays refused.
 - The importer must write `youtubeEmbed` blocks for YouTube, and for anything else a paragraph with the original link text (when it
   is a safe `https:` link) or nothing, plus a QA report line. It must not write `embed` nodes.
+
+**Audio/video block (v1.19).** The editor also registers `audioVideo`. Serialized shape (same wrapper as `youtubeEmbed`):
+
+```json
+{ "type": "block", "version": 2, "format": "",
+  "fields": { "id": "<block id>", "blockName": "", "blockType": "audioVideo", "kind": "video",
+              "media": 123, "poster": 124, "title": "Choir rehearsal", "caption": "Optional caption",
+              "transcriptUrl": "https://example.org/transcript", "duration": 95 } }
+```
+
+- `kind`: `"video"` or `"audio"` (required). `media`: id of a Media document (an upload relation; a populated object is accepted on write), the self-hosted
+  file. `sourceUrl`: legacy address, used only when no file exists (the importer could not find it); an http(s) address without credentials or a
+  root-relative path, at most 2000 characters. At least one of `media` / `sourceUrl` is required. `poster`: optional image (JPEG/PNG/WebP) in Media.
+  `title` (required, at most 120 characters) is the accessible name; `caption` at most 500; both plain text (no `<`, `>` or control characters).
+  `transcriptUrl`: optional, same address rules as `sourceUrl`. `duration`: optional seconds, 0 to 86400. A leaf: no children, no other fields (`400`).
+- **Server validation** (every write that carries `content`, skipped only for trusted seed calls): shape errors are `400` from the embed check; a `media` file
+  must exist, be readable by the caller, have a non-empty `alt` (its description) and a type allowed for the kind (video: `video/mp4`, `video/webm`;
+  audio: `audio/mpeg`, `audio/mp4`, `audio/ogg`); a `poster` must pass the body-image rules. `bodyMedia` also lists the `media` and `poster` ids, so the
+  media freeze (§6.3) and the public read rule (§3 Media) apply to them exactly as to body images.
+- **Public projection.** There is no separate endpoint: an anonymous reader of a published article gets the block as stored, and with `depth >= 1` `media` and
+  `poster` are populated Media documents. The public site needs: `fields.kind`, `fields.title`, `fields.caption`, `fields.duration`, `fields.transcriptUrl`,
+  `fields.media.url` (the file; absolute `${CMS_PUBLIC_URL}/api/media/file/<name>` whenever `CMS_PUBLIC_URL` is set, like every other media url),
+  `fields.media.mimeType` (one of the five types), `fields.poster.url`, and `fields.sourceUrl` when there is no `media` (legacy address, may be dead: render the title as
+  a plain link or nothing). If `media` comes back as a bare id the file is not public: render nothing. Files are public exactly while the article is `published`
+  (unchanged: draft, scheduled, in review, archived and withdrawn articles keep them private, `403` on the file route). Never build a player URL from anything but `media.url` / `sourceUrl`.
+- **Upload rules** (Media): content is verified by magic bytes (MP4 `ftyp`, WebM EBML with the `webm` doctype, MP3 ID3 or frame sync, Ogg `OggS`) and must match the
+  declared type (`audio/x-m4a` is stored as `audio/mp4`, `video/x-m4v` as `video/mp4`); the file is stored unchanged (no re-encode, no size variants, `width`/`height` empty).
+  Size cap: `MEDIA_AV_MAX_MB` (default 100, maximum 500), `413` above it; images stay at 10 MB. Through `POST /api/media` a request is still bounded by the
+  proxy and request-size limit (11 MB, `lib/requestLimits.ts`, `next.config.mjs`), so larger files are loaded server side (the importer, the Local API) until operations raise
+  those limits together with the reverse proxy.
+- **Importer.** `<video>`, `<audio>`, `<source>` and the shortcodes `[fvplayer]`, `[video]`, `[audio]` become `audioVideo` blocks (a figure around one element lends its figcaption as caption;
+  `poster`/`splash` go through the image resolver). A file found by the media resolver gets `media`; otherwise the block keeps `sourceUrl` and the run report counts
+  `unresolved-media` (counts only). YouTube addresses inside these tags still become `youtubeEmbed`; any other type or player page (`.mov`, `.wav`, Vimeo, ...) stays a link
+  paragraph or is dropped, counted as unsupported.
 
 **Tables (C1.4).** The editor registers Lexical's table feature (`EXPERIMENTAL_TableFeature`) on `articles.content`. Stored shape is the
 standard `table` > `tablerow` > `tablecell` (`headerState` 0/1/2, `colSpan`, `rowSpan`), unchanged from what the public renderer
@@ -944,6 +979,47 @@ archive data and the relation is required, so silently removing them for an edit
 `(article_id, status, commented_at, legacy_id)` for the public list), reversible (down, up, down is tested). **Production needs a UTF8 database**
 (`docs/operations.md`).
 
+### Go-live C8: public search
+
+`GET /api/public/search?q=&page=&limit=&category=&year=` (anonymous, read-only; also HEAD and an OPTIONS preflight). Published articles only: the
+search reads a projection table (`article_search`) that holds nothing else, and the endpoint also requires `status = published` and
+`publishedAt <= now`, so drafts, in-review, approved, scheduled, archived (withdrawn) and future-dated articles are never returned.
+
+| Query | Meaning |
+| --- | --- |
+| `q` | required; whitespace-trimmed, control characters and lone surrogates removed; at most 200 characters (`400` when empty, missing or longer) |
+| `page` | 1 to 100, default 1 (larger is clamped, invalid becomes 1) |
+| `limit` | 1 to 50, default 10 (larger is clamped to 50, invalid becomes 10) |
+| `category` | category slug, or its numeric id; an unknown category gives an empty list |
+| `year` | four-digit year of `publishedAt` (UTC), 1900 to 2100; anything else is `400` |
+
+`200 { docs: [{ id, slug, title, excerpt, snippet, publishedAt, category: { id, slug, title }, rank }], totalDocs, limit, page, totalPages, hasNextPage,
+hasPrevPage, nextPage, prevPage }`. `snippet` is a plain-text extract of the article body around the match (about 30 words, at most 240
+characters, no markup: `<` and `>` never appear; JSON-escaped like every field), falling back to the excerpt. The result carries no staff fields.
+Order: `rank` descending (title weight A, excerpt B, body C, `ts_rank`), then `publishedAt` descending, then id. Page numbers past the
+end return an empty `docs` with the real `totalDocs`.
+
+**Query language.** `q` is parsed by PostgreSQL `websearch_to_tsquery` (never `to_tsquery`), passed as a bound parameter: words are AND-ed,
+`"quoted phrases"`, `or` and a leading `-` work, and every other punctuation (`& | ! : * ( )`, quotes) is harmless. A query made only of stop-words or
+punctuation returns `200` with an empty list. The raw `q` is not logged.
+
+**Language configuration: `english`**, chosen deliberately: the archive is English-language Nigerian news, stemming lets "elections" find "election",
+and stop-words (the, of, and) do not dominate. Names are stemmed identically at index and query time, so they still find themselves. `simple` would
+miss plurals. `unaccent` is not used (the extension is not guaranteed in the test cluster or every production image); accented letters therefore
+match only themselves.
+
+**Transport.** `Cache-Control: public, max-age=60` on `200` (errors: `no-store`), `Vary: Origin`, `X-Content-Type-Options: nosniff`. `403` for an `Origin` not in
+`PUBLIC_SUBMISSION_ORIGINS` (same rule and exact-origin CORS echo as the other public endpoints; `Retry-After` is exposed). Per-client rate limit (the shared in-memory
+limiter, same client-address rules): `SEARCH_RATE_LIMIT` (default 60) per `SEARCH_RATE_WINDOW_SECONDS` (default 60), then `429` with `Retry-After`. A database failure is
+`500 { ok: false, errors: [{ message }] }`.
+
+**Projection and operations.** Migration `20261023_090000_article_search` creates `article_search` (FK to `articles` with `ON DELETE CASCADE`, a GENERATED weighted `tsv` column, GIN index
+on it, and btree indexes on `(category_id, published_at)` and `published_at`) and seeds published articles with title and excerpt only. Articles hooks keep it current on every
+create, update (including status changes: any status other than `published` removes the row) and delete, for REST, the scheduler and the importer alike (they all use the Local API
+and fire the same hooks). **After the first deploy and after every archive import run `npm run search:reindex`** (`-- --batch 200`): idempotent, keyset-batched, fills body text, and removes rows of
+articles that are no longer published. It prints counts only. Plain article text is the Lexical text nodes (embeds and images contribute nothing), capped at 200,000 characters. The table is
+hand-written SQL, not a Payload collection: do not run Payload's dev `push` mode against a database that matters (it is already off in production).
+
 ## 8. Environment variables
 
 See `apps/cms/.env.example` (annotated) and `docs/operations.md` §4. Secrets (`PAYLOAD_SECRET`, `PREVIEW_SECRET`,
@@ -954,6 +1030,20 @@ proxy) and https-only `CMS_PUBLIC_URL`/CORS/CSRF settings (`docs/security.md`). 
 limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/operations.md` §4).
 
 ## 9. Changelog
+
+### v1.20: Go-live C8 public search
+Additive; no existing response changes.
+- New `GET /api/public/search` (see "Go-live C8: public search"), migration `20261023_090000_article_search`, Articles hooks that maintain the projection, and `npm run search:reindex`.
+- New environment variables `SEARCH_RATE_LIMIT` and `SEARCH_RATE_WINDOW_SECONDS`.
+
+### v1.19: Audio/video article block (self-hosted media)
+Additive; YouTube/Vimeo/other-site handling is unchanged.
+- New Lexical block `audioVideo` (`kind`, `media`, `sourceUrl`, `poster`, `title`, `caption`, `transcriptUrl`, `duration`) accepted in `articles.content`; validation, `bodyMedia` derivation and the public projection are described in §2 "Audio/video block".
+- Media accepts `video/mp4`, `video/webm`, `audio/mpeg`, `audio/mp4`, `audio/ogg` (magic bytes verified, size cap `MEDIA_AV_MAX_MB`, default 100 MB); images keep their rules and the 10 MB cap. No other type, and never SVG or HTML.
+- Importer: `<video>`, `<audio>`, `<source>`, `[fvplayer]`, `[video]`, `[audio]` map to the block; unresolved files keep the legacy address and are counted as `unresolved-media` in the run report (`content.avUnresolvedMedia`). Rollback is unchanged: created Media and articles are already in the manifest.
+- `articles.featuredImage` must now be a JPEG/PNG/WebP image (`400` otherwise; audio/video Media is for the block only). The importer counts an audio/video featured attachment as a missing featured image.
+- Opt-in `MEDIA_UPLOAD_MAX_MB` (11 to 500) raises the `/api/media` request limit only (default unchanged at 11 MB); the reverse-proxy cap must be raised with it, see operations.md section 4.4.
+- No database migration (blocks live inside the Lexical JSON; `media.mime_type` is free text).
 
 ### v1.18: Articles live at `/{slug}/` (owner decision D1)
 **Behaviour change** for the default of `PUBLIC_ARTICLE_PATH_TEMPLATE` (C7, O1) and for slug validation; no response shape changes.
