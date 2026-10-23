@@ -5,7 +5,7 @@
  *   S1 reporter (UI): writes + submits a story; has NO schedule control, and the CMS answers 403 to a direct PATCH to `scheduled`.
  *   S2 section editor (UI): approves, tries a past time (CMS refuses, message shown, status unchanged), then schedules ~50 s ahead
  *      with the newsroom "Schedule" control. S2b checks two more CMS rules API-DRIVEN (labelled as such).
- *   S3 anonymous reader: BEFORE the time the story is absent (API, Latest list, /reports/<slug>/ = 404); after the scheduler
+ *   S3 anonymous reader: BEFORE the time the story is absent (API, Latest list, article path (template-aware) = 404); after the scheduler
  *      ran it is published (publishedAt sane, audit entry by the system actor) and visible as card + SSR article page.
  */
 import { expect, test } from '@playwright/test'

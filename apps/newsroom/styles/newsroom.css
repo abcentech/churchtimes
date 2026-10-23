@@ -1567,3 +1567,56 @@ body[data-auth="out"] .session-chip:empty {
   border-radius: var(--radius-sm);
   font-size: 0.8125rem;
 }
+
+/* ---- Archive review (recovered archive drafts) ---- */
+.archive-filters { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-end; margin-bottom: 1rem; }
+.archive-filters .filter-group { display: flex; flex-direction: column; gap: 0.25rem; min-width: 0; flex: 1 1 11rem; }
+.archive-filters .form-input, .archive-filters .select-input { width: 100%; min-height: 2.75rem; }
+.archive-filter-actions { flex-direction: row !important; gap: 0.5rem; flex: 0 0 auto !important; }
+.archive-hint { flex: 1 1 100%; margin: 0; font-size: 0.75rem; color: var(--color-muted); }
+.archive-summary { font-size: 0.875rem; margin: 0 0 0.75rem; }
+.archive-muted { color: var(--color-muted); font-size: 0.8125rem; }
+.archive-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.75rem; }
+.archive-row { display: flex; flex-direction: column; gap: 0.75rem; }
+.archive-row-badges { display: flex; flex-wrap: wrap; gap: 0.375rem; align-items: center; margin-bottom: 0.35rem; }
+.archive-row-title { margin: 0 0 0.25rem; overflow-wrap: anywhere; }
+.archive-row-meta { margin: 0; font-size: 0.8125rem; color: var(--color-muted); display: flex; flex-wrap: wrap; gap: 0.35rem; overflow-wrap: anywhere; }
+.archive-pager { display: flex; align-items: center; justify-content: center; gap: 1rem; margin-top: 1rem; }
+.archive-pager[hidden] { display: none; }
+.archive-link-row { margin: 0 0 1rem; font-size: 0.875rem; }
+.archive-link-row[hidden] { display: none; }
+.archive-back { margin: 0 0 0.5rem; font-size: 0.875rem; }
+.archive-split { display: grid; grid-template-columns: 1fr; gap: 1rem; margin: 1rem 0; }
+.archive-split > .card { padding: 1rem; min-width: 0; }
+.archive-h { font-family: var(--font-serif); font-size: 1.1rem; margin: 0 0 0.75rem; color: var(--color-forest); }
+.archive-body .preview-body { max-height: 28rem; overflow-y: auto; overflow-wrap: anywhere; }
+.archive-dl { margin: 0; display: grid; gap: 0.25rem; font-size: 0.875rem; }
+.archive-dl dt { font-weight: 600; margin-top: 0.5rem; }
+.archive-dl dd { margin: 0; overflow-wrap: anywhere; }
+.archive-code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.8125rem; word-break: break-all; }
+.archive-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; padding-top: 0.75rem; border-top: 1px solid var(--color-rule); }
+.archive-actions .btn { min-height: 2.75rem; }
+.archive-block { border-left: 4px solid #D97706; }
+.archive-ok { border-left: 4px solid #16A34A; }
+.archive-block-note { flex: 1 1 100%; margin: 0.25rem 0 0; font-size: 0.8125rem; color: #92400E; }
+.archive-confidence-note { margin: 0.5rem 0; font-size: 0.875rem; }
+.archive-links { padding: 1rem; margin: 1rem 0; }
+.archive-links summary { cursor: pointer; font-weight: 600; min-height: 2.75rem; display: flex; align-items: center; }
+.archive-link-list { margin: 0.75rem 0; padding-left: 1.25rem; display: flex; flex-direction: column; gap: 0.75rem; }
+.archive-link { display: flex; flex-wrap: wrap; gap: 0.35rem 0.5rem; align-items: center; overflow-wrap: anywhere; }
+.archive-link-host { font-weight: 700; background: #E0F2FE; color: #075985; padding: 0 0.35rem; border-radius: 0.25rem; }
+.archive-link.is-flagged .archive-link-host { background: #FEE2E2; color: #991B1B; }
+.archive-link-href { flex: 1 1 100%; }
+.archive-links-ack { display: flex; gap: 0.5rem; align-items: center; min-height: 2.75rem; font-weight: 600; }
+.badge-warn { background-color: #FEF3C7; color: #92400E; }
+.badge-confidence-partial { background-color: #E0F2FE; color: #075985; }
+.badge-confidence-citation-only { background-color: #FEF3C7; color: #92400E; }
+.badge-confidence-missing { background-color: #FEE2E2; color: #991B1B; }
+.badge-confidence-unknown { background-color: #E5E7EB; color: #374151; }
+.badge-archive-pending { background-color: #FEF3C7; color: #92400E; }
+.badge-archive-reviewed { background-color: #DCFCE7; color: #166534; }
+.badge-archive-rejected { background-color: #FEE2E2; color: #991B1B; }
+@media (min-width: 48rem) {
+  .archive-row { flex-direction: row; align-items: center; justify-content: space-between; }
+  .archive-split { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
+}

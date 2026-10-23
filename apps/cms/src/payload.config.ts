@@ -23,6 +23,7 @@ import { Subscribers } from './collections/Subscribers'
 import { Users } from './collections/Users'
 import { previewArticleEndpoint } from './endpoints/previewArticle'
 import { publicSearchEndpoints } from './endpoints/publicSearch'
+import { staffRelatedArticlesEndpoints } from './endpoints/staffRelatedArticles'
 import { startupSelfCheck } from './lib/health'
 import { publicContactEndpoint, publicContactPreflightEndpoint } from './endpoints/publicContact'
 import { newsletterEndpoints } from './endpoints/publicNewsletter'
@@ -174,6 +175,7 @@ export default buildConfig({
     publicAdvertisingPreflightEndpoint,
     previewArticleEndpoint,
     ...publicSearchEndpoints,
+    ...staffRelatedArticlesEndpoints,
   ],
   editor: lexicalEditor(),
   db: postgresAdapter({
