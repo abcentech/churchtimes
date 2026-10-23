@@ -44,3 +44,18 @@ describe('restore drill', () => {
     expect(workflow).toMatch(/timeout-minutes:\s*(1[0-9]|20|2[0-5])\b/)
   })
 })
+
+describe('payload run scripts', () => {
+  // `payload run <file>` exits when the module finishes evaluating: every script it runs must await its work at the top level.
+  it('every script started by `payload run` awaits its main function at the top level', () => {
+    const pkg = JSON.parse(fs.readFileSync(path.resolve(here, '../../package.json'), 'utf8')) as { scripts: Record<string, string> }
+    const files = Object.values(pkg.scripts)
+      .map((s) => /^payload run (\S+\.ts)/.exec(s)?.[1])
+      .filter((f): f is string => Boolean(f))
+    expect(files.length).toBeGreaterThan(5)
+    for (const f of files) {
+      const src = fs.readFileSync(path.resolve(here, '../..', f), 'utf8')
+      expect(src, `${f} must not start work with a bare main().then(...)`).not.toMatch(/^main\(\)\.then\(/m)
+    }
+  })
+})
