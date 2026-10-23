@@ -152,8 +152,6 @@ http_code_json() { # method url jsonfile [extra curl args]
 T_START=$(now)
 log "1/6 preparing the stack"
 mkdir -p "$WORK/media"
-$SUDO chown 1000:1000 "$WORK/media"
-$SUDO chmod 755 "$WORK/media"
 $C up -d --wait --wait-timeout 120 postgres
 $C --profile ops run --rm migrate
 log "seeding $ARTICLES articles, comments and media rows"
