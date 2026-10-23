@@ -7,7 +7,7 @@ import { writeAuditLog } from '../lib/audit'
 import { articlePath as buildArticlePath, resolveArticlePathTemplate } from '../lib/redirectPaths'
 import { avKindFromPath } from '../lib/avMedia'
 import { legacyPathFromUrl } from '../lib/legacyMediaPath'
-import { cleanText, slugify } from '../lib/sanitize'
+import { cleanText, SLUG_RE, slugify } from '../lib/sanitize'
 import { isReservedSlug } from '../lib/reservedSlugs'
 import { SEO_DESCRIPTION_MAX, SEO_TITLE_MAX } from '../lib/seoFields'
 import { safeErrorSummary } from '../lib/safeLog'
@@ -21,6 +21,7 @@ import { openManifest, type ManifestSink } from './manifest'
 import { createMediaResolver, isSafeRelativeUploadPath, type MediaResolver } from './media'
 import { bumpTally, newReport, statusKey, type ImportReport } from './qa'
 import { isInsideRepo } from './safePaths'
+import { csvRow } from '../lib/csvSafe'
 import { readWxrFile, type WxrAttachment, type WxrItem, type WxrTerm } from './wxr'
 
 /**
@@ -796,10 +797,13 @@ export async function runImport(payload: Payload, opts: ImportOptions): Promise<
   }
 }
 
+/** A category slug for the review file: only a well-formed slug is written, anything else is marked, never passed on as text. */
+const reviewSlug = (v: string | null | undefined): string => (v ? (SLUG_RE.test(v) && v.length <= 100 ? v : 'invalid-slug') : '')
+
 /** The review file: legacy id, suggested category, score, runner-up. Owner-only, outside the repository, created exclusively. */
 function writeCategoryReview(file: string, rows: { legacyId: number; cls: Classification }[]): void {
   const lines = ['legacy_id,suggested_category,score,runner_up,runner_up_score']
-  for (const r of [...rows].sort((a, b) => a.legacyId - b.legacyId)) lines.push([r.legacyId, r.cls.category ?? '', r.cls.score, r.cls.runnerUp ?? '', r.cls.runnerUpScore].join(','))
+  for (const r of [...rows].sort((a, b) => a.legacyId - b.legacyId)) lines.push(csvRow([r.legacyId, reviewSlug(r.cls.category), r.cls.score, reviewSlug(r.cls.runnerUp), r.cls.runnerUpScore]))
   try {
     fs.writeFileSync(file, lines.join('\n') + '\n', { flag: 'wx', mode: 0o600 })
   } catch {

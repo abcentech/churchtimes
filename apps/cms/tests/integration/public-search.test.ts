@@ -136,7 +136,7 @@ describe('GET /api/public/search: filters and paging', () => {
     expect((await search(q(t, '&year=99999'))).status).toBe(400)
   })
 
-  it('paginates, caps limit at 50 and page at 100, and survives junk paging values', async () => {
+  it('paginates, caps limit at 20 and page at 100, and survives junk paging values', async () => {
     const t = word('paging')
     for (let i = 0; i < 7; i++) await seed({ title: `P${i} ${t}`, publishedAt: new Date(Date.now() - (i + 1) * 60_000).toISOString() })
     const p1 = await search(q(t, '&limit=3&page=1'))
@@ -149,7 +149,7 @@ describe('GET /api/public/search: filters and paging', () => {
     // equal rank: newest first
     expect(p1.json.docs[0].title).toContain('P0')
 
-    expect((await search(q(t, '&limit=1000'))).json.limit).toBe(50)
+    expect((await search(q(t, '&limit=1000'))).json.limit).toBe(20)
     expect((await search(q(t, '&limit=0'))).json.limit).toBe(10)
     expect((await search(q(t, '&limit=-5'))).json.limit).toBe(10)
     expect((await search(q(t, '&limit=abc'))).json.limit).toBe(10)
@@ -209,12 +209,92 @@ describe('GET /api/public/search: hostile input', () => {
   })
 })
 
+describe('GET /api/public/search: counting, categories and uncategorised articles', () => {
+  const rawDb = async () => ({
+    db: (f.payload.db as unknown as { drizzle: { execute: (q: unknown) => Promise<unknown> } }).drizzle,
+    sql: (await import('@payloadcms/db-postgres')).sql,
+  })
+
+  it('a page past the end with a category filter reports the real total and no docs', async () => {
+    const t = word('pastend')
+    for (let i = 0; i < 3; i++) await seed({ title: `PE${i} ${t}`, category: f.catB.id })
+    await seed({ title: `PEother ${t}`, category: f.catA.id })
+    const r = await search(q(t, `&category=${runId}-cat-b&limit=2&page=5`))
+    expect(r.status).toBe(200)
+    expect(r.json.docs).toEqual([])
+    expect(r.json).toMatchObject({ totalDocs: 3, totalCapped: false, page: 5, hasNextPage: false })
+  })
+
+  it('totalDocs stops at SEARCH_COUNT_CAP and totalCapped says there are more (also past the end)', async () => {
+    const t = word('capped')
+    for (let i = 0; i < 4; i++) await seed({ title: `Cap ${i} ${t}` })
+    const before = process.env.SEARCH_COUNT_CAP
+    process.env.SEARCH_COUNT_CAP = '3'
+    try {
+      const r = await search(q(t, '&limit=2'))
+      expect(r.json).toMatchObject({ totalDocs: 3, totalCapped: true, totalPages: null, hasNextPage: true, nextPage: 2 })
+      expect(r.json.docs).toHaveLength(2)
+      const p2 = await search(q(t, '&limit=2&page=2'))
+      expect(p2.json.docs).toHaveLength(2)
+      const far = await search(q(t, '&limit=2&page=9'))
+      expect(far.json).toMatchObject({ docs: [], totalDocs: 3, totalCapped: true, totalPages: null, hasNextPage: false })
+    } finally {
+      if (before === undefined) delete process.env.SEARCH_COUNT_CAP
+      else process.env.SEARCH_COUNT_CAP = before
+    }
+    const all = await search(q(t))
+    expect(all.json).toMatchObject({ totalDocs: 4, totalCapped: false })
+  })
+
+  it('articles.category_id is NOT NULL in the database, so a published article without a category cannot exist (nothing to seed or index)', async () => {
+    const t = word('nocat')
+    const a = await seed({ title: `Orphan ${t}` })
+    const { db, sql } = await rawDb()
+    await expect(db.execute(sql`update "articles" set "category_id" = null where "id" = ${a.id}`)).rejects.toThrow()
+    expect(ids(await search(q(t)))).toEqual([a.id])
+  })
+})
+
 describe('GET /api/public/search: transport', () => {
-  it('sends a short public cache lifetime, nosniff and Vary: Origin', async () => {
+  it('without a configured public origin the response is private (CORS echo varies per request); nosniff and Vary: Origin always', async () => {
+    delete process.env.PUBLIC_SUBMISSION_ORIGINS
     const r = await search(q('anything'))
-    expect(r.headers.get('cache-control')).toBe('public, max-age=60')
+    expect(r.headers.get('cache-control')).toBe('private, max-age=60')
     expect(r.headers.get('x-content-type-options')).toBe('nosniff')
     expect(r.headers.get('vary')).toBe('Origin')
+  })
+
+  it('with exactly one public origin every 200 is identical (same ACAO, with or without an Origin) and public; others get an uncached 403', async () => {
+    process.env.PUBLIC_SUBMISSION_ORIGINS = 'https://allowed.test'
+    try {
+      const plain = await search(q('anything'))
+      const cors = await search(q('anything'), { origin: 'https://allowed.test' })
+      for (const r of [plain, cors]) {
+        expect(r.status).toBe(200)
+        expect(r.headers.get('cache-control')).toBe('public, max-age=60')
+        expect(r.headers.get('access-control-allow-origin')).toBe('https://allowed.test')
+        expect(r.headers.get('vary')).toBe('Origin')
+      }
+      const bad = await search(q('anything'), { origin: 'https://evil.test' })
+      expect(bad.status).toBe(403)
+      expect(bad.headers.get('cache-control')).toBe('no-store')
+      expect(bad.headers.get('access-control-allow-origin')).toBeNull()
+    } finally {
+      if (saved.origins === undefined) delete process.env.PUBLIC_SUBMISSION_ORIGINS
+      else process.env.PUBLIC_SUBMISSION_ORIGINS = saved.origins
+    }
+  })
+
+  it('with several public origins the grant is echoed per request, so the response is private', async () => {
+    process.env.PUBLIC_SUBMISSION_ORIGINS = 'https://a.test,https://b.test'
+    try {
+      const r = await search(q('anything'), { origin: 'https://b.test' })
+      expect(r.headers.get('cache-control')).toBe('private, max-age=60')
+      expect(r.headers.get('access-control-allow-origin')).toBe('https://b.test')
+    } finally {
+      if (saved.origins === undefined) delete process.env.PUBLIC_SUBMISSION_ORIGINS
+      else process.env.PUBLIC_SUBMISSION_ORIGINS = saved.origins
+    }
   })
 
   it('applies the Origin allowlist and CORS like the other public endpoints', async () => {

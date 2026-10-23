@@ -8,6 +8,7 @@ import {
   AV_TITLE_MAX,
   AV_URL_MAX,
   avTextProblem,
+  isSafeAvSourceUrl,
   isSafeAvUrl,
 } from '../lib/avMedia'
 import { YOUTUBE_BLOCK_SLUG, YOUTUBE_TITLE_MAX, validateVideoId, validateYoutubeTitle } from '../lib/lexicalEmbeds'
@@ -68,7 +69,7 @@ export const audioVideoBlock: Block = {
       name: 'sourceUrl',
       type: 'text',
       maxLength: AV_URL_MAX,
-      validate: (value: unknown) => (value === undefined || value === null || value === '' || isSafeAvUrl(value) ? true : 'Use an http(s) address or a path starting with /.'),
+      validate: (value: unknown) => (value === undefined || value === null || value === '' || isSafeAvSourceUrl(value) ? true : 'Use an https address on the old site or this CMS, or a path starting with /wp-content/uploads/.'),
       admin: { description: 'Only for content imported from the old site whose file was not found. Prefer uploading the file.' },
     },
     {

@@ -114,3 +114,41 @@ export function isSafeAvUrl(value: unknown): boolean {
     return false
   }
 }
+
+/** Host names a stored legacy source address may carry: this CMS (`CMS_PUBLIC_URL`), `LEGACY_SITE_HOSTS` and the known old-site names. */
+export function avSourceHosts(env: Record<string, string | undefined> = process.env): string[] {
+  const hosts = new Set<string>(['churchtimesnigeria.net', 'churchtimesnigeria.org', 'churchtimesnigeria.com'])
+  for (const h of (env.LEGACY_SITE_HOSTS ?? '').split(',')) {
+    const host = h.trim().toLowerCase()
+    if (host !== '') hosts.add(host)
+  }
+  try {
+    if (env.CMS_PUBLIC_URL) hosts.add(new URL(env.CMS_PUBLIC_URL).hostname.toLowerCase())
+  } catch {
+    // an unusable CMS_PUBLIC_URL adds nothing
+  }
+  for (const h of [...hosts]) hosts.add(h.startsWith('www.') ? h.slice(4) : `www.${h}`)
+  return [...hosts]
+}
+
+/**
+ * Stricter than `isSafeAvUrl`, for the legacy `sourceUrl` of an audio/video block (a file the importer could not find):
+ * an `https:` address on an allowed host (`avSourceHosts`), or a root-relative path under `/wp-content/uploads/` (no `..`).
+ * Plain http, any other host and any other root-relative path are refused. (Transcript links stay on `isSafeAvUrl`.)
+ */
+export function isSafeAvSourceUrl(value: unknown, hosts: readonly string[] = avSourceHosts()): boolean {
+  if (!isSafeAvUrl(value)) return false
+  const v = value as string
+  if (v.startsWith('/')) {
+    const path = v.split('#')[0].split('?')[0]
+    // No percent-encoding or backslashes: an encoded `..` or separator could slip past the prefix check.
+    if (/[%\\]/.test(path)) return false
+    return path.startsWith('/wp-content/uploads/') && !path.split('/').some((seg) => seg === '..' || seg === '.')
+  }
+  try {
+    const u = new URL(v)
+    return u.protocol === 'https:' && hosts.includes(u.hostname.toLowerCase())
+  } catch {
+    return false
+  }
+}

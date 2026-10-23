@@ -40,7 +40,7 @@ import {
   canTransition,
   isArticleStatus,
 } from '../workflow/articleWorkflow'
-import { PROVENANCE_CONFIDENCE, PROVENANCE_REVIEW_STATUSES, publishBlockedByProvenance } from '../lib/provenance'
+import { PROVENANCE_CONFIDENCE, PROVENANCE_REVIEW_STATUSES, publishBlockedByProvenance, reviewAndPublishInOneWrite } from '../lib/provenance'
 import { reconcileCorrections } from '../workflow/corrections'
 import { articlePath, resolveArticlePathTemplate } from '../lib/redirectPaths'
 import { isReservedSlug } from '../lib/reservedSlugs'
@@ -145,6 +145,17 @@ const markRestore: CollectionBeforeOperationHook = ({ args, operation }) => {
   if (operation === 'restoreVersion') {
     ;(args.req.context as { restoreVersion?: boolean }).restoreVersion = true
   }
+  return args
+}
+
+/**
+ * `provenance: null` in a write would reach Payload's group handling as a null object (500), before any collection
+ * beforeValidate hook runs, so it is dropped here (treated as "not sent") in beforeOperation.
+ */
+const dropNullProvenance: CollectionBeforeOperationHook = ({ args, operation }) => {
+  if (operation !== 'create' && operation !== 'update') return args
+  const data = (args as { data?: Record<string, unknown> }).data
+  if (data && typeof data === 'object' && data.provenance === null) delete data.provenance
   return args
 }
 
@@ -454,7 +465,27 @@ const enforceWorkflow: CollectionBeforeChangeHook = async ({ data, originalDoc, 
  * Archive-candidate articles (provenance.importBatch set) cannot be published or scheduled until an editor sets
  * provenance.reviewStatus to "reviewed". Applies to every caller, including the scheduler, seed and importer.
  */
-const guardUnreviewedImport: CollectionBeforeChangeHook = async ({ data, originalDoc }) => {
+const guardUnreviewedImport: CollectionBeforeChangeHook = async ({ data, originalDoc, req }) => {
+  const orig = (originalDoc ?? undefined) as Record<string, unknown> | undefined
+  // restoreVersion replaces the whole document with an old snapshot. Provenance and its review decision are not content: an
+  // old "reviewed" must never overrule a later "rejected" (or "pending"), so the stored provenance always wins on a restore.
+  if ((req.context as { restoreVersion?: boolean } | undefined)?.restoreVersion === true && orig && orig.provenance !== undefined) {
+    ;(data as Record<string, unknown>).provenance = orig.provenance
+  }
+  // A review decision only means something on a recovered archive article (one with an import batch, which only the importer sets).
+  {
+    const incoming = (data as Record<string, unknown>).provenance as { reviewStatus?: unknown; importBatch?: unknown } | undefined
+    if (incoming && typeof incoming === 'object' && incoming.reviewStatus !== undefined && incoming.reviewStatus !== null) {
+      const storedBatch = (orig?.provenance as { importBatch?: unknown } | undefined)?.importBatch
+      const batch = 'importBatch' in incoming ? incoming.importBatch : storedBatch
+      if (typeof batch !== 'string' || batch === '') return fail(400, 'A review status can only be set on a recovered archive article.')
+    }
+  }
+  // Approving and publishing a recovered article are separate decisions: not in one request, unless the actor is an admin.
+  const actor = asUser(req.user)
+  if (actor && actor.role !== 'admin' && reviewAndPublishInOneWrite(data as Record<string, unknown>, orig)) {
+    return fail(409, 'Mark a recovered archive article as reviewed first, then publish or schedule it in a separate request.')
+  }
   if (publishBlockedByProvenance(data as Record<string, unknown>, (originalDoc ?? undefined) as Record<string, unknown> | undefined)) {
     return fail(409, 'This recovered archive article must be reviewed (provenance review status "reviewed") before it can be published or scheduled.')
   }
@@ -555,6 +586,19 @@ const auditChanges: CollectionAfterChangeHook = async ({ doc, previousDoc, opera
       summary: title,
       actorRole,
     })
+    // An article created already approved or rejected is a review decision too.
+    const createdReview = (doc.provenance as { reviewStatus?: unknown } | null | undefined)?.reviewStatus
+    if (typeof createdReview === 'string' && createdReview !== 'pending') {
+      await writeAuditLog(req, {
+        action: 'archive.review',
+        collection: 'articles',
+        docId: doc.id,
+        toStatus: doc.status,
+        summary: `Archive review status none -> ${createdReview} (at creation): ${title}`.slice(0, 1000),
+        details: { from: null, to: createdReview },
+        actorRole,
+      })
+    }
     return doc
   }
   const prev = (previousDoc ?? {}) as Doc
@@ -685,7 +729,7 @@ export const Articles: CollectionConfig = {
     readVersions: readVersionsAccess,
   },
   hooks: {
-    beforeOperation: [clampLimit, markRestore, captureExpectedUpdatedAt],
+    beforeOperation: [clampLimit, markRestore, dropNullProvenance, captureExpectedUpdatedAt],
     beforeValidate: [autoSlug, normalizeSeoFields, validateEmbeds, validateBodyImages, validateAvMedia, validateFeaturedImage],
     beforeChange: [assertExpectedUpdatedAt('articles'), guardUnreviewedImport, deriveBodyMedia, guardPublishedSlug, enforceWorkflow],
     beforeDelete: [refuseDeleteWithLegacyComments],
