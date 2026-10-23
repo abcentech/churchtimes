@@ -1055,6 +1055,12 @@ limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/op
 
 ## 9. Changelog
 
+### v1.22: Archive review audit entry
+Additive; no request or response shape changes.
+- Every change of `articles.provenance.reviewStatus` (an editor approving or rejecting a recovered archive draft in the newsroom's Archive review screen, or in the admin) writes an audit row: `action: "archive.review"`, `collection: "articles"`, `docId`, `actor` / `actorIdSnapshot` / `actorRole` (who), `createdAt` (when), `toStatus` (the article status, unchanged), `details: { from, to }`. The summary holds the article title only, never the source address or hash. Rows are readable by editor-in-chief and admin (existing `audit-logs` rule). A write that leaves the review status unchanged writes no row. No migration (`audit-logs.action` is free text).
+- Access rule restated and tested: `provenance.reviewStatus` is writable by `admin`, `editor-in-chief` and `section-editor` (the latter only on articles the existing collection rules let them update, i.e. their sections). Reporters, trusted publishers and anonymous callers cannot change it (refused or ignored); the 409 publish guard of v1.21 is unchanged. Rejecting leaves the article a draft.
+- Newsroom client use: list `GET /api/articles?where[provenance.importBatch][exists]=true&where[provenance.confidence][equals]=...&where[provenance.reviewStatus][equals]=...&where[provenance.importBatch][equals]=...` (staff only; counts via `limit=1` and `totalDocs`), decide with `PATCH /api/articles/:id` `{"provenance":{"reviewStatus":"reviewed"|"rejected"},"expectedUpdatedAt":"..."}`.
+
 ### v1.21: Archive-candidate provenance on articles
 Additive; no existing response shape changes (a new staff-only field) and one new write rule.
 - New `articles.provenance` group: `sourceUrl`, `sourceHost`, `captureTimestamp`, `originalDate`, `sourceSha256`, `confidence` (`partial` | `citation-only` | `missing`), `importBatch`, `reviewStatus` (`pending` | `reviewed` | `rejected`). **Staff-only**: absent from every anonymous response (list, by id, published or not) and from public projections; anonymous queries filtering on it return nothing or are refused (400). All fields are server-owned (set by the importer) except `reviewStatus`, which editor roles may change (`PATCH /api/articles/:id` with `{"provenance":{"reviewStatus":"reviewed"}}`); other callers' attempts are ignored or denied.

@@ -17,6 +17,7 @@ import { createConnectionState, shouldRefreshSession } from './http-guard.js';
 import { renderReview } from './views/review.js';
 import { renderLive, stopLivePolling } from './views/live.js';
 import { renderMedia } from './views/media.js';
+import { renderArchive } from './views/archive.js';
 import { escapeHtml, formatRoleName } from './util.js';
 
 const ID_RE = /^\d+$/;
@@ -110,6 +111,7 @@ class NewsroomApp {
   updateSessionDisplay() {
     const user = api.getCurrentUser();
     document.body.dataset.auth = user ? 'in' : 'out';
+    document.querySelectorAll('[data-archive-nav]').forEach(el => { el.hidden = !(user && api.can('archive.view')); });
     if (!this.sessionChipEl) return;
     if (!user) {
       this.sessionChipEl.innerHTML = '';
@@ -260,7 +262,7 @@ class NewsroomApp {
     document.addEventListener('keydown', (e) => {
       if (!api.getCurrentUser()) return;
       if (e.altKey && !e.ctrlKey && !e.shiftKey) {
-        const map = { 1: 'dashboard', 2: 'editor', 3: 'review', 4: 'live', 5: 'media' };
+        const map = { 1: 'dashboard', 2: 'editor', 3: 'review', 4: 'live', 5: 'media', 6: 'archive' };
         if (map[e.key]) { e.preventDefault(); store.setCurrentView(map[e.key]); }
       }
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
@@ -346,6 +348,7 @@ class NewsroomApp {
       case 'review': await renderReview(host, storyId); break;
       case 'live': await renderLive(host); break;
       case 'media': await renderMedia(host); break;
+      case 'archive': await renderArchive(host, storyId); break;
       case 'submit': this.renderPublicTipNotice(host); break;
       case 'dashboard':
       default:

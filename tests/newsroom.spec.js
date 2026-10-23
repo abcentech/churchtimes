@@ -127,6 +127,51 @@ test.describe('Newsroom UI (dev mock mode)', () => {
     await expect(page.locator('.modal-overlay')).toHaveCount(0);
   });
 
+  test('archive review: a reporter has no access; an editor filters, reads provenance, approves and rejects', async ({ page }) => {
+    // Reporter (the mock default): no nav entry, and the screen refuses.
+    await expect(page.locator('[data-archive-nav]')).toHaveJSProperty('hidden', true);
+    await page.goto('./#archive');
+    await expect(page.getByTestId('archive-not-permitted')).toBeVisible();
+
+    await page.locator('#user-role-select').selectOption({ label: 'Derin Adeogun (Section Editor)' });
+    await page.goto('./#archive');
+    await expect(page.locator('[data-archive-nav]')).toHaveJSProperty('hidden', false);
+    await expect(page.locator('.view-title')).toHaveText('Archive review');
+    // Default view: pending drafts, with counts.
+    await expect(page.getByTestId('archive-row')).toHaveCount(3);
+    await expect(page.getByTestId('archive-count-pending')).toContainText('3');
+    await expect(page.getByTestId('archive-count-reviewed')).toContainText('1');
+    const first = page.getByTestId('archive-row').first();
+    await expect(first.getByTestId('archive-source-host')).toHaveText('old-site.test');
+    await expect(first.getByTestId('archive-confidence')).toBeVisible();
+
+    await page.getByLabel('Recovery confidence').selectOption('missing');
+    await page.getByTestId('archive-apply').click();
+    await expect(page.getByTestId('archive-row')).toHaveCount(1);
+    await page.getByTestId('archive-clear').click();
+    await expect(page.getByTestId('archive-row')).toHaveCount(4);
+
+    // Review screen: provenance beside the body; the source opens only on click, safely.
+    await page.getByTestId('archive-row').first().getByTestId('archive-open').click();
+    await expect(page.getByTestId('archive-publish-blocked')).toContainText('has not been reviewed');
+    await expect(page.getByTestId('archive-body')).toBeVisible();
+    await expect(page.getByTestId('archive-sha')).toContainText('11111111');
+    const link = page.getByTestId('archive-source-link');
+    await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    await expect(link).toHaveAttribute('target', '_blank');
+    await expect(page.locator('iframe, img[src*="old-site"]')).toHaveCount(0);
+    await expect(page.getByTestId('archive-open-editor')).toBeVisible();
+
+    await page.getByTestId('archive-approve').click();
+    await page.getByTestId('archive-approve-confirm-ok').click();
+    await expect(page.getByTestId('archive-publish-clear')).toBeVisible();
+    await expect(page.getByTestId('archive-approve')).toHaveCount(0);
+
+    await page.getByTestId('archive-reject').click();
+    await page.getByTestId('archive-reject-confirm-ok').click();
+    await expect(page.getByTestId('archive-publish-blocked')).toContainText('rejected');
+  });
+
   test('keyboard shortcuts navigate between views; dev role switcher changes permissions', async ({ page }) => {
     await page.keyboard.press('Alt+2');
     await expect(page.getByTestId('editor-title')).toBeVisible();

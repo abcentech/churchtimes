@@ -509,7 +509,7 @@ The detail file is JSON: `textShrink`, `emptyOutput`, `failed` (id and code), `i
 ## Links in article bodies (`npm run import:link-audit`)
 
 Every link in a body is classified by one shared module (`src/import/linkClassify.ts`); the converter rewrites with it and the audit counts with it.
-The article path is `PUBLIC_ARTICLE_PATH_TEMPLATE` (`/{slug}/` once D1 is set; the audit takes `--article-path` to override). A rewrite is always a root-relative
+The article path is `PUBLIC_ARTICLE_PATH_TEMPLATE` (`/{slug}/` by default (D1), `/reports/{slug}/` is the only other accepted value; the audit takes `--article-path` to override). A rewrite is always a root-relative
 path on the site itself, never another host. Old hosts are the export's own site address plus `churchtimesnigeria.net`, `.org` and `.com`.
 
 | Link type | Rule |
@@ -557,7 +557,7 @@ redirect file is empty (header only) for this export. Run the audit again after 
 What is left, and who does it:
 
 - **Owner**: decide what the 16 links to slugs that are not in the export should do (remove the link, or point at a replacement), and the 6 other paths. Details are in the private rows file (`--out`).
-- **Owner**: set `PUBLIC_ARTICLE_PATH_TEMPLATE=/{slug}/` (D1) before the real run so rewritten links use it; the importer now reads it (it used to write `/article/{slug}`).
+- **Owner**: nothing to set for the default: `/{slug}/` (D1) is the built-in default of the importer and the CMS. Set `PUBLIC_ARTICLE_PATH_TEMPLATE=/reports/{slug}/` only to override it, on the CMS and the public host alike (the importer used to write `/article/{slug}`).
 - **Owner**: `churchtimesnigeria.org` and `.com` must reach the same public host (DNS or host-level redirect) and be listed in `LEGACY_SITE_HOSTS`; path rules do not carry a host.
 - **Codex (E3, old-host redirect map)**: covered on the CMS side for exact rules by `--redirects-out`; still the public host's job: pattern rules (`/category/*`, `/tag/*`, `/page/N/`, `/feed/`), `?p=N` through `legacyId`, the `/category/{slug}/` route itself (the CMS only emits and rewrites to that form; change it with `--category-path`), and tag pages if wanted.
 - **Codex (E4, link audit)**: covered on the CMS side by this command (read-only, counts, private rows). Still open: the 3119 uploads links (they need the media map, `export:media-map`, to resolve) and pages (a pages collection, then `pagePath`).
