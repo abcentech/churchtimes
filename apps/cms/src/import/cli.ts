@@ -9,7 +9,8 @@ import { WxrError } from './wxr'
 /**
  * `npm run import:wxr -- --file <export.xml> [--uploads <folder>] [--manifest <path>] [--apply] [--update]
  *  [--old-host a.test,b.test] [--limit N] [--category-map <tag-map.json outside the repo>]
- *  [--fallback-category <slug>] [--fallback-category-name <name>]`
+ *  [--fallback-category <slug>] [--fallback-category-name <name>]
+ *  [--category-mode=strict|rules] [--category-rules <rules.json outside the repo>] [--category-review <csv outside the repo>]`
  *
  * DRY RUN by default (nothing is written). `--apply` writes and needs a rollback manifest path, given by `--manifest`
  * or the `IMPORT_MANIFEST_PATH` environment variable; it must be outside the repository and must not exist yet.
@@ -26,7 +27,15 @@ export function parseImportArgs(argv: readonly string[], env: Record<string, str
   }
   const file = value('--file')
   if (!file) return null
-  for (const name of ['--uploads', '--manifest', '--old-host', '--limit', '--category-map', '--fallback-category', '--fallback-category-name']) {
+  const modeArg = argv.filter((a) => a === '--category-mode' || a.startsWith('--category-mode='))
+  if (modeArg.length > 1) return null
+  let categoryMode: ImportOptions['categoryMode']
+  if (modeArg.length === 1) {
+    const m = modeArg[0] === '--category-mode' ? argv[argv.indexOf('--category-mode') + 1] : modeArg[0].slice('--category-mode='.length)
+    if (m !== 'strict' && m !== 'rules') return null
+    categoryMode = m
+  }
+  for (const name of ['--category-rules', '--category-review', '--uploads', '--manifest', '--old-host', '--limit', '--category-map', '--fallback-category', '--fallback-category-name']) {
     if (argv.includes(name) && !value(name)) return null
   }
   const limitRaw = value('--limit')
@@ -55,6 +64,9 @@ export function parseImportArgs(argv: readonly string[], env: Record<string, str
     limit,
     categoryMapFile: value('--category-map') ?? env.IMPORT_CATEGORY_MAP,
     fallbackCategory,
+    categoryMode,
+    categoryRulesFile: value('--category-rules'),
+    categoryReviewFile: value('--category-review'),
   }
 }
 

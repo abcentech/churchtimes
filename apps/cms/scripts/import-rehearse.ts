@@ -1,6 +1,8 @@
 /**
  * `npm run import:rehearse -- [--posts 1000] [--images 60] [--seed N] [--keep]`
- * `npm run import:rehearse -- --file <real export.xml> [--uploads <dir>] [--dry-run-only] [--detail-file <path>] [--keep]`
+ * `npm run import:rehearse -- --file <real export.xml> [--uploads <dir>] [--uploads-detail-file <path>] [--dry-run-only] [--detail-file <path>] [--keep]
+ *    [--category-mode strict|rules] [--category-review <csv outside the repo>]`
+ * With `--uploads` the uploads folder is checked first (same counts as `import:uploads-check`; `--uploads-detail-file` receives per-file detail).
  *
  * With `--file` the same throwaway database and temp media folder are used, but the export is a REAL one given by
  * the owner (read-only, outside every repository): inspect stats, conversion stats, loader dry run and, unless
@@ -27,6 +29,7 @@ import { convertWxrStats, formatConvertStats } from '../src/import/convertStats'
 import { formatInspectReport, inspectWxr } from '../src/import/inspect'
 import { formatImportReport, reconcile } from '../src/import/qa'
 import { isInsideRepo } from '../src/import/safePaths'
+import { checkUploads, formatUploadsCheck } from '../src/import/uploadsCheck'
 import { readWxrFile } from '../src/import/wxr'
 import { IMAGE_DIR, imageName, largeWxr } from '../tests/fixtures/wxr/large'
 
@@ -50,7 +53,11 @@ const strArg = (name: string): string | undefined => {
 const FILE = strArg('--file')
 const UPLOADS = strArg('--uploads')
 const DETAIL = strArg('--detail-file')
+const UPLOADS_DETAIL = strArg('--uploads-detail-file')
 const DRY_ONLY = argv.includes('--dry-run-only')
+const CATEGORY_MODE = strArg('--category-mode')
+const CATEGORY_REVIEW = strArg('--category-review')
+if (CATEGORY_MODE !== undefined && CATEGORY_MODE !== 'strict' && CATEGORY_MODE !== 'rules') throw new Error('bad --category-mode')
 
 const freePort = (): Promise<number> =>
   new Promise((resolve, reject) => {
@@ -115,6 +122,22 @@ async function realRehearsal(r: Real): Promise<number> {
   console.log('')
   console.log(formatInspectReport(await inspectWxr(readWxrFile(file))))
   console.log('')
+  if (uploadsRoot) {
+    // Read-only: the same counts as `npm run import:uploads-check`, so the folder is judged before anything is loaded.
+    let fd: number | undefined
+    if (UPLOADS_DETAIL) {
+      fs.mkdirSync(path.dirname(path.resolve(UPLOADS_DETAIL)), { recursive: true })
+      fd = fs.openSync(UPLOADS_DETAIL, 'w', 0o600)
+    }
+    try {
+      const uc = await checkUploads(uploadsRoot, file, fd === undefined ? undefined : (l) => fs.writeSync(fd as number, `${JSON.stringify(l)}
+`))
+      console.log(formatUploadsCheck(uc))
+    } finally {
+      if (fd !== undefined) fs.closeSync(fd)
+    }
+    console.log('')
+  }
   const conv = await timed('conversion stats', 0, () => convertWxrStats(() => readWxrFile(file), { assumeImages: false }))
   console.log(formatConvertStats(conv.stats))
   if (DETAIL) {
@@ -132,8 +155,8 @@ async function realRehearsal(r: Real): Promise<number> {
     failTally[m[1]] = (failTally[m[1]] ?? 0) + 1
     if (m[2] !== 'null') failedIds.push(Number(m[2]))
   }
-  const base = { file, uploadsRoot, progress }
-  const dry = await timed('dry-run', 0, () => r.runImport(payload, { ...base, dryRun: true }))
+  const base = { file, uploadsRoot, progress, categoryMode: CATEGORY_MODE as 'strict' | 'rules' | undefined }
+  const dry = await timed('dry-run', 0, () => r.runImport(payload, { ...base, dryRun: true, categoryReviewFile: CATEGORY_REVIEW }))
   phases[phases.length - 1].posts = dry.articles.created
   console.log(formatImportReport(dry))
   check('dry run wrote nothing', same(await dbCounts(), zero))
@@ -188,6 +211,7 @@ async function main(): Promise<number> {
     if (isInsideRepo(FILE) || (UPLOADS && isInsideRepo(UPLOADS)) || (DETAIL && isInsideRepo(DETAIL))) throw new Error('REHEARSAL_PATH_INSIDE_REPO')
     if (UPLOADS && (!fs.existsSync(UPLOADS) || !fs.statSync(UPLOADS).isDirectory())) throw new Error('REHEARSAL_UPLOADS_UNREADABLE')
     if (DETAIL && fs.existsSync(DETAIL)) throw new Error('REHEARSAL_DETAIL_EXISTS')
+    if (UPLOADS_DETAIL && (isInsideRepo(UPLOADS_DETAIL) || fs.existsSync(UPLOADS_DETAIL))) throw new Error('REHEARSAL_DETAIL_EXISTS')
   }
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-rehearse-'))
   const dataDir = path.join(tmp, 'pgdata')

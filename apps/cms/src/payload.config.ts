@@ -39,6 +39,7 @@ import {
   publicSubmissionsEndpoint,
   publicSubmissionsPreflightEndpoint,
 } from './endpoints/publicSubmissions'
+import { avMaxBytes } from './lib/avMedia'
 import { parseAllowedHosts, parseLegacyHosts, resolveArticlePathTemplate } from './lib/redirectPaths'
 import { startScheduler } from './lib/scheduler'
 import {
@@ -182,7 +183,8 @@ export default buildConfig({
     startScheduler(payload)
   },
   sharp,
-  upload: { limits: { fileSize: 10 * 1024 * 1024 } },
+  // The parser limit is the largest allowed file (audio/video, MEDIA_AV_MAX_MB, default 100 MB); images are capped at 10 MB in Media.checkUpload.
+  upload: { limits: { fileSize: avMaxBytes() } },
   graphQL: { disable: true },
   typescript: { outputFile: path.resolve(dirname, 'payload-types.ts') },
 })

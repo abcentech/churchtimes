@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 
 import { type DefaultTreeAdapterMap, defaultTreeAdapter, parseFragment } from 'parse5'
 
+import { AV_BLOCK_SLUG, AV_CAPTION_MAX, AV_TITLE_MAX, type AvKind, avKindFromPath, avTextProblem, isSafeAvUrl } from '../lib/avMedia'
 import { stripShortcodes, sanitizeLegacyLinks } from '../lib/legacyContent'
 import { articlePath, resolveArticlePathTemplate } from '../lib/redirectPaths'
 import { findEmbedProblem, YOUTUBE_BLOCK_SLUG, YOUTUBE_ID_RE, YOUTUBE_TITLE_MAX, youtubeTitleProblem } from '../lib/lexicalEmbeds'
@@ -13,7 +14,7 @@ import { findEmbedProblem, YOUTUBE_BLOCK_SLUG, YOUTUBE_ID_RE, YOUTUBE_TITLE_MAX,
  * Pure: no database, no network, no file access. The HTML is read with parse5 (a real, spec-compliant parser); nothing
  * here parses markup with a regular expression. Only these node shapes are ever written: paragraph, heading (h2 to h4),
  * quote, list/listitem, link, text, linebreak, upload (relationTo media), table/tablerow/tablecell and the registered
- * `youtubeEmbed` block. Raw HTML, styles, event handlers and unknown attributes are never carried over.
+ * `youtubeEmbed` and `audioVideo` blocks. Raw HTML, styles, event handlers and unknown attributes are never carried over.
  *
  * Everything lossy is listed in `report`. Hard limits: input size, element depth (a deeper subtree is flattened to
  * plain text and reported), output node count and table size. Exceeding the input or node limit throws
@@ -28,12 +29,24 @@ export type LexicalNode = Json
 
 export type ResolveImage = (src: string, context: { alt: string; caption: string; articleTitle?: string }) => { mediaId: number } | null
 
+/**
+ * Resolves the address of an audio/video file to a Media document (`kind` says what the file is). Return null when the file
+ * cannot be found: the block is then kept with the legacy address and counted as `unresolved-media`. Without this option
+ * every file counts as unresolved.
+ */
+export type ResolveMedia = (
+  src: string,
+  context: { kind: AvKind; title: string; caption: string; articleTitle?: string },
+) => { mediaId: number } | null
+
 export type HtmlToLexicalOptions = {
   /** Host names of the old site (see `sanitizeLegacyLinks`). */
   oldHosts: readonly string[]
   /** Old WordPress slug -> new slug. */
   slugMap: ReadonlyMap<string, string> | Readonly<Record<string, string>>
   resolveImage: ResolveImage
+  /** Audio/video files (`<video>`, `<audio>`, `[video]`, `[audio]`, `[fvplayer]`); optional, see ResolveMedia. */
+  resolveMedia?: ResolveMedia
   /** Extra shortcode names to remove (merged with the C1 defaults). */
   knownShortcodes?: readonly string[]
   articleTitle?: string
@@ -109,6 +122,8 @@ export type ConversionReport = {
     converted: { url: string; reason: string }[]
   }
   images: { resolved: number; unresolved: { src: string; reason: string }[] }
+  /** `audioVideo` blocks written: with a media file, with only the legacy address (unresolved-media), and files of a type the CMS does not host (linked or dropped instead). */
+  audioVideo: { resolved: number; unresolvedMedia: number; unsupported: number }
   /** YouTube blocks written (from iframes, embeds, shortcodes, bare URLs and wp:embed blocks). */
   youtube: number
   /** Iframes/embeds that were not YouTube: turned into a link paragraph or dropped. */
@@ -364,6 +379,9 @@ type Ctx = {
   hoist: LexicalNode[]
   /** Caption(s) of the figure being walked, taken by its single image. */
   pendingCaption: { captions: ChildNode[][]; used: boolean } | null
+  /** Caption of the figure being walked, taken by its single video/audio element. */
+  pendingAvCaption: { text: string; used: boolean } | null
+  avIndex: number
   /** Links turned to text by the converter itself (the link pass reports its own). */
   extraConverted: { url: string; reason: string }[]
   suppressedWarnings: number
@@ -374,7 +392,7 @@ function warn(ctx: Ctx, message: string): void {
   else ctx.suppressedWarnings++
 }
 
-type ShortcodePart = { text: string } | { shortcode: string; tag: string; id: string | null }
+type ShortcodePart = { text: string } | { shortcode: string; tag: string; id: string | null; attrs: string; inner: string }
 
 /** `[youtube ...]`, `[yt ...]` and `[embed]...[/embed]` markers inside a text, found without regular expressions. */
 function splitYoutubeShortcodes(text: string): ShortcodePart[] {
@@ -383,7 +401,7 @@ function splitYoutubeShortcodes(text: string): ShortcodePart[] {
   let i = 0
   const noCloser = new Set<string>()
   while ((i = text.indexOf('[', i)) !== -1) {
-    const head = /^\[(youtube|yt|embed)(?=[\s=\]])/.exec(text.slice(i, i + 10))
+    const head = /^\[(youtube|yt|embed|fvplayer|video|audio)(?=[\s=\]])/.exec(text.slice(i, i + 12))
     if (!head) {
       i++
       continue
@@ -405,7 +423,7 @@ function splitYoutubeShortcodes(text: string): ShortcodePart[] {
     }
     const id = youtubeFromShortcode(tag, attrs, inner)
     if (i > last) parts.push({ text: text.slice(last, i) })
-    parts.push({ shortcode: text.slice(i, end), tag, id })
+    parts.push({ shortcode: text.slice(i, end), tag, id, attrs, inner })
     last = end
     i = end
   }
@@ -451,6 +469,7 @@ function emptyReport(inputBytes: number): ConversionReport {
     links: { rewritten: 0, unmapped: [], converted: [] },
     images: { resolved: 0, unresolved: [] },
     youtube: 0,
+    audioVideo: { resolved: 0, unresolvedMedia: 0, unsupported: 0 },
     embeds: { linked: [], dropped: [] },
     unknownElements: {},
     unknownBlocks: {},
@@ -555,6 +574,8 @@ function convert(html: string, options: HtmlToLexicalOptions): HtmlToLexicalResu
     shortcodeOverflow: false,
     hoist: [],
     pendingCaption: null,
+    pendingAvCaption: null,
+    avIndex: 0,
     extraConverted: [],
     suppressedWarnings: 0,
   }
@@ -733,6 +754,8 @@ function handleText(ctx: Ctx, value: string, frame: Frame, col: Collector): void
         if (part.id) {
           ctx.report.youtube++
           col.items.push({ kind: 'block', nodes: [youtubeBlock(part.id, ctx.ytIndex++)] })
+        } else if (part.tag === 'fvplayer' || part.tag === 'video' || part.tag === 'audio') {
+          avFromShortcode(ctx, part.tag, part.attrs, part.inner, col)
         }
       }
     }
@@ -1305,6 +1328,10 @@ function walkElement(ctx: Ctx, el: Elem, frame: Frame, col: Collector, out: Lexi
   }
   const deeper: Frame = { ...frame, depth: frame.depth + 1 }
 
+  if (tag === 'video' || tag === 'audio') {
+    handleAvElement(ctx, el, col)
+    return
+  }
   if (DROP_WITH_CONTENT.has(tag)) {
     bump(ctx.report.droppedElements, tag)
     return
@@ -1399,6 +1426,19 @@ function walkElement(ctx: Ctx, el: Elem, frame: Frame, col: Collector, out: Lexi
       flush(ctx, col, out)
       const hasImg = findAll(kids(el), (e) => e.tagName === 'img', 2)
       if (hasImg.length === 0) {
+        const avEls = findAll(kids(el), (e) => e.tagName === 'video' || e.tagName === 'audio', 2)
+        const avCaps = kids(el).filter((c): c is Elem => isElem(c) && c.tagName === 'figcaption')
+        if (avEls.length === 1 && avCaps.length > 0) {
+          // A figure around ONE video/audio: its figcaption is the block caption (kept as paragraphs when no block is written).
+          const savedAv = ctx.pendingAvCaption
+          const pendingAv = { text: squash(avCaps.map((c) => textContent(kids(c))).join(' ')), used: false }
+          ctx.pendingAvCaption = pendingAv
+          walk(ctx, kids(el).filter((c) => !(isElem(c) && c.tagName === 'figcaption')), deeper, col, out)
+          flush(ctx, col, out)
+          ctx.pendingAvCaption = savedAv
+          if (!pendingAv.used) for (const c of avCaps) out.push(...captionParagraphs(ctx, kids(c), deeper))
+          return
+        }
         walk(ctx, kids(el), deeper, col, out)
         flush(ctx, col, out)
         return
@@ -1465,6 +1505,136 @@ function handleIframe(ctx: Ctx, el: Elem, col: Collector): void {
     return
   }
   otherEmbed(ctx, src.startsWith('//') ? `https:${src}` : src, 'iframe', col)
+}
+
+// ---------------------------------------------------------------------------------------------
+// Audio and video (self-hosted files)
+// ---------------------------------------------------------------------------------------------
+
+type AvSpec = { tag: string; src: string; poster: string; caption: string; title: string }
+
+/** Plain text for a block title/caption: markup characters and controls removed, bounded. */
+function avPlain(text: string, max: number): string {
+  return squash(stripControls(text).replace(/[<>]/g, '')).slice(0, max)
+}
+
+/** Attributes of a shortcode: `name="v"`, `name='v'`, `name=v`; a leading bare/quoted value counts as `src`. Names are lower case. */
+function shortcodeAttrs(attrs: string, inner: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  let rest = attrs.trim()
+  const lead = /^=?\s*(?:"([^"]*)"|'([^']*)')/.exec(rest)
+  if (lead) {
+    out.src = (lead[1] ?? lead[2] ?? '').trim()
+    rest = rest.slice(lead[0].length)
+  }
+  const re = /([A-Za-z_][A-Za-z0-9_-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"']+))/g
+  let m: RegExpExecArray | null
+  let guard = 0
+  while ((m = re.exec(rest)) !== null && guard++ < 50) {
+    const k = m[1].toLowerCase()
+    if (!Object.prototype.hasOwnProperty.call(out, k)) out[k] = (m[2] ?? m[3] ?? m[4] ?? '').trim()
+  }
+  if (!out.src && inner.trim() && /^(https?:)?\/\/\S+$|^\/\S+$/.test(inner.trim())) out.src = inner.trim()
+  return out
+}
+
+/** `[fvplayer src=".." splash=".." caption=".."]`, `[video mp4=".." poster=".."]`, `[audio src=".."]`. */
+function avFromShortcode(ctx: Ctx, tag: string, attrs: string, inner: string, col: Collector): void {
+  const a = shortcodeAttrs(attrs, inner)
+  const candidates = [a.src, a.mp4, a.webm, a.m4a, a.mp3, a.ogg, a.oga, a.m4v, a.url].filter((v): v is string => typeof v === 'string' && v !== '')
+  const src = candidates.find((c) => avKindFromPath(c) !== null) ?? candidates[0]
+  if (!src) return
+  emitAv(ctx, { tag, src, poster: a.poster ?? a.splash ?? '', caption: a.caption ?? '', title: a.title ?? '' }, col)
+}
+
+/** `<video>` / `<audio>` with `src` or `<source>` children, an optional `poster`, `title`, and the caption of its figure. */
+function handleAvElement(ctx: Ctx, el: Elem, col: Collector): void {
+  const sources = [el, ...findAll(kids(el), (e) => e.tagName === 'source', 10)]
+    .map((e) => (attr(e, 'src') ?? attr(e, 'data-src') ?? '').trim())
+    .filter((s) => s !== '')
+  const src = sources.find((s) => avKindFromPath(s) !== null) ?? sources[0]
+  if (!src) {
+    bump(ctx.report.droppedElements, el.tagName)
+    return
+  }
+  const pc = ctx.pendingAvCaption
+  let caption = ''
+  if (pc && !pc.used) {
+    caption = pc.text
+    pc.used = true
+  }
+  emitAv(ctx, { tag: el.tagName, src, poster: (attr(el, 'poster') ?? '').trim(), caption, title: squash(attr(el, 'title') ?? attr(el, 'aria-label') ?? '') }, col)
+}
+
+/** Address kept in a block that has no media file: absolute http(s) or root-relative, protocol-relative made https. */
+function avSourceUrl(raw: string): string | null {
+  const t = raw.trim()
+  const full = t.startsWith('//') ? `https:${t}` : t
+  return isSafeAvUrl(full) ? full : null
+}
+
+function emitAv(ctx: Ctx, spec: AvSpec, col: Collector): void {
+  const src = spec.src.trim()
+  const yt = extractYoutubeId(src)
+  if (yt) {
+    ctx.report.youtube++
+    col.items.push({ kind: 'block', nodes: [youtubeBlock(yt, ctx.ytIndex++, undefined)] })
+    return
+  }
+  const kind = avKindFromPath(src)
+  if (kind === null) {
+    // Not a type the CMS hosts (another site's player page, .mov, .wav, a stream): a link when safe, else dropped. Counted.
+    ctx.report.audioVideo.unsupported++
+    otherEmbed(ctx, src.startsWith('//') ? `https:${src}` : src, spec.tag, col)
+    return
+  }
+  const caption = avPlain(withoutShortcodes(ctx, spec.caption, false), AV_CAPTION_MAX)
+  const articleTitle = ctx.opts.articleTitle ? avPlain(ctx.opts.articleTitle, AV_TITLE_MAX) : ''
+  const title = avPlain(spec.title, AV_TITLE_MAX) || avPlain(caption, AV_TITLE_MAX) || articleTitle || (kind === 'audio' ? 'Audio' : 'Video')
+  const index = ctx.avIndex++
+  const fields: Json = {
+    id: createHash('sha1').update(`av:${index}:${kind}:${src}`).digest('hex').slice(0, 24),
+    blockName: '',
+    blockType: AV_BLOCK_SLUG,
+    kind,
+  }
+  let resolved: { mediaId: number } | null = null
+  if (ctx.opts.resolveMedia) {
+    try {
+      resolved = ctx.opts.resolveMedia(src, { kind, title, caption, articleTitle: ctx.opts.articleTitle })
+    } catch {
+      resolved = null
+    }
+  }
+  if (resolved && Number.isInteger(resolved.mediaId) && resolved.mediaId >= 1 && resolved.mediaId <= 2147483647) {
+    fields.media = resolved.mediaId
+    ctx.report.audioVideo.resolved++
+  } else {
+    const url = avSourceUrl(src)
+    if (url === null) {
+      ctx.report.embeds.dropped.push({ reason: `${spec.tag} without a safe address` })
+      return
+    }
+    fields.sourceUrl = url
+    ctx.report.audioVideo.unresolvedMedia++
+  }
+  const posterSrc = spec.poster.trim()
+  if (posterSrc && !/^(data|javascript|vbscript):/i.test(posterSrc)) {
+    try {
+      const p = ctx.opts.resolveImage(posterSrc, { alt: '', caption: '', articleTitle: ctx.opts.articleTitle })
+      if (p && Number.isInteger(p.mediaId) && p.mediaId >= 1 && p.mediaId <= 2147483647) {
+        fields.poster = p.mediaId
+        ctx.report.images.resolved++
+      } else {
+        ctx.report.images.unresolved.push({ src: posterSrc.slice(0, 500), reason: 'poster: resolveImage returned no media' })
+      }
+    } catch {
+      ctx.report.images.unresolved.push({ src: posterSrc.slice(0, 500), reason: 'poster: resolveImage failed' })
+    }
+  }
+  fields.title = title
+  if (caption !== '' && avTextProblem(caption, 'caption', AV_CAPTION_MAX) === null) fields.caption = caption
+  col.items.push({ kind: 'block', nodes: [{ type: 'block', version: 2, format: '', fields }] })
 }
 
 function handleObject(ctx: Ctx, el: Elem, col: Collector): void {
