@@ -15,6 +15,7 @@ import * as migration_20261021_110000_submission_consent from './20261021_110000
 import * as migration_20261022_125053_audit_actor_snapshot from './20261022_125053_audit_actor_snapshot';
 import * as migration_20261022_141856_article_list_index from './20261022_141856_article_list_index';
 import * as migration_20261023_090000_article_search from './20261023_090000_article_search';
+import * as migration_20261023_143703_archive_candidate_provenance from './20261023_143703_archive_candidate_provenance';
 
 export const migrations = [
   {
@@ -100,6 +101,11 @@ export const migrations = [
   {
     up: migration_20261023_090000_article_search.up,
     down: migration_20261023_090000_article_search.down,
-    name: '20261023_090000_article_search'
+    name: '20261023_090000_article_search',
+  },
+  {
+    up: migration_20261023_143703_archive_candidate_provenance.up,
+    down: migration_20261023_143703_archive_candidate_provenance.down,
+    name: '20261023_143703_archive_candidate_provenance',
   },
 ];

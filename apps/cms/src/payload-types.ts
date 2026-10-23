@@ -321,6 +321,22 @@ export interface Article {
     | null;
   legacyUrl?: string | null;
   legacyId?: number | null;
+  /**
+   * Where a recovered archive article came from. Review it, then set the review status to "reviewed" before publishing.
+   */
+  provenance?: {
+    sourceUrl?: string | null;
+    sourceHost?: string | null;
+    captureTimestamp?: string | null;
+    /**
+     * Publication date claimed by the recovered page (not verified).
+     */
+    originalDate?: string | null;
+    sourceSha256?: string | null;
+    confidence?: ('partial' | 'citation-only' | 'missing') | null;
+    importBatch?: string | null;
+    reviewStatus?: ('pending' | 'reviewed' | 'rejected') | null;
+  };
   updatedAt: string;
   createdAt: string;
 }
@@ -862,6 +878,18 @@ export interface ArticlesSelect<T extends boolean = true> {
       };
   legacyUrl?: T;
   legacyId?: T;
+  provenance?:
+    | T
+    | {
+        sourceUrl?: T;
+        sourceHost?: T;
+        captureTimestamp?: T;
+        originalDate?: T;
+        sourceSha256?: T;
+        confidence?: T;
+        importBatch?: T;
+        reviewStatus?: T;
+      };
   updatedAt?: T;
   createdAt?: T;
 }
