@@ -36,8 +36,8 @@ Rules for the whole project:
 
 | Item | Who | Check |
 | --- | --- | --- |
-| A new, clean server (see the hardening guide), not the old one | [Name] | You can log in with an SSH key |
-| The CMS deployed on that server per `operations.md` | [Name] | Admin login page loads over HTTPS |
+| A new, clean server (see the hardening guide), not the old one | your technical helper | You can log in with an SSH key |
+| The CMS deployed on that server per `operations.md` | your technical helper | Admin login page loads over HTTPS |
 | A private folder on your PC with free space of about 3x the uploads size | Owner | `D:\churchtimes-private\` exists |
 | WordPress admin access (read-only use) | Owner | You can open Tools, then Export |
 | The Rank Math redirects export (CSV) | Owner | File exists in the private folder |
@@ -117,7 +117,7 @@ Get-ChildItem D:\churchtimes-private\uploads-raw -Recurse -File |
 ```
 
 What to check afterwards: the list should be short. Any `.php`, `.exe`, `.js`, `.html` or `.phtml` file is a red flag.
-Do not open it. Delete those files, tell [Name], and run a full anti-virus scan of the folder before continuing. Then
+Do not open it. Delete those files, tell your technical helper, and run a full anti-virus scan of the folder before continuing. Then
 copy the clean result:
 
 ```
@@ -145,7 +145,7 @@ deleted at the end. The commands come from `import.md` (branch `feat/newsroom-mv
 `import:inspect`, `import:wxr-report`, `import:wxr`, `import:rollback`, `import:rehearse`, `import:redirects` and
 `export:media-map`. `import:convert-wxr` and the real-export rehearsal arrive with PR #92 (open): until it is merged,
 use branch `agent/claude-realdry` for step 3.3 and 3.4. If npm says "missing script", your copy is old: run `git pull`
-and `npm ci`, or ask [Name].
+and `npm ci`, or ask your technical helper.
 
 ### Step 3.1 Prepare the machine
 
@@ -174,7 +174,7 @@ It builds a temporary database and a large invented export, then runs a dry run,
 a rollback. It uses no real data. Allow 5 to 10 minutes.
 
 What to check afterwards: the last lines show PASS for every check and no FAIL. If anything says FAIL, stop and send the
-output to [Name].
+output to your technical helper.
 
 ### Step 3.3 Read-only reports on your real export
 
@@ -209,7 +209,7 @@ What the real export (the 2026-10-13 file) contains, so you can compare:
 | Conversion failures; posts whose text shrank by over 20 percent; posts with text but empty output | 0 each |
 | An error code such as `WXR_ENCODING` or `WXR_TRUNCATED` | none; if present, export again (step 2.1) |
 
-A newer export will differ a little; a large difference needs an explanation from [Name] before you carry on. Also look
+A newer export will differ a little; a large difference needs an explanation from your technical helper before you carry on. Also look
 at "shortcodes removed by tag": `video`, `audio`, `fvplayer` and `gallery` content is not imported as media yet (YouTube is
 kept as a video block; a video and audio block is being added in a separate change). Write the counts down so an editor
 can check those posts.
@@ -286,7 +286,7 @@ edited rows add `--force`, but only after reading the dry run.
 Run step 3.5 again, start the admin and open a sample (section 5.2 lists what to open). When satisfied, delete the
 rehearsal machine, or wipe its scratch database and delete the copy of `export.xml`.
 
-What to check afterwards: no real files remain on the rehearsal machine. Record the go-ahead decision with [Name] in
+What to check afterwards: no real files remain on the rehearsal machine. Record the go-ahead decision with your technical helper in
 section 9.
 
 ## 4. Real import into the staging CMS
@@ -294,30 +294,30 @@ section 9.
 Staging is the CMS on the new server, not yet public, with search engines blocked. The server runs the CMS from the
 production Docker definition (`apps/cms/docker-compose.production.yml`): a `postgres` container, the `cms` container
 (runs as user 1000, read-only filesystem), and a one-off `migrate` container that holds the tools (`migrate`,
-`admin:create` and the import commands). The full server procedure is `operations.md`, section 3.2; [Name] does the
+`admin:create` and the import commands). The full server procedure is `operations.md`, section 3.2; your technical helper does the
 server setup. Your part is below.
 
-### Step 4.1 Bring the CMS up on the server (done by [Name], checked by you)
+### Step 4.1 Bring the CMS up on the server (done by your technical helper, checked by you)
 
-Facts to confirm with [Name] before any import:
+Facts to confirm with your technical helper before any import:
 
 | Check | Where | What you should see |
 | --- | --- | --- |
-| The environment file is `/etc/churchtimes/cms.env` (mode 600, root only) and the database password is in `/etc/churchtimes/secrets/postgres_password` | [SERVER] | You never see these values in chat or screenshots; [Name] confirms they exist and are new (not from the old server) |
-| `CMS_PUBLIC_URL`, `CMS_CORS_ORIGINS`, `CMS_CSRF_ORIGINS` list only the real https addresses | [SERVER] | [Name] confirms |
+| The environment file is `/etc/churchtimes/cms.env` (mode 600, root only) and the database password is in `/etc/churchtimes/secrets/postgres_password` | [SERVER] | You never see these values in chat or screenshots; your technical helper confirms they exist and are new (not from the old server) |
+| `CMS_PUBLIC_URL`, `CMS_CORS_ORIGINS`, `CMS_CSRF_ORIGINS` list only the real https addresses | [SERVER] | your technical helper confirms |
 | `PUBLIC_CMS_URL` on the public site host is exactly the same address as the CMS `CMS_PUBLIC_URL` | public host settings | Yes. If they differ, the site silently drops article images (found in testing) |
 | `PUBLIC_ARTICLE_PATH_TEMPLATE=/{slug}/` on the CMS and the public host | both | Same value on both (decision D1) |
 | `ALLOW_FIRST_REGISTER` is NOT set (or not `true`) | cms.env | Left unset. With it unset the "first user" sign-up address is refused. The first administrator is created on the server with `admin:create` (`operations.md`, "First administrator") before the site is exposed |
-| Health: `https://<cms-address>/api/health/live` shows `{"status":"ok"}` and `https://<cms-address>/api/health/ready` shows `"status":"ready"` with `database`, `migrations` and `media` all `true` | [OWNER PC] browser or `curl.exe -s` | Both answer 200. If ready says 503, a `false` flag tells [Name] which part to look at |
+| Health: `https://<cms-address>/api/health/live` shows `{"status":"ok"}` and `https://<cms-address>/api/health/ready` shows `"status":"ready"` with `database`, `migrations` and `media` all `true` | [OWNER PC] browser or `curl.exe -s` | Both answer 200. If ready says 503, a `false` flag tells your technical helper which part to look at |
 | A backup ran and was verified before the import (section 8) | [SERVER] | A `churchtimes-<date>` folder exists and `verify-backup.sh` printed `VERIFIED` |
 
-Gap to settle with [Name] first: the production compose file does not mount your export, the uploads copy or a manifest
+Gap to settle with your technical helper first: the production compose file does not mount your export, the uploads copy or a manifest
 folder into the `migrate` container, and the import writes image files to the media folder. So the first real import
 needs a small local override file (kept on the server, outside GitHub) that mounts, for the one-off `migrate` run only:
 the private folder `/srv/private` read-only, a `manifests` folder that is writable, and `/srv/churchtimes/media` (owned by
 user 1000). Until that exists, do the real import on a machine where the tools run directly (the rehearsal machine setup of
 section 3, but with a persistent database), and move the result to the server with the backup and restore scripts
-(`operations.md`, section 6). Do not improvise this: ask [Name].
+(`operations.md`, section 6). Do not improvise this: ask your technical helper.
 
 ### Step 4.2 Move the private files to the server safely
 
@@ -334,7 +334,7 @@ import is accepted.
 
 ### Step 4.3 Dry run, then apply
 
-**[SERVER]** (inside the `migrate` container, with the override from step 4.1; [Name] gives you the exact command line, which
+**[SERVER]** (inside the `migrate` container, with the override from step 4.1; your technical helper gives you the exact command line, which
 looks like `$C --profile ops run --rm migrate npm run import:wxr -- --file /srv/private/export.xml ...`)
 
 First a dry run, which writes nothing:
@@ -366,7 +366,7 @@ addresses is zero when compared with your private top-100 list.
 
 ## 5. QA checklist on staging
 
-Tick each line. Anything unticked is a decision for [Name] and you, not something to ignore.
+Tick each line. Anything unticked is a decision for your technical helper and you, not something to ignore.
 
 ### 5.1 Counts
 
@@ -411,7 +411,7 @@ or 410. Your private top-100 list must give zero failures.
 Look at three commented articles (view the page source and search for the at-sign). What to check afterwards: no real email
 appears; text that looked like an email shows `[email removed]`.
 
-Sign-off: [Name] ____ [Date] ____ . No cutover until every line is ticked or consciously accepted.
+Sign-off: your technical helper ____ [Date] ____ . No cutover until every line is ticked or consciously accepted.
 
 ## 6. Cutover
 
@@ -420,7 +420,7 @@ the domain's mail or nameserver records at any point.
 
 ### Step 6.1 Soft launch on a subdomain
 
-1. **[SERVER]** set up the public host on a subdomain such as `new.<your-domain>` (name agreed with [Name]) with HTTPS.
+1. **[SERVER]** set up the public host on a subdomain such as `new.<your-domain>` (name agreed with your technical helper) with HTTPS.
    Search engines stay blocked (`PUBLIC_INDEXABLE` not set to true).
 2. **[OWNER PC]** at your DNS provider add a record for the subdomain only. The main domain is untouched.
 3. Invite staff and a few trusted readers for 3 to 7 days. Test on phones; submit a test story, the contact form and a
@@ -512,7 +512,7 @@ npm run export:media-map -- --out D:\churchtimes-private\media-map.json --detail
 ```
 
 The first line is a dry run (counts only, writes nothing). The second writes the map and a `media-map.json.sha256` file
-next to it. Only images that anonymous readers can see are exported. Give BOTH files to [Name] over a private channel; on
+next to it. Only images that anonymous readers can see are exported. Give BOTH files to your technical helper over a private channel; on
 the public host, `sha256sum -c media-map.json.sha256` must say OK before the map is swapped in. Never commit either file.
 Export again after each import or on a schedule, and replace the map and its `.sha256` together. What to check afterwards: a
 sample old image address returns the picture on the public host, and an unpublished article's image stops being served.
@@ -531,7 +531,7 @@ sample old image address returns the picture on the public host, and an unpublis
 ### 8.2 Backups with the supplied scripts
 
 The CMS ships tested scripts (`apps/cms/scripts/backup.sh`, `verify-backup.sh`, `restore.sh`; full text in `operations.md`,
-section 6). [Name] sets them up as a nightly timer. They make one folder per run with the database dump, a media archive,
+section 6). your technical helper sets them up as a nightly timer. They make one folder per run with the database dump, a media archive,
 checksums and row counts; they encrypt with a PUBLIC key (`age`), so the private key never sits on the server; and they
 refuse to run in unsafe ways. A failed backup returns an error, so alert on it, and also alert if no new folder appears
 for 26 hours.
@@ -566,35 +566,35 @@ A backup that was never restored is only a hope.
 
 What to check afterwards: `verify-backup.sh` prints `VERIFIED`; `restore.sh` exits 0 and its counts table shows `ok` on every
 row (articles, media, comments); start a test CMS against `churchtimes_drill` with its own test secrets (never the production
-ones), log in, and open 5 articles with their images. Record: [Name] [Date] [Minutes taken]. Delete the test database,
+ones), log in, and open 5 articles with their images. Record: your technical helper [Date] [Minutes taken]. Delete the test database,
 media copy, decrypted files and the machine afterwards.
 
 ## 9. Who does what
 
 | Step | Who | Backup person | Done on |
 | --- | --- | --- | --- |
-| Decide D1 to D8 | Owner | [Name] | [Date] |
-| New clean server and hardening | [Name] | [Name] | [Date] |
-| WordPress export and uploads pack | Owner | [Name] | [Date] |
-| Malware scan of uploads | [Name] | Owner | [Date] |
-| Rehearsal and rollback test | [Name] | [Name] | [Date] |
-| Real import on staging and QA report | [Name] | [Name] | [Date] |
-| Editorial QA: 50-article sample | Editor [Name] | Owner | [Date] |
-| Redirect map and top-100 check | [Name] | Owner | [Date] |
-| Soft launch on subdomain | [Name] | Owner | [Date] |
-| Lower DNS TTL | Owner | [Name] | [Date] |
+| Decide D1 to D8 | Owner | your technical helper | [Date] |
+| New clean server and hardening | your technical helper | your technical helper | [Date] |
+| WordPress export and uploads pack | Owner | your technical helper | [Date] |
+| Malware scan of uploads | your technical helper | Owner | [Date] |
+| Rehearsal and rollback test | your technical helper | your technical helper | [Date] |
+| Real import on staging and QA report | your technical helper | your technical helper | [Date] |
+| Editorial QA: 50-article sample | Editor your technical helper | Owner | [Date] |
+| Redirect map and top-100 check | your technical helper | Owner | [Date] |
+| Soft launch on subdomain | your technical helper | Owner | [Date] |
+| Lower DNS TTL | Owner | your technical helper | [Date] |
 | Go / no-go decision | Owner | none | [Date] |
-| DNS switch | Owner | [Name] | [Date] |
-| Indexing on, sitemap submission | [Name] | Owner | [Date] |
-| 72-hour watch rota | [Name], [Name] | Owner | [Date] |
-| Media map export and public host setup | [Name] | [Name] | [Date] |
-| Backups running, off-site copy proven, restore test passed | [Name] | Owner | [Date] |
-| Retire old WordPress | Owner | [Name] | [Date] |
+| DNS switch | Owner | your technical helper | [Date] |
+| Indexing on, sitemap submission | your technical helper | Owner | [Date] |
+| 72-hour watch rota | your technical helper, your technical helper | Owner | [Date] |
+| Media map export and public host setup | your technical helper | your technical helper | [Date] |
+| Backups running, off-site copy proven, restore test passed | your technical helper | Owner | [Date] |
+| Retire old WordPress | Owner | your technical helper | [Date] |
 
 ## 10. If something goes wrong
 
 Stop, do not retry in a loop, and keep the exact output. Do not paste real data or secrets when asking for help; the import
-prints counts and codes only, so its output is safe to share. Contact: [Name], [Phone or channel].
+prints counts and codes only, so its output is safe to share. Contact: your technical helper, [Phone or channel].
 
 
 ## 11. Note for people who raise pull requests

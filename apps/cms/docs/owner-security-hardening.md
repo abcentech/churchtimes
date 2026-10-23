@@ -136,7 +136,7 @@ The old setup used a hosting control panel. On the new host:
   if the CMS offers it, rate limiting and the audit log. Consider restricting `/admin` to known addresses at the web
   server if staff addresses are stable.
 - PostgreSQL is only inside Docker's private network: the production compose file publishes no database port, and CI
-  checks that. If you ever see port 5432 open on the server, stop and ask [Name].
+  checks that. If you ever see port 5432 open on the server, stop and ask your technical helper.
 - The "first user" sign-up (`POST /api/users/first-register`) would give an administrator account to whoever calls it first
   on an empty database. In production the CMS refuses it unless `ALLOW_FIRST_REGISTER=true`, and the Caddyfile in
   `operations.md` also answers 404 for it. Leave `ALLOW_FIRST_REGISTER` unset. Create the first administrator on the
@@ -161,7 +161,7 @@ curl.exe -s https://<cms-address>/api/health/ready
 ```
 
 `live` returns `{"status":"ok"}`. `ready` returns `"status":"ready"` with `database`, `migrations` and `media` all `true`;
-a `503` with a `false` flag tells [Name] which part failed.
+a `503` with a `false` flag tells your technical helper which part failed.
 
 ## 6. Least-privilege accounts
 
@@ -242,7 +242,7 @@ and `operations.md`, "Restore drill checklist"). Record the date: [Date].
   the CMS `https://<cms-address>/api/health/live` (keyword `ok`) and `/api/health/ready` (keyword `ready`), the public
   home page (a stable word from it), one article and the admin login page. The health addresses never show secrets or
   error text, so they are safe to give to a monitoring service.
-- Alerts go to two people by email and one by phone message: [Name], [Name], [Name].
+- Alerts go to two people by email and one by phone message: your technical helper, your technical helper, your technical helper.
 - Also watch disk space (alert at 80 percent), failed backups (`systemctl --failed` shows a failed backup unit, and a
   missing new backup folder for more than 26 hours is an alert), and certificate expiry (alert 14 days ahead).
 - Optionally send the server's authentication log summary by email daily (`logwatch`).
@@ -286,8 +286,8 @@ Decisions for the owner (write them down, with the time):
 | Is personal data likely to have been accessed or taken? | [Yes/No/Unknown] | Owner with [Lawyer] | [Date/Time] |
 | Notify the regulator? | [Decision] | Owner with [Lawyer] | [Date/Time] |
 | Notify affected people (for example commenters)? | [Decision] | Owner with [Lawyer] | [Date/Time] |
-| Who writes and sends the notices | [Name] | Owner | [Date/Time] |
-| Where evidence is kept (offline copy of the old server, logs) | [Location] | [Name] | [Date/Time] |
+| Who writes and sends the notices | your technical helper | Owner | [Date/Time] |
+| Where evidence is kept (offline copy of the old server, logs) | [Location] | your technical helper | [Date/Time] |
 | Our contact point for questions | [Name, channel] | Owner | [Date/Time] |
 
 A notice normally says: what happened, when, what kinds of data were involved, the likely consequences, what we have done
