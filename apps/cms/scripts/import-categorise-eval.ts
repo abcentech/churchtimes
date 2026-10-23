@@ -15,6 +15,7 @@ import path from 'node:path'
 import { classify, compileRules, EraIndex, parseCategoryRules, textForClassification, type Classification } from '../src/import/categoryRules'
 import { DEFAULT_CATEGORY_RULES } from '../src/import/categoryRulesDefault'
 import { chooseCategoryChain } from '../src/import/mapping'
+import { csvRow } from '../src/lib/csvSafe'
 import { isInsideRepo } from '../src/import/safePaths'
 import { readWxrFile, type WxrItem, type WxrTerm } from '../src/import/wxr'
 
@@ -123,7 +124,7 @@ console.log(`  nothing matched at all: ${tres.filter((t) => !t.cls.category).len
 
 if (detailFile) {
   const lines = ['legacy_id,suggested_category,score,runner_up,runner_up_score,confident']
-  for (const t of tres) lines.push([t.id, t.cls.category ?? '', t.cls.score, t.cls.runnerUp ?? '', t.cls.runnerUpScore, t.cls.confident ? 'yes' : 'no'].join(','))
+  for (const t of tres) lines.push(csvRow([t.id, t.cls.category ?? '', t.cls.score, t.cls.runnerUp ?? '', t.cls.runnerUpScore, t.cls.confident ? 'yes' : 'no']))
   fs.mkdirSync(path.dirname(detailFile), { recursive: true })
   fs.writeFileSync(detailFile, lines.join('\n') + '\n', { flag: 'wx', mode: 0o600 })
   console.log(`  detail rows written: ${tres.length}`)

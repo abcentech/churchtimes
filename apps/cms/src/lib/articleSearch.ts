@@ -20,7 +20,23 @@ import { executor } from './dbTransaction'
 export const SEARCH_CONFIG = 'english'
 export const SEARCH_Q_MAX = 200
 export const SEARCH_DEFAULT_LIMIT = 10
-export const SEARCH_MAX_LIMIT = 50
+export const SEARCH_MAX_LIMIT_DEFAULT = 20
+export const SEARCH_MAX_LIMIT_CEILING = 100
+/** Largest page size: `SEARCH_MAX_LIMIT` (1 to 100), default 20. Read on every request so tests and operators can change it. */
+export function searchMaxLimit(env: Record<string, string | undefined> = process.env): number {
+  const n = Number(env.SEARCH_MAX_LIMIT)
+  return Number.isInteger(n) && n >= 1 ? Math.min(n, SEARCH_MAX_LIMIT_CEILING) : SEARCH_MAX_LIMIT_DEFAULT
+}
+export const SEARCH_MAX_LIMIT = SEARCH_MAX_LIMIT_DEFAULT
+/** Matches counted for `totalDocs`: counting stops at this many (a broad query would otherwise scan every match). */
+export const SEARCH_COUNT_CAP_DEFAULT = 1000
+/** `SEARCH_COUNT_CAP` (1 to 10000), default 1000. */
+export function searchCountCap(env: Record<string, string | undefined> = process.env): number {
+  const n = Number(env.SEARCH_COUNT_CAP)
+  return Number.isInteger(n) && n >= 1 ? Math.min(n, 10_000) : SEARCH_COUNT_CAP_DEFAULT
+}
+/** Characters of body text handed to ts_headline per hit (the snippet is about 30 words; the whole body is never headlined). */
+export const SEARCH_HEADLINE_CHARS = 20_000
 export const SEARCH_MAX_PAGE = 100
 export const SEARCH_BODY_MAX = 200_000
 export const SNIPPET_MAX = 240
@@ -178,7 +194,7 @@ export function parseSearchParams(params: URLSearchParams): ParseResult {
   if (q === '') return { ok: false, message: 'Query parameter "q" is required.' }
   if ([...q].length > SEARCH_Q_MAX) return tooLong
 
-  const limit = Math.min(strictInt(params.get('limit')) || SEARCH_DEFAULT_LIMIT, SEARCH_MAX_LIMIT)
+  const limit = Math.min(strictInt(params.get('limit')) || SEARCH_DEFAULT_LIMIT, searchMaxLimit())
   const page = Math.min(strictInt(params.get('page')) || 1, SEARCH_MAX_PAGE)
 
   let category: string | undefined
@@ -206,7 +222,8 @@ export type SearchHit = {
   category: { id: number; slug: string; title: string }
   rank: number
 }
-export type SearchResult = { docs: SearchHit[]; totalDocs: number }
+/** `totalDocs` counts at most SEARCH_COUNT_CAP matches; `totalCapped` is true when there are more than that. */
+export type SearchResult = { docs: SearchHit[]; totalDocs: number; totalCapped: boolean }
 
 /** ts_headline output is already plain text (the body has no markup); still strip angle brackets and cap the length. */
 export function cleanSnippet(raw: unknown, fallback: string): string {
@@ -224,24 +241,28 @@ export async function searchArticles(payload: Payload, p: SearchParams): Promise
   const catId = p.category !== undefined && /^\d{1,9}$/.test(p.category) ? Number(p.category) : null
   const config = sql.raw(`'${SEARCH_CONFIG}'::regconfig`)
 
+  const filters = sql`
+        and s."published_at" <= now()
+        and (${yearFrom}::timestamptz is null or (s."published_at" >= ${yearFrom}::timestamptz and s."published_at" < ${yearTo}::timestamptz))
+        and (${catSlug}::text is null or s."category_id" in (
+              select c."id" from "categories" c where c."slug" = ${catSlug}::text or c."id" = ${catId}::integer))`
+  const countCap = searchCountCap()
+  const cap = countCap + 1
+
   const res = await db.execute(sql`
     with q as (select websearch_to_tsquery(${config}, ${p.q}) as tsq),
     matching as (
       select s."article_id", s."published_at", s."category_id", ts_rank(s."tsv", q.tsq) as rank
       from "article_search" s, q
-      where numnode(q.tsq) > 0 and s."tsv" @@ q.tsq
-        and s."published_at" <= now()
-        and (${yearFrom}::timestamptz is null or (s."published_at" >= ${yearFrom}::timestamptz and s."published_at" < ${yearTo}::timestamptz))
-        and (${catSlug}::text is null or s."category_id" in (
-              select c."id" from "categories" c where c."slug" = ${catSlug}::text or c."id" = ${catId}::integer))
+      where numnode(q.tsq) > 0 and s."tsv" @@ q.tsq ${filters}
     ),
     hits as (
       select * from matching order by rank desc, "published_at" desc, "article_id" desc limit ${p.limit} offset ${offset}
     )
     select h."article_id" as id, a."slug", s."title", s."excerpt", h."published_at", h."category_id", h.rank,
-           (select count(*) from matching) as total,
+           (select count(*) from (select 1 from matching limit ${cap}) capped) as total,
            c."slug" as category_slug, c."title" as category_title,
-           ts_headline(${config}, s."body", q.tsq, 'StartSel="", StopSel="", MaxWords=32, MinWords=14, ShortWord=2, MaxFragments=0') as snippet
+           ts_headline(${config}, left(s."body", ${SEARCH_HEADLINE_CHARS}), q.tsq, 'StartSel="", StopSel="", MaxWords=32, MinWords=14, ShortWord=2, MaxFragments=0') as snippet
     from hits h
     join "article_search" s on s."article_id" = h."article_id"
     join "articles" a on a."id" = h."article_id" and a."status"::text = 'published'
@@ -260,16 +281,17 @@ export async function searchArticles(payload: Payload, p: SearchParams): Promise
     category: { id: Number(r.category_id), slug: String(r.category_slug), title: String(r.category_title) },
     rank: Math.round(Number(r.rank) * 10_000) / 10_000,
   }))
-  let totalDocs = rows.length > 0 ? Number(rows[0]!.total) : 0
+  let counted = rows.length > 0 ? Number(rows[0]!.total) : 0
   if (rows.length === 0 && offset > 0) {
-    // Page past the end: report the real total so a client can tell "no more pages" from "no results".
+    // Page past the end: report the real (capped) total so a client can tell "no more pages" from "no results".
     const c = await db.execute(sql`
-      select count(*)::int as n from "article_search" s
-      where s."tsv" @@ websearch_to_tsquery(${config}, ${p.q}) and s."published_at" <= now()
-        and (${yearFrom}::timestamptz is null or (s."published_at" >= ${yearFrom}::timestamptz and s."published_at" < ${yearTo}::timestamptz))
-        and (${catSlug}::text is null or s."category_id" in (
-              select c."id" from "categories" c where c."slug" = ${catSlug}::text or c."id" = ${catId}::integer))`)
-    totalDocs = Number((c.rows?.[0] as { n?: number } | undefined)?.n ?? 0)
+      select count(*)::int as n from (
+        select 1 from "article_search" s
+        where s."tsv" @@ websearch_to_tsquery(${config}, ${p.q}) ${filters}
+        limit ${cap}) capped`)
+    counted = Number((c.rows?.[0] as { n?: number } | undefined)?.n ?? 0)
   }
-  return { docs, totalDocs }
+  const totalDocs = Math.min(counted, countCap)
+  const totalCapped = counted > countCap
+  return { docs, totalDocs, totalCapped }
 }

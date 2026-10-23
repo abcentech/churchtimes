@@ -6,6 +6,8 @@ import {
   parseSearchParams,
   sanitizeQuery,
   SEARCH_MAX_LIMIT,
+  searchCountCap,
+  searchMaxLimit,
   SEARCH_MAX_PAGE,
 } from '../../src/lib/articleSearch'
 
@@ -40,6 +42,17 @@ describe('parseSearchParams', () => {
     expect(ok.ok && ok.params.q).toBe('hello world')
     expect(p(`q=${'a'.repeat(200)}`).ok).toBe(true)
     expect(p(`q=${'a'.repeat(201)}`).ok).toBe(false)
+  })
+  it('the page-size ceiling defaults to 20 and follows SEARCH_MAX_LIMIT (1 to 100); the count cap defaults to 1000', () => {
+    expect(SEARCH_MAX_LIMIT).toBe(20)
+    expect(searchMaxLimit({})).toBe(20)
+    expect(searchMaxLimit({ SEARCH_MAX_LIMIT: '35' })).toBe(35)
+    expect(searchMaxLimit({ SEARCH_MAX_LIMIT: '5000' })).toBe(100)
+    for (const bad of ['', 'abc', '0', '-3', '2.5']) expect(searchMaxLimit({ SEARCH_MAX_LIMIT: bad })).toBe(20)
+    expect(searchCountCap({})).toBe(1000)
+    expect(searchCountCap({ SEARCH_COUNT_CAP: '50' })).toBe(50)
+    expect(searchCountCap({ SEARCH_COUNT_CAP: '99999' })).toBe(10000)
+    expect(searchCountCap({ SEARCH_COUNT_CAP: '0' })).toBe(1000)
   })
   it('clamps limit and page and validates year', () => {
     const r = p('q=x&limit=9999&page=9999999')

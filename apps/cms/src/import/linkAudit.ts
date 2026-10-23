@@ -1,3 +1,4 @@
+import { csvRow } from '../lib/csvSafe'
 import { normalizePath } from '../lib/redirectPaths'
 import {
   classifyHref,
@@ -136,7 +137,7 @@ export function finalizeRedirects(
 
 /** `from,to,status` exactly as `npm run import:redirects -- --file` reads it. */
 export const redirectsCsv = (rules: readonly RedirectRule[]): string =>
-  `from,to,status\n${rules.map((r) => `${r.from},${r.to},${r.status}`).join('\n')}${rules.length ? '\n' : ''}`
+  `from,to,status\n${rules.map((r) => `${csvRow([r.from, r.to, r.status])}`).join('\n')}${rules.length ? '\n' : ''}`
 
 export type AuditOptions = LinkContextOptions & { onRow?: (row: AuditRow) => void }
 
