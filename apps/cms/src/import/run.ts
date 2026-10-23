@@ -351,7 +351,7 @@ async function categoryFor(ctx: Ctx, item: WxrItem): Promise<number> {
  * error and the constraint / column / table names of a PostgreSQL error. Never a message, value or query.
  */
 function failureFields(err: unknown): string {
-  const ident = /^[A-Za-z0-9_.[]-]{1,80}$/
+  const ident = /^[-A-Za-z0-9_.]{1,80}$/
   const names: string[] = []
   const data = (err as { data?: { errors?: unknown } } | null)?.data
   if (Array.isArray(data?.errors)) {
@@ -364,6 +364,16 @@ function failureFields(err: unknown): string {
     }
   }
   return names.length > 0 ? ` fields=${[...new Set(names)].slice(0, 6).join(',')}` : ''
+}
+
+/** True for a body with no children, or only paragraphs without text (what the editor treats as empty). */
+export function isEmptyBody(root: unknown): boolean {
+  const kids = (root as { children?: unknown[] } | null)?.children
+  if (!Array.isArray(kids) || kids.length === 0) return true
+  return kids.every((k) => {
+    const n = k as { type?: string; children?: { type?: string; text?: string }[] }
+    return n.type === 'paragraph' && (n.children ?? []).every((c) => c.type === 'text' && !c.text)
+  })
 }
 
 type Converted = { content: { root: unknown }; report: ConversionReport }
@@ -746,6 +756,8 @@ async function importPost(
   }
   if (!skipArticleWrite) {
     const converted = await convert(ctx, item, oldHosts, first.slugMap)
+    // The editor refuses a body with no text, image or block (`required`); a post like that is reported, not written.
+    if (isEmptyBody(converted.content.root)) throw new PostSkip('empty-body')
     addConversionStats(report, converted.report)
     const featuredImage = await featuredImageFor(ctx, item, first.attachments)
     const excerpt = plain(item.excerptHtml, 600, true)

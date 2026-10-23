@@ -397,7 +397,7 @@ npm run import:convert-wxr -- --file D:\churchtimes-private\export.xml --detail-
 
 Options: `--file` (required, outside every repository), `--uploads <dir>` (a copy of `wp-content/uploads`), `--dry-run-only`, `--detail-file <path>` (must not exist yet,
 outside every repository, owner-only permissions) and `--keep` (keep the temp folder for debugging; it holds the throwaway database and, after an apply, copied media).
-Exit code 0 only when every PASS/FAIL check passes and nothing failed to convert.
+A failed article write is reported as one line of error class, SQLSTATE and invalid field names (never values); its post id goes to the detail file (`applyFailed`). Exit code 0 only when every PASS/FAIL check passes and nothing failed to convert.
 
 What is printed (counts and fixed codes only; the only strings taken from the file are shortcode, element and block tag names, and the fixed reason codes of the link rewriter):
 
@@ -415,12 +415,12 @@ What is printed (counts and fixed codes only; the only strings taken from the fi
   - *posts whose text shrank by more than 20%*: a data-loss signal. The non-space characters of the visible source text (tags, comments, scripts and shortcode markers removed; a bare YouTube address does not count, it becomes an embed)
     are compared with the non-space characters in the converted text. Expect 0. The legacy ids go to `--detail-file` (`textShrink`), never to the screen.
   - *posts with text in the source and none in the output*: the same signal at its sharpest (`emptyOutput` in the detail file).
-- **Loader dry run** (the `import:wxr` report): published posts accounted for X of Y (difference must be 0), skipped by reason, categories, authors, media (`unresolved by reason`, expected without `--uploads`),
+- **Loader dry run** (the `import:wxr` report): published posts accounted for X of Y (difference must be 0), skipped by reason, (`empty-body`: a post whose body is empty after conversion, for example only an image that could not be resolved; the editor refuses an empty body, so the post is reported and not written; look at these in the old site), categories, authors, media (`unresolved by reason`, expected without `--uploads`),
   content counts, comments created / skipped by reason.
 - **Apply, second apply, rollback** (not with `--dry-run-only`): apply must match the dry run and be verified in the database; the second apply must create nothing (`second apply changed nothing`);
   the rollback must remove every created row and its files, and its dry run must match it. Phase times, query counts and peak memory follow, then PASS/FAIL lines.
 
-The detail file is JSON: `textShrink`, `emptyOutput`, `failed` (id and code), `inputOverCap` and `maxDepthHit`, all WordPress post ids. Open a post by id in the old WordPress admin to look at it. Do not paste the file, or what is in it, anywhere shared.
+The detail file is JSON: `textShrink`, `emptyOutput`, `failed` (id and code), `inputOverCap`, `maxDepthHit` and `applyFailed`, all WordPress post ids. Open a post by id in the old WordPress admin to look at it. Do not paste the file, or what is in it, anywhere shared.
 
 ## Legacy media map export (A12)
 
