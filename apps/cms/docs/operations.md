@@ -95,6 +95,8 @@ systemd procedure above.
 
 `docker-compose.production.yml` is only validated in CI (`docker compose config`, and no published Postgres port), not started. On pushes to `feat/newsroom-mvp` a separate `publish` job (the only job with `packages: write`, using the built-in `GITHUB_TOKEN`, no added secret) pushes `ghcr.io/abcentech/churchtimes-cms` and `churchtimes-cms-migrator` and prints their digests in the job summary. If the job fails, read the "Container logs (on failure)" step first: a start-up validation error lists every problem.
 
+**CI path filters and required checks.** `docker-smoke` and `public-quality` run only when `apps/cms/**` (and, for public-quality, the public-site paths) change. A pull request that touches only `apps/newsroom/**` or only workflow files therefore reports just `verify`, and GitHub blocks the merge because two required checks never ran. Until the filters are widened, include a genuine change under `apps/cms/` (for example a documentation note) in such a PR.
+
 ### 3.2 Production deployment (Docker, host Caddy)
 
 Target: one clean Ubuntu 22.04/24.04 VPS (2 vCPU, 4 GB RAM or more recommended) running Docker Engine with the compose plugin, and Caddy installed on the **host** (not in a container). The definition lives in `apps/cms/docker-compose.production.yml` and the `migrator` / `runtime` targets of `apps/cms/Dockerfile`. The CI job (section 3.1) builds both images and proves the hardened flags work; the `publish` job pushes them to GHCR from `feat/newsroom-mvp`.
@@ -791,6 +793,7 @@ Confirm each item before go-live and again after any change to the server:
 
 - [ ] HTTPS only, with a valid certificate. HTTP redirects to HTTPS. HSTS is sent by the app (not duplicated at the proxy).
 - [ ] `CMS_PUBLIC_URL`, `CMS_CORS_ORIGINS` and `CMS_CSRF_ORIGINS` list only the production origins.
+- [ ] The public site host’s `PUBLIC_CMS_URL` is exactly the same origin as the CMS `CMS_PUBLIC_URL`. The CMS stamps every media URL with `CMS_PUBLIC_URL`, and the public host silently drops server-rendered hero and card images whose origin differs from its own `PUBLIC_CMS_URL` (found by the cross-app e2e suite).
 - [ ] Session cookies are `Secure` (automatic in production) and `HttpOnly`.
 - [ ] `PAYLOAD_SECRET`, `PREVIEW_SECRET` and `IP_HASH_SALT` are random, different, and not the example values.
 - [ ] `PAYLOAD_DB_PUSH=false`.
