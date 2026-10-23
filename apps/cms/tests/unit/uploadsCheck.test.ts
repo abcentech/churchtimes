@@ -65,7 +65,7 @@ describe('uploadSafety', () => {
     // not importable pictures or documents: counted apart
     for (const n of ['a.gif', 'a.bmp', 'a.ico', 'a.avif', 'a.pdf', 'a.GIF']) expect(unsafeNameReason(`2099/${n}`), n).toBe('unsupported-type')
     // everything else is not media
-    for (const n of ['a.txt', 'a.doc', 'a.mp4', 'noext', 'a.jpg_', 'a.jpgx']) expect(unsafeNameReason(`2099/${n}`), n).toBe('not-media')
+    for (const n of ['a.txt', 'a.doc', 'a.avi', 'a.mov', 'noext', 'a.jpg_', 'a.jpgx']) expect(unsafeNameReason(`2099/${n}`), n).toBe('not-media')
     // trailing dots and spaces are stripped before judging (Windows would drop them)
     expect(unsafeNameReason('2099/a.php.')).toBe('dangerous-extension')
     expect(unsafeNameReason('2099/a.php ')).toBe('dangerous-extension')
@@ -278,5 +278,35 @@ describe('import:uploads-check', () => {
     fs.mkdirSync(path.join(clean, '2099'), { recursive: true })
     fs.writeFileSync(path.join(clean, '2099', 'a.png'), fakePng())
     expect((await run(['--uploads', clean, '--wxr', exportFile])).code).toBe(0)
+  })
+})
+
+describe('uploadSafety with audio/video', () => {
+  const bytes = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypmp42'), Buffer.alloc(64, 7)])
+  // The Media collection checks the bytes against the declared type, so each extension needs its own kind of bytes.
+  const forExt: Record<string, Buffer> = {
+    mp4: bytes,
+    m4a: Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypM4A '), Buffer.alloc(64, 7)]),
+    webm: Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.from('Bwebm'), Buffer.alloc(64, 7)]),
+    mp3: Buffer.concat([Buffer.from('ID3'), Buffer.alloc(64, 7)]),
+    ogg: Buffer.concat([Buffer.from('OggS'), Buffer.alloc(64, 7)]),
+  }
+  it.each(['mp4', 'webm', 'mp3', 'm4a', 'ogg'])('does not flag .%s by name or magic bytes', async (ext) => {
+    expect(unsafeNameReason(`2099/01/clip.${ext}`)).toBeNull()
+    fs.writeFileSync(path.join(dir, `clip.${ext}`), forExt[ext] as Buffer)
+    expect(await unsafeFileReason(dir, `clip.${ext}`)).toBeNull()
+  })
+  it('reads an audio/video file once with its type; wrong magic bytes and other extensions are refused', () => {
+    fs.writeFileSync(path.join(dir, 'ok.mp4'), bytes)
+    expect(readCheckedFile(dir, 'ok.mp4')).toMatchObject({ ok: true, mimetype: 'video/mp4', size: bytes.length })
+    fs.writeFileSync(path.join(dir, 'fake.mp3'), 'not audio at all')
+    expect(readCheckedFile(dir, 'fake.mp3')).toEqual({ ok: false, reason: 'magic-mismatch' })
+    expect(unsafeNameReason('2099/01/clip.avi')).toBe('not-media')
+    expect(unsafeNameReason('2099/01/clip.mov')).toBe('not-media')
+  })
+  it('still rejects active content hidden in an audio/video file', async () => {
+    fs.writeFileSync(path.join(dir, 'evil.mp4'), Buffer.concat([bytes, Buffer.from('<?php system($_GET[1]);')]))
+    expect(await unsafeFileReason(dir, 'evil.mp4')).toBe('polyglot')
+    expect(unsafeNameReason('2099/01/evil.php.mp3')).toBe('dangerous-extension')
   })
 })

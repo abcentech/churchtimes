@@ -5,7 +5,7 @@ import type { Payload, PayloadRequest } from 'payload'
 
 import { candidatePaths, legacyPathFromUrl, resolveAlt } from '../lib/legacyMediaPath'
 import { isNetworkOrDevicePath } from './safePaths'
-import { MEDIA_MAX_BYTES } from '../lib/mediaLimits'
+import { MEDIA_MAX_BYTES, maxBytesForPath } from '../lib/mediaLimits'
 import { readCheckedFile } from './uploadSafety'
 
 /**
@@ -64,7 +64,8 @@ export function confineUploadPath(uploadsRoot: string | undefined, rel: string):
   try {
     const st = fs.statSync(real)
     if (!st.isFile()) return { ok: false, reason: 'not-a-file' }
-    if (st.size > MEDIA_MAX_BYTES) return { ok: false, reason: 'too-large' }
+    // Audio/video files (mp4, webm, mp3, m4a, ogg) have their own cap, MEDIA_AV_MAX_MB; images use the Media collection's image cap.
+    if (st.size > maxBytesForPath(rel)) return { ok: false, reason: 'too-large' }
   } catch {
     return { ok: false, reason: 'missing-file' }
   }

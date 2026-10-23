@@ -104,11 +104,18 @@ deterministic `id`). Attributes (class, style, event handlers, ...) are never ca
   blocks fall back to their inner HTML and are listed. `wp:more` and `<!--more-->` are a paragraph break, never a join.
 - Classic: documents without block comments get `wpautop`-like handling: a blank line ends a paragraph, a single
   newline is a line break. In Gutenberg documents newlines are plain whitespace.
-- Video: only YouTube is kept. The 11-character id is taken from `iframe` sources (`youtube.com/embed`,
+- Video: YouTube stays a `youtubeEmbed` block; files hosted on the old site become `audioVideo` blocks (see the audio/video bullet below). The 11-character id is taken from `iframe` sources (`youtube.com/embed`,
   `youtube-nocookie.com/embed`, `youtu.be`, `watch?v=`, shorts), `[youtube ...]` and `[embed]` shortcodes, `wp:embed`
   blocks, old `object`/`embed` markup and bare YouTube URLs on their own line. Any other iframe/embed becomes a
-  paragraph with the https link, or is dropped; always reported. `video`, `audio`, `script`, `style`, `form`, `input`,
+  paragraph with the https link, or is dropped; always reported. `script`, `style`, `form`, `input`,
   `svg` and similar are dropped with their contents.
+- Audio and video files (API contract v1.19): `<video>`, `<audio>` (with `src` or `<source>` children, preferring the first mp4/webm/mp3/m4a/ogg address) and the
+  shortcodes `[fvplayer src=.. splash=.. caption=..]`, `[video mp4=.. poster=..]`, `[audio src=..]` become one `audioVideo` block each (`kind`, `media`, optional `poster`,
+  `title`, `caption`). The title is the element title, else the caption, else the article title, else "Video"/"Audio". The file is found like an image: `media.legacyPath`, then the
+  copied uploads folder (the Media rules check the bytes; the audio/video size cap is `MEDIA_AV_MAX_MB`, default 100 MB, not the 10 MB image cap). When the file cannot be found or
+  is refused, the block is kept with the legacy address (`sourceUrl`) and the report counts it as `unresolved-media` (`content.avUnresolvedMedia`; the reason by code is in the media
+  `unresolved` table). Counts only: no address or file name is printed. Types the CMS does not host (`.mov`, `.wav`, streams, other players) stay a link paragraph or are dropped
+  (`content.avUnsupported`); a YouTube address in these tags still becomes a YouTube block. The new Media rows are in the rollback manifest like image media, so rollback needs no change.
 - Links: after conversion `sanitizeLegacyLinks` (C1.5) runs; unsafe or unknown schemes become plain text.
   Shortcodes are removed with `stripShortcodes` (also when the opening and closing marker sit in different text
   nodes). Entities are decoded by the parser. Whitespace is normalised without joining words; `&nbsp;`-only blocks are
@@ -201,7 +208,7 @@ code (`IMPORT_USAGE`, `IMPORT_FILE_INSIDE_REPO`, `IMPORT_FILE_UNREADABLE`, `IMPO
   report is printed (exit code 1).
 - Files are read only from inside the real `--uploads` folder: UNC and device paths, drive letters, `..`, backslashes,
   alternate-stream colons, NUL and control characters are refused, and the real path (symlinks and junctions resolved)
-  must stay inside the real uploads folder. Files over 25 MB are refused.
+  must stay inside the real uploads folder. Image files over 10 MB (the Media collection's image cap, `MAX_IMAGE_BYTES`) and audio/video files over `MEDIA_AV_MAX_MB` are refused.
 - 50 consecutive failed writes, or (after 20 posts) more than half failing, stop the run (`IMPORT_TOO_MANY_FAILURES`). Report keys for post statuses come from a fixed set (anything else is `other`).
 
 ### SEO text
@@ -422,6 +429,22 @@ What is printed (counts and fixed codes only; the only strings taken from the fi
 
 The detail file is JSON: `textShrink`, `emptyOutput`, `failed` (id and code), `inputOverCap`, `maxDepthHit` and `applyFailed`, all WordPress post ids. Open a post by id in the old WordPress admin to look at it. Do not paste the file, or what is in it, anywhere shared.
 
+## Categories: the rules mode (`--category-mode=rules`)
+
+**Default is `strict`** (the behaviour before this existed): WordPress category, Yoast primary category, tag map, generic "Uncategorised", fallback category. `--category-mode=rules` is opt-in and awaits the owner's approval before it becomes the default. In rules mode a classifier runs only for posts the earlier steps could not place; it never overrides a WordPress or Yoast category or a tag-map entry.
+
+Options: `--category-mode=strict|rules`, `--category-rules <rules.json outside the repo>` (replaces the built-in rules), `--category-review <csv outside the repo, must not exist>`, `--fallback-category <slug>` and `--fallback-category-name <name>` (default `news` / `News`; an existing category is never renamed).
+
+Why the posts were uncategorised (real export, counts): of 4,343 published posts, 1,392 fell to the fallback. All 1,392 have no WordPress category, no tags and no usable Yoast primary category (310 name a primary category id that is not in the export). They are concentrated in 2012-2017 (about 250), 2020-2022 (about 400) and 2023-2024 (about 680). Tags are essentially unused (1 post).
+
+What predicts the existing categories: **time, not topic**. Up to 2017 the posts that have a category are almost all "missions"; 2018-2022 mostly "interviews"; from 2024 mostly "news". Topical keywords (health, education, business, gospel and so on) predicted the existing categories at 10-25% precision and are not used. The classifier therefore adds up two kinds of evidence per category (all in `src/import/categoryRules.ts`, defaults in `categoryRulesDefault.ts`): explicit cue phrases (title x3, excerpt x2, body x0.5, at most twice), and neighbour evidence, the share of already categorised posts published within a window of months (widened by doubling for sparse periods). A winner needs `minScore` and a `minMargin` over the runner-up; otherwise the post goes to the fallback category and into the review file. Deterministic, offline, no model.
+
+Provenance: every created article writes a `category` line to the rollback manifest (legacy id, step, category slug, and in rules mode the winning rule id, score, runner-up and its score). Rollback ignores these lines. The review CSV (`legacy_id,suggested_category,score,runner_up,runner_up_score`) lists posts left in the fallback with a suggestion; it holds no titles or text.
+
+Measure before trusting: `npm run import:categorise-eval -- --file <export.xml> [--rules <file>] [--detail-file <csv>]` classifies the already categorised posts with their own category hidden (validation) and then the unplaced ones (counts only). On the real export: validation 2,951 posts, 2,425 confident, precision 68%. Of the 1,392 unplaced posts 672 get a confident category (interviews 542, missions 90, publishers-note 29, news 10, opinion 1) and 720 stay in the fallback. Precision is about two thirds, so treat the result as a first pass for editors, not as truth; the review file and manifest make it auditable.
+
+Dry run versus apply: the dry run used to report 76 categories created where apply creates 15, because a skipped post cleared the dry run's "already counted" cache and every category was counted again. The dry run now remembers what it would create (`dryCreated`), and a test compares it with apply. On the real export the dry run now reports 15.
+
 ## Legacy media map export (A12)
 
 The public host serves old `/wp-content/uploads/...` addresses from an exact map that the owner exports from the CMS and provisions privately. The
@@ -468,10 +491,10 @@ npm run import:uploads-check -- --uploads D:\churchtimes-private\uploads-raw --w
 folders and `--out` must be outside every git work tree (the command refuses otherwise) and `--out` must not be inside the uploads folder. The same exclusive-create rule applies to `--detail-file` of `import:convert-wxr`, `import:convert` and `import:rehearse`, and to `--uploads-detail-file` (one shared helper, `privateOut.ts`). Nothing is written except `--out`; nothing is executed, no database, no network.
 Only counts are printed. Exit code: 0 done, 1 failed, 2 bad usage or location, 3 done but unsafe files were found (the loader still refuses them, so that is a finding, not a blocker).
 
-- **Importable** means a `.jpg`, `.jpeg`, `.png` or `.webp` file (allow-list, after lower-casing and stripping trailing dots and spaces) whose first bytes are that image type, not empty and at most 25 MB (`MEDIA_MAX_BYTES`, shared with the loader and the Media collection). Reasons below are rejections. The real protection is the Media collection: it takes JPEG/PNG/WebP by magic bytes, refuses more than 40 megapixels and re-saves every picture with sharp, so a script hidden after the image data is not stored.
+- **Importable** means a `.jpg`, `.jpeg`, `.png` or `.webp` picture, or an audio/video file of the `audioVideo` block (`.mp4`, `.m4v`, `.webm`, `.mp3`, `.m4a`, `.ogg`, `.oga`) (allow-list, after lower-casing and stripping trailing dots and spaces) whose first bytes are that image type, not empty and at most 10 MB (`MAX_IMAGE_BYTES` in `src/lib/mediaLimits.ts`, shared by the uploads check, the loader and the Media collection; audio/video use the `MEDIA_AV_MAX_MB` cap). Reasons below are rejections. The real protection is the Media collection: it takes JPEG/PNG/WebP by magic bytes, refuses more than 40 megapixels and re-saves every picture with sharp, so a script hidden after the image data is not stored.
 - **Rejected, by reason**: `dangerous-extension` (php, phtml, phar, sh, exe, js, html, svg, zip and other archives, a dangerous extension inside a name such as `x.php.jpg`, `x.html.jpg`, `x.svg.png`), `hidden-file` (a name that starts with a dot, such as `.htaccess`),
-  `bad-name` (control characters, backslash, colon, a Windows device name such as `con.png`, a trailing dot or space), `symlink` (a link or junction; never followed), `hard-link` (a file with more than one name), `zero-byte`, `magic-mismatch` (an image extension whose first bytes are not that image type), `not-media` (any other extension or none), `unsupported-type` (gif, bmp, ico, avif, pdf: real files that the CMS does not take; counted apart as `not importable`, never as safe or present), `too-large` (over the cap; never read), `not-a-file`, `unreadable`.
-  A script marker (`<?php` or `<script`) inside an otherwise valid JPEG/PNG/WebP is NOT a rejection: it is counted as an advisory `warning` among the safe files (random image data contains such bytes by chance, and the re-save removes any payload). `<?=` is no longer searched for.
+  `bad-name` (control characters, backslash, colon, a Windows device name such as `con.png`, a trailing dot or space), `symlink` (a link or junction; never followed), `hard-link` (a file with more than one name), `zero-byte`, `magic-mismatch` (an image extension whose first bytes are not that image type), `not-media` (any other extension or none), `unsupported-type` (gif, bmp, ico, avif, pdf: real files that the CMS does not take; counted apart as `not importable`, never as safe or present), `too-large` (over the cap of its type; never read), `not-a-file`, `unreadable`.
+  A script marker (`<?php` or `<script`) inside an otherwise valid JPEG/PNG/WebP is NOT a rejection: it is counted as an advisory `warning` among the safe files (random image data contains such bytes by chance, and the re-save removes any payload). `<?=` is no longer searched for. Audio and video are stored as uploaded (no re-save), so a script marker inside one stays a rejection (`polyglot`).
   WordPress itself leaves an `index.php` ("silence is golden") in some upload folders: it is rejected like any other script and does no harm.
 - **Attachments in the export**: distinct paths, `present`, `missing`, `only size variants on disk` (the original is gone but `name-300x200.jpg` files exist; the loader cannot use them), name differs by Unicode form (NFC against NFD)
   or by letter case (the loader looks files up exactly, so these need a rename on a case-sensitive file system), and rejected as unsafe.

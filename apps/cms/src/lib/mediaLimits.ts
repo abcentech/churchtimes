@@ -1,14 +1,14 @@
+import { AV_EXTENSIONS, avKindFromPath, avMaxBytes } from './avMedia'
+
 /**
  * Limits and types shared by the Media collection (`collections/Media.ts`), the legacy loader (`import/media.ts`) and
  * the untrusted-uploads check (`import/uploadSafety.ts`), so a file the check calls importable is one the loader
  * and the collection accept.
  */
 
-/** Largest image file the loader reads (and the check accepts). */
-export const MEDIA_MAX_BYTES = 25 * 1024 * 1024
-
-// TODO(#95): audio/video files get their own, larger cap once the AV block is on this branch; until then only images
-// are importable and every other type is `unsupported-type` in the uploads check.
+/** Largest image file the Media collection accepts. The loader and the uploads check use the same number. */
+export const MAX_IMAGE_BYTES = 10 * 1024 * 1024
+export const MEDIA_MAX_BYTES = MAX_IMAGE_BYTES
 
 export const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp'] as const
 export type AllowedMime = (typeof ALLOWED_MIME)[number]
@@ -20,3 +20,21 @@ export const MEDIA_EXTENSION_MIME: Readonly<Record<string, AllowedMime>> = {
   png: 'image/png',
   webp: 'image/webp',
 }
+
+/** Audio/video extensions the importer takes (`avMedia.ts`), and the types each may carry (first match with the file's bytes wins). */
+export const AV_EXTENSION_MIMES: Readonly<Record<string, readonly string[]>> = {
+  mp4: ['video/mp4', 'audio/mp4'],
+  m4v: ['video/mp4'],
+  webm: ['video/webm'],
+  mp3: ['audio/mpeg'],
+  m4a: ['audio/mp4'],
+  ogg: ['audio/ogg'],
+  oga: ['audio/ogg'],
+}
+
+/** True when `ext` (lower case, no dot) is an importable image or audio/video extension. */
+export const isImportableExtension = (ext: string): boolean =>
+  Object.prototype.hasOwnProperty.call(MEDIA_EXTENSION_MIME, ext) || AV_EXTENSIONS.includes(ext)
+
+/** Size cap in bytes for a file by its path: audio/video use the AV cap (`MEDIA_AV_MAX_MB`), images the image cap. */
+export const maxBytesForPath = (rel: string): number => (avKindFromPath(rel) !== null ? avMaxBytes() : MAX_IMAGE_BYTES)

@@ -4,7 +4,7 @@ import path from 'node:path'
 import { candidatePaths, legacyPathFromUrl, stripSizeSuffix } from '../lib/legacyMediaPath'
 import { isSafeRelativeUploadPath } from './media'
 import { isInsideRepo } from './safePaths'
-import { MEDIA_MAX_BYTES } from '../lib/mediaLimits'
+import { maxBytesForPath } from '../lib/mediaLimits'
 import { isInsideDir, openPrivateOut, privateOutProblem, PrivateOutError } from './privateOut'
 import { judgeContent, scanFile, unsafeNameReason, type UnsafeReason } from './uploadSafety'
 import { readWxrFile, WxrError, type WxrAttachment, type WxrItem } from './wxr'
@@ -276,8 +276,8 @@ export async function verdictsFor(root: string, entries: readonly WalkEntry[]): 
       out.push({ rel: e.rel, bytes: e.bytes, reason: 'hard-link' })
       continue
     }
-    if (e.bytes > MEDIA_MAX_BYTES) {
-      // Never read a file over the cap (neither here nor in the loader).
+    if (e.bytes > maxBytesForPath(e.rel)) {
+      // Never read a file over the cap of its type (neither here nor in the loader).
       out.push({ rel: e.rel, bytes: e.bytes, reason: 'too-large' })
       continue
     }
