@@ -166,7 +166,7 @@ insert into articles (title, slug, excerpt, content, category_id, status, publis
   select 'Synthetic drill article ' || g, 'drill-article-' || g, 'Excerpt for drill article ' || g,
          jsonb_build_object('root', jsonb_build_object('type', 'root', 'children', jsonb_build_array(
            jsonb_build_object('type', 'paragraph', 'children', jsonb_build_array(
-             jsonb_build_object('type', 'text', 'text', 'Synthetic drill body ' || g || ' about parish councils, choirs and the harvest festival.'))))),
+             jsonb_build_object('type', 'text', 'text', 'Synthetic drill body ' || g || ' about parish councils, choirs and the harvest festival.')))))),
          (select min(id) from categories), 'published', now() - (g || ' minutes')::interval, 900000 + g, 'Drill Desk'
   from generate_series(1, $ARTICLES) g;
 insert into legacy_comments (article_id, author_name, content, commented_at, legacy_id)
