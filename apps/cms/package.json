@@ -28,6 +28,7 @@
     "import:inspect": "tsx src/seed/importInspect.ts",
     "import:wxr": "payload run src/seed/importWxr.ts --",
     "import:rollback": "payload run src/seed/importRollback.ts --",
+    "import:archive-candidates": "payload run src/seed/importArchiveCandidates.ts --",
     "import:uploads-check": "tsx scripts/import-uploads-check.ts",
     "import:rehearse": "tsx scripts/import-rehearse.ts",
     "import:convert-wxr": "tsx scripts/import-convert-stats.ts",

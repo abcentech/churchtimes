@@ -1,4 +1,4 @@
-# Church Times CMS — API contracts (v1.18)
+# Church Times CMS — API contracts (v1.19)
 
 Status: implemented on `agent/payload-core`. v1.1 added Turnstile, duplicate detection, staff auth/session
 contract and security hardening; v1.2 closes the verified security-review findings: media ownership, version
@@ -954,6 +954,13 @@ proxy) and https-only `CMS_PUBLIC_URL`/CORS/CSRF settings (`docs/security.md`). 
 limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/operations.md` §4).
 
 ## 9. Changelog
+
+### v1.19: Archive-candidate provenance on articles
+Additive; no existing response shape changes (a new staff-only field) and one new write rule.
+- New `articles.provenance` group: `sourceUrl`, `sourceHost`, `captureTimestamp`, `originalDate`, `sourceSha256`, `confidence` (`partial` | `citation-only` | `missing`), `importBatch`, `reviewStatus` (`pending` | `reviewed` | `rejected`). **Staff-only**: absent from every anonymous response (list, by id, published or not) and from public projections; anonymous queries filtering on it return nothing or are refused (400). All fields are server-owned (set by the importer) except `reviewStatus`, which editor roles may change (`PATCH /api/articles/:id` with `{"provenance":{"reviewStatus":"reviewed"}}`); other callers' attempts are ignored or denied.
+- **Write rule (409):** an article whose `provenance.importBatch` is set cannot be given status `published` or `scheduled` (create or update, any caller including the scheduler, seed and importer) while `provenance.reviewStatus` is not `reviewed`.
+- New command `npm run import:archive-candidates` (dry run by default) creating draft-only articles from `archive-candidate/1` JSON Lines files; format in `docs/archive-candidate-schema.md`, behaviour in `docs/import.md` ("Archive candidates"). `import:rollback` recognises these articles by `provenance.importBatch`.
+- Migration `20261023_143703_archive_candidate_provenance` (columns, enums, three indexes on `articles` and `_articles_v`; `down` uses `IF EXISTS`).
 
 ### v1.18: Articles live at `/{slug}/` (owner decision D1)
 **Behaviour change** for the default of `PUBLIC_ARTICLE_PATH_TEMPLATE` (C7, O1) and for slug validation; no response shape changes.

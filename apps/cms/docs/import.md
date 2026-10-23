@@ -305,13 +305,55 @@ dry run, first run, no-op second run, `--update`, manifest, audit rows, comments
 (48 synthetic articles from `tests/fixtures/html/corpus.ts`), `tests/unit/convertReport.test.ts` and
 `tests/integration/import-lexical.test.ts` (converted bodies through the real REST handlers). All content is invented.
 
+## Archive candidates (recovered pages, draft only)
+
+### `npm run import:archive-candidates -- --file <candidates.jsonl> [--apply] [--manifest <dir>] [--category <slug>] [--batch <label>]`
+
+Imports pages recovered from web captures (format `archive-candidate/1`, fully specified in `docs/archive-candidate-schema.md`) as
+**draft** articles with provenance. Nothing recovered is ever published automatically (`src/import/archiveCandidates.ts`).
+
+- **Dry run by default.** It reads the file and the database and writes nothing (no articles, no category, no manifest). `--apply`
+  writes and needs `--manifest <existing directory>`: the rollback manifest (`archive-candidates-<batch>-<time>.manifest.jsonl`) and
+  the per-row detail file (`...detail.jsonl`: row number and a fixed outcome code, never text) are created there, mode 0600, never
+  overwritten. The source file and the directory must be **outside every Git work tree** (`ARCHIVE_FILE_INSIDE_REPO`,
+  `ARCHIVE_MANIFEST_INSIDE_REPO`). A dry run with `--manifest` also writes the detail file.
+- **Validation per line**: schema version, strict keys, sizes, plain-text fields, http and https addresses only, host equals the
+  address's host, real calendar dates, hashes, `confidence` one of `partial`, `citation-only`, `missing` (`verified-full` is refused),
+  no script content in the body. The body then goes through the same sanitising HTML-to-Lexical converter as the WordPress import
+  (`req.context.import = true`: editorial workflow skipped, embed, image, SEO and slug validators on). Images are not imported by
+  this command: media references are validated and counted only; unresolved images are dropped from the body.
+- **Deduplication** (each counted, nothing written): a second line in the file with the same address or `rawSha256`
+  (`duplicateInFile`); an article that already has the same `provenance.sourceUrl` (also `http` or `https`, with or without `www.`
+  and a trailing slash), the same `provenance.sourceSha256`, or a WordPress `legacyUrl` equal to the address (`alreadyPresent`:
+  `present-source-url`, `present-source-hash`, `present-legacy-url`); and the same slug with the same normalised title
+  (`present-slug-title`). A slug owned by a **different** article, or equal to a reserved route name (`src/lib/reservedSlugs.ts`),
+  gets `-archive`, `-archive-2` and so on (`slugRenamed`, `slugRenamedReserved`).
+- **Idempotent**: a second run over the same file creates nothing (every line is `present-source-url`).
+- **Result**: `status: draft`, no `publishedAt`, `provenance.reviewStatus: pending`, `provenance.importBatch` (`arc-` plus 12 hex
+  characters of the file hash, or `--batch`), the category given by `--category` (default `uncategorised`, created on apply when missing
+  and recorded in the manifest), one `import.article` audit row per draft. One database transaction per line.
+- **Publishing is gated**: an article with an `importBatch` cannot be set to `published` or `scheduled` (409) until an editor sets
+  `provenance.reviewStatus` to `reviewed` in the admin. The rule runs server-side in the Articles `beforeChange` hook for every caller
+  (REST, admin, scheduler, seed, importer). Only `reviewStatus` is editable (editors); the other provenance fields are server-owned.
+- **Never public**: the `provenance` group has staff-only read access, so it is absent from every anonymous response, including
+  published articles; the drafts themselves are invisible to anonymous reads.
+- **Rollback**: the manifest is compatible with `import:rollback` (below). An imported article is recognised by its `importBatch`
+  (as a WordPress import article is by its legacy id); an article an editor has touched since (including flipping the review status)
+  is skipped as `edited-since-import` unless `--force`.
+- **Output** is counts only: lines, invalid by reason, duplicates, already present, drafts created (or that would be), by confidence,
+  failed by fixed code. Exit codes: 0 success, 1 some lines failed to write or the run was stopped, 2 usage or safety refusal.
+  A rejected line never prints its content. 20 failed writes in a row abort the run (`ARCHIVE_TOO_MANY_FAILURES`).
+- Tests: `tests/unit/archiveCandidate.test.ts` (validator edge cases, publish guard, arguments) and
+  `tests/integration/archive-candidates.test.ts` (draft created, never public, publish blocked until reviewed, dedup, idempotence,
+  slug collisions, rollback). Fixtures are synthetic (`tests/fixtures/archive/candidates.ts`).
+
 ## Rehearsal and rollback
 
 ### `npm run import:rollback -- --manifest <path> [--apply] [--force] [--allow-incomplete]`
 
 Undoes ONE import run from its manifest (`src/import/rollback.ts`). A DRY RUN unless `--apply`.
 
-- Deletes only ids the manifest lists as CREATED by that run, and only when the row proves it: legacy comments (with a legacy id), articles (with a legacy id), media
+- Deletes only ids the manifest lists as CREATED by that run, and only when the row proves it: legacy comments (with a legacy id), articles (with a legacy id, or a provenance import batch for archive candidates), media
   documents (with a legacy path) and their files, and categories. Every row must also have been created inside the run's time window (`createdAt` between the
   manifest's start line, minus 5 seconds, and its end line, or for a killed run the last manifest write); anything else is skipped
   (`outside-run-window`, `not-an-imported-row`). Only `created` id lines count: `updated` lines for any kind are ignored, and articles the run only updated are never touched

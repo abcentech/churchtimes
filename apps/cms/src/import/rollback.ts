@@ -202,10 +202,11 @@ const handlers: Record<Handler['collection'], Handler> = {
   },
   articles: {
     collection: 'articles',
-    select: { legacyId: true, category: true, featuredImage: true, bodyMedia: true },
+    select: { legacyId: true, provenance: true, category: true, featuredImage: true, bodyMedia: true },
     check: async (ctx, req, doc) => {
-      // Only rows the loader made carry a legacy id.
-      const bad = provenance(ctx, doc, typeof doc.legacyId === 'number')
+      // Only rows the loaders made carry a legacy id (WordPress import) or an import batch (archive candidates).
+      const batch = (doc.provenance as { importBatch?: unknown } | null | undefined)?.importBatch
+      const bad = provenance(ctx, doc, typeof doc.legacyId === 'number' || (typeof batch === 'string' && batch !== ''))
       if (bad) return bad
       if (edited(ctx, doc)) return 'edited-since-import'
       const remaining = (await count(ctx, req, 'legacy-comments', { article: { equals: doc.id } })) - (ctx.pending.commentsByArticle.get(doc.id) ?? 0)

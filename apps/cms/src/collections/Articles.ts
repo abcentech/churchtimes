@@ -39,6 +39,7 @@ import {
   canTransition,
   isArticleStatus,
 } from '../workflow/articleWorkflow'
+import { PROVENANCE_CONFIDENCE, PROVENANCE_REVIEW_STATUSES, publishBlockedByProvenance } from '../lib/provenance'
 import { reconcileCorrections } from '../workflow/corrections'
 import { articlePath, resolveArticlePathTemplate } from '../lib/redirectPaths'
 import { isReservedSlug } from '../lib/reservedSlugs'
@@ -414,6 +415,17 @@ const enforceWorkflow: CollectionBeforeChangeHook = async ({ data, originalDoc, 
 }
 
 /**
+ * Archive-candidate articles (provenance.importBatch set) cannot be published or scheduled until an editor sets
+ * provenance.reviewStatus to "reviewed". Applies to every caller, including the scheduler, seed and importer.
+ */
+const guardUnreviewedImport: CollectionBeforeChangeHook = async ({ data, originalDoc }) => {
+  if (publishBlockedByProvenance(data as Record<string, unknown>, (originalDoc ?? undefined) as Record<string, unknown> | undefined)) {
+    return fail(409, 'This recovered archive article must be reviewed (provenance review status "reviewed") before it can be published or scheduled.')
+  }
+  return data
+}
+
+/**
  * A published article's slug is its public address. Changing it breaks every link, bookmark and search result for the
  * old URL, so after `publishedAt` is set only an editor-in-chief or admin may change it (403 otherwise). Server-side
  * callers (seed, archive importer, scheduler) are exempt: the importer owns its own slugs and redirects.
@@ -614,7 +626,7 @@ export const Articles: CollectionConfig = {
   hooks: {
     beforeOperation: [clampLimit, markRestore, captureExpectedUpdatedAt],
     beforeValidate: [autoSlug, normalizeSeoFields, validateEmbeds, validateBodyImages],
-    beforeChange: [assertExpectedUpdatedAt('articles'), deriveBodyMedia, guardPublishedSlug, enforceWorkflow],
+    beforeChange: [assertExpectedUpdatedAt('articles'), guardUnreviewedImport, deriveBodyMedia, guardPublishedSlug, enforceWorkflow],
     beforeDelete: [refuseDeleteWithLegacyComments],
     afterChange: [auditChanges, redirectOnSlugChange],
     afterDelete: [auditDelete],
@@ -731,5 +743,34 @@ export const Articles: CollectionConfig = {
     // set or change them, or one article could claim another's WordPress id and hijack its redirects.
     { name: 'legacyUrl', type: 'text', access: { create: never, update: never } },
     { name: 'legacyId', type: 'number', index: true, unique: true, access: { create: never, update: never } },
+    {
+      // Archive-candidate provenance (docs/archive-candidate-schema.md). Staff-only: never on a public projection.
+      // Everything is server-owned (importer, Local API) except reviewStatus, which editors flip in the admin.
+      name: 'provenance',
+      type: 'group',
+      access: { read: staffRead, create: never, update: editorWrite },
+      admin: { description: 'Where a recovered archive article came from. Review it, then set the review status to "reviewed" before publishing.' },
+      fields: [
+        { name: 'sourceUrl', type: 'text', index: true, maxLength: 2000, access: { read: staffRead, create: never, update: never }, admin: { readOnly: true } },
+        { name: 'sourceHost', type: 'text', maxLength: 253, access: { read: staffRead, create: never, update: never }, admin: { readOnly: true } },
+        { name: 'captureTimestamp', type: 'date', access: { read: staffRead, create: never, update: never }, admin: { readOnly: true } },
+        { name: 'originalDate', type: 'date', access: { read: staffRead, create: never, update: never }, admin: { readOnly: true, description: 'Publication date claimed by the recovered page (not verified).' } },
+        { name: 'sourceSha256', type: 'text', index: true, maxLength: 64, access: { read: staffRead, create: never, update: never }, admin: { readOnly: true } },
+        {
+          name: 'confidence',
+          type: 'select',
+          options: PROVENANCE_CONFIDENCE.map((v) => ({ label: v, value: v })),
+          access: { read: staffRead, create: never, update: never },
+          admin: { readOnly: true },
+        },
+        { name: 'importBatch', type: 'text', index: true, maxLength: 80, access: { read: staffRead, create: never, update: never }, admin: { readOnly: true } },
+        {
+          name: 'reviewStatus',
+          type: 'select',
+          options: PROVENANCE_REVIEW_STATUSES.map((v) => ({ label: v, value: v })),
+          access: { read: staffRead, create: never, update: editorWrite },
+        },
+      ],
+    },
   ],
 }
