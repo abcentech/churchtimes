@@ -1,8 +1,9 @@
-import { mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { readdir, readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 
 import { isInsideRepo, type Log, parseFlags } from '../lib/redirectCli'
 import { type ConversionReport, DEFAULT_MAX_INPUT_BYTES, HtmlConversionError, htmlToLexical } from './htmlToLexical'
+import { PrivateOutError, writePrivateOut } from './privateOut'
 
 /**
  * `npm run import:convert -- --in <folder of .html files> [--old-host a.test,b.test] [--slug-map map.json]
@@ -133,8 +134,12 @@ export async function runConvertReport(argv: readonly string[], log: Log): Promi
   for (const [code, n] of Object.entries(failures).sort()) log.out(`failed.${code}: ${n}`)
   for (const [key, n] of Object.entries(totals).sort(([a], [b]) => a.localeCompare(b))) if (n > 0) log.out(`${key}: ${n}`)
   if (typeof detailFlag === 'string') {
-    await mkdir(path.dirname(path.resolve(detailFlag)), { recursive: true })
-    await writeFile(detailFlag, `${JSON.stringify(details, null, 2)}\n`, 'utf8')
+    try {
+      writePrivateOut(path.resolve(detailFlag), `${JSON.stringify(details, null, 2)}\n`, { notInside: [dir] })
+    } catch (err) {
+      log.err(`The detail file was not written (${err instanceof PrivateOutError ? err.code : 'OUT_FAILED'}); it must be a new file outside the --in folder.`)
+      return 2
+    }
     log.out('Details (they name files and old addresses) written to the detail file.')
   }
   return Object.keys(failures).length > 0 ? 1 : 0

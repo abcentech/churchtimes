@@ -7,6 +7,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { convertWxrStats, formatConvertStats } from '../src/import/convertStats'
+import { PrivateOutError, privateOutProblem, writePrivateOut } from '../src/import/privateOut'
 import { isInsideRepo } from '../src/import/safePaths'
 import { readWxrFile } from '../src/import/wxr'
 
@@ -27,14 +28,24 @@ async function main(): Promise<number> {
     console.error('CONVERT_PATH_INSIDE_REPO')
     return 2
   }
+  // Checked before the (slow) conversion: the detail file is created exclusively and can never be the export itself.
+  const problem = detail ? privateOutProblem(path.resolve(detail), { inputs: [path.resolve(file)] }) : null
+  if (problem) {
+    console.error(`CONVERT_DETAIL_${problem}`)
+    return 2
+  }
   const { stats, detail: d } = await convertWxrStats(() => readWxrFile(path.resolve(file)), {
     oldHosts: (val('--old-host') ?? '').split(',').map((h) => h.trim()).filter(Boolean),
     assumeImages: argv.includes('--assume-images'),
   })
   console.log(formatConvertStats(stats))
   if (detail) {
-    fs.mkdirSync(path.dirname(path.resolve(detail)), { recursive: true })
-    fs.writeFileSync(detail, `${JSON.stringify(d, null, 1)}\n`, { mode: 0o600 })
+    try {
+      writePrivateOut(path.resolve(detail), `${JSON.stringify(d, null, 1)}\n`, { inputs: [path.resolve(file)] })
+    } catch (err) {
+      console.error(`CONVERT_DETAIL_${err instanceof PrivateOutError ? err.code : 'OUT_FAILED'}`)
+      return 2
+    }
     console.log('Legacy ids written to the detail file.')
   }
   return Object.keys(stats.failedByCode).length > 0 ? 1 : 0

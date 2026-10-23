@@ -28,6 +28,7 @@ import sharp from 'sharp'
 import { convertWxrStats, formatConvertStats } from '../src/import/convertStats'
 import { formatInspectReport, inspectWxr } from '../src/import/inspect'
 import { formatImportReport, reconcile } from '../src/import/qa'
+import { openPrivateOut, writePrivateOut } from '../src/import/privateOut'
 import { isInsideRepo } from '../src/import/safePaths'
 import { checkUploads, formatUploadsCheck } from '../src/import/uploadsCheck'
 import { readWxrFile } from '../src/import/wxr'
@@ -126,8 +127,8 @@ async function realRehearsal(r: Real): Promise<number> {
     // Read-only: the same counts as `npm run import:uploads-check`, so the folder is judged before anything is loaded.
     let fd: number | undefined
     if (UPLOADS_DETAIL) {
-      fs.mkdirSync(path.dirname(path.resolve(UPLOADS_DETAIL)), { recursive: true })
-      fd = fs.openSync(UPLOADS_DETAIL, 'w', 0o600)
+      // Created exclusively (never over an existing file), not the export, not inside the uploads folder (real paths compared).
+      fd = openPrivateOut(UPLOADS_DETAIL, { inputs: [file], notInside: [uploadsRoot] })
     }
     try {
       const uc = await checkUploads(uploadsRoot, file, fd === undefined ? undefined : (l) => fs.writeSync(fd as number, `${JSON.stringify(l)}
@@ -141,8 +142,7 @@ async function realRehearsal(r: Real): Promise<number> {
   const conv = await timed('conversion stats', 0, () => convertWxrStats(() => readWxrFile(file), { assumeImages: false }))
   console.log(formatConvertStats(conv.stats))
   if (DETAIL) {
-    fs.mkdirSync(path.dirname(path.resolve(DETAIL)), { recursive: true })
-    fs.writeFileSync(DETAIL, `${JSON.stringify(conv.detail, null, 1)}\n`, { mode: 0o600 })
+    writePrivateOut(DETAIL, `${JSON.stringify(conv.detail, null, 1)}\n`, { inputs: [file], notInside: uploadsRoot ? [uploadsRoot] : [] })
     console.log('Legacy ids of posts needing attention written to the detail file.')
   }
   console.log('')

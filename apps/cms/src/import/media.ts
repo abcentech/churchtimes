@@ -3,10 +3,10 @@ import path from 'node:path'
 
 import type { Payload, PayloadRequest } from 'payload'
 
-import { avKindFromPath, avMaxBytes } from '../lib/avMedia'
 import { candidatePaths, legacyPathFromUrl, resolveAlt } from '../lib/legacyMediaPath'
 import { isNetworkOrDevicePath } from './safePaths'
-import { unsafeFileReason } from './uploadSafety'
+import { MEDIA_MAX_BYTES, maxBytesForPath } from '../lib/mediaLimits'
+import { readCheckedFile } from './uploadSafety'
 
 /**
  * Legacy upload resolution for the loader (go-live contract C1.2).
@@ -25,7 +25,7 @@ import { unsafeFileReason } from './uploadSafety'
  * and reason codes only, never a path or file name.
  */
 
-export const MEDIA_MAX_BYTES = 25 * 1024 * 1024
+export { MEDIA_MAX_BYTES }
 
 export type ConfineFailure = 'bad-path' | 'outside-root' | 'missing-file' | 'not-a-file' | 'too-large' | 'no-uploads-root'
 export type ConfineResult = { ok: true; file: string } | { ok: false; reason: ConfineFailure }
@@ -64,9 +64,8 @@ export function confineUploadPath(uploadsRoot: string | undefined, rel: string):
   try {
     const st = fs.statSync(real)
     if (!st.isFile()) return { ok: false, reason: 'not-a-file' }
-    // Audio/video files (mp4, webm, mp3, m4a, ogg) have their own cap, MEDIA_AV_MAX_MB; images keep MEDIA_MAX_BYTES.
-    const cap = avKindFromPath(rel) !== null ? avMaxBytes() : MEDIA_MAX_BYTES
-    if (st.size > cap) return { ok: false, reason: 'too-large' }
+    // Audio/video files (mp4, webm, mp3, m4a, ogg) have their own cap, MEDIA_AV_MAX_MB; images use the Media collection's image cap.
+    if (st.size > maxBytesForPath(rel)) return { ok: false, reason: 'too-large' }
   } catch {
     return { ok: false, reason: 'missing-file' }
   }
@@ -166,7 +165,11 @@ export function createMediaResolver(opts: MediaResolverOptions): MediaResolver {
       }
       // Defence in depth: the folder is an untrusted copy. A dangerous name, link, zero-byte file, wrong magic bytes or a
       // script hidden in an image is refused here too, whether or not `import:uploads-check` was run first.
-      if ((await unsafeFileReason(fs.realpathSync.native(opts.uploadsRoot as string), candidate)) !== null) return fail('rejected-unsafe')
+      // The file is read ONCE (at most the size cap) and checked from that buffer; the buffer, not the path, is uploaded, so
+      // it cannot change between the check and the use. A file too large or of a type the Media collection does not take
+      // is its own reason (not "unsafe").
+      const checked = readCheckedFile(fs.realpathSync.native(opts.uploadsRoot as string), candidate)
+      if (!checked.ok) return fail(checked.reason === 'too-large' ? 'too-large' : checked.reason === 'unsupported-type' ? 'unsupported-type' : 'rejected-unsafe')
       if (opts.dryRun) {
         stats.created++
         // A placeholder (never written): 1 and not 0, so the converter treats it as a resolved image exactly as in a real run.
@@ -180,7 +183,7 @@ export function createMediaResolver(opts: MediaResolverOptions): MediaResolver {
             ...(ctx.caption ? { caption: ctx.caption.slice(0, 500) } : {}),
             legacyPath: candidate,
           } as never,
-          filePath: confined.file,
+          file: { data: checked.data, name: checked.name, mimetype: checked.mimetype, size: checked.size },
           overrideAccess: true,
           req: req,
         })) as { id: number }

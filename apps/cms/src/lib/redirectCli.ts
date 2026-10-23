@@ -4,6 +4,7 @@ import path from 'node:path'
 
 import { type Payload, createLocalReq } from 'payload'
 
+import { PrivateOutError, writePrivateOut } from '../import/privateOut'
 import { writeAuditLog } from './audit'
 import {
   generateRedirectMap,
@@ -88,8 +89,13 @@ function detailTarget(flags: Record<string, string | true>, log: Log): { file: s
 
 async function writeDetails(file: string | null, lines: readonly string[], log: Log): Promise<void> {
   if (!file) return
-  await mkdir(path.dirname(path.resolve(file)), { recursive: true })
-  await writeFile(file, `${lines.join('\n')}\n`, 'utf8')
+  try {
+    // Exclusive create: a detail file never replaces (truncates) an existing file, such as an input.
+    writePrivateOut(path.resolve(file), `${lines.join('\n')}\n`)
+  } catch (err) {
+    log.err(`The detail file was not written (${err instanceof PrivateOutError ? err.code : 'OUT_FAILED'}); it must be a new file.`)
+    return
+  }
   log.out(`Details (${lines.length} lines, they name addresses) written to the detail file.`)
 }
 

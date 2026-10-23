@@ -10,6 +10,8 @@ export type SyntheticTree = {
   /** Relative names actually created that the checker must reject, with the expected reason code. */
   expectedRejected: Record<string, string>
   symlinkCreated: boolean
+  /** Safe files with a script marker after the image data (advisory warning only: the Media re-save removes it). */
+  expectedWarnings: string[]
   /** References that only match the file on disk after Unicode normalisation / lowercasing / adding a size suffix. */
   nfcRef: string
   caseRef: string
@@ -39,8 +41,10 @@ export function buildSyntheticUploads(root: string, png: Buffer, DIR = '2099/01'
   put(`${DIR}/café.png`, more('u')) // decomposed (NFD) on disk
 
   reject(`${DIR}/shell.jpg`, 'magic-mismatch', '<?php system($_GET["x"]); ?>')
-  reject(`${DIR}/poly.png`, 'polyglot', more('\n<?PHP echo 1; ?>'))
-  reject(`${DIR}/poly2.png`, 'polyglot', more('<ScRiPt>alert(1)</script>'))
+  // A script marker after valid image data is only a warning: the Media collection decodes and re-saves the picture.
+  put(`${DIR}/poly.png`, more('\n<?PHP echo 1; ?>'))
+  put(`${DIR}/poly2.png`, more('<ScRiPt>alert(1)</script>'))
+  const expectedWarnings = [`${DIR}/poly.png`, `${DIR}/poly2.png`]
   reject(`${DIR}/evil.php`, 'dangerous-extension', '<?php echo 1;')
   reject(`${DIR}/inner.php.png`, 'dangerous-extension', png)
   reject(`${DIR}/.htaccess`, 'hidden-file', 'AddHandler application/x-httpd-php .png')
@@ -50,9 +54,27 @@ export function buildSyntheticUploads(root: string, png: Buffer, DIR = '2099/01'
   reject(`${DIR}/x.html`, 'dangerous-extension', '<p>x</p>')
   reject(`${DIR}/x.svg`, 'dangerous-extension', '<svg/>')
   reject(`${DIR}/backup.zip`, 'dangerous-extension', 'PK')
+  reject(`${DIR}/x.html.jpg`, 'dangerous-extension', png)
+  reject(`${DIR}/x.svg.png`, 'dangerous-extension', png)
+  reject(`${DIR}/x.js.jpg`, 'dangerous-extension', png)
+  reject(`${DIR}/anim.gif`, 'unsupported-type', 'GIF89a')
+  reject(`${DIR}/manual.pdf`, 'unsupported-type', '%PDF-1.4')
+  reject(`${DIR}/notes.txt`, 'not-media', 'hello')
+  reject(`${DIR}/noext`, 'not-media', png)
   reject(`${DIR}/empty.png`, 'zero-byte', '')
   reject(`${DIR}/fake.png`, 'magic-mismatch', 'just text')
   reject(`${DIR}/wrongtype.jpg`, 'magic-mismatch', png) // a PNG named .jpg
+
+  // Two names for one file: refused (it may be the same data as something outside the folder).
+  try {
+    put(`${DIR}/hl-src.png`, more('h'))
+    fs.linkSync(path.join(root, ...`${DIR}/hl-src.png`.split('/')), path.join(root, ...`${DIR}/hl.png`.split('/')))
+    expectedRejected[`${DIR}/hl-src.png`] = 'hard-link'
+    expectedRejected[`${DIR}/hl.png`] = 'hard-link'
+  } catch {
+    // Hard links not supported here: skip that case and remove the leftover plain file.
+    fs.rmSync(path.join(root, ...`${DIR}/hl-src.png`.split('/')), { force: true })
+  }
 
   let symlinkCreated = false
   try {
@@ -71,7 +93,7 @@ export function buildSyntheticUploads(root: string, png: Buffer, DIR = '2099/01'
       // not creatable on this platform
     }
   }
-  return { expectedRejected, symlinkCreated, nfcRef: `${DIR}/café.png`, caseRef: `${DIR}/case.png`, sizeVariantOnlyRef: `${DIR}/c.png` }
+  return { expectedRejected, expectedWarnings, symlinkCreated, nfcRef: `${DIR}/café.png`, caseRef: `${DIR}/case.png`, sizeVariantOnlyRef: `${DIR}/c.png` }
 }
 
 /** A PNG signature plus filler: enough for magic-byte checks (not decodable). */
