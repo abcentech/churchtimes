@@ -24,6 +24,8 @@ export type ImportReport = {
     /** Everything not imported, by reason: password-protected, status-<x>, bad-id, no-date, conversion-<code>, write-failed, ... */
     skipped: Tally
     passwordProtected: number
+    /** Posts whose WordPress slug is a reserved route name (admin, search, ...) and got a numbered slug instead (root article paths). */
+    slugRenamedReserved: number
     /** Imported before, but the post is now draft, private, trashed ...: left as it is in the CMS. */
     previouslyImportedNowNotPublished: number
   }
@@ -73,6 +75,9 @@ export type ImportReport = {
     imagesUnresolved: number
     linksUnmapped: number
     featuredImageMissing: number
+    /** Featured images resolved to a media document, and those refused by the safety or media rules (also in `media.unresolved`). */
+    featuredImageResolved: number
+    featuredImageRejected: number
     youtube: number
     tablesFlattened: number
     embedsDropped: number
@@ -91,7 +96,7 @@ export function newReport(mode: 'dry-run' | 'apply', update: boolean): ImportRep
     mode,
     update,
     source: { items: t(), postsByStatus: t(), publishedPosts: 0, approvedCommentsOnPublishedPosts: 0, attachments: 0 },
-    articles: { created: 0, updated: 0, unchanged: 0, skipped: t(), passwordProtected: 0, previouslyImportedNowNotPublished: 0 },
+    articles: { created: 0, updated: 0, unchanged: 0, skipped: t(), passwordProtected: 0, previouslyImportedNowNotPublished: 0, slugRenamedReserved: 0 },
     categories: {
       created: 0,
       fallbackUsed: 0,
@@ -116,7 +121,7 @@ export function newReport(mode: 'dry-run' | 'apply', update: boolean): ImportRep
     },
     authors: { distinct: 0, withByline: 0, unmapped: 0, postsWithoutByline: 0 },
     media: { reused: 0, created: 0, unresolved: t() },
-    content: { imagesResolved: 0, imagesUnresolved: 0, linksUnmapped: 0, featuredImageMissing: 0, youtube: 0, tablesFlattened: 0, embedsDropped: 0 },
+    content: { imagesResolved: 0, imagesUnresolved: 0, linksUnmapped: 0, featuredImageMissing: 0, featuredImageResolved: 0, featuredImageRejected: 0, youtube: 0, tablesFlattened: 0, embedsDropped: 0 },
     comments: { created: 0, existing: 0, skipped: t(), orphanedParents: 0, truncated: 0 },
     notes: [],
   }
@@ -168,6 +173,7 @@ export function formatImportReport(rep: ImportReport): string {
     ...lines('  skipped by reason', rep.articles.skipped),
     `  published posts accounted for: ${rec.accountedFor} of ${rec.sourcePublished} (difference ${rec.difference})`,
     `  previously imported, now not published in the export (left alone): ${rep.articles.previouslyImportedNowNotPublished}`,
+    `  slug is a reserved route name, renamed with the post id: ${rep.articles.slugRenamedReserved}`,
     '',
     'Categories',
     `  created: ${rep.categories.created}`,
@@ -198,6 +204,8 @@ export function formatImportReport(rep: ImportReport): string {
     `  images resolved: ${rep.content.imagesResolved}`,
     `  images unresolved (now text): ${rep.content.imagesUnresolved}`,
     `  links unmapped: ${rep.content.linksUnmapped}`,
+    `  featured images resolved: ${rep.content.featuredImageResolved}`,
+    `  featured images rejected (unsafe or refused by the media rules): ${rep.content.featuredImageRejected}`,
     `  articles without a featured image where one was expected: ${rep.content.featuredImageMissing}`,
     `  YouTube embeds: ${rep.content.youtube}`,
     `  tables flattened: ${rep.content.tablesFlattened}`,

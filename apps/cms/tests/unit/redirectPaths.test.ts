@@ -1,6 +1,9 @@
+import { readFileSync } from 'node:fs'
+
 import { describe, expect, it } from 'vitest'
 
 import {
+  DEFAULT_ARTICLE_PATH_TEMPLATE,
   RedirectConfigError,
   articlePath,
   normalizePath,
@@ -142,8 +145,8 @@ describe('normalizeTarget', () => {
 
 describe('environment values fail loudly', () => {
   it('PUBLIC_ARTICLE_PATH_TEMPLATE: default, the two accepted values, and nothing else', () => {
-    expect(resolveArticlePathTemplate({})).toBe('/reports/{slug}/')
-    expect(resolveArticlePathTemplate({ PUBLIC_ARTICLE_PATH_TEMPLATE: '  ' })).toBe('/reports/{slug}/')
+    expect(resolveArticlePathTemplate({})).toBe('/{slug}/')
+    expect(resolveArticlePathTemplate({ PUBLIC_ARTICLE_PATH_TEMPLATE: '  ' })).toBe('/{slug}/')
     expect(resolveArticlePathTemplate({ PUBLIC_ARTICLE_PATH_TEMPLATE: '/{slug}/' })).toBe('/{slug}/')
     expect(resolveArticlePathTemplate({ PUBLIC_ARTICLE_PATH_TEMPLATE: '/reports/{slug}/' })).toBe('/reports/{slug}/')
     for (const bad of ['/{slug}', '/news/{slug}/', '/reports/{slug}', 'reports/{slug}/', '/{id}/', 'https://example.test/{slug}/']) {
@@ -171,4 +174,23 @@ describe('article path helpers', () => {
     expect(slugFromArticlePath('/{slug}/', '/reports/new-slug/')).toBeNull()
     expect(slugFromArticlePath('/reports/{slug}/', '/new-slug/')).toBeNull()
   })
+})
+
+describe('root article path /{slug}/ (owner decision D1)', () => {
+  const fixture = JSON.parse(readFileSync(new URL('../fixtures/redirect-normalisation.json', import.meta.url), 'utf8')) as {
+    rootArticlePath: { vectors: { request: string; path: string; slug: string | null }[] }
+  }
+
+  it('is the default template', () => {
+    expect(DEFAULT_ARTICLE_PATH_TEMPLATE).toBe('/{slug}/')
+  })
+
+  it.each(fixture.rootArticlePath.vectors.map((v) => [v.request, v.path, v.slug]))(
+    'request %j normalises to %j and reverses to slug %j',
+    (request, expectedPath, slug) => {
+      expect(normalizeRequestPath(request as string)).toBe(expectedPath)
+      expect(slugFromArticlePath('/{slug}/', expectedPath as string)).toBe(slug)
+      if (slug) expect(articlePath('/{slug}/', slug as string)).toBe(expectedPath)
+    },
+  )
 })

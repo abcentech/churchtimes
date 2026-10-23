@@ -6,6 +6,8 @@ import { createLocalReq, type Payload, type PayloadRequest } from 'payload'
 import { writeAuditLog } from '../lib/audit'
 import { legacyPathFromUrl } from '../lib/legacyMediaPath'
 import { cleanText, slugify } from '../lib/sanitize'
+import { isReservedSlug } from '../lib/reservedSlugs'
+import { resolveArticlePathTemplate } from '../lib/redirectPaths'
 import { SEO_DESCRIPTION_MAX, SEO_TITLE_MAX } from '../lib/seoFields'
 import { safeErrorSummary } from '../lib/safeLog'
 import { classify, compileRules, EraIndex, parseCategoryRules, textForClassification, type Classification, type CompiledRules } from './categoryRules'
@@ -174,7 +176,13 @@ async function slugTaken(payload: Payload, req: PayloadRequest, slug: string): P
 }
 
 /** The slug the article has (existing) or will get: the WordPress one, else with the post id, else numbered; each candidate is checked. */
-async function decideSlug(payload: Payload, req: PayloadRequest, claimed: Set<string>, item: WxrItem): Promise<string> {
+async function decideSlug(
+  payload: Payload,
+  req: PayloadRequest,
+  claimed: Set<string>,
+  item: WxrItem,
+  report: ImportReport,
+): Promise<string> {
   const existing = await findByLegacyId(payload, req, item.wpId as number)
   if (existing?.slug) {
     claimed.add(existing.slug)
@@ -182,9 +190,17 @@ async function decideSlug(payload: Payload, req: PayloadRequest, claimed: Set<st
   }
   const base = articleSlug(item)
   const fit = (s: string) => s.slice(0, 160).replace(/-+$/, '')
+  // Under /{slug}/ a slug equal to a real route (admin, search, ...) is never used; the post gets the numbered form instead.
+  const blockReserved = resolveArticlePathTemplate() === '/{slug}/'
+  let reservedHit = false
   for (let attempt = 0; attempt < 20; attempt++) {
     const candidate = attempt === 0 ? base : fit(`${base.slice(0, 140)}-${item.wpId}${attempt > 1 ? `-${attempt}` : ''}`)
+    if (blockReserved && isReservedSlug(candidate)) {
+      if (attempt === 0) reservedHit = true
+      continue
+    }
     if (!claimed.has(candidate) && !(await slugTaken(payload, req, candidate))) {
+      if (reservedHit) report.articles.slugRenamedReserved++
       claimed.add(candidate)
       return candidate
     }
@@ -239,7 +255,7 @@ async function pass1(file: string, payload: Payload, req: PayloadRequest, report
         if (importable(it)) {
           if (collectEra) out.eraSources.push({ dateGmt: it.dateGmt, categories: it.categories, primaryCategory: it.seo.yoastPrimaryCategory })
           try {
-            const slug = await decideSlug(payload, req, claimed, it)
+            const slug = await decideSlug(payload, req, claimed, it, report)
             out.slugs.set(it.wpId as number, slug)
             if (it.slug) out.slugMap[it.slug] = slug
           } catch (err) {
@@ -496,8 +512,10 @@ async function featuredImageFor(ctx: Ctx, item: WxrItem, attachments: Map<number
     : { ok: false as const, reason: 'no-attachment' }
   if (!r.ok) {
     ctx.report.content.featuredImageMissing++
+    if (r.reason === 'rejected-unsafe' || r.reason === 'rejected-by-media-rules') ctx.report.content.featuredImageRejected++
     return undefined
   }
+  ctx.report.content.featuredImageResolved++
   return r.mediaId
 }
 

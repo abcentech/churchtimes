@@ -1,3 +1,4 @@
+import { RESERVED_ROOT_SLUGS } from './reservedSlugs'
 import { hasTemplateVariable } from './seoFields'
 
 /**
@@ -47,7 +48,8 @@ export function resolveSlugCollisions<T extends SlugItem>(
   items: readonly T[],
   existingSlugs: Iterable<string> = [],
 ): { items: T[]; renamed: SlugRename[] } {
-  const taken = new Set<string>(existingSlugs)
+  // a root-level /{slug}/ must never take a real route's address (RESERVED_ROOT_SLUGS): those slugs count as taken
+  const taken = new Set<string>([...RESERVED_ROOT_SLUGS, ...existingSlugs])
   const originals = items.map((item) => (typeof item.slug === 'string' ? item.slug : ''))
   const assigned: (string | undefined)[] = items.map(() => undefined)
   const baseOf = (i: number): string =>
@@ -218,7 +220,7 @@ export type LinkOptions = {
   oldHosts: readonly string[]
   /** Old WordPress slug -> new slug. */
   slugMap: ReadonlyMap<string, string> | Readonly<Record<string, string>>
-  /** The new root-relative path of an article, e.g. `(slug) => '/article/' + slug`. Must return a path starting `/`. */
+  /** The new root-relative path of an article, e.g. `(slug) => '/' + slug + '/'`. Must return a path starting `/`. */
   articlePath: (slug: string) => string
 }
 
@@ -336,7 +338,12 @@ function decideInner(raw: string, opts: LinkOptions, report: LinkReport): Decisi
   }
   const mapped = lookupSlug(opts.slugMap, segment) ?? lookupSlug(opts.slugMap, segment.toLowerCase())
   if (mapped === undefined) return keepUnmapped('slug is not in the slug map')
-  const path = opts.articlePath(mapped)
+  let path: string
+  try {
+    path = opts.articlePath(mapped)
+  } catch {
+    return keepUnmapped('the article path mapper rejected the slug')
+  }
   if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//') || UNSAFE_URL_CHARS_RE.test(path)) {
     return keepUnmapped('the article path mapper returned an unsafe path')
   }
