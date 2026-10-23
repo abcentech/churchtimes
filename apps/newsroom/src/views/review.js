@@ -42,6 +42,8 @@ export async function renderReview(container, preselectedStoryId = null) {
       </div>
     </div>
 
+    <p class="archive-link-row" data-archive-link ${api.can('archive.view') ? '' : 'hidden'}><a href="#archive" data-testid="review-archive-link">Recovered archive drafts: open Archive review</a></p>
+
     <div id="review-error" data-testid="review-error" role="alert" class="validation-summary-alert" style="display:none; margin-bottom: 1rem;"></div>
 
     <div class="review-tabs" role="tablist" aria-label="Review queue categories">

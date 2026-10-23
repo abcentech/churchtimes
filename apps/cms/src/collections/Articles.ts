@@ -569,6 +569,20 @@ const auditChanges: CollectionAfterChangeHook = async ({ doc, previousDoc, opera
       actorRole,
     })
   }
+  const prevReview = (prev.provenance as { reviewStatus?: unknown } | null | undefined)?.reviewStatus ?? null
+  const nextReview = (doc.provenance as { reviewStatus?: unknown } | null | undefined)?.reviewStatus ?? null
+  if (prevReview !== nextReview && typeof nextReview === 'string') {
+    // Archive-candidate review decision (docs/archive-candidate-schema.md): who and when come from the audit row's actor and createdAt.
+    await writeAuditLog(req, {
+      action: 'archive.review',
+      collection: 'articles',
+      docId: doc.id,
+      toStatus: doc.status,
+      summary: `Archive review status ${String(prevReview ?? 'none')} -> ${nextReview}: ${title}`.slice(0, 1000),
+      details: { from: prevReview, to: nextReview },
+      actorRole,
+    })
+  }
   const before = Array.isArray(prev.corrections) ? prev.corrections.length : 0
   const after = Array.isArray(doc.corrections) ? doc.corrections.length : 0
   if (after > before) {

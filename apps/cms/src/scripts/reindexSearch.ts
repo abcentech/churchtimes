@@ -23,10 +23,12 @@ async function main(): Promise<void> {
   console.log(`search:reindex done: scanned ${result.scanned}, indexed ${result.indexed}, removed stale ${result.removedStale}`)
 }
 
-main().then(
-  () => process.exit(0),
-  (err) => {
-    console.error(`search:reindex failed: ${cliFailureMessage(err)}`)
-    process.exit(1)
-  },
-)
+// `payload run` exits as soon as the imported module finishes evaluating, so the work MUST be awaited at the top level:
+// a bare `main().then(...)` made it exit 0 before indexing anything (found by the restore drill).
+try {
+  await main()
+  process.exit(0)
+} catch (err) {
+  console.error(`search:reindex failed: ${cliFailureMessage(err)}`)
+  process.exit(1)
+}

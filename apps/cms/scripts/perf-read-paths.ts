@@ -360,6 +360,24 @@ async function main(): Promise<number> {
     await searchCase('common word + category filter', `q=church&limit=20&category=${category}`)
     await searchCase('common word + year filter', 'q=church&limit=20&year=2023')
     await searchCase('no match (zzzunmatched)', 'q=zzzunmatched')
+    // Staff related-articles retriever (E5.3): same projection, OR query derived from a ~2,000 character draft.
+    const { deriveTerms, findRelatedArticles } = await import('../src/lib/staffRetriever')
+    const draftTitle = 'Church community outreach in Nigeria youth service'
+    const draftBody = 'church community grace service nigeria youth outreach pastor sermon worship family prayer '.repeat(24)
+    const midId = Number((await sql(`SELECT id FROM articles WHERE status = 'published' ORDER BY id OFFSET 1000 LIMIT 1`))[0].id)
+    await measure('staff related articles: 2k-char draft, 10 results', { p95: 300, queries: 2 }, async () => {
+      const r = await findRelatedArticles(payload, deriveTerms(draftTitle, draftBody).terms, { limit: 10, excludeId: midId })
+      return JSON.stringify(r).length
+    })
+    await measure('staff related articles: 20k-char draft, 20 results', { p95: 400, queries: 2 }, async () => {
+      const r = await findRelatedArticles(payload, deriveTerms(draftTitle, draftBody.repeat(10)).terms, { limit: 20, excludeId: midId })
+      return JSON.stringify(r).length
+    })
+    await measure('staff related articles: one rare term', { p95: 100, queries: 2 }, async () => {
+      const r = await findRelatedArticles(payload, ['zzzunmatched'], { limit: 10 })
+      return JSON.stringify(r).length
+    })
+
     await measure('redirects list GET /api/public/redirects (cold build)', { p95: 1500, queries: 20 }, async () => body(await handler(publicRedirectsEndpoint)(fakeReq(''))), { iterations: 10, before: resetRedirectsCache })
     await measure('redirects list GET /api/public/redirects (warm, in-process memo)', { p95: 5, queries: 0 }, async () => body(await handler(publicRedirectsEndpoint)(fakeReq(''))))
     const comments = handler(publicLegacyCommentsEndpoints[0])

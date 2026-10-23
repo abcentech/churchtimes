@@ -24,6 +24,7 @@ import { ApiError } from '../api/errors.js';
 import { STALE_MESSAGE, CONTENT_CONFLICT_MESSAGE, isStaleConflict } from '../stale-guard.js';
 import { saveLocalCopy, readLocalCopy, clearLocalCopy, copyDiffers } from '../draft-guard.js';
 import { escapeHtml, slugify, statusBadge, formatDate } from '../util.js';
+import { publishBlockReason } from '../archive-review.js';
 import { parseScheduleInput, isoToLocalInput, formatScheduled, defaultScheduleValue } from '../schedule.js';
 
 // Pointer to the editor currently on screen, used only by the page-unload guard below (story state stays in `states`).
@@ -721,8 +722,12 @@ function renderWorkflowButtons(story) {
   if (story.id && api.can('story.approve', ctx)) {
     html += `<button type="button" class="btn btn-success btn-sm" id="btn-approve-story" data-testid="editor-approve">Approve Story</button>`;
   }
+  const archiveBlock = publishBlockReason(story);
   if (api.can('story.publish', ctx)) {
-    html += `<button type="button" class="btn btn-primary btn-sm" id="btn-publish-story" data-testid="editor-publish" style="background-color: var(--color-forest-dark);">Publish Story</button>`;
+    html += `<button type="button" class="btn btn-primary btn-sm" id="btn-publish-story" data-testid="editor-publish" style="background-color: var(--color-forest-dark);"${archiveBlock ? ' disabled aria-describedby="archive-block-note"' : ''}>Publish Story</button>`;
+  }
+  if (archiveBlock) {
+    html += `<p id="archive-block-note" class="archive-block-note" data-testid="editor-archive-blocked" role="note">${escapeHtml(archiveBlock)} <a href="#archive?id=${encodeURIComponent(story.id)}">Go to Archive review</a></p>`;
   }
   if (story.id && api.can('story.archive', ctx)) {
     html += `<button type="button" class="btn btn-outline btn-sm" id="btn-archive-story" data-testid="editor-archive">Archive</button>`;
