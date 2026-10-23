@@ -31,6 +31,7 @@
     "import:uploads-check": "tsx scripts/import-uploads-check.ts",
     "import:rehearse": "tsx scripts/import-rehearse.ts",
     "import:convert-wxr": "tsx scripts/import-convert-stats.ts",
+    "import:categorise-eval": "tsx scripts/import-categorise-eval.ts",
     "perf:read": "tsx scripts/perf-read-paths.ts",
     "import:redirects": "payload run src/scripts/importRedirects.ts --",
     "import:convert": "tsx src/scripts/convertHtmlReport.ts",

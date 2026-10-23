@@ -18,6 +18,15 @@ export type ManifestRecord =
   | { type: 'start'; schema: 'churchtimes-import-manifest/2'; at: string }
   | { type: 'intent'; legacyId: number }
   | { type: 'id'; collection: ManifestCollection; action: 'created' | 'updated'; id: number }
+  /** Why a post got its category (counts and slugs only): written for every created article, ignored by rollback. */
+  | {
+      type: 'category'
+      legacyId: number
+      step: 'wordpress' | 'yoast-primary' | 'tag-map' | 'rules' | 'generic' | 'fallback'
+      category: string
+      /** Rules mode: the winning rule (or the low-confidence suggestion's rule), its score, and the runner-up. */
+      rule?: { id: string; category: string; score: number; runnerUp: string | null; runnerUpScore: number; confident: boolean }
+    }
   | { type: 'commit'; legacyId: number }
   | { type: 'abort'; legacyId: number }
   | { type: 'end'; at: string; status: 'complete' | 'failed' | 'stopped' }

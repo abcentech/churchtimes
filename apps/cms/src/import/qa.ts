@@ -40,7 +40,11 @@ export type ImportReport = {
     postsWithExtraCategories: number
     extraCategoriesDropped: number
     /** Where each created article's category came from (the chain: WordPress, Yoast primary, tag map, generic, fallback). */
-    bySource: { wordpress: number; yoastPrimary: number; tagMap: number; generic: number; fallback: number }
+    bySource: { wordpress: number; yoastPrimary: number; tagMap: number; rules: number; generic: number; fallback: number }
+    /** Rules mode: posts left in the fallback with a low-confidence suggestion (listed in the review file when one is given). */
+    rulesLowConfidence: number
+    /** The category mode of this run. */
+    mode: 'strict' | 'rules'
     /** Posts naming a Yoast primary category that is not a category of the export. */
     yoastPrimaryUnresolved: number
     /** Tag-map entries whose target category does not exist (nothing is created from a tag): the next step applied. */
@@ -98,7 +102,9 @@ export function newReport(mode: 'dry-run' | 'apply', update: boolean): ImportRep
       fallbackUsed: 0,
       postsWithExtraCategories: 0,
       extraCategoriesDropped: 0,
-      bySource: { wordpress: 0, yoastPrimary: 0, tagMap: 0, generic: 0, fallback: 0 },
+      bySource: { wordpress: 0, yoastPrimary: 0, tagMap: 0, rules: 0, generic: 0, fallback: 0 },
+      rulesLowConfidence: 0,
+      mode: 'strict',
       yoastPrimaryUnresolved: 0,
       tagMapTargetMissing: 0,
     },
@@ -172,7 +178,8 @@ export function formatImportReport(rep: ImportReport): string {
     'Categories',
     `  created: ${rep.categories.created}`,
     `  articles placed in the fallback category (or kept as WordPress "Uncategorised"): ${rep.categories.fallbackUsed}`,
-    `  category source: WordPress ${rep.categories.bySource.wordpress}, Yoast primary ${rep.categories.bySource.yoastPrimary}, tag map ${rep.categories.bySource.tagMap}, generic ${rep.categories.bySource.generic}, fallback ${rep.categories.bySource.fallback}`,
+    `  category source: WordPress ${rep.categories.bySource.wordpress}, Yoast primary ${rep.categories.bySource.yoastPrimary}, tag map ${rep.categories.bySource.tagMap}, rules ${rep.categories.bySource.rules}, generic ${rep.categories.bySource.generic}, fallback ${rep.categories.bySource.fallback}`,
+    `  category mode: ${rep.categories.mode}${rep.categories.mode === 'rules' ? `; low-confidence suggestions left in the fallback: ${rep.categories.rulesLowConfidence}` : ''}`,
     `  Yoast primary category not in the export: ${rep.categories.yoastPrimaryUnresolved}; tag-map targets that do not exist: ${rep.categories.tagMapTargetMissing}`,
     `  posts with more categories than the schema holds (one): ${rep.categories.postsWithExtraCategories} (${rep.categories.extraCategoriesDropped} extra categories not kept)`,
     '',
