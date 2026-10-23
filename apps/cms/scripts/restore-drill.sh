@@ -137,7 +137,7 @@ select 'payload_migrations|' || count(*) || '|' || coalesce(md5(string_agg(name,
 SQL
 }
 media_hashes() {
-  (cd "$WORK/media" && find . -type f -print0 | sort -z | xargs -0 sha256sum)
+  $SUDO bash -c 'cd "$1" && find . -type f -print0 | sort -z | xargs -0 sha256sum' _ "$WORK/media"
 }
 search_total() {
   local body code
