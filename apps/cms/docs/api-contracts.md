@@ -1,4 +1,4 @@
-# Church Times CMS — API contracts (v1.22)
+# Church Times CMS — API contracts (v1.24)
 
 Status: implemented on `agent/payload-core`. v1.1 added Turnstile, duplicate detection, staff auth/session
 contract and security hardening; v1.2 closes the verified security-review findings: media ownership, version
@@ -1054,6 +1054,10 @@ proxy) and https-only `CMS_PUBLIC_URL`/CORS/CSRF settings (`docs/security.md`). 
 limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/operations.md` §4).
 
 ## 9. Changelog
+
+### v1.24: Staff related articles
+Additive: new endpoint `POST /api/staff/related-articles` (section 6.4); no existing shape changes.
+- Request bodies are read as a stream and refused with `413` as soon as they exceed 256 KiB measured in **bytes** (not characters), without buffering the remainder. The headline snippet is computed over the first 20,000 characters of an article body only.
 
 ### v1.22: Archive review audit entry
 Additive; no request or response shape changes.

@@ -8,6 +8,7 @@ import { safeErrorFields } from '../lib/safeLog'
 import {
   deriveTerms,
   findRelatedArticles,
+  readLimitedText,
   RETRIEVER_DEFAULT_LIMIT,
   RETRIEVER_INPUT_MAX,
   RETRIEVER_MAX_LIMIT,
@@ -41,8 +42,8 @@ export function resetStaffRelatedLimiter(): void {
 async function readJson(req: PayloadRequest): Promise<unknown> {
   const declared = Number(req.headers.get('content-length') ?? '0')
   if (Number.isFinite(declared) && declared > BODY_MAX_BYTES) return 'too-large'
-  const raw = await (req as unknown as Request).text()
-  if (raw.length > BODY_MAX_BYTES) return 'too-large'
+  const raw = await readLimitedText((req as unknown as Request).body, BODY_MAX_BYTES)
+  if (raw === null) return 'too-large'
   try {
     return JSON.parse(raw)
   } catch {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildOrTsQuery, deriveTerms, extractTerms, RETRIEVER_INPUT_MAX, RETRIEVER_MAX_TERMS } from '../../src/lib/staffRetriever'
+import { buildOrTsQuery, deriveTerms, extractTerms, RETRIEVER_INPUT_MAX, RETRIEVER_MAX_TERMS, readLimitedText } from '../../src/lib/staffRetriever'
 
 describe('extractTerms', () => {
   it('drops stopwords, short words and bare numbers, ranks by frequency with title weight', () => {
@@ -63,5 +63,37 @@ describe('buildOrTsQuery: never lets input form tsquery syntax', () => {
   it('caps the number of terms', () => {
     const many = Array.from({ length: 100 }, (_, i) => `t${i}`)
     expect(buildOrTsQuery(many).split(' | ')).toHaveLength(RETRIEVER_MAX_TERMS)
+  })
+})
+
+describe('readLimitedText', () => {
+  const stream = (...parts: Uint8Array[]) =>
+    new ReadableStream<Uint8Array>({
+      start(c) {
+        parts.forEach((p) => c.enqueue(p))
+        c.close()
+      },
+    })
+  it('reads within the limit and decodes UTF-8', async () => {
+    expect(await readLimitedText(stream(new TextEncoder().encode('{"a":"é"}')), 100)).toBe('{"a":"é"}')
+    expect(await readLimitedText(null, 10)).toBe('')
+  })
+  it('measures bytes, not characters', async () => {
+    const s = 'é'.repeat(60) // 60 characters, 120 bytes
+    expect(await readLimitedText(stream(new TextEncoder().encode(s)), 100)).toBeNull()
+    expect(await readLimitedText(stream(new TextEncoder().encode(s)), 120)).toBe(s)
+  })
+  it('aborts across chunks and cancels the stream', async () => {
+    let cancelled = false
+    const body = new ReadableStream<Uint8Array>({
+      pull(c) {
+        c.enqueue(new Uint8Array(40))
+      },
+      cancel() {
+        cancelled = true
+      },
+    })
+    expect(await readLimitedText(body, 100)).toBeNull()
+    expect(cancelled).toBe(true)
   })
 })

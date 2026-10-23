@@ -148,6 +148,9 @@ describe('POST /api/staff/related-articles', () => {
     expect(ids(r)).toContain(a.id)
     const huge = await post({ text: 'x'.repeat(400 * 1024) }, f.tokens.admin)
     expect(huge.status).toBe(413)
+    // multi-byte: 150k characters is under 256 KiB as characters but over it as UTF-8 bytes
+    const wide = await post({ text: 'é'.repeat(150 * 1024) }, f.tokens.admin)
+    expect(wide.status).toBe(413)
   })
 
   it('validates the body', async () => {

@@ -94,6 +94,34 @@ export type RelatedArticle = {
   matchedTerms: string[]
 }
 
+/**
+ * Characters of the body that `ts_headline` may scan (it is CPU-heavy on long text). Same value as public search's
+ * `SEARCH_HEADLINE_CHARS` (#104); not on this base yet, so it is local here and should be unified once both are merged.
+ */
+export const RETRIEVER_HEADLINE_CHARS = 20000
+
+/**
+ * Read a request body as UTF-8 text, aborting as soon as more than `maxBytes` bytes have arrived (measured in bytes,
+ * not characters). Returns `null` when the limit is exceeded; the rest of the stream is cancelled, not buffered.
+ */
+export async function readLimitedText(body: ReadableStream<Uint8Array> | null, maxBytes: number): Promise<string | null> {
+  if (!body) return ''
+  const reader = body.getReader()
+  const chunks: Buffer[] = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.byteLength
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => undefined)
+      return null
+    }
+    chunks.push(Buffer.from(value.buffer, value.byteOffset, value.byteLength))
+  }
+  return Buffer.concat(chunks, total).toString('utf8')
+}
+
 type Exec = { execute: (q: unknown) => Promise<{ rows?: unknown[] }> }
 
 /** Related published articles for `terms`, best first, never including `excludeId`. */
@@ -121,7 +149,7 @@ export async function findRelatedArticles(
       limit ${limit}
     )
     select h."article_id" as id, a."slug", s."title", s."excerpt", h."published_at", h.rank,
-           ts_headline(${config}, s."body", q.tsq, 'StartSel="", StopSel="", MaxWords=32, MinWords=14, ShortWord=2, MaxFragments=0') as snippet,
+           ts_headline(${config}, left(s."body", ${RETRIEVER_HEADLINE_CHARS}), q.tsq, 'StartSel="", StopSel="", MaxWords=32, MinWords=14, ShortWord=2, MaxFragments=0') as snippet,
            (select coalesce(array_agg(t order by t), '{}') from unnest(string_to_array(${tsq}, ' | ')) t
               where s."tsv" @@ to_tsquery(${config}, t)) as matched
     from hits h
