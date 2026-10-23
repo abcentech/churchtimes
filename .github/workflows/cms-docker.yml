@@ -28,6 +28,7 @@ concurrency:
 env:
   IMAGE: churchtimes-cms:ci
   MIGRATOR_IMAGE: churchtimes-cms-migrator:ci
+  IMPORTER_IMAGE: churchtimes-cms-importer:ci
   NETWORK: ctcms-ci
   PG_CONTAINER: ctcms-ci-postgres
   CMS_CONTAINER: ctcms-ci-cms
@@ -102,6 +103,17 @@ jobs:
           load: true
           push: false
           tags: ${{ env.MIGRATOR_IMAGE }}
+          cache-from: type=gha,scope=cms-docker
+
+      - name: Build importer image
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/cms
+          file: apps/cms/Dockerfile
+          target: importer
+          load: true
+          push: false
+          tags: ${{ env.IMPORTER_IMAGE }}
           cache-from: type=gha,scope=cms-docker
 
       - name: Image hygiene (non-root user, no secrets baked in)
@@ -267,6 +279,39 @@ jobs:
           # Postgres must never publish a port.
           ! docker compose -f docker-compose.production.yml config --format json | jq -e '.services.postgres.ports // empty | length > 0' >/dev/null
 
+      - name: Validate the import override and smoke the importer image
+        working-directory: apps/cms
+        # Placeholder values only; nothing here is a secret. Proves docker-compose.import.yml renders with the production file,
+        # is hardened and publishes no port, and that the importer image runs the read-only uploads check on mounted folders.
+        run: |
+          set -euo pipefail
+          t="$RUNNER_TEMP/importsmoke"
+          mkdir -p "$t/uploads/2024/01" "$t/private" "$t/secrets"
+          printf '\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9' > "$t/uploads/2024/01/a.jpg"
+          cat > "$t/export.xml" <<'XML'
+          <?xml version="1.0" encoding="UTF-8" ?>
+          <rss version="2.0" xmlns:wp="http://wordpress.org/export/1.2/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:excerpt="http://wordpress.org/export/1.2/excerpt/" xmlns:dc="http://purl.org/dc/elements/1.1/">
+          <channel><title>t</title><link>https://old.example.org</link></channel>
+          </rss>
+          XML
+          chmod -R a+rX "$t"; chmod 700 "$t/private"; sudo chown 1000:1000 "$t/private"
+          echo "ci-only-not-a-secret" > "$t/secrets/pg"; : > "$t/dummy.env"
+          export CMS_IMAGE=example.invalid/cms@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          export CMS_MIGRATOR_IMAGE="$CMS_IMAGE" CMS_IMPORTER_IMAGE="$IMPORTER_IMAGE" CMS_ENV_FILE="$t/dummy.env" POSTGRES_PASSWORD_FILE_PATH="$t/secrets/pg"
+          export IMPORT_EXPORT_FILE="$t/export.xml" IMPORT_UPLOADS_DIR="$t/uploads" IMPORT_PRIVATE_DIR="$t/private" CMS_MEDIA_DIR="$t/private"
+          C="docker compose -f docker-compose.production.yml -f docker-compose.import.yml --profile import"
+          $C config --format json > "$t/rendered.json"
+          jq -e '.services.importer | (.read_only == true) and ((.ports // []) | length == 0) and (.cap_drop == ["ALL"]) and (.networks | keys == ["db"])' "$t/rendered.json"
+          # Required variables have no defaults: an unset IMPORT_EXPORT_FILE must fail.
+          ! env -u IMPORT_EXPORT_FILE $C config >/dev/null 2>&1
+          rc=0
+          $C run --rm --no-deps importer > "$t/out.txt" 2>&1 || rc=$?
+          cat "$t/out.txt"
+          # 0 = clean, 3 = unsafe files found (still a successful check); anything else is a broken image or mount.
+          [ "$rc" -eq 0 ] || [ "$rc" -eq 3 ] || { echo "::error::importer smoke exited $rc"; exit 1; }
+          docker run --rm --entrypoint sh "$IMPORTER_IMAGE" -c 'test -f scripts/import-uploads-check.ts && test -x node_modules/.bin/tsx'
+          sudo rm -rf "$t"
+
       - name: Run the real production compose stack
         working-directory: apps/cms
         # Runs docker-compose.production.yml itself with the two images built above, a throw-away env file and secret
@@ -346,7 +391,7 @@ jobs:
       - name: Save the tested images for publishing
         # The publish job ships exactly these images (no second build from cache). Push events only.
         if: github.event_name == 'push' && github.ref == 'refs/heads/feat/newsroom-mvp'
-        run: docker save "$IMAGE" "$MIGRATOR_IMAGE" | gzip -1 > "$RUNNER_TEMP/cms-images.tar.gz"
+        run: docker save "$IMAGE" "$MIGRATOR_IMAGE" "$IMPORTER_IMAGE" | gzip -1 > "$RUNNER_TEMP/cms-images.tar.gz"
 
       - name: Upload the tested images
         if: github.event_name == 'push' && github.ref == 'refs/heads/feat/newsroom-mvp'
@@ -376,7 +421,7 @@ jobs:
           docker network rm "$NETWORK" >/dev/null 2>&1 || true
           rm -f "$RUNNER_TEMP/cms.env" "$RUNNER_TEMP"/image-env.txt "$RUNNER_TEMP"/image-history.txt "$RUNNER_TEMP"/cms.log "$RUNNER_TEMP"/me.* "$RUNNER_TEMP"/articles.json
 
-  # Pushes the SAME two images the smoke job built and tested (handed over as an artifact, loaded, retagged, pushed: nothing is
+  # Pushes the SAME three images the smoke job built and tested (handed over as an artifact, loaded, retagged, pushed: nothing is
   # rebuilt) to GHCR, on pushes to feat/newsroom-mvp only (never on pull requests, so fork PRs cannot reach it). Uses the
   # workflow's own GITHUB_TOKEN: no repository secret is added. `packages: write` is granted to THIS job only. The third-party
   # action is pinned to a commit SHA. The digests are printed in the job summary: pin them in CMS_IMAGE / CMS_MIGRATOR_IMAGE.
@@ -403,10 +448,10 @@ jobs:
       - name: Tag, push and print digests
         run: |
           set -euo pipefail
-          for pair in "churchtimes-cms:ci ghcr.io/abcentech/churchtimes-cms" "churchtimes-cms-migrator:ci ghcr.io/abcentech/churchtimes-cms-migrator"; do
+          for pair in "churchtimes-cms:ci ghcr.io/abcentech/churchtimes-cms" "churchtimes-cms-migrator:ci ghcr.io/abcentech/churchtimes-cms-migrator" "churchtimes-cms-importer:ci ghcr.io/abcentech/churchtimes-cms-importer"; do
             set -- $pair
             docker tag "$1" "$2:sha-${GITHUB_SHA}"
             docker push "$2:sha-${GITHUB_SHA}"
             digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$2:sha-${GITHUB_SHA}")"
-            case "$2" in *migrator) echo "CMS_MIGRATOR_IMAGE=$digest" ;; *) echo "CMS_IMAGE=$digest" ;; esac | tee -a "$GITHUB_STEP_SUMMARY"
+            case "$2" in *migrator) echo "CMS_MIGRATOR_IMAGE=$digest" ;; *importer) echo "CMS_IMPORTER_IMAGE=$digest" ;; *) echo "CMS_IMAGE=$digest" ;; esac | tee -a "$GITHUB_STEP_SUMMARY"
           done

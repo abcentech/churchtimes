@@ -162,6 +162,10 @@ $C --profile ops run --rm -e ADMIN_EMAIL=editor@example.org -e ADMIN_NEW_PASSWOR
 
 `cms` has `mem_limit: 1280m`, `NODE_OPTIONS=--max-old-space-size=960` and `oom_score_adj: 500`; `postgres` has `mem_limit: 1g`, `shm_size: 256m`, `shared_buffers=256MB` and `oom_score_adj: -500`; the one-off `migrate` has `mem_limit: 768m`, `--max-old-space-size=512` and `oom_score_adj: 0`. If the host runs short of memory the kernel kills Node first (it restarts through `restart: unless-stopped`), not the database. Watch `docker stats` during the first import and adjust the limits together.
 
+#### First WordPress import on the server
+
+Use the opt-in override `docker-compose.import.yml` (service `importer`, profile `import`) with the digest-pinned `CMS_IMPORTER_IMAGE` (Dockerfile target `importer`: migrator plus `scripts/`). It bind-mounts the export file and the verified uploads read-only and a private manifest/report directory read-write, from the required variables `IMPORT_EXPORT_FILE`, `IMPORT_UPLOADS_DIR` and `IMPORT_PRIVATE_DIR` (no defaults, outside the repo), and has the same hardening as `migrate` with no published ports. Exact commands (dry run, apply, rollback, uploads check, reindex) are in `docs/import.md`, "Importing on the server". Run `docker compose ... config` for both files first; the importer image needs the media directory writable by uid 1000 like `cms`.
+
 #### Release procedure
 
 Run from `/srv/churchtimes/app/apps/cms`.

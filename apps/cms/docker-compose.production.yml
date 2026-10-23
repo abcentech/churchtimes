@@ -3,6 +3,7 @@
 #
 #   export CMS_IMAGE=ghcr.io/abcentech/churchtimes-cms@sha256:<digest from the CI build>
 #   export CMS_MIGRATOR_IMAGE=ghcr.io/abcentech/churchtimes-cms-migrator@sha256:<digest, same commit>
+#   export CMS_IMPORTER_IMAGE=ghcr.io/abcentech/churchtimes-cms-importer@sha256:<digest, same commit; only for the one-off import, see docker-compose.import.yml>
 #   docker compose -f docker-compose.production.yml up -d postgres
 #   docker compose -f docker-compose.production.yml --profile ops run --rm migrate     # BEFORE starting the new cms
 #   docker compose -f docker-compose.production.yml up -d cms
