@@ -2,8 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   archiveWhere, cleanFilters, groupSha, normalizeProvenance, originalDateLabel, publishBlockReason, reviewActions,
-  reviewPatchBody, safeSourceUrl
+  reviewPatchBody, safeSourceUrl, extractLinks, summarizeLinks, linksNeedAcknowledgement, isKnownLinkHost, parseKnownHosts, hostInText
 } from '../src/archive-review.js';
+import { markdownToHtml } from '../src/lexical.js';
+import { buildCsp, cmsOrigin } from '../csp.js';
+import fs from 'node:fs';
 import { can } from '../src/permissions.js';
 import { MockAdapter } from '../src/api/mock.js';
 
@@ -141,4 +144,83 @@ test('mock: a stale version answers 409 and a section editor outside the section
   await assert.rejects(eic.setArchiveReview('arc-3', 'reviewed', { expectedUpdatedAt: '2001-01-01T00:00:00.000Z' }), { status: 409 });
   const other = mockAs('section-editor', ['not-this-section']);
   await assert.rejects(other.setArchiveReview('arc-3', 'reviewed'), { status: 403 });
+});
+
+// ---- outbound link review ------------------------------------------------------------------------------------------
+
+test('known hosts: exact or subdomain, case and www ignored, junk ignored', () => {
+  assert.deepEqual(parseKnownHosts('Example.org, https://www.Diocese.test/path  news.test:8080'), ['example.org', 'diocese.test', 'news.test']);
+  const known = ['example.org'];
+  assert.equal(isKnownLinkHost('example.org', known), true);
+  assert.equal(isKnownLinkHost('WWW.Example.org', known), true);
+  assert.equal(isKnownLinkHost('news.example.org', known), true);
+  assert.equal(isKnownLinkHost('evilexample.org', known), false);
+  assert.equal(isKnownLinkHost('example.org.evil.test', known), false);
+  assert.equal(isKnownLinkHost('', known), false);
+  assert.equal(isKnownLinkHost('example.org', []), false);
+});
+
+test('extractLinks lists every real href, flags unknown hosts and look-alike link text', () => {
+  const md = 'Read [Example](https://example.org/a), [https://example.org](https://casino.test/win?x=1&y=2) and [click](https://other.test/z). Also [mail](javascript:alert(1)).';
+  const links = extractLinks(markdownToHtml(md), ['example.org']);
+  assert.equal(links.length >= 3, true);
+  const byHref = Object.fromEntries(links.map(l => [l.href, l]));
+  assert.equal(byHref['https://example.org/a'].known, true);
+  assert.equal(byHref['https://example.org/a'].mismatch, false);
+  const sneaky = byHref['https://casino.test/win?x=1&y=2'];
+  assert.equal(sneaky.host, 'casino.test');
+  assert.equal(sneaky.known, false);
+  assert.equal(sneaky.mismatch, true, 'text names example.org but the target is casino.test');
+  assert.equal(byHref['https://other.test/z'].mismatch, false, 'plain words are not an address claim');
+  assert.deepEqual(summarizeLinks(links).mismatched, 1);
+  assert.equal(summarizeLinks(links).unknown, links.filter(l => !l.known).length);
+  for (const l of links.filter(l => !l.http)) assert.equal(l.known, false);
+});
+
+test('extractLinks handles entities, nested markup and no links', () => {
+  const html = '<p><a href="https://a.test/?x=1&amp;y=2" rel="noopener"><strong>Go</strong> &amp; see</a> <a href=\'https://b.test/\'>b.test</a></p>';
+  const [one, two] = extractLinks(html, ['b.test']);
+  assert.equal(one.href, 'https://a.test/?x=1&y=2');
+  assert.equal(one.text, 'Go & see');
+  assert.equal(two.known, true);
+  assert.equal(two.mismatch, false);
+  assert.deepEqual(extractLinks('<p>No links here</p>'), []);
+  assert.equal(linksNeedAcknowledgement([]), false);
+  assert.equal(linksNeedAcknowledgement(extractLinks(html)), true);
+  assert.equal(hostInText('www.example.org/path'), 'example.org');
+  assert.equal(hostInText('Read more'), '');
+});
+
+test('mock archive story 2 carries links so the screen can be exercised', async () => {
+  const api = mockAs('editor-in-chief');
+  const story = (await api.getArticle('arc-2')).data;
+  const links = extractLinks(markdownToHtml(story.bodyMd), ['diocese.example']);
+  assert.equal(links.length, 3);
+  assert.equal(summarizeLinks(links).unknown, 2);
+});
+
+// ---- Content-Security-Policy ---------------------------------------------------------------------------------------
+
+test('CSP: production policy is strict and names only the CMS origin', () => {
+  const csp = buildCsp({ cmsUrl: 'https://cms.example.org/', dev: false });
+  for (const part of ["default-src 'self'", "script-src 'self'", "object-src 'none'", "base-uri 'none'", "connect-src 'self' https://cms.example.org", "img-src 'self' data: https:"]) {
+    assert.ok(csp.includes(part), part);
+  }
+  assert.equal(/unsafe-eval|script-src[^;]*unsafe-inline|ws:|frame-ancestors/.test(csp), false);
+  assert.ok(buildCsp({ cmsUrl: '' }).includes("connect-src 'self'; "), 'same-origin CMS adds nothing');
+  assert.equal(cmsOrigin('javascript:alert(1)'), '');
+});
+
+test('CSP: dev policy allows the HMR socket and an http dev CMS for images', () => {
+  const csp = buildCsp({ cmsUrl: 'http://localhost:3000', dev: true });
+  assert.match(csp, /connect-src 'self' http:\/\/localhost:3000 ws:/);
+  assert.match(csp, /img-src 'self' data: https: http:\/\/localhost:3000/);
+});
+
+test('index.html carries exactly one CSP meta with the build placeholder and no inline script', () => {
+  const html = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  assert.equal((html.match(/http-equiv="Content-Security-Policy"/g) || []).length, 1);
+  assert.ok(html.includes('content="__NEWSROOM_CSP__"'));
+  assert.equal(/<script(?![^>]*\bsrc=)[^>]*>/i.test(html), false, 'no inline script');
+  assert.equal(/\son[a-z]+\s*=/i.test(html), false, 'no inline event handlers');
 });

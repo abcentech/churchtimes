@@ -348,6 +348,22 @@ test.describe('Production build against a stubbed CMS', () => {
   test.beforeEach(({}, testInfo) => { test.skip(testInfo.project.name !== 'desktop', 'stubbed-CMS suite runs once, on desktop'); });
   test.setTimeout(60_000);
 
+  test('the production page carries a CSP naming the CMS origin and loads under it without violations', async ({ page }) => {
+    await page.addInitScript(() => {
+      window.__cspViolations = [];
+      document.addEventListener('securitypolicyviolation', e => window.__cspViolations.push(`${e.violatedDirective} ${e.blockedURI}`));
+    });
+    await stubCms(page, { articles: [stubArticle(1)] });
+    await page.goto(`${STUB_BASE}#editor?id=1`);
+    await expect(page.getByTestId('editor-title')).toHaveValue('Stub story 1');
+    const csp = await page.locator('meta[http-equiv="Content-Security-Policy"]').getAttribute('content');
+    expect(csp).toContain("default-src 'self'");
+    expect(csp).toContain("connect-src 'self'");
+    expect(csp).not.toContain('ws:');
+    expect(csp).not.toContain('__NEWSROOM_CSP__');
+    expect(await page.evaluate(() => window.__cspViolations)).toEqual([]);
+  });
+
   test('a slow load of story 1 can never take over after navigating to story 2: PATCH goes to story 2 only', async ({ page }) => {
     const cms = await stubCms(page, { articles: [stubArticle(1), stubArticle(2)] });
     cms.holdGet(1);

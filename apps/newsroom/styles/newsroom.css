@@ -1600,6 +1600,15 @@ body[data-auth="out"] .session-chip:empty {
 .archive-ok { border-left: 4px solid #16A34A; }
 .archive-block-note { flex: 1 1 100%; margin: 0.25rem 0 0; font-size: 0.8125rem; color: #92400E; }
 .archive-confidence-note { margin: 0.5rem 0; font-size: 0.875rem; }
+.archive-links { padding: 1rem; margin: 1rem 0; }
+.archive-links summary { cursor: pointer; font-weight: 600; min-height: 2.75rem; display: flex; align-items: center; }
+.archive-link-list { margin: 0.75rem 0; padding-left: 1.25rem; display: flex; flex-direction: column; gap: 0.75rem; }
+.archive-link { display: flex; flex-wrap: wrap; gap: 0.35rem 0.5rem; align-items: center; overflow-wrap: anywhere; }
+.archive-link-host { font-weight: 700; background: #E0F2FE; color: #075985; padding: 0 0.35rem; border-radius: 0.25rem; }
+.archive-link.is-flagged .archive-link-host { background: #FEE2E2; color: #991B1B; }
+.archive-link-href { flex: 1 1 100%; }
+.archive-links-ack { display: flex; gap: 0.5rem; align-items: center; min-height: 2.75rem; font-weight: 600; }
+.badge-warn { background-color: #FEF3C7; color: #92400E; }
 .badge-confidence-partial { background-color: #E0F2FE; color: #075985; }
 .badge-confidence-citation-only { background-color: #FEF3C7; color: #92400E; }
 .badge-confidence-missing { background-color: #FEE2E2; color: #991B1B; }
