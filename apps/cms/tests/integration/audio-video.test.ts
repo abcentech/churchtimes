@@ -223,7 +223,7 @@ describe('importer: audio/video', () => {
     fs.mkdirSync(path.join(uploads, '2097', '01'), { recursive: true })
     fs.writeFileSync(path.join(uploads, '2097', '01', 'sermon.mp3'), MP3)
     fs.writeFileSync(path.join(uploads, '2097', '01', 'choir.mp4'), MP4)
-    fs.writeFileSync(path.join(uploads, '2097', '01', 'corrupt.mp4'), SVG) // not a video: the Media rules refuse it
+    fs.writeFileSync(path.join(uploads, '2097', '01', 'corrupt.mp4'), SVG) // not a video: the safety check refuses it (active content)
     fs.writeFileSync(path.join(uploads, '2097', '01', 'poster.png'), await png())
     const cat = { nicename: `${runId}-av`, name: `${runId} AV` }
     const items: FixtureItem[] = [
@@ -251,7 +251,7 @@ describe('importer: audio/video', () => {
     const rep = await runImport(f.payload, { file, uploadsRoot: uploads, manifestPath, dryRun: false })
     expect(rep.articles, JSON.stringify(rep.articles)).toMatchObject({ created: 2 })
     expect(rep.content).toMatchObject({ avResolved: 2, avUnresolvedMedia: 2, youtube: 1 })
-    expect(rep.media.unresolved).toMatchObject({ 'missing-file': 1, 'rejected-by-media-rules': 1 })
+    expect(rep.media.unresolved).toMatchObject({ 'missing-file': 1, 'rejected-unsafe': 1 })
     expect(rep.media.created).toBe(3)
 
     const doc = (

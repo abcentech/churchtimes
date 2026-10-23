@@ -179,7 +179,7 @@ code (`IMPORT_USAGE`, `IMPORT_FILE_INSIDE_REPO`, `IMPORT_FILE_UNREADABLE`, `IMPO
   to `media.legacyPath` (exact path, then without a `-300x200` size suffix); when there is none the file is read from
   `--uploads` and created as Media (the Media rules apply: JPEG/PNG/WebP, alt text). Unresolved images become text in
   the body and are counted by reason: `missing-file`, `bad-path`, `outside-root`, `external-host`, `not-an-upload`,
-  `no-uploads-root`, `not-a-file`, `too-large`, `rejected-by-media-rules`.
+  `no-uploads-root`, `not-a-file`, `too-large`, `rejected-by-media-rules`, `rejected-unsafe` (see "Checking the uploads folder" below).
 
 ### Safety
 
@@ -385,6 +385,50 @@ npm run import:rollback -- --manifest D:\churchtimes-private\manifests\run-1.jso
 A rollback does not remove audit rows (kept on purpose), does not restore an article that `--update` rewrote (use its version history), and touches
 nothing the manifest does not list.
 
+## Rehearsal against a real export
+
+Run the whole import against the owner's REAL WordPress export on a throwaway database, with counts only on screen. Nothing real is written
+anywhere except the folders you name: PostgreSQL is an embedded, temporary instance on a free port, the media folder is inside the temp
+folder (never `apps/cms/media`), and everything is removed at the end (also on Ctrl+C). The export and the uploads folder are only read.
+
+```
+cd apps/cms
+# Everything below stays OUTSIDE every repository. Replace the paths.
+# 1. Dry run only (inspect stats, conversion stats, loader dry run). About 3 to 5 minutes for a 100 MB export.
+npm run import:rehearse -- --file D:\churchtimes-private\export.xml --dry-run-only --detail-file D:\churchtimes-private\reports\rehearse-detail.json
+# 2. Full rehearsal: also apply, second apply (must change nothing) and rollback, all on the throwaway database.
+npm run import:rehearse -- --file D:\churchtimes-private\export.xml --uploads D:\churchtimes-private\uploads --detail-file D:\churchtimes-private\reports\rehearse-detail-2.json --uploads-detail-file D:\churchtimes-private\reports\uploads-detail.jsonl
+# Conversion statistics alone (no database at all):
+npm run import:convert-wxr -- --file D:\churchtimes-private\export.xml --detail-file D:\churchtimes-private\reports\convert-detail.json
+```
+
+Options: `--file` (required, outside every repository), `--uploads <dir>` (a copy of `wp-content/uploads`; it is checked first, see "Checking the uploads folder"), `--uploads-detail-file <path>` (per-file detail of that check, same rules as `--detail-file`), `--dry-run-only`, `--detail-file <path>` (must not exist yet,
+outside every repository, owner-only permissions) and `--keep` (keep the temp folder for debugging; it holds the throwaway database and, after an apply, copied media).
+A failed article write is reported as one line of error class, SQLSTATE and invalid field names (never values); its post id goes to the detail file (`applyFailed`). Exit code 0 only when every PASS/FAIL check passes and nothing failed to convert.
+
+What is printed (counts and fixed codes only; the only strings taken from the file are shortcode, element and block tag names, and the fixed reason codes of the link rewriter):
+
+- **Inspect**: posts by status, password-protected posts, categories, authors, comments by status, attachments, top shortcode tags, largest post, deepest HTML nesting.
+- **Conversion of published posts**: each published post goes through `htmlToLexical` with no database.
+  - *conversion failures by code*: `input-too-large` (over the 5 MB cap), `too-deep`, `too-many-nodes`, `invalid-output`. Any non-zero count needs a look.
+  - *shortcodes removed by tag*: markers removed from the text. An opening and a closing tag count separately (`[caption]...[/caption]` is 2). Shortcodes that carry content the CMS cannot
+    show (`video`, `audio`, `fvplayer`, `gallery`) are listed here: that content is NOT imported (only YouTube is kept), so each count is a post the editors should check.
+  - *unknown elements*, *unknown blocks*, *elements dropped with contents*: markup the converter flattened to text or dropped. `pre` is kept as plain lines.
+  - *tables kept / flattened*, *embeds linked / dropped*, *youtube blocks written*.
+  - *images resolved / unresolved*: without `--uploads` every body image is unresolved (it becomes text). That is expected, not a failure. With `--uploads`, an unresolved image is a file missing from the folder.
+  - *links*: rewritten to new article paths; kept as written but unmapped, by reason (`not a single-segment article address` is a category, tag, date or media link on the old host,
+    which the public host redirects; `slug is not in the slug map` is an old-host link to a post that is not imported); turned into text, by reason (`tel:` links, links without a leading slash, and so on: the words stay, the link goes).
+  - *deep nesting flattened* (past 64 levels), *lists flattened* (a list inside a quote or past 6 levels keeps its text as plain lines), *posts over the input cap*, *posts with converter warnings*.
+  - *posts whose text shrank by more than 20%*: a data-loss signal. The non-space characters of the visible source text (tags, comments, scripts and shortcode markers removed; a bare YouTube address does not count, it becomes an embed)
+    are compared with the non-space characters in the converted text. Expect 0. The legacy ids go to `--detail-file` (`textShrink`), never to the screen.
+  - *posts with text in the source and none in the output*: the same signal at its sharpest (`emptyOutput` in the detail file).
+- **Loader dry run** (the `import:wxr` report): published posts accounted for X of Y (difference must be 0), skipped by reason, (`empty-body`: a post whose body is empty after conversion, for example only an image that could not be resolved; the editor refuses an empty body, so the post is reported and not written; look at these in the old site), categories, authors, media (`unresolved by reason`, expected without `--uploads`),
+  content counts, comments created / skipped by reason.
+- **Apply, second apply, rollback** (not with `--dry-run-only`): apply must match the dry run and be verified in the database; the second apply must create nothing (`second apply changed nothing`);
+  the rollback must remove every created row and its files, and its dry run must match it. Phase times, query counts and peak memory follow, then PASS/FAIL lines.
+
+The detail file is JSON: `textShrink`, `emptyOutput`, `failed` (id and code), `inputOverCap`, `maxDepthHit` and `applyFailed`, all WordPress post ids. Open a post by id in the old WordPress admin to look at it. Do not paste the file, or what is in it, anywhere shared.
+
 ## Legacy media map export (A12)
 
 The public host serves old `/wp-content/uploads/...` addresses from an exact map that the owner exports from the CMS and provisions privately. The
@@ -417,6 +461,32 @@ public legacy path. `0600` has no effect on Windows; protect the folder with its
   downloaded cannot be recalled.
 - **Aliases.** Thumbnail addresses (`photo-300x200.jpg`) are served only when recorded in the `--aliases` JSON as
   `[{"alias":"2023/10/photo-300x200.jpg","path":"2023/10/photo.jpg"}]`; they are never guessed, and an alias never overrides a real file with that name.
+
+## Checking the uploads folder
+
+The uploads folder comes from a server that was compromised, so every file in it is untrusted. How to get it off the old server safely is in `docs/uploads-download.md`. Before the first import run the read-only check on the copy:
+
+```
+cd apps/cms
+npm run import:uploads-check -- --uploads D:\churchtimes-private\uploads-raw --wxr D:\churchtimes-private\export.xml --out D:\churchtimes-private\reports\uploads-detail.jsonl
+```
+
+`--uploads` and `--wxr` are required; `--out` is optional and receives one JSON line per file and per reference (real file names: private, owner-only permissions on Linux and macOS). Both
+folders and `--out` must be outside every git work tree (the command refuses otherwise) and `--out` must not be inside the uploads folder. Nothing is written except `--out`; nothing is executed, no database, no network.
+Only counts are printed. Exit code: 0 done, 1 failed, 2 bad usage or location, 3 done but unsafe files were found (the loader still refuses them, so that is a finding, not a blocker).
+
+- **Rejected as unsafe, by reason**: `dangerous-extension` (php, phtml, phar, sh, exe, js, html, svg, zip and other archives, a `.php` inside a name such as `x.php.jpg`), `hidden-file` (a name that starts with a dot, such as `.htaccess`),
+  `bad-name` (control characters, backslash), `symlink` (a link or junction; never followed), `zero-byte`, `magic-mismatch` (an image extension whose first bytes are not that image type), `polyglot` (`<?php`, `<?=` or `<script` anywhere in the file), `not-a-file`, `unreadable`.
+  WordPress itself leaves an `index.php` ("silence is golden") in some upload folders: it is rejected like any other script and does no harm.
+- **Attachments in the export**: distinct paths, `present`, `missing`, `only size variants on disk` (the original is gone but `name-300x200.jpg` files exist; the loader cannot use them), name differs by Unicode form (NFC against NFD)
+  or by letter case (the loader looks files up exactly, so these need a rename on a case-sensitive file system), and rejected as unsafe.
+- **Images in published article bodies**: the same, plus `present as the original of a size variant` (the body points at `name-300x200.jpg`, the loader finds `name.jpg`).
+- **Featured images of published posts**: present, missing, attachment not in the export, rejected.
+- **Rest of the folder**: size variants of listed images, unreferenced files, and duplicate content (same SHA-256) as groups and extra copies.
+
+The loader repeats the safety checks itself (`media.ts`, via `uploadSafety.ts`): a file that fails any of them is never ingested, even when `--uploads` is used without the check; it is counted as `rejected-unsafe` under
+`media.unresolved`. The import report also prints `featured images resolved` and `featured images rejected`. `import:rehearse` with `--file` and `--uploads` prints the same counts first, so one command reads the whole picture
+(add `--uploads-detail-file <path>` for the per-file detail).
 
 ## Running the rehearsal on a clean CI runner
 

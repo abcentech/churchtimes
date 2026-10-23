@@ -8,6 +8,7 @@ import { parseImportArgs } from '../../src/import/cli'
 import { cleanDisplayName, prepareComments, stripEmailShaped } from '../../src/import/comments'
 import { openManifest, readManifest } from '../../src/import/manifest'
 import { confineUploadPath, isSafeRelativeUploadPath } from '../../src/import/media'
+import { isEmptyBody } from '../../src/import/run'
 import { bumpTally, formatImportReport, newReport, reconcile, statusKey } from '../../src/import/qa'
 import type { WxrComment } from '../../src/import/wxr'
 
@@ -218,5 +219,18 @@ describe('cli arguments', () => {
     expect(parseImportArgs(['--file', 'a.xml'], { IMPORT_FALLBACK_CATEGORY_NAME: 'Daily' })?.fallbackCategory).toEqual({ slug: 'news', title: 'Daily' })
     expect(parseImportArgs(['--file', 'a.xml', '--fallback-category', 'Bad Slug'], {})).toBeNull()
     expect(parseImportArgs(['--file', 'a.xml', '--category-map'], {})).toBeNull()
+  })
+})
+
+describe('isEmptyBody', () => {
+  const para = (...children: unknown[]) => ({ type: 'paragraph', children })
+  it('treats no children and empty paragraphs as empty, anything else as a body', () => {
+    expect(isEmptyBody({ children: [] })).toBe(true)
+    expect(isEmptyBody({ children: [para()] })).toBe(true)
+    expect(isEmptyBody({ children: [para({ type: 'text', text: '' })] })).toBe(true)
+    expect(isEmptyBody({ children: [para({ type: 'text', text: 'x' })] })).toBe(false)
+    expect(isEmptyBody({ children: [{ type: 'upload' }] })).toBe(false)
+    expect(isEmptyBody({ children: [{ type: 'block' }] })).toBe(false)
+    expect(isEmptyBody({ children: [para({ type: 'linebreak' })] })).toBe(false)
   })
 })

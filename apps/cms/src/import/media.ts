@@ -6,6 +6,7 @@ import type { Payload, PayloadRequest } from 'payload'
 import { avKindFromPath, avMaxBytes } from '../lib/avMedia'
 import { candidatePaths, legacyPathFromUrl, resolveAlt } from '../lib/legacyMediaPath'
 import { isNetworkOrDevicePath } from './safePaths'
+import { unsafeFileReason } from './uploadSafety'
 
 /**
  * Legacy upload resolution for the loader (go-live contract C1.2).
@@ -17,6 +18,8 @@ import { isNetworkOrDevicePath } from './safePaths'
  * MIME allowlist, alt text). Files are never read outside the uploads root: UNC and device paths, drive letters,
  * `..` segments, NUL and control characters, backslashes and alternate data streams are refused, and the real path
  * (symlinks and junctions resolved) must stay inside the real uploads root.
+ *
+ * Every file is also checked by `uploadSafety` (see `import:uploads-check`); a failure is counted as `rejected-unsafe`.
  *
  * A missing, refused or unreadable image is reported by reason code and never stops the import. Reports hold counts
  * and reason codes only, never a path or file name.
@@ -161,6 +164,9 @@ export function createMediaResolver(opts: MediaResolverOptions): MediaResolver {
         if (confined.reason !== 'missing-file') lastFailure = confined.reason
         continue
       }
+      // Defence in depth: the folder is an untrusted copy. A dangerous name, link, zero-byte file, wrong magic bytes or a
+      // script hidden in an image is refused here too, whether or not `import:uploads-check` was run first.
+      if ((await unsafeFileReason(fs.realpathSync.native(opts.uploadsRoot as string), candidate)) !== null) return fail('rejected-unsafe')
       if (opts.dryRun) {
         stats.created++
         // A placeholder (never written): 1 and not 0, so the converter treats it as a resolved image exactly as in a real run.

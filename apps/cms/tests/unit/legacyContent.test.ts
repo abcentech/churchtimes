@@ -218,6 +218,11 @@ describe('sanitizeLegacyLinks', () => {
   const doc = (...children: unknown[]) => ({ root: { type: 'root', children: [{ type: 'paragraph', children }] } })
   const urls = (d: any) => (d.root.children[0].children as any[]).map((n) => (n.type === 'link' ? n.fields.url : `text:${n.text}`))
 
+  it('writes a space inside a web address as %20 (the editor rejects an address with a space) and drops tabs and line breaks', () => {
+    const out = sanitizeLegacyLinks(doc(link('https://other.example.test/a b/c d'), link(' https://other.example.test/x	y '), link('https://old.example.test/a b/')), opts)
+    expect(urls(out.root)).toEqual(['https://other.example.test/a%20b/c%20d', 'https://other.example.test/xy', 'https://old.example.test/a%20b/'])
+  })
+
   it('keeps http, https, mailto and root-relative links untouched', () => {
     const input = doc(link('https://other.example.test/a'), link('http://other.example.test/b'), link('mailto:desk@example.test'), link('/about'))
     const { root, report } = sanitizeLegacyLinks(input, opts)

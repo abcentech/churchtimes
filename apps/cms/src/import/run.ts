@@ -363,6 +363,36 @@ async function categoryFor(ctx: Ctx, item: WxrItem): Promise<number> {
   return id
 }
 
+/**
+ * Identifier-only detail of a failed write, for the progress line: the invalid field paths of a Payload validation
+ * error and the constraint / column / table names of a PostgreSQL error. Never a message, value or query.
+ */
+function failureFields(err: unknown): string {
+  const ident = /^[-A-Za-z0-9_.]{1,80}$/
+  const names: string[] = []
+  const data = (err as { data?: { errors?: unknown } } | null)?.data
+  if (Array.isArray(data?.errors)) {
+    for (const e of data.errors as { path?: unknown }[]) if (typeof e?.path === 'string' && ident.test(e.path)) names.push(e.path)
+  }
+  for (const holder of [err, (err as { cause?: unknown } | null)?.cause]) {
+    for (const key of ['constraint', 'column', 'table'] as const) {
+      const v = (holder as Record<string, unknown> | null)?.[key]
+      if (typeof v === 'string' && ident.test(v)) names.push(`${key}=${v}`)
+    }
+  }
+  return names.length > 0 ? ` fields=${[...new Set(names)].slice(0, 6).join(',')}` : ''
+}
+
+/** True for a body with no children, or only paragraphs without text (what the editor treats as empty). */
+export function isEmptyBody(root: unknown): boolean {
+  const kids = (root as { children?: unknown[] } | null)?.children
+  if (!Array.isArray(kids) || kids.length === 0) return true
+  return kids.every((k) => {
+    const n = k as { type?: string; children?: { type?: string; text?: string }[] }
+    return n.type === 'paragraph' && (n.children ?? []).every((c) => c.type === 'text' && !c.text)
+  })
+}
+
 type Converted = { content: { root: unknown }; report: ConversionReport }
 
 /** Two passes: the first collects image addresses, they are resolved (async), the second builds the body. */
@@ -420,8 +450,10 @@ async function featuredImageFor(ctx: Ctx, item: WxrItem, attachments: Map<number
     : { ok: false as const, reason: 'no-attachment' }
   if (!r.ok) {
     ctx.report.content.featuredImageMissing++
+    if (r.reason === 'rejected-unsafe' || r.reason === 'rejected-by-media-rules') ctx.report.content.featuredImageRejected++
     return undefined
   }
+  ctx.report.content.featuredImageResolved++
   return r.mediaId
 }
 
@@ -593,7 +625,7 @@ export async function runImport(payload: Payload, opts: ImportOptions): Promise<
         else {
           // Only a failed write counts towards the abort limits (a database or disk problem is systemic).
           skip('write-failed')
-          opts.progress?.(`article failed: ${safeErrorSummary(err)}`)
+          opts.progress?.(`article failed: ${safeErrorSummary(err)}${failureFields(err)} id=${item.wpId}`)
           failures++
           consecutiveFailures++
           if (consecutiveFailures >= maxConsecutive || (processed >= FAILURE_RATIO_MIN_POSTS && failures * 2 > processed)) {
@@ -761,6 +793,8 @@ async function importPost(
   }
   if (!skipArticleWrite) {
     const converted = await convert(ctx, item, oldHosts, first.slugMap)
+    // The editor refuses a body with no text, image or block (`required`); a post like that is reported, not written.
+    if (isEmptyBody(converted.content.root)) throw new PostSkip('empty-body')
     addConversionStats(report, converted.report)
     const featuredImage = await featuredImageFor(ctx, item, first.attachments)
     const excerpt = plain(item.excerptHtml, 600, true)
