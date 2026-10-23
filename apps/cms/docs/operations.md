@@ -735,6 +735,41 @@ PostgreSQL 16, not the production server.
   to apply), and check `GET /api/categories` and a staff login.
 - [ ] Record the date, backup name, time taken and result in the ops log. Drop `churchtimes_drill`, delete the media copy and any decrypted files.
 
+
+### Automated restore drill
+
+`.github/workflows/restore-drill.yml` runs `apps/cms/scripts/restore-drill.sh` every night (02:43 UTC), on demand (Actions, "CMS restore drill",
+Run workflow) and on pull requests that touch `apps/cms/scripts/**`, `docker-compose.production.yml`, the Dockerfile or the workflow. It needs no
+repository secrets: the database password, Payload secrets and the admin password are generated per run, masked, never printed, and deleted at the end.
+
+What one run does, in order:
+
+1. Builds the runtime and migrator images, starts `postgres` from `docker-compose.production.yml`, runs `migrate`, seeds 500 synthetic articles,
+   1,500 comments, 60 media rows and 60 random media files, creates an admin with `admin:create`, runs `search:reindex` and starts the CMS.
+2. `backup.sh` (database and media, checksum list signed with a throwaway gpg key), then `verify-backup.sh`.
+3. Tamper tests: one byte of `db.dump` and, separately, of `media.tar.gz` is flipped in a copy. `verify-backup.sh` must exit non-zero and
+   `restore.sh` must refuse without creating a database or extracting media.
+4. Wipe: `docker compose down -v` and the media folder are removed; the drill checks the volume is gone.
+5. Fresh stack: `restore.sh` into the new empty database and media folder, `migrate` (nothing to apply), `search:reindex`, start the CMS.
+6. Assertions: row counts and a content checksum identical for `articles`, `legacy_comments`, `media`, `categories`, `users`, `article_search` and
+   `payload_migrations`; the sha256 of every media file identical; `/api/health/live` and `/api/health/ready` report ready;
+   `/api/public/search?q=drill` returns every seeded article; the admin logs in with the right password and is refused with a wrong one;
+   `POST /api/users/first-register` is refused (403) because `ALLOW_FIRST_REGISTER` is unset, the production default, and creates no user.
+
+Run it by hand on a host with Docker: `CMS_IMAGE=... CMS_MIGRATOR_IMAGE=... apps/cms/scripts/restore-drill.sh --work /tmp/drill --artifacts /tmp/drill-out`.
+It uses the fixed compose project `churchtimes-cms-prod` and port 3000 and runs `down -v` on exit, so never run it on the production host.
+
+**Reading a run.** A green run ends with `DRILL PASSED` and a `RESULT` line. The job summary and the `restore-drill` artifact (14 days) hold
+`summary.md`, `results.json`, `drill.log` and redacted container logs. A red run names the failed assertion (`FAIL: ...`) and still uploads the logs.
+A failure in the tamper step is the most serious: it means a corrupted backup would be accepted.
+
+**RPO and RTO.** The summary prints measured numbers for the synthetic data set (about 500 articles, 60 small media files; production is larger, so
+scale restore time by backup size from `results.json`):
+
+- RTO: seconds from the wipe to a stack that is healthy, searchable and accepting logins (restore.sh, migrate, reindex and CMS start included).
+- RPO exposure: seconds from the last write to the end of `backup.sh`. The policy RPO is one backup interval (24 hours with the nightly timer), so a
+  restore can lose up to a day of edits; shorten the interval if the owner needs less.
+
 ### After a real restore
 
 1. Point `DATABASE_URL` at the restored database. If the dump is older than the code, run `npm run migrate` before starting the app (section 3).
