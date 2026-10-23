@@ -50,3 +50,73 @@ export function checkRelationFilters(pathname: string, searchParams: URLSearchPa
   }
   return { ok: true }
 }
+
+/** Collections whose REST ids are numeric primary keys (every Payload collection in this schema). */
+const NUMERIC_ID_COLLECTIONS = [
+  'articles',
+  'categories',
+  'media',
+  'submissions',
+  'contact-messages',
+  'subscribers',
+  'live-events',
+  'live-updates',
+  'redirects',
+  'advertisers',
+  'ad-campaigns',
+  'legacy-comments',
+  'audit-logs',
+  'users',
+]
+/** Single path segments after `/api/<collection>/` that are routes, not ids. */
+const RESERVED_SEGMENTS = new Set([
+  'count',
+  'versions',
+  'access',
+  'login',
+  'logout',
+  'me',
+  'init',
+  'forgot-password',
+  'reset-password',
+  'unlock',
+  'refresh-token',
+  'first-register',
+  'export',
+  'preview-token',
+])
+
+export type ShapeDecision = { ok: true } | { ok: false; status: 400 | 404; message: string }
+
+/**
+ * Malformed requests that PostgreSQL would reject with a generic 500 (found by the security suite, tests/security):
+ * - a NUL byte anywhere in the path or query ("invalid byte sequence for encoding UTF8: 0x00"),
+ * - a non-numeric document id on a numeric-id collection (`/api/articles/not-a-number`),
+ * and one route Payload registers but this schema cannot serve: e-mail verification (`auth.verify` is off, so
+ * `POST /api/users/verify/:token` ends in a 500 about a missing `_verificationToken` field).
+ */
+export function checkRequestShape(pathname: string, rawSearch: string): ShapeDecision {
+  if (pathname !== '/api' && !pathname.startsWith('/api/')) return { ok: true }
+  let decodedPath = pathname
+  let decodedSearch = rawSearch
+  try {
+    decodedPath = decodeURIComponent(pathname)
+    decodedSearch = decodeURIComponent(rawSearch)
+  } catch {
+    return { ok: false, status: 400, message: 'Malformed URL encoding.' }
+  }
+  if (decodedPath.includes('\u0000') || decodedSearch.includes('\u0000') || /%00/i.test(pathname + rawSearch)) {
+    return { ok: false, status: 400, message: 'Invalid characters in the request URL.' }
+  }
+  const parts = pathname.split('/').filter(Boolean) // ['api', collection, seg, ...]
+  if (parts[1] === 'users' && parts[2] === 'verify') {
+    return { ok: false, status: 404, message: 'Not found.' }
+  }
+  if (parts.length === 3 && NUMERIC_ID_COLLECTIONS.includes(parts[1]!)) {
+    const seg = parts[2]!
+    if (!RESERVED_SEGMENTS.has(seg) && !/^\d{1,15}$/.test(seg)) {
+      return { ok: false, status: 404, message: 'Not found.' }
+    }
+  }
+  return { ok: true }
+}

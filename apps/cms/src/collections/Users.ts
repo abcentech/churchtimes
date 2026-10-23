@@ -21,6 +21,7 @@ import {
 } from '../access/roles'
 import { writeAuditLog } from '../lib/audit'
 import { authRateLimitHook } from '../lib/authRateLimit'
+import { equaliseLoginTiming } from '../lib/loginTiming'
 import { clampLimit } from '../lib/clampLimit'
 import { checkPasswordPolicy } from '../lib/passwordPolicy'
 import { firstRegisterAllowed } from '../lib/securityConfig'
@@ -390,6 +391,7 @@ export const Users: CollectionConfig = {
     beforeOperation: [
       clampLimit,
       authRateLimitHook('login'),
+      equaliseLoginTiming,
       authRateLimitHook('forgotPassword'),
       authRateLimitHook('resetPassword'),
       resetPasswordPolicy,

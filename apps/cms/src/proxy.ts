@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 
-import { checkRelationFilters } from './lib/queryGuards'
+import { checkRelationFilters, checkRequestShape } from './lib/queryGuards'
 import { checkRequestLimits } from './lib/requestLimits'
 import { csv, normaliseOrigin } from './lib/securityConfig'
 
@@ -33,12 +33,15 @@ const corsHeaders = (origin: string | null): Record<string, string> => {
 export function proxy(request: NextRequest) {
   const { pathname, searchParams } = request.nextUrl
   const limits = checkRequestLimits({ method: request.method, pathname, headers: request.headers })
-  const decision = limits.ok
-    ? (() => {
-        const q = checkRelationFilters(pathname, searchParams)
-        return q.ok ? q : { ...q, errors: [{ field: q.field, message: q.message }] }
-      })()
-    : { ...limits, errors: [{ message: limits.message }] }
+  const shape = checkRequestShape(pathname, request.nextUrl.search)
+  const decision = !shape.ok
+    ? { ...shape, errors: [{ message: shape.message }] }
+    : limits.ok
+      ? (() => {
+          const q = checkRelationFilters(pathname, searchParams)
+          return q.ok ? q : { ...q, errors: [{ field: q.field, message: q.message }] }
+        })()
+      : { ...limits, errors: [{ message: limits.message }] }
   if (decision.ok) {
     // Payload echoes the request Origin in Access-Control-Allow-Origin, so a shared cache (CDN, reverse
     // proxy) must key API responses on Origin or it could replay one origin's grant to another.

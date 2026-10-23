@@ -43,6 +43,7 @@
     "test": "vitest run",
     "test:unit": "vitest run --project unit",
     "test:integration": "vitest run --project integration",
+    "test:security": "vitest run --project security",
     "staging:up": "node scripts/staging-up.mjs",
     "staging:down": "node scripts/staging-down.mjs",
     "test:e2e:api": "vitest run -c vitest.e2e.config.ts",
