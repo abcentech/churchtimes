@@ -24,8 +24,7 @@ describe('restore drill', () => {
   it('never prints a secret, enables tracing, or passes the admin password as an argument', () => {
     expect(script).toMatch(/^set \+x$/m)
     expect(script).not.toMatch(/set -[a-z]*x/)
-    expect(script).not.toMatch(/^s*(echo|log|fail)b[^
-]*${?(PGPW|SECRET_[ABC]|SALT|ADMIN_NEW_PASSWORD|SECRETS)b/m)
+    expect(script).not.toMatch(/^\s*(echo|log|fail)\b.*\$\{?(PGPW|SECRET_[ABC]|SALT|ADMIN_NEW_PASSWORD|SECRETS)\b/m)
     expect(script).not.toMatch(/-e ADMIN_NEW_PASSWORD=/)
   })
 
