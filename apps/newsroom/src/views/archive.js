@@ -19,8 +19,9 @@ import { escapeHtml, formatTimeAgo, cssToken, latestGuard } from '../util.js';
 import { STALE_MESSAGE, isStaleConflict } from '../stale-guard.js';
 import {
   CONFIDENCE_LEVELS, REVIEW_STATUSES, cleanFilters, confidenceHelp, confidenceLabel, groupSha, originalDateLabel,
-  publishBlockReason, reviewActions, reviewLabel, safeSourceUrl, BATCH_RE
+  publishBlockReason, reviewActions, reviewLabel, safeSourceUrl, BATCH_RE, extractLinks, summarizeLinks, linksNeedAcknowledgement
 } from '../archive-review.js';
+import { KNOWN_LINK_HOSTS } from '../config.js';
 
 let filters = { reviewStatus: 'pending', confidence: '', batch: '' };
 let page = 1;
@@ -182,6 +183,29 @@ function rowHtml(a) {
     </li>`;
 }
 
+/** The collapsible "Links in this article (N)" list: every real address as plain visible text (never a clickable link). */
+function linkReviewHtml(links, sum) {
+  if (!links.length) return '';
+  const flagged = sum.unknown > 0 || sum.mismatched > 0;
+  const items = links.map(l => `
+        <li class="archive-link${l.known ? '' : ' is-flagged'}${l.mismatch ? ' is-mismatch' : ''}" data-testid="archive-link-item" data-known="${l.known}" data-mismatch="${l.mismatch}">
+          <span class="archive-link-host" data-testid="archive-link-host">${escapeHtml(l.host || 'not a web address')}</span>
+          ${l.known ? '' : '<span class="badge badge-warn" data-testid="archive-link-unknown">Unknown host</span>'}
+          ${l.mismatch ? '<span class="badge badge-warn" data-testid="archive-link-mismatch">Text shows a different address</span>' : ''}
+          <code class="archive-code archive-link-href" data-testid="archive-link-href">${escapeHtml(l.href || '(empty)')}</code>
+          <span class="archive-muted">Link text: ${escapeHtml(l.text || '(none)')}</span>
+        </li>`).join('');
+  return `
+    <section class="card archive-links" data-testid="archive-links" aria-labelledby="archive-links-h">
+      <details${flagged ? ' open' : ''}>
+        <summary id="archive-links-h" data-testid="archive-links-summary">Links in this article (${sum.total})</summary>
+        <p class="archive-muted" data-testid="archive-links-counts">${sum.unknown} of ${sum.total} point to a host not on the known list. ${sum.mismatched} ${sum.mismatched === 1 ? 'has' : 'have'} link text showing a different address than where ${sum.mismatched === 1 ? 'it goes' : 'they go'}. The recovered page came from a site that may have been compromised: read each address below. Nothing here is clickable.</p>
+        <ol class="archive-link-list">${items}</ol>
+      </details>
+      <label class="archive-links-ack" id="archive-links-ack-note"><input type="checkbox" id="archive-links-ack" data-testid="archive-links-ack"> I checked the links</label>
+    </section>`;
+}
+
 function setError(container, message) {
   const el = container.querySelector('#archive-error');
   if (!el) return;
@@ -215,6 +239,10 @@ async function renderReviewScreen(container, storyId, notice = '') {
   const actions = reviewActions(story, canReview);
   const block = publishBlockReason(story);
   const href = safeSourceUrl(p.sourceUrl);
+  const bodyHtml = markdownToHtml(story.bodyMd || '', { media: id => story.bodyMedia?.[id] });
+  const linkList = extractLinks(bodyHtml, KNOWN_LINK_HOSTS);
+  const linkSummary = summarizeLinks(linkList);
+  const needsLinkAck = actions.approve && linksNeedAcknowledgement(linkList);
 
   container.innerHTML = `
     <div class="view-header">
@@ -229,7 +257,7 @@ async function renderReviewScreen(container, storyId, notice = '') {
     <div class="archive-split">
       <section class="card archive-body" aria-labelledby="archive-body-h">
         <h2 id="archive-body-h" class="archive-h">Recovered body</h2>
-        <div class="preview-body" data-testid="archive-body" tabindex="0" aria-label="Recovered body text">${markdownToHtml(story.bodyMd || '', { media: id => story.bodyMedia?.[id] })}</div>
+        <div class="preview-body" data-testid="archive-body" tabindex="0" aria-label="Recovered body text">${bodyHtml}</div>
       </section>
       <aside class="card archive-prov" aria-labelledby="archive-prov-h" data-testid="archive-provenance">
         <h2 id="archive-prov-h" class="archive-h">Provenance (staff only)</h2>
@@ -249,14 +277,20 @@ async function renderReviewScreen(container, storyId, notice = '') {
         </dl>
       </aside>
     </div>
+    ${linkReviewHtml(linkList, linkSummary)}
     <div class="archive-actions" role="group" aria-label="Review decision">
       <a class="btn btn-outline" href="#editor?id=${encodeURIComponent(story.id)}" id="archive-open-editor" data-testid="archive-open-editor">Open in editor</a>
       ${actions.reject ? '<button type="button" class="btn btn-danger" id="archive-reject" data-testid="archive-reject">Reject</button>' : ''}
-      ${actions.approve ? '<button type="button" class="btn btn-success" id="archive-approve" data-testid="archive-approve">Approve</button>' : ''}
+      ${actions.approve ? '<button type="button" class="btn btn-success" id="archive-approve" data-testid="archive-approve"' + (needsLinkAck ? ' disabled aria-describedby="archive-links-ack-note"' : '') + '>Approve</button>' : ''}
       ${!canReview ? '<p class="archive-muted" data-testid="archive-review-not-permitted" style="margin:0;">Only an editor for this section can approve or reject.</p>' : ''}
     </div>`;
 
   const errEl = container.querySelector('#archive-review-error');
+  const ack = container.querySelector('#archive-links-ack');
+  ack?.addEventListener('change', () => {
+    const approve = container.querySelector('#archive-approve');
+    if (approve) approve.disabled = !ack.checked;
+  });
   const decide = async (decision, success, tone) => {
     errEl.style.display = 'none';
     container.querySelectorAll('.archive-actions button').forEach(b => { b.disabled = true; });
@@ -278,6 +312,7 @@ async function renderReviewScreen(container, storyId, notice = '') {
   };
 
   container.querySelector('#archive-approve')?.addEventListener('click', async () => {
+    if (needsLinkAck && !ack?.checked) return;
     const weak = p.confidence !== 'partial';
     const ok = await askConfirm({
       title: 'Approve this recovered story?',

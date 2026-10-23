@@ -124,3 +124,72 @@ export function originalDateLabel(value) {
 export function groupSha(sha) {
   return typeof sha === 'string' ? sha.replace(/(.{8})(?=.)/g, '$1 ') : '';
 }
+
+// ---------------------------------------------------------------------------------------------------
+// Outbound link review. A recovered body comes from a site that was compromised, so it can carry hidden hostile links
+// (a "read more" that points at a casino). The review screen lists every link's real address as visible text and the
+// reviewer must acknowledge them before Approve is enabled.
+// ---------------------------------------------------------------------------------------------------
+
+const decodeEntities = t => String(t)
+  .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&amp;/g, '&');
+
+const stripHost = h => String(h || '').toLowerCase().replace(/^www\./, '');
+
+/** Parse a comma/space separated list of hosts (a build-time setting) into lowercase host names. */
+export function parseKnownHosts(value) {
+  return String(value || '').split(/[\s,]+/).map(h => stripHost(h.replace(/^[a-z]+:\/\//i, '').replace(/[/:?#].*$/, ''))).filter(Boolean);
+}
+
+/** True when `host` is one of the known hosts or a subdomain of one. Case and a leading "www." are ignored. */
+export function isKnownLinkHost(host, knownHosts = []) {
+  const h = stripHost(host);
+  if (!h) return false;
+  return knownHosts.some(k => { const kh = stripHost(k); return kh && (h === kh || h.endsWith('.' + kh)); });
+}
+
+/** The host a piece of link text claims to be ("https://www.example.org/x" or "example.org"), or '' when it is not address-like. */
+export function hostInText(text) {
+  const t = String(text || '').trim();
+  const m = /^(?:[a-z][a-z0-9+.-]*:\/\/)?((?:[a-z0-9-]+\.)+[a-z]{2,})(?::\d+)?(?:[/?#]\S*)?$/i.exec(t);
+  return m ? stripHost(m[1]) : '';
+}
+
+/**
+ * Every anchor in rendered body HTML (the HTML the reviewer is shown), in document order, as
+ * { href, text, host, http, known, mismatch }:
+ * - `href` is the real target, exactly as it would be followed; `host` its host ('' when it is not an http(s) address);
+ * - `known` is false for hosts outside `knownHosts` and for anything that is not http(s) (javascript:, data:, relative);
+ * - `mismatch` is true when the visible text looks like a web address of a different host than the real target.
+ */
+export function extractLinks(html, knownHosts = []) {
+  const out = [];
+  const re = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
+  let m;
+  while ((m = re.exec(String(html || ''))) !== null) {
+    const hm = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(m[1]);
+    const href = decodeEntities(hm ? (hm[1] ?? hm[2] ?? '') : '').trim();
+    const text = decodeEntities(m[2].replace(/<[^>]*>/g, '')).replace(/\s+/g, ' ').trim();
+    let host = '';
+    let http = false;
+    try {
+      const u = new URL(href);
+      if (u.protocol === 'http:' || u.protocol === 'https:') { http = true; host = u.hostname.toLowerCase(); }
+    } catch { /* relative or malformed: not http */ }
+    const shown = hostInText(text);
+    out.push({ href, text, host, http, known: http && isKnownLinkHost(host, knownHosts), mismatch: Boolean(shown) && (!http || shown !== stripHost(host)) });
+  }
+  return out;
+}
+
+/** Counts for the review header: total, links to hosts not on the known list, links whose text names a different host. */
+export function summarizeLinks(links) {
+  return {
+    total: links.length,
+    unknown: links.filter(l => !l.known).length,
+    mismatched: links.filter(l => l.mismatch).length
+  };
+}
+
+/** Approve needs an explicit "I checked the links" when the body has any outbound link. */
+export const linksNeedAcknowledgement = links => links.length > 0;

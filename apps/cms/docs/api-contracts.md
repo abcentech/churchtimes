@@ -1,4 +1,4 @@
-# Church Times CMS — API contracts (v1.23)
+# Church Times CMS — API contracts (v1.24)
 
 Status: implemented on `agent/payload-core`. v1.1 added Turnstile, duplicate detection, staff auth/session
 contract and security hardening; v1.2 closes the verified security-review findings: media ownership, version
@@ -768,6 +768,30 @@ media scan and no staff credential on the public host. The CMS side is an offlin
   cache is ever introduced the staleness window is export time + host reload + cache lifetime; #58 keeps no-store.
 - Not covered: aliases are not recorded on the media document (no schema change); the owner supplies them. `HEAD`/range behaviour belongs to the host.
 
+### 6.4 Staff related articles
+
+`POST /api/staff/related-articles`: finds past **published** articles related to a draft or to free text, with citations. Read-only, **no generation**
+(it returns existing articles and their canonical addresses, nothing is written or summarised by a model). Contract and notes for consumers:
+`docs/staff-retriever.md`.
+
+- **Auth.** Staff session only (cookie or `Authorization: JWT`); any staff role (`reporter` and above; there is no lower role). Anonymous: `401`.
+  Cookie sessions are CSRF-checked by Payload (an `Origin` outside the CSRF list is treated as anonymous: `401`).
+- **Body** (JSON, at most 256 KiB, else `413`): `{ "text"?: string, "articleId"?: number | string, "limit"?: integer }`. At least one of `text` and `articleId`.
+  `limit` default 10, **maximum 20** (larger values are clamped; non-integers `400`). With `articleId` the draft (title, excerpt, body) is loaded with the
+  caller's own access rules (`404` when it does not exist or is not readable by them) and **excluded** from the results. When both are given, `text`
+  drives the query and the article is still excluded.
+- **Query derivation.** Input is capped at 20,000 characters (`truncated: true` when cut). Terms are the title (weighted x3), the first 1,000 characters
+  and the rest of the body, lowercased, letters/digits only, 3-30 characters, English stopwords and bare numbers removed, top 24 by frequency. The query is
+  `to_tsquery('english', 't1 | t2 | ...')` (OR semantics); input never reaches PostgreSQL as tsquery syntax.
+- **Response `200`**: `{ "ok": true, "results": [...], "limit": n, "truncated": bool }`, each result
+  `{ id, title, slug, canonicalPath, canonicalUrl, publishedAt, snippet, score, matchedTerms }`. `canonicalPath` follows `PUBLIC_ARTICLE_PATH_TEMPLATE`;
+  `canonicalUrl` is `PUBLIC_SITE_URL` (else the `CMS_PUBLIC_URL` origin) plus the path, `null` when neither is configured. `snippet` is plain text, at
+  most 240 characters; `score` is `ts_rank` (higher is better, 4 decimals); `matchedTerms` are the query terms (stemmed match) found in the article.
+  Only `published` articles with `publishedAt` in the past appear; drafts, in-review, scheduled and archived (withdrawn) never do.
+- **Headers.** Every response (including errors) is `Cache-Control: private, no-store`.
+- **Limits.** Per-user rate limit `STAFF_RELATED_RATE_LIMIT` (default 30) per `STAFF_RELATED_RATE_WINDOW_SECONDS` (default 60): `429` + `Retry-After`.
+  Not audited; the submitted text is never logged (errors log class name and SQLSTATE only).
+
 ## 7. Error shape
 
 Payload-native routes return Payload's `{ errors: [{ message, ... }] }`. Custom endpoints in §4 and §6 return
@@ -1030,6 +1054,10 @@ proxy) and https-only `CMS_PUBLIC_URL`/CORS/CSRF settings (`docs/security.md`). 
 limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/operations.md` §4).
 
 ## 9. Changelog
+
+### v1.24: Staff related articles
+Additive: new endpoint `POST /api/staff/related-articles` (section 6.4); no existing shape changes.
+- Request bodies are read as a stream and refused with `413` as soon as they exceed 256 KiB measured in **bytes** (not characters), without buffering the remainder. The headline snippet is computed over the first 20,000 characters of an article body only.
 
 ### v1.23: Review follow-ups (preview, search cost, upload limits, review rules)
 Additive except where a rule is tightened (listed first); the search response only gains a field.

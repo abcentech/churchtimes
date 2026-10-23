@@ -13,6 +13,7 @@ The public tip form is **not** part of this app: it lives on the public site. Ti
 | --- | --- |
 | `VITE_CMS_URL` | CMS base URL, no trailing slash, e.g. `https://cms.example.org`. Baked in at build time; there is no user-editable backend URL. Empty = same origin (CMS reverse-proxied under `/api`). |
 | `VITE_PUBLIC_SITE_URL` | Optional public site origin, used only to link to its tip form. |
+| `VITE_KNOWN_LINK_HOSTS` | Optional comma-separated hosts the Archive review treats as known outbound-link hosts (subdomains included). Other hosts are flagged. See `apps/cms/docs/security.md` section 6. |
 
 Requirements on the CMS side (see `apps/cms/docs/api-contracts.md` §5 and `docs/staging.md` §7):
 
