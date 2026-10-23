@@ -172,6 +172,59 @@ test.describe('Newsroom UI (dev mock mode)', () => {
     await expect(page.getByTestId('archive-publish-blocked')).toContainText('rejected');
   });
 
+  test('archive review: outbound links are listed as text, flagged, and must be acknowledged before Approve', async ({ page }) => {
+    await page.locator('#user-role-select').selectOption({ label: 'Derin Adeogun (Section Editor)' });
+    await page.goto('./#archive');
+    await page.getByTestId('archive-row').filter({ hasText: 'Invented synod headline only' }).getByTestId('archive-open').click();
+
+    const panel = page.getByTestId('archive-links');
+    await expect(page.getByTestId('archive-links-summary')).toHaveText('Links in this article (3)');
+    await expect(page.getByTestId('archive-links-counts')).toContainText('3 of 3 point to a host not on the known list');
+    await expect(panel.getByTestId('archive-link-item')).toHaveCount(3);
+    await expect(panel.getByTestId('archive-link-host').first()).toHaveText('spam-casino.test');
+    await expect(panel.getByTestId('archive-link-href').first()).toHaveText('https://spam-casino.test/win');
+    await expect(panel.getByTestId('archive-link-unknown').first()).toBeVisible();
+    // The list is text only: nothing in it can be clicked through.
+    await expect(panel.locator('a')).toHaveCount(0);
+
+    const approve = page.getByTestId('archive-approve');
+    await expect(approve).toBeDisabled();
+    await page.getByTestId('archive-links-ack').check();
+    await expect(approve).toBeEnabled();
+    await page.getByTestId('archive-links-ack').uncheck();
+    await expect(approve).toBeDisabled();
+    await page.getByTestId('archive-links-ack').check();
+    await approve.click();
+    await page.getByTestId('archive-approve-confirm-ok').click();
+    await expect(page.getByTestId('archive-publish-clear')).toBeVisible();
+
+    // A story without links needs no acknowledgement.
+    await page.goto('./#archive');
+    await page.getByLabel('Review status').selectOption('pending');
+    await page.getByTestId('archive-apply').click();
+    await page.getByTestId('archive-row').filter({ hasText: 'harvest festival' }).getByTestId('archive-open').click();
+    await expect(page.getByTestId('archive-links')).toHaveCount(0);
+    await expect(page.getByTestId('archive-approve')).toBeEnabled();
+  });
+
+  test('the app loads under its Content-Security-Policy with no violations', async ({ page }) => {
+    await page.addInitScript(() => {
+      window.__cspViolations = [];
+      document.addEventListener('securitypolicyviolation', e => window.__cspViolations.push(`${e.violatedDirective} ${e.blockedURI}`));
+    });
+    await page.reload(); // hash-only goto would not start a new document, so the init script must run via a reload
+    const csp = await page.locator('meta[http-equiv="Content-Security-Policy"]').getAttribute('content');
+    expect(csp).toContain("script-src 'self'");
+    expect(csp).toContain("object-src 'none'");
+    expect(csp).toContain("base-uri 'none'");
+    expect(csp).not.toContain('__NEWSROOM_CSP__');
+    await expect(page.getByTestId('session-user')).toBeVisible();
+    await expect(page.locator('#dash-metrics-container')).toBeVisible();
+    await page.goto('./#review');
+    await expect(page.locator('.view-title')).toHaveText('Editorial Review Queue');
+    expect(await page.evaluate(() => window.__cspViolations)).toEqual([]);
+  });
+
   test('keyboard shortcuts navigate between views; dev role switcher changes permissions', async ({ page }) => {
     await page.keyboard.press('Alt+2');
     await expect(page.getByTestId('editor-title')).toBeVisible();

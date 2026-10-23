@@ -73,7 +73,7 @@ function seedArchive() {
   });
   return [
     mk(1, 'Synthetic diocese announces a harvest festival', 'partial', '2014-03-09T00:00:00.000Z', 'A synthetic paragraph about an invented festival.\n\nA second synthetic paragraph.'),
-    mk(2, 'Invented synod headline only', 'citation-only', null, 'Invented synod headline only.'),
+    mk(2, 'Invented synod headline only', 'citation-only', null, 'Invented synod headline only. [Read the full report](https://spam-casino.test/win) or see [diocese.example](https://diocese.example/news) and [our own page](https://churchtimes.example/about).'),
     mk(3, 'Recovered note without a body', 'missing', '2012-11-02T00:00:00.000Z', 'Body not recovered. Known: a synthetic report on a choir tour.', { batch: 'arc-fedcba987654' }),
     mk(4, 'Already reviewed synthetic story', 'partial', '2015-06-21T00:00:00.000Z', 'A synthetic reviewed paragraph.', { reviewStatus: 'reviewed' })
   ];
