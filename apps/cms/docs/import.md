@@ -153,7 +153,7 @@ npm run import:wxr -- --file D:\churchtimes-private\export.xml --uploads D:\chur
 
 Flags: `--file` (required), `--uploads <folder>` (the copied `wp-content/uploads`), `--manifest <path>` or
 `IMPORT_MANIFEST_PATH`, `--apply` (write), `--update` (rewrite already imported articles that nobody edited since), `--force-update` (also those), `--old-host a.test,b.test`
-(extra old-site hosts; the hosts in the export's own header are always used), `--limit N` (first N posts, for trials).
+(extra old-site hosts; the hosts in the export's own header are always used), `--limit N` (first N posts, for trials), `--category-map <json>` (tag to category map, outside the repository; see "Uncategorised posts"), `--fallback-category <slug>` and `--fallback-category-name <name>` (or `IMPORT_FALLBACK_CATEGORY`, `IMPORT_FALLBACK_CATEGORY_NAME`, `IMPORT_CATEGORY_MAP`; default `news` / `News`).
 Exit code 0 when clean, 1 when an article failed to convert or write, 2 for a usage or path error. Errors print one short
 code (`IMPORT_USAGE`, `IMPORT_FILE_INSIDE_REPO`, `IMPORT_FILE_UNREADABLE`, `IMPORT_UPLOADS_INSIDE_REPO`, `IMPORT_MANIFEST_REQUIRED`,
 `IMPORT_MANIFEST_INSIDE_REPO`, `IMPORT_MANIFEST_UNWRITABLE`, `IMPORT_TOO_MANY_FAILURES`, or a `WXR_*` code).
@@ -164,7 +164,7 @@ code (`IMPORT_USAGE`, `IMPORT_FILE_INSIDE_REPO`, `IMPORT_FILE_UNREADABLE`, `IMPO
   (`passwordProtected`), other statuses (`status-draft`, ...), missing id, date or title.
 - Article: title, slug (from `wp:post_name`; on a clash `-<wp id>`, then a number, is added; every candidate is checked, and links between articles use the FINAL slug. Articles live at `/{slug}/` (owner decision D1), so a slug that equals a reserved route name such as `admin`, `api`, `search`, `category`, `newsletter` or `wp-json` (`src/lib/reservedSlugs.ts`) is never used: the post gets the `-<wp id>` form and the report line "slug is a reserved route name, renamed with the post id" counts it). Because the new address equals the WordPress address, an imported post with an unchanged slug needs NO redirect rule; rewritten internal links use `/{slug}/`, excerpt (plain text), body (converted),
   ONE category (see "Categories and authors" below), featured image (`_thumbnail_id`), byline text (see below), `publishedAt` (the GMT date), `legacyUrl` (the old permalink, see below), `legacyId`, Rank Math / Yoast title and description
-  (dropped when they hold `%variables%` or are over the length limits, C2). Imported articles are `published`.
+  (variables resolved, then cut to the length limits, C2; see "SEO text"). Imported articles are `published`.
 - Approved ordinary comments through `toLegacyCommentData`, plus a second email-shaped-text pass over names and bodies
   (an address becomes `[email removed]`, a name with an at-sign becomes `Anonymous`; a byline that is an email address is dropped). `parentLegacyId` is kept only
   when the parent is imported for the same article (loops are broken); otherwise the reply becomes top level.
@@ -204,11 +204,55 @@ code (`IMPORT_USAGE`, `IMPORT_FILE_INSIDE_REPO`, `IMPORT_FILE_UNREADABLE`, `IMPO
   must stay inside the real uploads folder. Files over 25 MB are refused.
 - 50 consecutive failed writes, or (after 20 posts) more than half failing, stop the run (`IMPORT_TOO_MANY_FAILURES`). Report keys for post statuses come from a fixed set (anything else is `other`).
 
+### SEO text
+
+`Articles.seoTitle` (70) and `seoDescription` (200) are filled per field: an explicit Rank Math value first, else Yoast
+(`_yoast_wpseo_title`, `_yoast_wpseo_metadesc`), else empty. Every value is untrusted text: markup is stripped, entities are
+decoded (never into `<` or `>`), whitespace is collapsed.
+
+- **Variables.** Yoast `%%var%%` and Rank Math `%var%` are resolved with fixed rules: `title` (the post title), `sitename`
+  (`Church Times Nigeria`), `sep` (`-`), `page` (empty), `category` / `primary_category` (the post's category name),
+  `date` (for example `4 May 2023`), `excerpt` / `excerpt_only`. Any other variable (`%%name%%`, `%%sitedesc%%`,
+  `%%cf_x%%`, `%var(arg)%`) is removed and the separators it leaves are tidied. A value that still contains `%%` or a `%var%`
+  afterwards is dropped (counted as `droppedUnresolved`) and the next source is tried. Regexes are bounded; values over 20,000
+  characters are dropped.
+- **Length.** Over the limit, a trailing `- Church Times Nigeria` is removed first (the public site adds its own), then the text is
+  cut at a word with an ellipsis (counted as `truncated`).
+- **Not stored (no field in C2):** `_yoast_wpseo_canonical` (counted valid when https, a path, or http on a site host, else invalid),
+  `_yoast_wpseo_meta-robots-noindex` (counted when `1`) and the Open Graph / Twitter title and description (counted). The report
+  line "Yoast values with no field in the schema" sizes them so the owner can ask for a contract change (canonical, noindex) if wanted.
+- The report (`SEO text` section) gives counts by source (Rank Math, Yoast, none) for title and description, values with variables
+  resolved, dropped, truncated. SEO values are written for articles created or updated in the run; `--update` rewrites them.
+
+### Uncategorised posts
+
+`Articles.category` is one required relationship, so each NEW article gets one category by this deterministic chain (the first
+step that applies):
+
+1. the post's WordPress categories (the existing rule above);
+2. the Yoast primary category (`_yoast_wpseo_primary_category`, a term id) when it is a category listed in the export's channel
+   (`wp:category`, matched by `wp:term_id`); the generic `uncategorised` never counts as a placement;
+3. the first WordPress TAG that has an entry in the `--category-map` file, a JSON object of tag slug to category slug
+   (`{"church-life": "faith"}`), outside the repository, at most 10,000 entries, slugs only. The target must be a category of the export,
+   or already exist in Categories; otherwise it is counted (`tagMapTargetMissing`) and the chain continues. Categories are NEVER
+   created from tags. Without the file, tags are skipped;
+4. the generic WordPress `uncategorised` category if the post had exactly that (unchanged behaviour), else the fallback category
+   (`--fallback-category`, default slug `news`, title `News`; found by slug, created if missing and recorded in the manifest like any
+   other created category, so rollback removes it when nothing uses it).
+
+Counts per step are in the report (`category source`, `Yoast primary category not in the export`). Only new articles get a category;
+an existing article is never recategorised, so a second run changes nothing (idempotent) and rollback is unchanged.
+
+Real export measured (2026-10-13 file, published posts): 3,050 have no WordPress category; 1,973 posts carry a Yoast primary category and
+for 1,658 of the uncategorised ones it resolves to one of 8 exported categories; the file has 1 post with a tag and 1 distinct tag, so the
+tag step has nothing to work with and needs no map; the other 1,392 uncategorised posts (310 with a primary id that is not in the export,
+the rest with none) land in the fallback category.
+
 ### Categories and authors
 
 - **One category per article.** `Articles.category` is a single REQUIRED relationship and there is no second categories field, so
   only one WordPress category per post can be kept. The primary is the first listed category, except that WordPress's generic
-  `uncategorised` / `uncategorized` is skipped when a real category exists; a post with none gets the `uncategorised` fallback.
+  `uncategorised` / `uncategorized` is skipped when a real category exists; a post with none follows the chain in "Uncategorised posts".
   Posts that had more are counted (`postsWithExtraCategories`, `extraCategoriesDropped`) so the owner can decide whether a
   schema change (a `categories` hasMany field plus a migration) is wanted before the real run. Only the kept category is created,
   and it is recorded in the manifest, so rollback is unchanged (it removes created categories that no article still uses).
@@ -228,7 +272,7 @@ npm run import:inspect -- --file D:churchtimes-privateexport.xml
 ```
 
 Reads the export only: no database, no network, no writes; a path inside the repository is refused. Output is counts only: posts by
-status, published password-protected posts, categories (in the file, used by posts, posts with more than one), distinct authors
+status, published password-protected posts, categories (in the file, used by posts, posts with more than one), tags and Yoast data on published posts (posts with tags, distinct tags, Yoast title / description / canonical / noindex / social counts, primary category and how many resolve, uncategorised posts a primary category or tag would place), distinct authors
 (a number, no names), comments by status (approved, pending, spam, trash, other), attachments, the top 20 shortcode tag names
 (the only strings taken from the file), the largest post content in bytes, and the deepest HTML element nesting in post content.
 Run it first to size the real import; `import:wxr-report` has the wider parse report.

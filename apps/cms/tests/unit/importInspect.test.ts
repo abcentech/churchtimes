@@ -51,6 +51,44 @@ describe('import:inspect', () => {
     expect(r.maxHtmlNestingDepth).toBe(3)
   })
 
+  it('counts tags and Yoast data on published posts (counts only)', async () => {
+    const file = path.join(dir, 'yoast.xml')
+    const y = (extra: Record<string, string>) => ({ ...extra })
+    fs.writeFileSync(
+      file,
+      wxr(
+        [
+          { id: 1, categories: [{ nicename: 'news', name: 'News' }], meta: y({ _yoast_wpseo_title: '%%title%% %%sep%% %%sitename%%', _yoast_wpseo_metadesc: 'Plain' }) },
+          { id: 2, meta: y({ _yoast_wpseo_primary_category: '3', _yoast_wpseo_canonical: 'https://x.example.test/a/', '_yoast_wpseo_meta-robots-noindex': '1', '_yoast_wpseo_opengraph-title': 'Social' }) },
+          { id: 3, meta: y({ _yoast_wpseo_primary_category: '99' }), tags: [{ nicename: 'secret-tag', name: 'Secret Tag' }] },
+          { id: 4, tags: [{ nicename: 'secret-tag', name: 'Secret Tag' }, { nicename: 'other-tag', name: 'Other' }] },
+          { id: 5, status: 'draft', tags: [{ nicename: 'draft-tag', name: 'Draft' }], meta: y({ _yoast_wpseo_title: 'draft only' }) },
+        ],
+        { channelCategories: [{ id: 3, nicename: 'news', name: 'News' }] },
+      ),
+    )
+    const r = await inspectWxr(readWxrFile(file))
+    expect(r.tags).toEqual({ postsWithTags: 2, distinctTags: 2, uncategorisedPostsWithTags: 2 })
+    expect(r.yoast).toEqual({
+      title: 1,
+      description: 1,
+      titleWithVariables: 1,
+      descriptionWithVariables: 0,
+      canonical: 1,
+      noindex: 1,
+      social: 1,
+      primaryCategory: 2,
+      primaryCategoryResolves: 1,
+      uncategorisedPosts: 3,
+      uncategorisedWithResolvablePrimary: 1,
+      uncategorisedWithTagsOrPrimary: 3,
+    })
+    const { out } = await run(['--file', file])
+    expect(out).toContain('tags (published posts): 2 posts have tags, 2 distinct tags')
+    expect(out).not.toContain('secret-tag')
+    expect(out).not.toContain('Secret Tag')
+  })
+
   it('prints counts only: no title, slug, name, email or category name', async () => {
     const file = path.join(dir, 'b.xml')
     fs.writeFileSync(file, wxr(items, { authors: [{ id: 2, login: 'writer_one', display: 'Writer Person' }] }))

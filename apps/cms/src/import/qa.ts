@@ -33,7 +33,35 @@ export type ImportReport = {
    * Articles.category is ONE required relationship, so only one WordPress category per post is kept.
    * `postsWithExtraCategories` / `extraCategoriesDropped` size what the schema cannot hold.
    */
-  categories: { created: number; fallbackUsed: number; postsWithExtraCategories: number; extraCategoriesDropped: number }
+  categories: {
+    created: number
+    /** Articles that ended in the configured fallback category or kept the generic WordPress "Uncategorised". */
+    fallbackUsed: number
+    postsWithExtraCategories: number
+    extraCategoriesDropped: number
+    /** Where each created article's category came from (the chain: WordPress, Yoast primary, tag map, generic, fallback). */
+    bySource: { wordpress: number; yoastPrimary: number; tagMap: number; generic: number; fallback: number }
+    /** Posts naming a Yoast primary category that is not a category of the export. */
+    yoastPrimaryUnresolved: number
+    /** Tag-map entries whose target category does not exist (nothing is created from a tag): the next step applied. */
+    tagMapTargetMissing: number
+  }
+  /** SEO text (Articles.seoTitle / seoDescription) for articles written in this run, by source. Counts only. */
+  seo: {
+    titleFrom: { rankMath: number; yoast: number; none: number }
+    descriptionFrom: { rankMath: number; yoast: number; none: number }
+    /** Values whose variables (%title%, %%sitename%% ...) were substituted or removed. */
+    variablesResolved: number
+    /** Values dropped because a variable text was still present after resolution. */
+    droppedUnresolved: number
+    /** Values cut to the schema limit. */
+    truncated: number
+    /** Yoast values the schema has no field for: counted, not stored. */
+    yoastCanonicalValid: number
+    yoastCanonicalInvalid: number
+    yoastNoindex: number
+    yoastSocial: number
+  }
   /** Bylines are text only (Articles.bylineName); no user account is ever created. Counts of distinct `dc:creator` values. */
   authors: { distinct: number; withByline: number; unmapped: number; postsWithoutByline: number }
   media: { reused: number; created: number; unresolved: Tally }
@@ -62,7 +90,26 @@ export function newReport(mode: 'dry-run' | 'apply', update: boolean): ImportRep
     update,
     source: { items: t(), postsByStatus: t(), publishedPosts: 0, approvedCommentsOnPublishedPosts: 0, attachments: 0 },
     articles: { created: 0, updated: 0, unchanged: 0, skipped: t(), passwordProtected: 0, previouslyImportedNowNotPublished: 0, slugRenamedReserved: 0 },
-    categories: { created: 0, fallbackUsed: 0, postsWithExtraCategories: 0, extraCategoriesDropped: 0 },
+    categories: {
+      created: 0,
+      fallbackUsed: 0,
+      postsWithExtraCategories: 0,
+      extraCategoriesDropped: 0,
+      bySource: { wordpress: 0, yoastPrimary: 0, tagMap: 0, generic: 0, fallback: 0 },
+      yoastPrimaryUnresolved: 0,
+      tagMapTargetMissing: 0,
+    },
+    seo: {
+      titleFrom: { rankMath: 0, yoast: 0, none: 0 },
+      descriptionFrom: { rankMath: 0, yoast: 0, none: 0 },
+      variablesResolved: 0,
+      droppedUnresolved: 0,
+      truncated: 0,
+      yoastCanonicalValid: 0,
+      yoastCanonicalInvalid: 0,
+      yoastNoindex: 0,
+      yoastSocial: 0,
+    },
     authors: { distinct: 0, withByline: 0, unmapped: 0, postsWithoutByline: 0 },
     media: { reused: 0, created: 0, unresolved: t() },
     content: { imagesResolved: 0, imagesUnresolved: 0, linksUnmapped: 0, featuredImageMissing: 0, youtube: 0, tablesFlattened: 0, embedsDropped: 0 },
@@ -121,8 +168,16 @@ export function formatImportReport(rep: ImportReport): string {
     '',
     'Categories',
     `  created: ${rep.categories.created}`,
-    `  articles placed in the fallback category: ${rep.categories.fallbackUsed}`,
+    `  articles placed in the fallback category (or kept as WordPress "Uncategorised"): ${rep.categories.fallbackUsed}`,
+    `  category source: WordPress ${rep.categories.bySource.wordpress}, Yoast primary ${rep.categories.bySource.yoastPrimary}, tag map ${rep.categories.bySource.tagMap}, generic ${rep.categories.bySource.generic}, fallback ${rep.categories.bySource.fallback}`,
+    `  Yoast primary category not in the export: ${rep.categories.yoastPrimaryUnresolved}; tag-map targets that do not exist: ${rep.categories.tagMapTargetMissing}`,
     `  posts with more categories than the schema holds (one): ${rep.categories.postsWithExtraCategories} (${rep.categories.extraCategoriesDropped} extra categories not kept)`,
+    '',
+    'SEO text (articles written in this run)',
+    `  title from: Rank Math ${rep.seo.titleFrom.rankMath}, Yoast ${rep.seo.titleFrom.yoast}, none ${rep.seo.titleFrom.none}`,
+    `  description from: Rank Math ${rep.seo.descriptionFrom.rankMath}, Yoast ${rep.seo.descriptionFrom.yoast}, none ${rep.seo.descriptionFrom.none}`,
+    `  values with variables resolved: ${rep.seo.variablesResolved}; dropped (variable left over): ${rep.seo.droppedUnresolved}; cut to the limit: ${rep.seo.truncated}`,
+    `  Yoast values with no field in the schema (not stored): canonical valid ${rep.seo.yoastCanonicalValid}, canonical invalid ${rep.seo.yoastCanonicalInvalid}, noindex ${rep.seo.yoastNoindex}, social text ${rep.seo.yoastSocial}`,
     '',
     'Authors (byline text only, no accounts created)',
     `  distinct authors: ${rep.authors.distinct}`,

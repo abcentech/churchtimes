@@ -8,16 +8,16 @@ import { legacyPathFromUrl } from '../lib/legacyMediaPath'
 import { cleanText, slugify } from '../lib/sanitize'
 import { isReservedSlug } from '../lib/reservedSlugs'
 import { resolveArticlePathTemplate } from '../lib/redirectPaths'
-import { hasTemplateVariable, SEO_DESCRIPTION_MAX, SEO_TITLE_MAX } from '../lib/seoFields'
+import { SEO_DESCRIPTION_MAX, SEO_TITLE_MAX } from '../lib/seoFields'
 import { safeErrorSummary } from '../lib/safeLog'
-import { bylineFor, chooseCategory, cleanLegacyUrl } from './mapping'
+import { bylineFor, chooseCategoryChain, cleanLegacyUrl, isCategorySlug, parseCategoryMap, resolveSeoText, validCanonical, type CategoryLookups, type SeoOutcome } from './mapping'
 import { cleanDisplayName, prepareComments, writeComments } from './comments'
 import { HtmlConversionError, htmlToLexical, type ConversionReport } from './htmlToLexical'
 import { openManifest, type ManifestSink } from './manifest'
 import { createMediaResolver, isSafeRelativeUploadPath, type MediaResolver } from './media'
 import { bumpTally, newReport, statusKey, type ImportReport } from './qa'
 import { isInsideRepo } from './safePaths'
-import { readWxrFile, type WxrAttachment, type WxrItem } from './wxr'
+import { readWxrFile, type WxrAttachment, type WxrItem, type WxrTerm } from './wxr'
 
 /**
  * WordPress archive loader: parse (WXR) -> convert (HTML to Lexical) -> write (Local API). See docs/import.md.
@@ -74,9 +74,14 @@ export type ImportOptions = {
   progress?: (line: string) => void
   /** Working directory for the repository checks. */
   cwd?: string
+  /** JSON file (outside the repository) of allowed tag slug -> category slug. Only existing or exported categories are ever used. */
+  categoryMapFile?: string
+  /** Category for posts the chain cannot place (default News / news). */
+  fallbackCategory?: { slug: string; title: string }
 }
 
-const FALLBACK_CATEGORY = { slug: 'uncategorised', title: 'Uncategorised' }
+export const DEFAULT_FALLBACK_CATEGORY = { slug: 'news', title: 'News' }
+const GENERIC_CATEGORY = { slug: 'uncategorised', title: 'Uncategorised' }
 const DEFAULT_MAX_CONSECUTIVE_FAILURES = 50
 /** Past this many posts, more than half failing aborts the run. */
 const FAILURE_RATIO_MIN_POSTS = 20
@@ -112,6 +117,9 @@ type Ctx = {
   manifest: ManifestSink | undefined
   media: MediaResolver
   categories: Map<string, number>
+  lookups: CategoryLookups
+  /** Hosts of the export's own site header (for judging a Yoast canonical address). */
+  siteHosts: string[]
   /** Distinct `dc:creator` keys seen, and whether each got a byline (for the report only; never printed). */
   authorKeys: Map<string, boolean>
   /** Media ids created for the post being written (to find their `upload` audit rows). */
@@ -186,6 +194,9 @@ type Pass1 = {
   attachments: Map<number, WxrAttachment>
   authors: Map<string, string>
   siteHosts: string[]
+  /** Channel categories by term id and by nicename (for the Yoast primary category and tag map). */
+  catByTermId: Map<number, WxrTerm>
+  catByNicename: Map<string, WxrTerm>
   /** Old slug -> the FINAL slug the article has or will get (after collision handling). */
   slugMap: Record<string, string>
   /** wp id -> final slug, or the reason the post cannot be given one. */
@@ -193,11 +204,18 @@ type Pass1 = {
 }
 
 async function pass1(file: string, payload: Payload, req: PayloadRequest, report: ImportReport): Promise<Pass1> {
-  const out: Pass1 = { attachments: new Map(), authors: new Map(), siteHosts: [], slugMap: {}, slugs: new Map() }
+  const out: Pass1 = { attachments: new Map(), authors: new Map(), siteHosts: [], catByTermId: new Map(), catByNicename: new Map(), slugMap: {}, slugs: new Map() }
   const claimed = new Set<string>()
   for await (const rec of readWxrFile(file)) {
     if (rec.record === 'site') out.siteHosts = hostsOf(rec.site.baseSiteUrl, rec.site.baseBlogUrl)
-    else if (rec.record === 'author') {
+    else if (rec.record === 'category') {
+      const c = rec.category
+      if (c.nicename) {
+        const term: WxrTerm = { name: c.name, nicename: c.nicename }
+        out.catByNicename.set(c.nicename, term)
+        if (c.termId !== null) out.catByTermId.set(c.termId, term)
+      }
+    } else if (rec.record === 'author') {
       if (rec.author.login) out.authors.set(rec.author.login, rec.author.displayName)
     } else if (rec.record === 'item') {
       const it = rec.item
@@ -250,16 +268,27 @@ function noteAuthor(ctx: Ctx, item: WxrItem, authors: Map<string, string>): stri
   return a.byline
 }
 
-async function categoryFor(ctx: Ctx, item: WxrItem): Promise<number> {
-  const choice = chooseCategory(item.categories)
-  const first = choice.primary
-  if (choice.dropped > 0) {
-    ctx.report.categories.postsWithExtraCategories++
-    ctx.report.categories.extraCategoriesDropped += choice.dropped
+function loadCategoryMap(cwd: string, file: string | undefined): Record<string, string> {
+  if (!file) return {}
+  const abs = path.resolve(cwd, file)
+  if (isInsideRepo(abs, cwd)) throw new ImportError('IMPORT_CATEGORY_MAP_INSIDE_REPO')
+  let text: string
+  try {
+    if (fs.statSync(abs).size > 1_000_000) throw new Error('too big')
+    text = fs.readFileSync(abs, 'utf8')
+  } catch {
+    throw new ImportError('IMPORT_CATEGORY_MAP_UNREADABLE')
   }
-  const slug = first ? slugify(first.nicename, 100, FALLBACK_CATEGORY.slug) : FALLBACK_CATEGORY.slug
-  const title = first ? plain(first.name || first.nicename, 120) || slug : FALLBACK_CATEGORY.title
-  if (!first) ctx.report.categories.fallbackUsed++
+  const map = parseCategoryMap(text.replace(/^\uFEFF/, ''))
+  if (!map) throw new ImportError('IMPORT_CATEGORY_MAP_INVALID')
+  return map
+}
+
+function pass1Lookups(first: Pass1, tagMap: Record<string, string>): CategoryLookups {
+  return { byTermId: first.catByTermId, byNicename: first.catByNicename, tagMap }
+}
+
+async function findCategory(ctx: Ctx, slug: string): Promise<number | undefined> {
   const known = ctx.categories.get(slug)
   if (known !== undefined) return known
   const found = await ctx.payload.find({
@@ -270,9 +299,53 @@ async function categoryFor(ctx: Ctx, item: WxrItem): Promise<number> {
     overrideAccess: true,
     req: ctx.req,
   })
-  let id = (found.docs[0] as { id?: number } | undefined)?.id
+  const id = (found.docs[0] as { id?: number } | undefined)?.id
+  if (id !== undefined) ctx.categories.set(slug, id)
+  return id
+}
+
+/**
+ * The category for a NEW article, by the chain in mapping.ts (WordPress, Yoast primary, tag map, generic, fallback). A category
+ * is created only from an exported WordPress category or the configured fallback, never from a tag's free text.
+ */
+async function categoryFor(ctx: Ctx, item: WxrItem): Promise<number> {
+  const rep = ctx.report.categories
+  const fallback = ctx.opts.fallbackCategory ?? DEFAULT_FALLBACK_CATEGORY
+  let choice = chooseCategoryChain(
+    { categories: item.categories, tags: item.tags, primaryCategory: item.seo.yoastPrimaryCategory },
+    ctx.lookups,
+  )
+  if (choice.dropped > 0) {
+    rep.postsWithExtraCategories++
+    rep.extraCategoriesDropped += choice.dropped
+  }
+  if (choice.primaryUnresolved) rep.yoastPrimaryUnresolved++
+  let term = choice.term
+  let slug: string
+  if (choice.step === 'fallback') {
+    slug = fallback.slug
+  } else {
+    slug = slugify(term!.nicename, 100, choice.step === 'generic' ? GENERIC_CATEGORY.slug : fallback.slug)
+    if (choice.mustExist && (await findCategory(ctx, slug)) === undefined) {
+      // A tag-map target that is neither exported nor already present: never created from a tag. The post gets the fallback (or its generic category).
+      rep.tagMapTargetMissing++
+      const generic = chooseCategoryChain({ categories: item.categories, tags: [], primaryCategory: null }, ctx.lookups)
+      choice = { ...generic, step: generic.step === 'generic' ? 'generic' : 'fallback' }
+      term = choice.term
+      slug = choice.step === 'generic' ? slugify(term!.nicename, 100, GENERIC_CATEGORY.slug) : fallback.slug
+    }
+  }
+  const title =
+    choice.step === 'fallback' ? fallback.title : plain(term!.name || term!.nicename, 120) || slug
+  if (choice.step === 'wordpress') rep.bySource.wordpress++
+  else if (choice.step === 'yoast-primary') rep.bySource.yoastPrimary++
+  else if (choice.step === 'tag-map') rep.bySource.tagMap++
+  else if (choice.step === 'generic') rep.bySource.generic++
+  else rep.bySource.fallback++
+  if (choice.step === 'generic' || choice.step === 'fallback') rep.fallbackUsed++
+  let id = await findCategory(ctx, slug)
   if (id === undefined) {
-    ctx.report.categories.created++
+    rep.created++
     if (ctx.opts.dryRun) id = 0
     else {
       const doc = (await ctx.payload.create({
@@ -336,11 +409,55 @@ async function featuredImageFor(ctx: Ctx, item: WxrItem, attachments: Map<number
   return r.mediaId
 }
 
-function seoValue(raw: string | null | undefined, max: number): string | undefined {
-  if (!raw) return undefined
-  const v = plain(raw, 2000)
-  if (v === '' || v.length > max || hasTemplateVariable(v)) return undefined
-  return v
+/**
+ * Articles.seoTitle / seoDescription for one post. An explicit Rank Math value wins, else Yoast, else empty. Variables are
+ * resolved (see resolveSeoText); a value that cannot be resolved is dropped and the next source is tried. Yoast canonical,
+ * noindex and social text have no field in the schema, so they are only counted.
+ */
+function seoFor(ctx: Ctx, item: WxrItem, title: string): { seoTitle: string | undefined; seoDescription: string | undefined } {
+  const rep = ctx.report.seo
+  const chain = chooseCategoryChain({ categories: item.categories, tags: [], primaryCategory: item.seo.yoastPrimaryCategory }, ctx.lookups)
+  const seoCtx = {
+    title,
+    categoryName: chain.term ? plain(chain.term.name || chain.term.nicename, 120) : undefined,
+    dateGmt: item.dateGmt,
+    excerpt: plain(item.excerptHtml, 300),
+  }
+  const pick = (
+    rankMath: string | null,
+    yoast: string | null,
+    max: number,
+    from: { rankMath: number; yoast: number; none: number },
+  ): string | undefined => {
+    const note = (o: SeoOutcome) => {
+      if (o.hadVariables && o.status === 'ok') rep.variablesResolved++
+      if (o.status === 'dropped') rep.droppedUnresolved++
+      if (o.truncated) rep.truncated++
+    }
+    const rm = resolveSeoText(rankMath, 'rankmath', seoCtx, max)
+    note(rm)
+    if (rm.value !== undefined) {
+      from.rankMath++
+      return rm.value
+    }
+    const y = resolveSeoText(yoast, 'yoast', seoCtx, max)
+    note(y)
+    if (y.value !== undefined) {
+      from.yoast++
+      return y.value
+    }
+    from.none++
+    return undefined
+  }
+  const seoTitle = pick(item.seo.rankMathTitle, item.seo.yoastTitle, SEO_TITLE_MAX, rep.titleFrom)
+  const seoDescription = pick(item.seo.rankMathDescription, item.seo.yoastDescription, SEO_DESCRIPTION_MAX, rep.descriptionFrom)
+  if (item.seo.yoastCanonical) {
+    if (validCanonical(item.seo.yoastCanonical, ctx.siteHosts)) rep.yoastCanonicalValid++
+    else rep.yoastCanonicalInvalid++
+  }
+  if (item.seo.yoastNoindex === '1') rep.yoastNoindex++
+  if (item.seo.yoastSocialTitle || item.seo.yoastSocialDescription) rep.yoastSocial++
+  return { seoTitle, seoDescription }
 }
 
 function addConversionStats(rep: ImportReport, c: ConversionReport): void {
@@ -373,6 +490,8 @@ export async function runImport(payload: Payload, opts: ImportOptions): Promise<
     manifestPath = path.resolve(cwd, opts.manifestPath)
     if (isInsideRepo(manifestPath, cwd)) throw new ImportError('IMPORT_MANIFEST_INSIDE_REPO')
   }
+  const tagMap = loadCategoryMap(cwd, opts.categoryMapFile)
+  if (opts.fallbackCategory && !isCategorySlug(opts.fallbackCategory.slug)) throw new ImportError('IMPORT_FALLBACK_CATEGORY_INVALID')
   // The export must open before a manifest file is created, so a bad path does not leave an empty manifest behind.
   assertReadable(file)
   let manifest: ManifestSink | undefined
@@ -402,7 +521,7 @@ export async function runImport(payload: Payload, opts: ImportOptions): Promise<
         postMedia.push(id)
       },
     })
-    const ctx: Ctx = { payload, req, opts, report, manifest, media, categories: new Map(), authorKeys: new Map(), postMedia }
+    const ctx: Ctx = { payload, req, opts, report, manifest, media, categories: new Map(), lookups: pass1Lookups(first, tagMap), siteHosts: first.siteHosts, authorKeys: new Map(), postMedia }
 
     const seenLegacyIds: number[] = []
     const seenArticleIds: number[] = []
@@ -633,8 +752,7 @@ async function importPost(
       content: converted.content,
       featuredImage,
       bylineName: byline || undefined,
-      seoTitle: seoValue(item.seo.rankMathTitle ?? item.seo.yoastTitle, SEO_TITLE_MAX),
-      seoDescription: seoValue(item.seo.rankMathDescription ?? item.seo.yoastDescription, SEO_DESCRIPTION_MAX),
+      ...seoFor(ctx, item, title),
       legacyUrl: cleanLegacyUrl(item.link),
       legacyId,
     }

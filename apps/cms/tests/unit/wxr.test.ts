@@ -154,6 +154,11 @@ describe('parseWxrStream: well-formed export', () => {
       rankMathDescription: 'Plain description',
       yoastTitle: 'Y title',
       yoastDescription: 'Y desc',
+      yoastCanonical: null,
+      yoastNoindex: null,
+      yoastPrimaryCategory: null,
+      yoastSocialTitle: null,
+      yoastSocialDescription: null,
     })
     expect(a.hasPassword).toBe(true)
     expect(JSON.stringify(a)).not.toContain('hunter2')

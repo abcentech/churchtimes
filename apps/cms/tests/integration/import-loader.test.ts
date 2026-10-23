@@ -134,7 +134,7 @@ describe('WXR loader', () => {
     const a = docs.find((d) => d.legacyId === ids.a)!
     expect(a).toMatchObject({ status: 'published', slug: `${runId}-story-a`, title: `${runId} story A & more`, excerpt: 'A short synthetic excerpt.', bylineName: 'Editor One' })
     expect(a.publishedAt).toBe('2023-05-04T10:30:00.000Z')
-    expect(a.seoTitle).toBeFalsy() // had a %variable%
+    expect(a.seoTitle).toBe('Search title Church Times Nigeria') // Rank Math %sitename% resolved
     expect(a.seoDescription).toBe('A fine description')
     expect(typeof a.featuredImage).toBe('number')
     expect(a.bodyMedia).toHaveLength(1)
