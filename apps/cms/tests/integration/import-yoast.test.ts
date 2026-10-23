@@ -85,7 +85,7 @@ afterAll(async () => {
 it('a dry run writes nothing but reports the chain and the SEO sources', async () => {
   const rep = await runImport(f.payload, opts(0, { dryRun: true, manifestPath: undefined }))
   expect(await yDocs()).toHaveLength(0)
-  expect(rep.categories.bySource).toEqual({ wordpress: 1, yoastPrimary: 1, tagMap: 1, generic: 0, fallback: 3 })
+  expect(rep.categories.bySource).toEqual({ wordpress: 1, yoastPrimary: 1, tagMap: 1, rules: 0, generic: 0, fallback: 3 })
   expect(rep.categories.yoastPrimaryUnresolved).toBe(1)
   expect(rep.categories.tagMapTargetMissing).toBe(1)
   const text = formatImportReport(rep)
@@ -96,7 +96,7 @@ it('a dry run writes nothing but reports the chain and the SEO sources', async (
 it('places posts by the chain, imports Yoast SEO with variables resolved, and prefers Rank Math', async () => {
   const rep = await runImport(f.payload, opts(1))
   expect(rep.articles.created).toBe(6)
-  expect(rep.categories.bySource).toEqual({ wordpress: 1, yoastPrimary: 1, tagMap: 1, generic: 0, fallback: 3 })
+  expect(rep.categories.bySource).toEqual({ wordpress: 1, yoastPrimary: 1, tagMap: 1, rules: 0, generic: 0, fallback: 3 })
   expect(rep.categories.fallbackUsed).toBe(3)
   const docs = await yDocs()
   const by = (id: number) => docs.find((d) => d.legacyId === id)!
@@ -132,7 +132,7 @@ it('a second run is idempotent: nothing created, no categories, no counters move
   const rep = await runImport(f.payload, opts(2))
   expect(rep.articles).toMatchObject({ created: 0, updated: 0, unchanged: 6 })
   expect(rep.categories.created).toBe(0)
-  expect(rep.categories.bySource).toEqual({ wordpress: 0, yoastPrimary: 0, tagMap: 0, generic: 0, fallback: 0 })
+  expect(rep.categories.bySource).toEqual({ wordpress: 0, yoastPrimary: 0, tagMap: 0, rules: 0, generic: 0, fallback: 0 })
   expect(await yDocs()).toHaveLength(6)
   expect(readManifest(man(2)).articles).toEqual({ created: [], updated: [] })
 })

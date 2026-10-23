@@ -422,6 +422,22 @@ What is printed (counts and fixed codes only; the only strings taken from the fi
 
 The detail file is JSON: `textShrink`, `emptyOutput`, `failed` (id and code), `inputOverCap`, `maxDepthHit` and `applyFailed`, all WordPress post ids. Open a post by id in the old WordPress admin to look at it. Do not paste the file, or what is in it, anywhere shared.
 
+## Categories: the rules mode (`--category-mode=rules`)
+
+**Default is `strict`** (the behaviour before this existed): WordPress category, Yoast primary category, tag map, generic "Uncategorised", fallback category. `--category-mode=rules` is opt-in and awaits the owner's approval before it becomes the default. In rules mode a classifier runs only for posts the earlier steps could not place; it never overrides a WordPress or Yoast category or a tag-map entry.
+
+Options: `--category-mode=strict|rules`, `--category-rules <rules.json outside the repo>` (replaces the built-in rules), `--category-review <csv outside the repo, must not exist>`, `--fallback-category <slug>` and `--fallback-category-name <name>` (default `news` / `News`; an existing category is never renamed).
+
+Why the posts were uncategorised (real export, counts): of 4,343 published posts, 1,392 fell to the fallback. All 1,392 have no WordPress category, no tags and no usable Yoast primary category (310 name a primary category id that is not in the export). They are concentrated in 2012-2017 (about 250), 2020-2022 (about 400) and 2023-2024 (about 680). Tags are essentially unused (1 post).
+
+What predicts the existing categories: **time, not topic**. Up to 2017 the posts that have a category are almost all "missions"; 2018-2022 mostly "interviews"; from 2024 mostly "news". Topical keywords (health, education, business, gospel and so on) predicted the existing categories at 10-25% precision and are not used. The classifier therefore adds up two kinds of evidence per category (all in `src/import/categoryRules.ts`, defaults in `categoryRulesDefault.ts`): explicit cue phrases (title x3, excerpt x2, body x0.5, at most twice), and neighbour evidence, the share of already categorised posts published within a window of months (widened by doubling for sparse periods). A winner needs `minScore` and a `minMargin` over the runner-up; otherwise the post goes to the fallback category and into the review file. Deterministic, offline, no model.
+
+Provenance: every created article writes a `category` line to the rollback manifest (legacy id, step, category slug, and in rules mode the winning rule id, score, runner-up and its score). Rollback ignores these lines. The review CSV (`legacy_id,suggested_category,score,runner_up,runner_up_score`) lists posts left in the fallback with a suggestion; it holds no titles or text.
+
+Measure before trusting: `npm run import:categorise-eval -- --file <export.xml> [--rules <file>] [--detail-file <csv>]` classifies the already categorised posts with their own category hidden (validation) and then the unplaced ones (counts only). On the real export: validation 2,951 posts, 2,425 confident, precision 68%. Of the 1,392 unplaced posts 672 get a confident category (interviews 542, missions 90, publishers-note 29, news 10, opinion 1) and 720 stay in the fallback. Precision is about two thirds, so treat the result as a first pass for editors, not as truth; the review file and manifest make it auditable.
+
+Dry run versus apply: the dry run used to report 76 categories created where apply creates 15, because a skipped post cleared the dry run's "already counted" cache and every category was counted again. The dry run now remembers what it would create (`dryCreated`), and a test compares it with apply. On the real export the dry run now reports 15.
+
 ## Legacy media map export (A12)
 
 The public host serves old `/wp-content/uploads/...` addresses from an exact map that the owner exports from the CMS and provisions privately. The

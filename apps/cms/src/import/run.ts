@@ -8,6 +8,8 @@ import { legacyPathFromUrl } from '../lib/legacyMediaPath'
 import { cleanText, slugify } from '../lib/sanitize'
 import { SEO_DESCRIPTION_MAX, SEO_TITLE_MAX } from '../lib/seoFields'
 import { safeErrorSummary } from '../lib/safeLog'
+import { classify, compileRules, EraIndex, parseCategoryRules, textForClassification, type Classification, type CompiledRules } from './categoryRules'
+import { DEFAULT_CATEGORY_RULES } from './categoryRulesDefault'
 import { bylineFor, chooseCategoryChain, cleanLegacyUrl, isCategorySlug, parseCategoryMap, resolveSeoText, validCanonical, type CategoryLookups, type SeoOutcome } from './mapping'
 import { cleanDisplayName, prepareComments, writeComments } from './comments'
 import { HtmlConversionError, htmlToLexical, type ConversionReport } from './htmlToLexical'
@@ -76,6 +78,16 @@ export type ImportOptions = {
   categoryMapFile?: string
   /** Category for posts the chain cannot place (default News / news). */
   fallbackCategory?: { slug: string; title: string }
+  /**
+   * strict (default, the behaviour before rules existed): WordPress category, Yoast primary, tag map, generic, fallback.
+   * rules: the rule classifier (categoryRules.ts) also runs for posts the earlier steps could not place; a confident answer
+   * is used, anything less goes to the fallback category and into the review file.
+   */
+  categoryMode?: 'strict' | 'rules'
+  /** JSON file (outside the repository) replacing the built-in rules (parseCategoryRules). Rules mode only. */
+  categoryRulesFile?: string
+  /** CSV (outside the repository, must not exist) of posts left in the fallback with a suggestion: legacy id, category, score, runner-up. */
+  categoryReviewFile?: string
 }
 
 export const DEFAULT_FALLBACK_CATEGORY = { slug: 'news', title: 'News' }
@@ -115,7 +127,13 @@ type Ctx = {
   manifest: ManifestSink | undefined
   media: MediaResolver
   categories: Map<string, number>
+  /** Dry run only: category slugs already counted as "would create" (nothing is cached in a dry run, and a skipped post must not recount). */
+  dryCreated: Set<string>
   lookups: CategoryLookups
+  /** Rules mode: the compiled rules, the neighbour evidence, and a cache so a post is classified once. */
+  rules: { compiled: CompiledRules; era: EraIndex; cache: Map<number, Classification> } | undefined
+  /** Rules mode: posts left in the fallback with a suggestion (for the review file). */
+  review: { legacyId: number; cls: Classification }[]
   /** Hosts of the export's own site header (for judging a Yoast canonical address). */
   siteHosts: string[]
   /** Distinct `dc:creator` keys seen, and whether each got a byline (for the report only; never printed). */
@@ -185,10 +203,12 @@ type Pass1 = {
   slugMap: Record<string, string>
   /** wp id -> final slug, or the reason the post cannot be given one. */
   slugs: Map<number, string | { skip: string }>
+  /** Rules mode: dates and categories of the importable posts, to build the neighbour evidence once the channel categories are known. */
+  eraSources: { dateGmt: string | null; categories: WxrTerm[]; primaryCategory: string | null }[]
 }
 
-async function pass1(file: string, payload: Payload, req: PayloadRequest, report: ImportReport): Promise<Pass1> {
-  const out: Pass1 = { attachments: new Map(), authors: new Map(), siteHosts: [], catByTermId: new Map(), catByNicename: new Map(), slugMap: {}, slugs: new Map() }
+async function pass1(file: string, payload: Payload, req: PayloadRequest, report: ImportReport, collectEra: boolean): Promise<Pass1> {
+  const out: Pass1 = { attachments: new Map(), authors: new Map(), siteHosts: [], catByTermId: new Map(), catByNicename: new Map(), slugMap: {}, slugs: new Map(), eraSources: [] }
   const claimed = new Set<string>()
   for await (const rec of readWxrFile(file)) {
     if (rec.record === 'site') out.siteHosts = hostsOf(rec.site.baseSiteUrl, rec.site.baseBlogUrl)
@@ -217,6 +237,7 @@ async function pass1(file: string, payload: Payload, req: PayloadRequest, report
           }
         }
         if (importable(it)) {
+          if (collectEra) out.eraSources.push({ dateGmt: it.dateGmt, categories: it.categories, primaryCategory: it.seo.yoastPrimaryCategory })
           try {
             const slug = await decideSlug(payload, req, claimed, it)
             out.slugs.set(it.wpId as number, slug)
@@ -268,11 +289,52 @@ function loadCategoryMap(cwd: string, file: string | undefined): Record<string, 
   return map
 }
 
+function loadCategoryRules(cwd: string, file: string | undefined): CompiledRules {
+  if (!file) return compileRules(DEFAULT_CATEGORY_RULES)
+  const abs = path.resolve(cwd, file)
+  if (isInsideRepo(abs, cwd)) throw new ImportError('IMPORT_CATEGORY_RULES_INSIDE_REPO')
+  let text: string
+  try {
+    text = fs.readFileSync(abs, 'utf8')
+  } catch {
+    throw new ImportError('IMPORT_CATEGORY_RULES_UNREADABLE')
+  }
+  const set = parseCategoryRules(text.replace(/^\uFEFF/, ''))
+  if (!set) throw new ImportError('IMPORT_CATEGORY_RULES_INVALID')
+  return compileRules(set)
+}
+
+/** The neighbour evidence: categories of the posts that the WordPress or Yoast steps place (these are the "already categorised" ones). */
+function buildEra(first: Pass1, lookups: CategoryLookups): EraIndex {
+  const era = new EraIndex()
+  for (const s of first.eraSources) {
+    const c = chooseCategoryChain({ categories: s.categories, tags: [], primaryCategory: s.primaryCategory }, lookups)
+    if ((c.step === 'wordpress' || c.step === 'yoast-primary') && c.term) era.add(s.dateGmt, c.term.nicename)
+  }
+  return era
+}
+
+function classifyItem(ctx: Ctx, item: WxrItem): Classification {
+  const r = ctx.rules as NonNullable<Ctx['rules']>
+  const key = item.wpId as number
+  const hit = r.cache.get(key)
+  if (hit) return hit
+  const cls = classify(
+    { title: plain(item.title, 240), excerpt: textForClassification(item.excerptHtml), body: textForClassification(item.contentHtml), dateGmt: item.dateGmt },
+    r.compiled,
+    r.era,
+  )
+  r.cache.set(key, cls)
+  return cls
+}
+
 function pass1Lookups(first: Pass1, tagMap: Record<string, string>): CategoryLookups {
   return { byTermId: first.catByTermId, byNicename: first.catByNicename, tagMap }
 }
 
+/** Dry run: a category counted as "would create" earlier in this run exists for the rest of it (id 0, nothing is written). */
 async function findCategory(ctx: Ctx, slug: string): Promise<number | undefined> {
+  if (ctx.opts.dryRun && ctx.dryCreated.has(slug)) return 0
   const known = ctx.categories.get(slug)
   if (known !== undefined) return known
   const found = await ctx.payload.find({
@@ -296,7 +358,7 @@ async function categoryFor(ctx: Ctx, item: WxrItem): Promise<number> {
   const rep = ctx.report.categories
   const fallback = ctx.opts.fallbackCategory ?? DEFAULT_FALLBACK_CATEGORY
   let choice = chooseCategoryChain(
-    { categories: item.categories, tags: item.tags, primaryCategory: item.seo.yoastPrimaryCategory },
+    { categories: item.categories, tags: item.tags, primaryCategory: item.seo.yoastPrimaryCategory, classify: ctx.rules ? () => classifyItem(ctx, item) : undefined },
     ctx.lookups,
   )
   if (choice.dropped > 0) {
@@ -311,10 +373,10 @@ async function categoryFor(ctx: Ctx, item: WxrItem): Promise<number> {
   } else {
     slug = slugify(term!.nicename, 100, choice.step === 'generic' ? GENERIC_CATEGORY.slug : fallback.slug)
     if (choice.mustExist && (await findCategory(ctx, slug)) === undefined) {
-      // A tag-map target that is neither exported nor already present: never created from a tag. The post gets the fallback (or its generic category).
+      // A tag-map (or rules) target that is neither exported nor already present: never created from a tag or a rule. The post gets the fallback (or its generic category).
       rep.tagMapTargetMissing++
       const generic = chooseCategoryChain({ categories: item.categories, tags: [], primaryCategory: null }, ctx.lookups)
-      choice = { ...generic, step: generic.step === 'generic' ? 'generic' : 'fallback' }
+      choice = { ...generic, step: generic.step === 'generic' ? 'generic' : 'fallback', ...(choice.rule ? { rule: choice.rule } : {}) }
       term = choice.term
       slug = choice.step === 'generic' ? slugify(term!.nicename, 100, GENERIC_CATEGORY.slug) : fallback.slug
     }
@@ -324,14 +386,30 @@ async function categoryFor(ctx: Ctx, item: WxrItem): Promise<number> {
   if (choice.step === 'wordpress') rep.bySource.wordpress++
   else if (choice.step === 'yoast-primary') rep.bySource.yoastPrimary++
   else if (choice.step === 'tag-map') rep.bySource.tagMap++
+  else if (choice.step === 'rules') rep.bySource.rules++
   else if (choice.step === 'generic') rep.bySource.generic++
   else rep.bySource.fallback++
   if (choice.step === 'generic' || choice.step === 'fallback') rep.fallbackUsed++
+  if (ctx.rules && choice.rule && choice.step !== 'rules' && choice.rule.category) {
+    rep.rulesLowConfidence++
+    ctx.review.push({ legacyId: item.wpId as number, cls: choice.rule })
+  }
+  ctx.manifest?.append({
+    type: 'category',
+    legacyId: item.wpId as number,
+    step: choice.step,
+    category: slug,
+    ...(choice.rule?.category
+      ? { rule: { id: choice.rule.ruleId ?? '', category: choice.rule.category ?? '', score: choice.rule.score, runnerUp: choice.rule.runnerUp ?? null, runnerUpScore: choice.rule.runnerUpScore, confident: choice.rule.confident } }
+      : {}),
+  })
   let id = await findCategory(ctx, slug)
   if (id === undefined) {
     rep.created++
-    if (ctx.opts.dryRun) id = 0
-    else {
+    if (ctx.opts.dryRun) {
+      ctx.dryCreated.add(slug)
+      id = 0
+    } else {
       const doc = (await ctx.payload.create({
         collection: 'categories',
         data: { title, slug } as never,
@@ -505,6 +583,17 @@ export async function runImport(payload: Payload, opts: ImportOptions): Promise<
     if (isInsideRepo(manifestPath, cwd)) throw new ImportError('IMPORT_MANIFEST_INSIDE_REPO')
   }
   const tagMap = loadCategoryMap(cwd, opts.categoryMapFile)
+  const rulesMode = opts.categoryMode === 'rules'
+  if (opts.categoryMode !== undefined && opts.categoryMode !== 'strict' && !rulesMode) throw new ImportError('IMPORT_CATEGORY_MODE_INVALID')
+  if (opts.categoryRulesFile && !rulesMode) throw new ImportError('IMPORT_CATEGORY_RULES_NEED_RULES_MODE')
+  const compiledRules = rulesMode ? loadCategoryRules(cwd, opts.categoryRulesFile) : undefined
+  let reviewPath: string | undefined
+  if (opts.categoryReviewFile) {
+    if (!rulesMode) throw new ImportError('IMPORT_CATEGORY_REVIEW_NEEDS_RULES_MODE')
+    reviewPath = path.resolve(cwd, opts.categoryReviewFile)
+    if (isInsideRepo(reviewPath, cwd)) throw new ImportError('IMPORT_CATEGORY_REVIEW_INSIDE_REPO')
+    if (fs.existsSync(reviewPath)) throw new ImportError('IMPORT_CATEGORY_REVIEW_EXISTS')
+  }
   if (opts.fallbackCategory && !isCategorySlug(opts.fallbackCategory.slug)) throw new ImportError('IMPORT_FALLBACK_CATEGORY_INVALID')
   // The export must open before a manifest file is created, so a bad path does not leave an empty manifest behind.
   assertReadable(file)
@@ -518,10 +607,11 @@ export async function runImport(payload: Payload, opts: ImportOptions): Promise<
   }
 
   const report = newReport(opts.dryRun ? 'dry-run' : 'apply', opts.update === true)
+  report.categories.mode = rulesMode ? 'rules' : 'strict'
   let endStatus: 'complete' | 'failed' | 'stopped' = 'failed'
   try {
     const req = await createLocalReq({ context: { import: true } }, payload)
-    const first = await pass1(file, payload, req, report)
+    const first = await pass1(file, payload, req, report, rulesMode)
     const oldHosts = [...new Set([...(opts.oldHosts ?? []).map((h) => h.toLowerCase()), ...first.siteHosts])]
     const postMedia: number[] = []
     const media = createMediaResolver({
@@ -535,7 +625,23 @@ export async function runImport(payload: Payload, opts: ImportOptions): Promise<
         postMedia.push(id)
       },
     })
-    const ctx: Ctx = { payload, req, opts, report, manifest, media, categories: new Map(), lookups: pass1Lookups(first, tagMap), siteHosts: first.siteHosts, authorKeys: new Map(), postMedia }
+    const lookups = pass1Lookups(first, tagMap)
+    const ctx: Ctx = {
+      payload,
+      req,
+      opts,
+      report,
+      manifest,
+      media,
+      categories: new Map(),
+      dryCreated: new Set(),
+      lookups,
+      rules: compiledRules ? { compiled: compiledRules, era: buildEra(first, lookups), cache: new Map() } : undefined,
+      review: [],
+      siteHosts: first.siteHosts,
+      authorKeys: new Map(),
+      postMedia,
+    }
 
     const seenLegacyIds: number[] = []
     const seenArticleIds: number[] = []
@@ -599,6 +705,7 @@ export async function runImport(payload: Payload, opts: ImportOptions): Promise<
       if (processed % 100 === 0) opts.progress?.(`${processed} posts processed`)
     }
 
+    if (reviewPath) writeCategoryReview(reviewPath, ctx.review)
     report.media.reused = media.stats.reused
     report.media.created = media.stats.created
     report.media.unresolved = { ...media.stats.unresolved }
@@ -635,6 +742,17 @@ export async function runImport(payload: Payload, opts: ImportOptions): Promise<
   }
 }
 
+/** The review file: legacy id, suggested category, score, runner-up. Owner-only, outside the repository, created exclusively. */
+function writeCategoryReview(file: string, rows: { legacyId: number; cls: Classification }[]): void {
+  const lines = ['legacy_id,suggested_category,score,runner_up,runner_up_score']
+  for (const r of [...rows].sort((a, b) => a.legacyId - b.legacyId)) lines.push([r.legacyId, r.cls.category ?? '', r.cls.score, r.cls.runnerUp ?? '', r.cls.runnerUpScore].join(','))
+  try {
+    fs.writeFileSync(file, lines.join('\n') + '\n', { flag: 'wx', mode: 0o600 })
+  } catch {
+    throw new ImportError('IMPORT_CATEGORY_REVIEW_UNWRITABLE')
+  }
+}
+
 /** Did an editor change the article after the loader last wrote it? (No import audit row counts as edited.) */
 async function editedSinceImport(ctx: Ctx, article: ExistingArticle): Promise<boolean> {
   const last = await ctx.payload.find({
@@ -663,6 +781,8 @@ async function importOne(
   const legacyId = item.wpId as number
   const snapshot = structuredClone(report)
   const authorKeysSnapshot = new Map(ctx.authorKeys)
+  const dryCreatedSnapshot = new Set(ctx.dryCreated)
+  const reviewLength = ctx.review.length
   const baseReq = ctx.req
 
   // One transaction per post (not in a dry run, which writes nothing).
@@ -694,7 +814,10 @@ async function importOne(
     manifest?.append({ type: 'abort', legacyId })
     // The rolled-back rows no longer exist: forget what was cached about them.
     Object.assign(report, snapshot)
+    // Apply: the rolled-back category rows no longer exist, forget them. Dry run: nothing was written, so only the counted names are restored.
     ctx.categories.clear()
+    ctx.dryCreated = dryCreatedSnapshot
+    ctx.review.length = reviewLength
     ctx.authorKeys = authorKeysSnapshot
     ctx.media.reset()
     throw err
