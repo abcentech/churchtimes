@@ -662,3 +662,34 @@ function hash(text: string): number {
   for (const ch of text) h = (h * 31 + ch.charCodeAt(0)) | 0
   return h
 }
+
+describe('load-test fixes: redirect list rebuild', () => {
+  it('SQL loaders return exactly what the Payload loaders return', async () => {
+    const { loadStoredRows, loadStoredRowsFast, loadPublishedLegacyArticles, loadPublishedLegacyArticlesFast } = await import('../../src/lib/redirectData')
+    await rule(p('fast'), '/')
+    expect(await loadStoredRowsFast(f.payload)).toEqual(await loadStoredRows(f.payload))
+    expect(await loadPublishedLegacyArticlesFast(f.payload)).toEqual(await loadPublishedLegacyArticles(f.payload))
+  })
+
+  it('an expired memo is served stale, then refreshed in the background', async () => {
+    const first = await getList()
+    expect(first.status).toBe(200)
+    const id = await rule(p('swr'), '/')
+    expect(id).toBeGreaterThan(0)
+    const realNow = Date.now
+    try {
+      Date.now = () => realNow() + 11_000 // past CACHE_MS
+      const stale = await getList()
+      expect(stale.status).toBe(200)
+      expect(mine(stale.json.rules).some((r) => r.from === p('swr'))).toBe(false)
+      for (let i = 0; i < 50; i++) {
+        await new Promise((r) => setTimeout(r, 100))
+        const again = await getList()
+        if (mine(again.json.rules).some((r) => r.from === p('swr'))) return
+      }
+      throw new Error('background refresh never published the new rule')
+    } finally {
+      Date.now = realNow
+    }
+  })
+})

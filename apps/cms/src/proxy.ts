@@ -38,8 +38,8 @@ const corsHeaders = (origin: string | null): Record<string, string> => {
  * corrected article leaves a cache within one minute. See docs/performance.md.
  */
 export const PUBLIC_READ_CACHE: ReadonlyArray<{ path: RegExp; cacheControl: string }> = [
-  { path: /^/api/articles/?$/, cacheControl: 'public, max-age=60' },
-  { path: /^/api/categories/?$/, cacheControl: 'public, max-age=300' },
+  { path: /^\/api\/articles\/?$/, cacheControl: 'public, max-age=60' },
+  { path: /^\/api\/categories\/?$/, cacheControl: 'public, max-age=300' },
 ]
 
 export function publicReadCacheControl(

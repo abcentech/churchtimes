@@ -1,4 +1,145 @@
-# CMS read-path performance
+# CMS performance
+
+## HTTP load test (production build)
+
+Reproduce: `npm run load:test -- --db-dir <dir> --build --webpack` (the first run seeds the database with the perf harness, about 10 minutes; `--webpack` only because `node_modules` was a junction in the test worktree, a normal checkout can build with Turbopack). Options: `--steps 10,25,50,100`, `--duration 60`, `--only "<endpoint>"` (isolated endpoint, including the extra `article list (depth 0)` and `article list (projection)`), `--think-ms`, `--env K=V`. The generator is plain node:http (no external tool), closed loop with no think time, so the numbers are saturation capacity. On Windows, embedded PostgreSQL can leave an orphaned `startup` process after a run; kill it before the next run if PostgreSQL refuses to start ("pre-existing shared memory block").
+
+Machine: 8 logical cores, Intel(R) Core(TM) i5-8350U CPU @ 1.70GHz, 15.8 GB RAM, win32 10.0.26200, node v24.19.0. The load generator, the embedded PostgreSQL and the CMS ran on the same laptop, with other unrelated processes active, so treat absolute numbers as a floor and compare before/after only.
+
+CMS: `next start` (NODE_ENV=production, one process), `PAYLOAD_DB_PUSH=false`, `TRUST_PROXY=true` with one X-Forwarded-For address per virtual user (as behind nginx), rate limits at defaults (search 60 per minute per address), pg pool at the default 10, scheduler off.
+
+Dataset: 4160 published articles (6 MB table), 1348 legacy comments, 12 categories, 5000 stored redirect rules (plus derived), 60 ad campaigns, 1408 media.
+
+Workload mix (weights): article list 18 (70 percent page 1, rest pages 2 to 30, depth 1, limit 20), list by category 8, article by slug 30, category list 5, search 15 (20 realistic queries, 20 percent page 2 to 4), legacy comments 8, redirects 3, advertising 8, health live 3, health ready 2. 60 s per step after a 10 s warm-up.
+
+### Before the fixes (same data, same machine)
+
+| VUs | RPS | p50 ms | p95 ms | p99 ms | error % | 429 | CPU % of 1 core | RSS MB max | DB conns max / active max |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 10 | 16.8 | 476.7 | 1831.9 | 2934.7 | 0.39 | 0 | 60.4 | 372.6 | 10 / 2 |
+| 25 | 19.3 | 1165.6 | 2974.7 | 3785.8 | 0.17 | 0 | 68.1 | 392.3 | 10 / 3 |
+| 50 | 21.2 | 2186.1 | 4522.5 | 5062.9 | 0.75 | 0 | 67.9 | 472.6 | 10 / 3 |
+| 100 | 18.4 | 6207.4 | 9427.2 | 10493.2 | 1.86 | 0 | 68.3 | 494.2 | 10 / 3 |
+
+### After the fixes
+
+| VUs | RPS | p50 ms | p95 ms | p99 ms | error % | 429 | CPU % of 1 core | RSS MB max | DB conns max / active max |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 10 | 52.4 | 191 | 364.4 | 731.1 | 0 | 0 | 99.1 | 392.6 | 10 / 2 |
+| 25 | 65 | 428.1 | 764.1 | 1079.9 | 0 | 0 | 104.3 | 511.8 | 10 / 4 |
+| 50 | 67.5 | 889.6 | 1426.7 | 1928.9 | 0 | 0 | 107.9 | 511.7 | 10 / 4 |
+| 100 | 55.9 | 1941.3 | 3523 | 4027.1 | 0 | 0 | 95.2 | 535 | 10 / 2 |
+
+Error rate excludes 429s. There were no 429s in the mix because every virtual user has its own address and stays far below 60 searches a minute. Rate limiter probe from ONE address: the 61st search inside a minute is the first 429, with `Retry-After: 60`. The limiter is in process memory, so with N replicas the effective limit is 60 x N per address.
+
+### Per endpoint, after the fixes
+
+#### 10 virtual users
+
+| Endpoint | requests | RPS | p50 | p95 | p99 | errors | KB/resp | Cache-Control |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| article list | 554 | 9.2 | 262.9 | 399.2 | 786.7 | 0 | 59.2 | public, max-age=60 |
+| article list by category | 283 | 4.7 | 257.6 | 435.8 | 1102.6 | 0 | 62.6 | public, max-age=60 |
+| article by slug | 956 | 15.8 | 230.1 | 434.6 | 747.3 | 0 | 3.7 | public, max-age=60 |
+| category list | 168 | 2.8 | 78 | 159.4 | 539.2 | 0 | 2 | public, max-age=300 |
+| search | 459 | 7.6 | 72.1 | 136.4 | 199.7 | 0 | 3 | public, max-age=60 |
+| legacy comments | 242 | 4 | 130.7 | 260.6 | 653.7 | 0 | 0.3 | public, max-age=60 |
+| redirects | 88 | 1.5 | 29.4 | 68.9 | 145.5 | 0 | 400.8 | public, max-age=300 |
+| advertising | 261 | 4.3 | 78 | 136.9 | 242.3 | 0 | 0.1 | public, max-age=60 |
+| health live | 83 | 1.4 | 27.5 | 61.6 | 180.6 | 0 | 0 | no-store |
+| health ready | 72 | 1.2 | 31.7 | 436 | 473.2 | 0 | 0.1 | no-store |
+
+#### 25 virtual users
+
+| Endpoint | requests | RPS | p50 | p95 | p99 | errors | KB/resp | Cache-Control |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| article list | 726 | 12.1 | 543.7 | 885.8 | 1171.7 | 0 | 59.5 | public, max-age=60 |
+| article list by category | 313 | 5.2 | 536.7 | 949 | 1124.6 | 0 | 63 | public, max-age=60 |
+| article by slug | 1201 | 20 | 486.5 | 819.4 | 1157.9 | 0 | 3.7 | public, max-age=60 |
+| category list | 169 | 2.8 | 146.9 | 222.5 | 592.8 | 0 | 2 | public, max-age=300 |
+| search | 559 | 9.3 | 131 | 250.3 | 515.2 | 0 | 3.3 | public, max-age=60 |
+| legacy comments | 324 | 5.4 | 270.5 | 432.7 | 584 | 0 | 0.3 | public, max-age=60 |
+| redirects | 120 | 2 | 39.7 | 67.9 | 95.3 | 0 | 400.8 | public, max-age=300 |
+| advertising | 321 | 5.3 | 129.4 | 204.5 | 324.7 | 0 | 0.1 | public, max-age=60 |
+| health live | 110 | 1.8 | 40.2 | 96.6 | 399.3 | 0 | 0 | no-store |
+| health ready | 72 | 1.2 | 44.3 | 686 | 1304.8 | 0 | 0.1 | no-store |
+
+#### 50 virtual users
+
+| Endpoint | requests | RPS | p50 | p95 | p99 | errors | KB/resp | Cache-Control |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| article list | 745 | 12.3 | 1030.8 | 1562.2 | 2210.2 | 0 | 59.5 | public, max-age=60 |
+| article list by category | 320 | 5.3 | 1033.6 | 1656.8 | 2051.1 | 0 | 63 | public, max-age=60 |
+| article by slug | 1260 | 20.9 | 988.7 | 1529.6 | 2260.5 | 0 | 3.7 | public, max-age=60 |
+| category list | 186 | 3.1 | 293.5 | 645.5 | 701.5 | 0 | 2 | public, max-age=300 |
+| search | 576 | 9.5 | 203.5 | 415.8 | 683.6 | 0 | 3.4 | public, max-age=60 |
+| legacy comments | 319 | 5.3 | 563.3 | 898.9 | 1077.8 | 0 | 0.3 | public, max-age=60 |
+| redirects | 130 | 2.2 | 38 | 79.8 | 107.5 | 0 | 400.8 | public, max-age=300 |
+| advertising | 318 | 5.3 | 199.3 | 326.6 | 593 | 0 | 0.1 | public, max-age=60 |
+| health live | 114 | 1.9 | 39.9 | 89.3 | 139.2 | 0 | 0 | no-store |
+| health ready | 108 | 1.8 | 42.9 | 1110.6 | 2063 | 0 | 0.1 | no-store |
+
+#### 100 virtual users
+
+| Endpoint | requests | RPS | p50 | p95 | p99 | errors | KB/resp | Cache-Control |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| article list | 602 | 9.9 | 2736.9 | 3920 | 4076.2 | 0 | 59.5 | public, max-age=60 |
+| article list by category | 256 | 4.2 | 2754 | 3934.7 | 4208.1 | 0 | 62.9 | public, max-age=60 |
+| article by slug | 1036 | 17 | 2615.6 | 3840.3 | 4058.7 | 0 | 3.7 | public, max-age=60 |
+| category list | 158 | 2.6 | 718.4 | 1263.3 | 1526.9 | 0 | 2 | public, max-age=300 |
+| search | 507 | 8.3 | 470.6 | 907.1 | 1123.5 | 0 | 3.3 | public, max-age=60 |
+| legacy comments | 281 | 4.6 | 1453.5 | 2208 | 2439.6 | 0 | 0.3 | public, max-age=60 |
+| redirects | 118 | 1.9 | 48.8 | 159.5 | 301.8 | 0 | 400.8 | public, max-age=300 |
+| advertising | 266 | 4.4 | 437.2 | 758.5 | 968.3 | 0 | 0.1 | public, max-age=60 |
+| health live | 106 | 1.7 | 42.9 | 117.7 | 182.9 | 0 | 0 | no-store |
+| health ready | 68 | 1.1 | 41.7 | 1683.8 | 2093.9 | 0 | 0.1 | no-store |
+
+## Bottlenecks found
+
+1. **The redirect list rebuild froze the whole process (fixed).** The memo expired every 10 s and requests waited for the rebuild. A rebuild costs about 2.7 s of CPU on the event loop (0.4 s loading 5,000 stored rows and 0.9 s loading 4,160 articles through Payload document hydration, 1.0 to 1.4 s in `buildRedirectMap`, pure CPU, linear), SQL itself 24 ms. Every other endpoint stalled behind it. Fix: stale-while-revalidate (an expired memo is served while one background rebuild runs; a failed rebuild still replaces the memo with the error as before) and two raw SQL loaders for the rebuild (same rows, a test proves equality). Result: 3.1x more requests at 10 users (16.8 to 52.4 RPS), p95 1831.9 to 364.4 ms, request errors 0.39 / 0.17 / 0.75 / 1.86 percent to 0 at every step (before: mostly timeouts and 500s while stalled).
+2. **One Node process is the limit, not PostgreSQL.** After the fix CPU sits at about 100 percent of one core from 10 users upward and throughput plateaus at 65 to 68 RPS; above that latency grows with users (queueing, not failure: 0 errors at 100 users). SQL time per request is small: EXPLAIN of every SELECT shows 1 to 15 ms per request path (article list 15 ms of SQL against about 100 ms of request time; advertising 5 ms against 65 ms; article by slug 2 ms against 43 ms). The cost is Payload document hydration and JSON serialisation in JavaScript. The pool never exhausted: 10 connections, at most 4 active at any sample.
+3. **Article list responses are 59 KB** (20 articles with their full Lexical `content`, depth 1). Clients that render cards should send `select` (title, slug, excerpt, publishedAt, category, featuredImage) and `depth=0`; compare with `--only "article list (projection)"`. The depth-1 list also pays the media read-access query (2 extra queries, about 10 ms of SQL).
+4. **No missing index.** EXPLAIN shows index scans on every hot path (the article list composite index, `articles_slug_idx`, GIN on `article_search`, comments and redirect indexes). The sequential scans left are on 4,160-row tables where the planner is right to prefer them (sitemap last page 8 ms, `articles_rels` in the media access query 5 to 9 ms). **No migration was added.** Deep list pages stay linear in the offset (see Findings below).
+5. **Query counts (N+1):** unchanged. Article list 7, article by slug 7, search 1, comments 4, advertising 1, redirects 0 warm; the perf harness thresholds still apply.
+6. **Pool:** default 10 per process was enough. `PG_POOL_MAX` now sets it (documented in `.env.example`).
+7. **Rate limiter:** fixed window per address and per process; correct under 100 concurrent users with distinct addresses, 429 after exactly 60 from one address.
+
+## Fixes shipped with this test
+
+- Redirect list: stale-while-revalidate plus SQL loaders (`src/endpoints/publicRedirects.ts`, `src/lib/redirectData.ts`). Tests in `tests/integration/redirects.test.ts`.
+- Cache-Control on Payload's anonymous `GET /api/articles` (list) and `GET /api/categories` (`src/proxy.ts`): only without Cookie or Authorization and without `draft` or `preview`. Tests in `tests/unit/publicReadCache.test.ts`.
+- `PG_POOL_MAX` environment variable.
+- `scripts/load-test.ts` (`npm run load:test`).
+
+## Recommended production sizing
+
+Measured: about 65 mixed uncached requests per second per Node process on a 4-core laptop that was also running the generator and PostgreSQL. Plan on **about 50 uncached RPS per CMS process**.
+
+- **CPU / replicas:** with the CDN rules below, origin traffic for public reads is a few requests per second. Start with **2 vCPU and 2 CMS processes** (one per core, behind the existing reverse proxy) plus PostgreSQL on the same host; do not run more processes than cores.
+- **RAM:** about 0.55 GB RSS per process at 100 users, so 1.2 GB for two, plus PostgreSQL (shared_buffers 256 MB; the dataset is under 100 MB) and the OS: **4 GB**.
+- **pg pool:** 10 per process (default) is enough (4 active at most). Keep processes x `PG_POOL_MAX` below PostgreSQL `max_connections` minus about 10 for backups and admin tools.
+- **Rate limiters** are per process: with 2 replicas the search limit is 120 per minute per address. Add the limit in the reverse proxy as well if exactness matters.
+- **Redirect list:** a rebuild costs 1 to 3 s of CPU on one process, at most every 10 s, and only while someone asks for it (a CDN asks once per 5 minutes). Re-measure above 15,000 rules.
+
+## What to put behind a CDN (exact values)
+
+Cache only 200 responses, key on the full URL including the query string and on `Origin` (`Vary: Origin` is sent), and bypass the cache when a Cookie or Authorization header is present.
+
+| Endpoint | Cache-Control sent by the CMS | CDN rule |
+| --- | --- | --- |
+| `GET /api/articles?...` (anonymous list and by-slug queries) | `public, max-age=60` (new) | cache, honour origin TTL; purge on unpublish if instant takedown matters |
+| `GET /api/articles/:id`, `/api/articles/count`, `/api/media/*` | none | do not cache (media files may be cached by filename) |
+| `GET /api/categories` | `public, max-age=300` (new) | cache |
+| `GET /api/public/search` | `public, max-age=60` | cache (the rate limit is only reached on a miss) |
+| `GET /api/legacy-comments?article=...` | `public, max-age=60` | cache |
+| `GET /api/public/redirects` | `public, max-age=300` plus ETag | cache; the 400 KB response, the one most worth caching |
+| `GET /api/public/advertising` | `public, max-age=N`, N up to 60 (shorter near a campaign boundary) | cache, honour origin TTL exactly |
+| `/api/health/live`, `/api/health/ready` | `no-store` | never cache |
+| everything else under `/api` (users, submissions, contact, newsletter, admin, writes) | `no-store` or none | never cache |
+
+---
+
+# CMS read-path performance (in process, no HTTP)
 
 Measured at go-live scale on synthetic data (no real personal data, throwaway PostgreSQL). The numbers are for the
 database and Payload layer only (Local API and endpoint handlers called in process, no HTTP, no reverse proxy, no CDN).
