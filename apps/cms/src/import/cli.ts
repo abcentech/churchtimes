@@ -2,12 +2,14 @@ import type { Payload } from 'payload'
 
 import { safeErrorSummary } from '../lib/safeLog'
 import { formatImportReport } from './qa'
-import { ImportError, runImport, type ImportOptions } from './run'
+import { isCategorySlug } from './mapping'
+import { DEFAULT_FALLBACK_CATEGORY, ImportError, runImport, type ImportOptions } from './run'
 import { WxrError } from './wxr'
 
 /**
  * `npm run import:wxr -- --file <export.xml> [--uploads <folder>] [--manifest <path>] [--apply] [--update]
- *  [--old-host a.test,b.test] [--limit N]`
+ *  [--old-host a.test,b.test] [--limit N] [--category-map <tag-map.json outside the repo>]
+ *  [--fallback-category <slug>] [--fallback-category-name <name>]`
  *
  * DRY RUN by default (nothing is written). `--apply` writes and needs a rollback manifest path, given by `--manifest`
  * or the `IMPORT_MANIFEST_PATH` environment variable; it must be outside the repository and must not exist yet.
@@ -24,7 +26,7 @@ export function parseImportArgs(argv: readonly string[], env: Record<string, str
   }
   const file = value('--file')
   if (!file) return null
-  for (const name of ['--uploads', '--manifest', '--old-host', '--limit']) {
+  for (const name of ['--uploads', '--manifest', '--old-host', '--limit', '--category-map', '--fallback-category', '--fallback-category-name']) {
     if (argv.includes(name) && !value(name)) return null
   }
   const limitRaw = value('--limit')
@@ -32,6 +34,15 @@ export function parseImportArgs(argv: readonly string[], env: Record<string, str
   if (limitRaw !== undefined) {
     if (!/^\d{1,7}$/.test(limitRaw) || Number(limitRaw) < 1) return null
     limit = Number(limitRaw)
+  }
+  const fallbackSlug = value('--fallback-category') ?? env.IMPORT_FALLBACK_CATEGORY
+  const fallbackName = value('--fallback-category-name') ?? env.IMPORT_FALLBACK_CATEGORY_NAME
+  let fallbackCategory: ImportOptions['fallbackCategory']
+  if (fallbackSlug || fallbackName) {
+    const slug = (fallbackSlug ?? DEFAULT_FALLBACK_CATEGORY.slug).trim()
+    const title = (fallbackName ?? (fallbackSlug ? '' : DEFAULT_FALLBACK_CATEGORY.title)).trim() || slug
+    if (!isCategorySlug(slug) || title.length > 120) return null
+    fallbackCategory = { slug, title }
   }
   return {
     file,
@@ -42,6 +53,8 @@ export function parseImportArgs(argv: readonly string[], env: Record<string, str
     forceUpdate: argv.includes('--force-update'),
     oldHosts: (value('--old-host') ?? '').split(',').map((h) => h.trim()).filter(Boolean),
     limit,
+    categoryMapFile: value('--category-map') ?? env.IMPORT_CATEGORY_MAP,
+    fallbackCategory,
   }
 }
 
