@@ -25,7 +25,12 @@ const isAllowed = (ruleId, node) =>
 
 async function scan(page, label, testInfo) {
   await page.waitForTimeout(300); // let entrance animations/transitions settle before measuring contrast
-  const results = await new AxeBuilder({ page }).withTags(AXE_TAGS).analyze();
+  let results = await new AxeBuilder({ page }).withTags(AXE_TAGS).analyze();
+  // A toast fading out mid-scan makes axe report colour contrast against :root (no stable background). Re-scan once.
+  if (results.violations.some(v => v.nodes.some(n => n.target.join(' ') === ':root'))) {
+    await page.waitForTimeout(800);
+    results = await new AxeBuilder({ page }).withTags(AXE_TAGS).analyze();
+  }
   const blocking = [];
   for (const v of results.violations) {
     const nodes = v.nodes.filter(n => !isAllowed(v.id, n));
@@ -133,6 +138,42 @@ test.describe('axe: every screen and state', () => {
     await scan(page, 'public-tip-notice', ti);
   });
 
+  test('archive review: not-permitted, list, filtered, review screen, approve modal', async ({ page }, ti) => {
+    await signedIn(page, '#archive');
+    await expect(page.getByTestId('archive-not-permitted')).toBeVisible();
+    await scan(page, 'archive-not-permitted', ti);
+    await signedIn(page, '#archive', EDITOR);
+    await expect(page.getByTestId('archive-row').first()).toBeVisible();
+    await scan(page, 'archive-list', ti);
+    await page.getByLabel('Recovery confidence').selectOption('missing');
+    await page.getByTestId('archive-apply').click();
+    await expect(page.getByTestId('archive-row')).toHaveCount(1);
+    await scan(page, 'archive-list-filtered', ti);
+    await page.getByTestId('archive-clear').click();
+    await page.getByTestId('archive-row').first().getByTestId('archive-open').click();
+    await expect(page.getByTestId('archive-publish-blocked')).toBeVisible();
+    await scan(page, 'archive-review-blocked', ti);
+    await page.getByTestId('archive-approve').click();
+    await expect(page.locator('.modal-overlay')).toBeVisible();
+    await scan(page, 'archive-approve-modal', ti);
+  });
+
+  test('archive review: outbound links panel', async ({ page }, ti) => {
+    await signedIn(page, '#archive', EDITOR);
+    const rows = page.getByTestId('archive-row');
+    await expect(rows.first()).toBeVisible();
+    const n = await rows.count();
+    for (let i = 0; i < n; i++) {
+      await page.goto('./#archive');
+      await rows.nth(i).getByTestId('archive-open').click();
+      await expect(page.getByTestId('archive-body')).toBeVisible();
+      if (await page.getByTestId('archive-links').count()) {
+        await scan(page, 'archive-review-links', ti);
+        return;
+      }
+    }
+  });
+
   test('dark theme', async ({ page }, ti) => {
     await signedIn(page, '#dashboard');
     await page.locator('#theme-toggle-btn').click();
@@ -175,7 +216,9 @@ test.describe('keyboard and assistive technology behaviour', () => {
       info.ids.forEach(id => seen.add(id));
     }
     expect(missingRing).toEqual([]);
-    for (const id of ['nav-editor', 'nav-review', 'nav-live', 'nav-media', 'nav-new-story', 'dash-new-story', 'logout']) {
+    const desktopNav = (page.viewportSize()?.width ?? 0) > 768; // the top nav is replaced by the bottom bar on phones
+    const required = ['dash-new-story', 'logout', ...(desktopNav ? ['nav-editor', 'nav-review', 'nav-live', 'nav-media', 'nav-new-story'] : [])];
+    for (const id of required) {
       expect([...seen], `tab order never reached ${id}`).toContain(id);
     }
   });
