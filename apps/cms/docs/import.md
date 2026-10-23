@@ -378,6 +378,40 @@ npm run import:rollback -- --manifest D:\churchtimes-private\manifests\run-1.jso
 A rollback does not remove audit rows (kept on purpose), does not restore an article that `--update` rewrote (use its version history), and touches
 nothing the manifest does not list.
 
+## Importing on the server (production compose)
+
+The production stack mounts no export, uploads or manifest folder, so the import uses the opt-in override `docker-compose.import.yml` (service `importer`, profile `import`, never started by `up`). It runs the `importer` image (Dockerfile target `importer`: the migrator image plus `scripts/`, so `tsx`, `payload` and every `npm run import:*` command work) with the same hardening as `migrate`: uid 1000, read-only root, tmpfs `/tmp`, `cap_drop: ALL`, `no-new-privileges`, only the internal `db` network, no published ports.
+
+Mounts (host paths come from variables with **no defaults**; keep all of them outside the repository checkout):
+
+| Variable | Container path | Mode |
+| --- | --- | --- |
+| `IMPORT_EXPORT_FILE` (a file) | `/import/export.xml` | read-only |
+| `IMPORT_UPLOADS_DIR` | `/import/uploads` | read-only |
+| `IMPORT_PRIVATE_DIR` (owned by 1000:1000, mode 700) | `/import/private` | read-write: manifests and reports |
+| `CMS_MEDIA_DIR` (default `/srv/churchtimes/media`) | `/app/media` | read-write: ingested images land here |
+
+Build and pin the image from the same commit as the others (`docker build --target importer -t churchtimes-cms-importer apps/cms`), then:
+
+```sh
+export CMS_IMAGE=... CMS_MIGRATOR_IMAGE=... CMS_IMPORTER_IMAGE=ghcr.io/abcentech/churchtimes-cms-importer@sha256:<digest>
+export IMPORT_EXPORT_FILE=/srv/churchtimes-private/export.xml
+export IMPORT_UPLOADS_DIR=/srv/churchtimes-private/uploads
+export IMPORT_PRIVATE_DIR=/srv/churchtimes-private/import-private
+C="sudo -E docker compose -f docker-compose.production.yml -f docker-compose.import.yml --profile import run --rm importer"
+sudo -E docker compose -f docker-compose.production.yml up -d postgres
+sudo -E docker compose -f docker-compose.production.yml --profile ops run --rm migrate      # schema first
+
+$C                                                       # smoke: read-only uploads check on the mounts, counts only
+$C npm run import:uploads-check -- --uploads /import/uploads --wxr /import/export.xml --out /import/private/uploads-detail.jsonl
+$C npm run import:wxr -- --file /import/export.xml --uploads /import/uploads                       # dry run (default), writes nothing
+$C npm run import:wxr -- --file /import/export.xml --uploads /import/uploads --apply --manifest /import/private/run-1.jsonl
+$C npm run import:rollback -- --manifest /import/private/run-1.jsonl                               # rollback dry run, read the counts
+$C npm run import:rollback -- --manifest /import/private/run-1.jsonl --apply
+```
+
+Other commands (`import:inspect`, `import:wxr-report`, `import:convert-wxr`) take the same `/import/...` paths. The manifest must not exist yet; keep it, it is the only way to undo a run. Rollback needs the same `IMPORT_PRIVATE_DIR`. After a successful apply, rebuild the search index with the search reindex command, if that command exists in the release you deployed (it was not in the package scripts when this was written; check `npm run` in the importer image), and then start `cms`. Do the first import against a scratch database (`DATABASE_URL` in the env file), never the live one.
+
 ## Rehearsal against a real export
 
 Run the whole import against the owner's REAL WordPress export on a throwaway database, with counts only on screen. Nothing real is written

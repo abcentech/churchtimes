@@ -6,6 +6,8 @@
 # Targets:
 #   migrator  full node_modules (incl. dev deps: tsx etc. that `payload migrate` needs). Used only for the one-off
 #             migration step (compose service `migrate`, profile ops). Never run it as the long-lived server.
+#   importer  migrator + scripts/ (import:uploads-check, import:rehearse, import:convert-wxr). Used only for the one-off
+#             WordPress import (docker-compose.import.yml, profile import). Never run it as the long-lived server.
 #   runtime   (default, last stage) production dependencies only (`npm prune --omit=dev`). The long-lived server.
 #   Build both:  docker build --target migrator -t churchtimes-cms-migrator .
 #                docker build --target runtime  -t churchtimes-cms .
@@ -57,6 +59,11 @@ COPY --from=build --chown=node:node /app/src ./src
 COPY --from=build --chown=node:node /app/package.json /app/next.config.mjs /app/tsconfig.json ./
 USER node
 CMD ["npm", "run", "migrate"]
+
+# ---- importer: migrator + scripts/, for the one-off WordPress import only ------------
+FROM migrator AS importer
+COPY --from=build --chown=node:node /app/scripts ./scripts
+CMD ["npm", "run", "import:uploads-check"]
 
 # ---- runtime: minimal app, non-root (LAST stage = default build target) ----------------
 FROM node:24-bookworm-slim AS runtime
