@@ -1,4 +1,4 @@
-# Church Times CMS — API contracts (v1.17)
+# Church Times CMS — API contracts (v1.18)
 
 Status: implemented on `agent/payload-core`. v1.1 added Turnstile, duplicate detection, staff auth/session
 contract and security hardening; v1.2 closes the verified security-review findings: media ownership, version
@@ -214,7 +214,7 @@ first because a real file can be called `banner-1920x1080.jpg`; `altFallback`/`r
 `<title> photo`, at most 300 characters).
 
 **Import helpers (C1.3, C1.5).** Pure, database-free functions in `src/lib/legacyContent.ts` for the later importer task:
-`resolveSlugCollisions` (every valid original slug is reserved first, only true duplicates and normalised forms that collide get `-2`, `-3`,
+`resolveSlugCollisions` (reserved route names such as `admin` or `search` count as taken, so a colliding post gets `-2`; every valid original slug is reserved first, only true duplicates and normalised forms that collide get `-2`, `-3`,
 so a duplicate never takes a slug another post owns, in any order; returns `{old,new}` pairs; slug rule and 160 characters),
 `sanitizeLegacyLinks` (keep `http`, `https`, `mailto` and root-relative links; convert everything else, including a URL in any of
 `fields.url`, `url`, `href`, to plain text; an old-host link is rewritten through the slug map **only** when it is a plain `/<slug>/`
@@ -780,7 +780,7 @@ published article. A **manual row overrides** the rule an article derives for th
 `legacy-url` rows may chain (flattened, or made 410, at generation).
 
 **Derived rules**: each **published** article with a `legacyUrl` yields `from` = path of `legacyUrl`, `to` = the article path from
-`PUBLIC_ARTICLE_PATH_TEMPLATE` (`/reports/{slug}/` default, or `/{slug}/`; any other value stops startup). Nothing is emitted when `from`
+`PUBLIC_ARTICLE_PATH_TEMPLATE` (**`/{slug}/` default**, owner decision D1: the same address WordPress used; or `/reports/{slug}/`; any other value stops startup). Nothing is emitted when `from`
 equals `to`, the article is not published, the `legacyUrl` has a query string or is the root, or its host is not in `LEGACY_SITE_HOSTS`
 (default `churchtimesnigeria.net,www.churchtimesnigeria.net`; a bare path is accepted). Existing rules and the write hook compare canonical paths
 over all published articles (no substring search, no limit).
@@ -789,7 +789,7 @@ over all published articles (no substring search, no limit).
 
 ```json
 { "version": "sha256:…", "generatedAt": "2026-10-16T00:00:00Z", "count": 2, "rules": [
-  { "from": "/old-slug/", "to": "/reports/new-slug/", "status": 301, "source": "legacy-url" },
+  { "from": "/old-slug/", "to": "/new-slug/", "status": 301, "source": "legacy-url" },
   { "from": "/retired/", "to": null, "status": 410, "source": "manual" } ] }
 ```
 
@@ -954,6 +954,14 @@ proxy) and https-only `CMS_PUBLIC_URL`/CORS/CSRF settings (`docs/security.md`). 
 limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/operations.md` §4).
 
 ## 9. Changelog
+
+### v1.18: Articles live at `/{slug}/` (owner decision D1)
+**Behaviour change** for the default of `PUBLIC_ARTICLE_PATH_TEMPLATE` (C7, O1) and for slug validation; no response shape changes.
+- `PUBLIC_ARTICLE_PATH_TEMPLATE` now defaults to `/{slug}/` (was `/reports/{slug}/`); `/reports/{slug}/` stays an accepted value; anything else stops startup. The public host must read the same value.
+- C7: with `/{slug}/` the WordPress address and the new address of an imported post are identical, so `GET /api/public/redirects` emits no rule for it (`sameAddress`). Rules remain only for genuine changes: slug renames made by the slug-lock feature, old-host or dated permalinks, and `?p=N` (resolved by the public host through `legacyId`).
+- Slugs equal to a reserved route name (`admin`, `api`, `newsletter`, `contact`, `search`, `category`, `tag`, `feed`, `sitemap`, `wp-content`, `wp-admin`, `wp-json`, ... see `src/lib/reservedSlugs.ts`) are refused on write (400) while the template is `/{slug}/`; a generated slug that would collide gets `-2`; the importer gives a colliding post its `-<wp id>` slug and counts it (`articles.slugRenamedReserved`); `resolveSlugCollisions` treats reserved names as taken.
+- The importer's link rewriting now defaults to the configured article path (`/{slug}/`) instead of `/article/<slug>`.
+- Test vectors for root article paths added to `tests/fixtures/redirect-normalisation.json` (`rootArticlePath`).
 
 ### v1.17: Newsletter consent hardening (NDPA)
 **Behaviour change** for the subscriber import and subscriber staff access; no public response changes (subscribe, confirm and unsubscribe answers are byte-identical to v1.14).

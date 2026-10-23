@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { type DefaultTreeAdapterMap, defaultTreeAdapter, parseFragment } from 'parse5'
 
 import { stripShortcodes, sanitizeLegacyLinks } from '../lib/legacyContent'
+import { articlePath, resolveArticlePathTemplate } from '../lib/redirectPaths'
 import { findEmbedProblem, YOUTUBE_BLOCK_SLUG, YOUTUBE_ID_RE, YOUTUBE_TITLE_MAX, youtubeTitleProblem } from '../lib/lexicalEmbeds'
 
 /**
@@ -36,7 +37,7 @@ export type HtmlToLexicalOptions = {
   /** Extra shortcode names to remove (merged with the C1 defaults). */
   knownShortcodes?: readonly string[]
   articleTitle?: string
-  /** New root-relative article path, default `/article/<slug>`. */
+  /** New root-relative article path, default is the configured article path (`/{slug}/`, see PUBLIC_ARTICLE_PATH_TEMPLATE). */
   articlePath?: (slug: string) => string
   /** Default 5 MB. */
   maxInputBytes?: number
@@ -593,7 +594,7 @@ function convert(html: string, options: HtmlToLexicalOptions): HtmlToLexicalResu
   const linkResult = sanitizeLegacyLinks(content, {
     oldHosts: options.oldHosts,
     slugMap: options.slugMap,
-    articlePath: options.articlePath ?? ((slug: string) => `/article/${slug}`),
+    articlePath: options.articlePath ?? ((slug: string) => articlePath(resolveArticlePathTemplate(), slug)),
   })
   content = linkResult.root as { root: LexicalNode }
   root = content.root

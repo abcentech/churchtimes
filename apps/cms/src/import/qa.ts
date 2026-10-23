@@ -24,6 +24,8 @@ export type ImportReport = {
     /** Everything not imported, by reason: password-protected, status-<x>, bad-id, no-date, conversion-<code>, write-failed, ... */
     skipped: Tally
     passwordProtected: number
+    /** Posts whose WordPress slug is a reserved route name (admin, search, ...) and got a numbered slug instead (root article paths). */
+    slugRenamedReserved: number
     /** Imported before, but the post is now draft, private, trashed ...: left as it is in the CMS. */
     previouslyImportedNowNotPublished: number
   }
@@ -87,7 +89,7 @@ export function newReport(mode: 'dry-run' | 'apply', update: boolean): ImportRep
     mode,
     update,
     source: { items: t(), postsByStatus: t(), publishedPosts: 0, approvedCommentsOnPublishedPosts: 0, attachments: 0 },
-    articles: { created: 0, updated: 0, unchanged: 0, skipped: t(), passwordProtected: 0, previouslyImportedNowNotPublished: 0 },
+    articles: { created: 0, updated: 0, unchanged: 0, skipped: t(), passwordProtected: 0, previouslyImportedNowNotPublished: 0, slugRenamedReserved: 0 },
     categories: {
       created: 0,
       fallbackUsed: 0,
@@ -162,6 +164,7 @@ export function formatImportReport(rep: ImportReport): string {
     ...lines('  skipped by reason', rep.articles.skipped),
     `  published posts accounted for: ${rec.accountedFor} of ${rec.sourcePublished} (difference ${rec.difference})`,
     `  previously imported, now not published in the export (left alone): ${rep.articles.previouslyImportedNowNotPublished}`,
+    `  slug is a reserved route name, renamed with the post id: ${rep.articles.slugRenamedReserved}`,
     '',
     'Categories',
     `  created: ${rep.categories.created}`,
