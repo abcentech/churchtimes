@@ -378,6 +378,50 @@ npm run import:rollback -- --manifest D:\churchtimes-private\manifests\run-1.jso
 A rollback does not remove audit rows (kept on purpose), does not restore an article that `--update` rewrote (use its version history), and touches
 nothing the manifest does not list.
 
+## Rehearsal against a real export
+
+Run the whole import against the owner's REAL WordPress export on a throwaway database, with counts only on screen. Nothing real is written
+anywhere except the folders you name: PostgreSQL is an embedded, temporary instance on a free port, the media folder is inside the temp
+folder (never `apps/cms/media`), and everything is removed at the end (also on Ctrl+C). The export and the uploads folder are only read.
+
+```
+cd apps/cms
+# Everything below stays OUTSIDE every repository. Replace the paths.
+# 1. Dry run only (inspect stats, conversion stats, loader dry run). About 3 to 5 minutes for a 100 MB export.
+npm run import:rehearse -- --file D:\churchtimes-private\export.xml --dry-run-only --detail-file D:\churchtimes-private\reports\rehearse-detail.json
+# 2. Full rehearsal: also apply, second apply (must change nothing) and rollback, all on the throwaway database.
+npm run import:rehearse -- --file D:\churchtimes-private\export.xml --uploads D:\churchtimes-private\uploads --detail-file D:\churchtimes-private\reports\rehearse-detail-2.json
+# Conversion statistics alone (no database at all):
+npm run import:convert-wxr -- --file D:\churchtimes-private\export.xml --detail-file D:\churchtimes-private\reports\convert-detail.json
+```
+
+Options: `--file` (required, outside every repository), `--uploads <dir>` (a copy of `wp-content/uploads`), `--dry-run-only`, `--detail-file <path>` (must not exist yet,
+outside every repository, owner-only permissions) and `--keep` (keep the temp folder for debugging; it holds the throwaway database and, after an apply, copied media).
+A failed article write is reported as one line of error class, SQLSTATE and invalid field names (never values); its post id goes to the detail file (`applyFailed`). Exit code 0 only when every PASS/FAIL check passes and nothing failed to convert.
+
+What is printed (counts and fixed codes only; the only strings taken from the file are shortcode, element and block tag names, and the fixed reason codes of the link rewriter):
+
+- **Inspect**: posts by status, password-protected posts, categories, authors, comments by status, attachments, top shortcode tags, largest post, deepest HTML nesting.
+- **Conversion of published posts**: each published post goes through `htmlToLexical` with no database.
+  - *conversion failures by code*: `input-too-large` (over the 5 MB cap), `too-deep`, `too-many-nodes`, `invalid-output`. Any non-zero count needs a look.
+  - *shortcodes removed by tag*: markers removed from the text. An opening and a closing tag count separately (`[caption]...[/caption]` is 2). Shortcodes that carry content the CMS cannot
+    show (`video`, `audio`, `fvplayer`, `gallery`) are listed here: that content is NOT imported (only YouTube is kept), so each count is a post the editors should check.
+  - *unknown elements*, *unknown blocks*, *elements dropped with contents*: markup the converter flattened to text or dropped. `pre` is kept as plain lines.
+  - *tables kept / flattened*, *embeds linked / dropped*, *youtube blocks written*.
+  - *images resolved / unresolved*: without `--uploads` every body image is unresolved (it becomes text). That is expected, not a failure. With `--uploads`, an unresolved image is a file missing from the folder.
+  - *links*: rewritten to new article paths; kept as written but unmapped, by reason (`not a single-segment article address` is a category, tag, date or media link on the old host,
+    which the public host redirects; `slug is not in the slug map` is an old-host link to a post that is not imported); turned into text, by reason (`tel:` links, links without a leading slash, and so on: the words stay, the link goes).
+  - *deep nesting flattened* (past 64 levels), *lists flattened* (a list inside a quote or past 6 levels keeps its text as plain lines), *posts over the input cap*, *posts with converter warnings*.
+  - *posts whose text shrank by more than 20%*: a data-loss signal. The non-space characters of the visible source text (tags, comments, scripts and shortcode markers removed; a bare YouTube address does not count, it becomes an embed)
+    are compared with the non-space characters in the converted text. Expect 0. The legacy ids go to `--detail-file` (`textShrink`), never to the screen.
+  - *posts with text in the source and none in the output*: the same signal at its sharpest (`emptyOutput` in the detail file).
+- **Loader dry run** (the `import:wxr` report): published posts accounted for X of Y (difference must be 0), skipped by reason, (`empty-body`: a post whose body is empty after conversion, for example only an image that could not be resolved; the editor refuses an empty body, so the post is reported and not written; look at these in the old site), categories, authors, media (`unresolved by reason`, expected without `--uploads`),
+  content counts, comments created / skipped by reason.
+- **Apply, second apply, rollback** (not with `--dry-run-only`): apply must match the dry run and be verified in the database; the second apply must create nothing (`second apply changed nothing`);
+  the rollback must remove every created row and its files, and its dry run must match it. Phase times, query counts and peak memory follow, then PASS/FAIL lines.
+
+The detail file is JSON: `textShrink`, `emptyOutput`, `failed` (id and code), `inputOverCap`, `maxDepthHit` and `applyFailed`, all WordPress post ids. Open a post by id in the old WordPress admin to look at it. Do not paste the file, or what is in it, anywhere shared.
+
 ## Legacy media map export (A12)
 
 The public host serves old `/wp-content/uploads/...` addresses from an exact map that the owner exports from the CMS and provisions privately. The
