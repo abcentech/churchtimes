@@ -5,7 +5,7 @@ tools have been rehearsed on a real export on a throwaway database (PR #92); not
 Every step that touches the old site, DNS or production needs your explicit "go" first. Read it once start to finish
 before running anything.
 
-Related: [owner-security-hardening.md](owner-security-hardening.md), [import.md](import.md), [operations.md](operations.md),
+Related: [owner-security-hardening.md](owner-security-hardening.md), [import.md](import.md) (server import commands: "Importing on the server"), [uploads-download.md](uploads-download.md), [operations.md](operations.md),
 [security.md](security.md), [api-contracts.md](api-contracts.md). The go-live plan, build spec and Codex specs
 (`docs/go-live-plan.md`, `docs/go-live-build-spec.md`, `docs/codex-wave4-spec.md`) live on the go-live-plan branch.
 
@@ -91,7 +91,14 @@ off, export again (a very large site may need the export split by date range; ke
 ### Step 2.2 Take the uploads pack (images)
 
 The export does not include image files. Ask your host or developer for a copy of the `wp-content/uploads` folder, made
-with the hosting provider's file manager or backup download, not with tools run on the compromised server.
+with the hosting provider's file manager or backup download, not with tools run on the compromised server. The step-by-step
+download guide is [uploads-download.md](uploads-download.md). Three rules for this step:
+
+- Never log in to the compromised server as root, and never with a password. Use a limited account with a key, or the
+  hosting provider's own download.
+- If you copy with rsync, it must be version 3.4.0 or newer. Otherwise use SFTP. Older rsync versions have known security flaws.
+- A separate hardening pull request is fixing problems in that guide. Until it is merged and the uploads check (step 2.3)
+  has been updated, do not delete any file from the raw download. Keep everything in `uploads-raw` exactly as received.
 
 **[OWNER PC]** after you receive the archive:
 
@@ -117,8 +124,13 @@ Get-ChildItem D:\churchtimes-private\uploads-raw -Recurse -File |
 ```
 
 What to check afterwards: the list should be short. Any `.php`, `.exe`, `.js`, `.html` or `.phtml` file is a red flag.
-Do not open it. Delete those files, tell your technical helper, and run a full anti-virus scan of the folder before continuing. Then
-copy the clean result:
+Do not open it. Do not delete anything from the raw download yet (see the rule in step 2.2): tell your technical helper, and run a full anti-virus scan of the folder before continuing. The importer itself refuses every unsafe file, so a bad file in the folder is a finding, not a danger to the import. Your technical helper will also run the read-only uploads check on the raw copy (see "Checking the uploads folder" in [import.md](import.md)), which lists every rejected file and the reason without changing anything:
+
+```
+npm run import:uploads-check -- --uploads D:\churchtimes-private\uploads-raw --wxr D:\churchtimes-private\export.xml --out D:\churchtimes-private\reports\uploads-detail.jsonl
+```
+
+Only after the check's rules have been updated and your technical helper says so, copy the cleaned result:
 
 ```
 Copy-Item D:\churchtimes-private\uploads-raw D:\churchtimes-private\uploads -Recurse
@@ -187,12 +199,18 @@ file only: no database, no network, nothing written. They print counts and codes
 npm run import:inspect -- --file D:\churchtimes-private\export.xml
 npm run import:wxr-report -- --file D:\churchtimes-private\export.xml
 npm run import:convert-wxr -- --file D:\churchtimes-private\export.xml --detail-file D:\churchtimes-private\reports\convert-detail.json
+npm run import:link-audit -- --file D:\churchtimes-private\export.xml --out D:\churchtimes-private\reports\link-rows.jsonl --redirects-out D:\churchtimes-private\reports\link-redirects.csv
 ```
 
 `import:inspect` is the quick size check. `import:wxr-report` is the wider parse report. `import:convert-wxr` converts every
 published post in memory (no database) and reports what the converter had to drop or flatten. The `--detail-file` must not
 exist yet and must be outside the repository; it holds WordPress post ids so you can open a post in the old admin. Never
 paste it anywhere shared.
+
+`import:link-audit` checks every link inside the articles. It prints counts only: links to other articles that will be rewritten to
+the new address, links that cannot be resolved (and why), and the redirect rules the old addresses need. `--out` lists every link
+and `--redirects-out` writes redirect rules you can load later (step 4.4); both files must be outside the repository and must
+not exist yet. Keep them private.
 
 What the real export (the 2026-10-13 file) contains, so you can compare:
 
@@ -210,8 +228,9 @@ What the real export (the 2026-10-13 file) contains, so you can compare:
 | An error code such as `WXR_ENCODING` or `WXR_TRUNCATED` | none; if present, export again (step 2.1) |
 
 A newer export will differ a little; a large difference needs an explanation from your technical helper before you carry on. Also look
-at "shortcodes removed by tag": `video`, `audio`, `fvplayer` and `gallery` content is not imported as media yet (YouTube is
-kept as a video block; a video and audio block is being added in a separate change). Write the counts down so an editor
+at "shortcodes removed by tag": `gallery` content is not imported as media yet. YouTube stays a video block, and video and audio files hosted on the old site
+become a video/audio block when the file is found in the uploads copy; a file that cannot be found is counted as unresolved
+media and the old address is kept, so editors can check those posts. Write the counts down so an editor
 can check those posts.
 
 ### Step 3.4 Dry run of the import
@@ -251,6 +270,14 @@ What the importer decides for you, so nothing surprises you in the QA:
   variables such as `%title%` are filled in where possible (title, site name, category, date, excerpt) and dropped
   otherwise; overlong values are cut at a word. Canonical address, noindex and social titles are counted but not stored
   (the CMS has no field for them yet; ask for one if you want them).
+- **Category rules (optional).** The default, `strict`, is the order above. Adding `--category-mode=rules` lets a rule-based
+  helper suggest a category for posts that would otherwise fall to `News`. It never overrides a category WordPress or Yoast gave,
+  it is right about two thirds of the time, and it needs your approval before you rely on it. Add
+  `--category-review D:\churchtimes-private\reports\category-review.csv` (the file must not exist yet) to get a spreadsheet of the
+  posts left in `News` with a suggestion, for editors to work through. It contains no titles or text. See "Categories: the rules mode" in [import.md](import.md).
+- **Archive candidates.** Pages recovered from web captures of the old site are imported with a separate command
+  (`import:archive-candidates`, dry run by default). They always arrive as drafts, with a note of where they came from, and are
+  never published until an editor has reviewed them. Rolling back removes them too.
 - **Bylines** are text only (the single author name in the export). No accounts are created.
 - **Comments** keep name, date, text and replies. Email addresses, websites and IP addresses are never read, and anything
   shaped like an email address in a name or body becomes `[email removed]`.
@@ -294,7 +321,7 @@ section 9.
 Staging is the CMS on the new server, not yet public, with search engines blocked. The server runs the CMS from the
 production Docker definition (`apps/cms/docker-compose.production.yml`): a `postgres` container, the `cms` container
 (runs as user 1000, read-only filesystem), and a one-off `migrate` container that holds the tools (`migrate`,
-`admin:create` and the import commands). The full server procedure is `operations.md`, section 3.2; your technical helper does the
+`admin:create`; the import commands run in a separate `importer` container, step 4.1). The full server procedure is `operations.md`, section 3.2; your technical helper does the
 server setup. Your part is below.
 
 ### Step 4.1 Bring the CMS up on the server (done by your technical helper, checked by you)
@@ -311,51 +338,65 @@ Facts to confirm with your technical helper before any import:
 | Health: `https://<cms-address>/api/health/live` shows `{"status":"ok"}` and `https://<cms-address>/api/health/ready` shows `"status":"ready"` with `database`, `migrations` and `media` all `true` | [OWNER PC] browser or `curl.exe -s` | Both answer 200. If ready says 503, a `false` flag tells your technical helper which part to look at |
 | A backup ran and was verified before the import (section 8) | [SERVER] | A `churchtimes-<date>` folder exists and `verify-backup.sh` printed `VERIFIED` |
 
-Gap to settle with your technical helper first: the production compose file does not mount your export, the uploads copy or a manifest
-folder into the `migrate` container, and the import writes image files to the media folder. So the first real import
-needs a small local override file (kept on the server, outside GitHub) that mounts, for the one-off `migrate` run only:
-the private folder `/srv/private` read-only, a `manifests` folder that is writable, and `/srv/churchtimes/media` (owned by
-user 1000). Until that exists, do the real import on a machine where the tools run directly (the rehearsal machine setup of
-section 3, but with a persistent database), and move the result to the server with the backup and restore scripts
-(`operations.md`, section 6). Do not improvise this: ask your technical helper.
+The import on the server runs in a one-off container, started from an extra file `docker-compose.import.yml` that is kept with the
+code. Your technical helper sets three variables (folders outside the code folder and outside GitHub, no defaults) and the
+image name, and the commands in step 4.3 then work as written. The full explanation is in [import.md](import.md), section
+"Importing on the server (production compose)".
+
+| Variable | What it points to | Inside the container |
+| --- | --- | --- |
+| `IMPORT_EXPORT_FILE` | the `export.xml` file | `/import/export.xml` (read only) |
+| `IMPORT_UPLOADS_DIR` | the verified uploads folder | `/import/uploads` (read only) |
+| `IMPORT_PRIVATE_DIR` | a private folder (owner 1000:1000, mode 700) for manifests and reports | `/import/private` (read and write) |
+| `CMS_IMPORTER_IMAGE` | the pinned importer image (by digest) | - |
+
+Ask your technical helper to confirm all four are set and that the folders are not inside a Git checkout. Do not improvise this.
 
 ### Step 4.2 Move the private files to the server safely
 
 **[OWNER PC]**
 
 ```
-scp D:\churchtimes-private\export.xml <user>@<server-address>:/srv/private/export.xml
-scp -r D:\churchtimes-private\uploads <user>@<server-address>:/srv/private/uploads
+scp D:\churchtimes-private\export.xml <user>@<server-address>:/srv/churchtimes-private/export.xml
+scp -r D:\churchtimes-private\uploads <user>@<server-address>:/srv/churchtimes-private/uploads
 ```
 
-What to check afterwards: on **[SERVER]**, `ls -la /srv/private` shows both items and the folder is readable only by the
+What to check afterwards: on **[SERVER]**, `ls -la /srv/churchtimes-private` shows both items and the folder is readable only by the
 deploy user (`drwx------`). It must be outside the code folder and outside any Git checkout. Remove the files once the
 import is accepted.
 
 ### Step 4.3 Dry run, then apply
 
-**[SERVER]** (inside the `migrate` container, with the override from step 4.1; your technical helper gives you the exact command line, which
-looks like `$C --profile ops run --rm migrate npm run import:wxr -- --file /srv/private/export.xml ...`)
+**[SERVER]** (in the one-off `importer` container, set up in step 4.1; the paths `/import/...` are paths inside the container.
+Full details: [import.md](import.md), "Importing on the server")
 
-First a dry run, which writes nothing:
+Set the shortcut once per session (the variables are the ones from step 4.1):
 
 ```
-npm run import:wxr -- --file /srv/private/export.xml --uploads /srv/private/uploads
+C="sudo -E docker compose -f docker-compose.production.yml -f docker-compose.import.yml --profile import run --rm importer"
+```
+
+First check the uploads, then a dry run, which writes nothing:
+
+```
+$C npm run import:uploads-check -- --uploads /import/uploads --wxr /import/export.xml --out /import/private/uploads-detail.jsonl
+$C npm run import:wxr -- --file /import/export.xml --uploads /import/uploads
 ```
 
 What to check afterwards: same as step 3.4 ("published posts accounted for X of Y" shows no difference, failures 0).
-Then apply. The manifest file must not exist yet; it is your undo button and must be OUTSIDE the repository.
+Then apply. The manifest file must not exist yet; it is your undo button and lives in the private folder, outside the repository.
+Rebuild the search index straight after, otherwise the public search will not find the imported articles:
 
 ```
-export IMPORT_MANIFEST_PATH=/srv/private/manifests/staging-1.jsonl
-npm run import:wxr -- --file /srv/private/export.xml --uploads /srv/private/uploads --apply
-echo $?
+$C npm run import:wxr -- --file /import/export.xml --uploads /import/uploads --apply --manifest /import/private/staging-1.jsonl
+$C npm run search:reindex
 ```
 
-What to check afterwards: the printed exit code is 0, the QA report matches the rehearsal (4,343 published posts, about 1,348
-approved comments), and the manifest exists. Watch `docker stats` during the first run in case memory runs short. Copy the
-manifest and the printed report to your PC (private folder). Take a fresh database and media backup right after the import
-(section 8).
+What to check afterwards: the QA report matches the rehearsal (4,343 published posts, about 1,348 approved comments), the
+manifest exists in the private folder, and the reindex finished without an error. Watch `docker stats` during the first run in
+case memory runs short. Copy the manifest and the printed report to your PC (private folder). Take a fresh database and media backup
+right after the import (section 8). To undo a run (only if you do not accept the result), use the same container form with
+`import:rollback -- --manifest /import/private/staging-1.jsonl` (dry run first, then `--apply`), then run `search:reindex` again.
 
 ### Step 4.4 Redirects
 
