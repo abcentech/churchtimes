@@ -13,6 +13,7 @@ The public tip form is **not** part of this app: it lives on the public site. Ti
 | --- | --- |
 | `VITE_CMS_URL` | CMS base URL, no trailing slash, e.g. `https://cms.example.org`. Baked in at build time; there is no user-editable backend URL. Empty = same origin (CMS reverse-proxied under `/api`). |
 | `VITE_PUBLIC_SITE_URL` | Optional public site origin, used only to link to its tip form. |
+| `VITE_KNOWN_LINK_HOSTS` | Optional comma-separated hosts the Archive review treats as known outbound-link hosts (subdomains included). Other hosts are flagged. See `apps/cms/docs/security.md` section 6. |
 
 Requirements on the CMS side (see `apps/cms/docs/api-contracts.md` §5 and `docs/staging.md` §7):
 
@@ -99,10 +100,36 @@ npm run test:newsroom-app
 The config then builds the app with that `VITE_CMS_URL` and serves the production bundle on
 `http://newsroom.churchtimes.localhost:5274` (`NEWSROOM_LIVE_PORT`); credentials are read from the file and never printed.
 
+## Archive review
+
+Recovered archive pages arrive as draft articles with a staff-only `provenance` group (`apps/cms/docs/archive-candidate-schema.md`).
+The **Archive review** screen (`#archive`, nav entry for editor roles; Alt+6; also linked from the Review Queue) is the editor's
+desk for them:
+
+- **Queue:** recovered drafts filtered by review status (pending / reviewed / rejected), recovery confidence (partial /
+  citation-only / missing) and import batch, with live counts (status counts ignore the status filter, confidence counts ignore the
+  confidence filter). Each row shows the title, the date the old page claimed, the source host and a confidence badge. Only editor
+  roles see it (the CMS lists recovered drafts for editors; a reporter would see nothing anyway).
+- **Review screen** (`#archive?id=...`): the recovered body beside the provenance (source address, host, claimed date, capture time,
+  SHA-256, confidence, batch, review status). The source address is text plus a link that opens **only on click**, in a new tab with
+  `rel="noopener noreferrer"` and no referrer; the app never loads, embeds or fetches the old page, and only `http(s)` addresses
+  become links.
+- **Actions:** *Approve* (sets `provenance.reviewStatus` to `reviewed`) and *Reject* (`rejected`; the article stays a draft) are
+  shown to admin, editor-in-chief and the section editor of the story's section; both ask for confirmation and send the version
+  seen (`expectedUpdatedAt`, a stale version answers 409 and the screen reloads). The CMS enforces the role rule, writes an
+  `archive.review` audit row (who, when) and refuses everyone else. *Open in editor* goes to the normal editor.
+- **Publishing is unchanged.** Approval does not publish. A recovered story goes through the usual review, approve and publish
+  steps; until it is approved here the CMS refuses to publish or schedule it (409). The review screen and the editor both say so
+  (`archive-publish-blocked`, `editor-archive-blocked`), and the editor's Publish button is disabled with the reason.
+- **No leakage:** `provenance` is read only from staff responses, is never written into the public site or the story markup, and the
+  build contains no public route for it.
+
+Dev mock mode seeds four synthetic recovered drafts (`old-site.test`) kept apart from the desk's stories.
+
 ## Stable test selectors
 
 Elements carry `data-testid` plus stable ids, for example: `login-form`, `login-email`, `login-password`, `login-submit`,
 `login-error`, `logout`, `story-list`, `story-row`, `dash-new-story`, `nav-new-story`, `editor-title`, `editor-standfirst`,
 `editor-body`, `editor-category`, `editor-slug`, `editor-byline`, `editor-featured-image`, `editor-choose-image`,
 `editor-save-draft`, `editor-submit-review`, `editor-approve`, `editor-request-changes`, `editor-publish`,
-`review-card`, `review-inspect`, `tip-list`, `tip-card`, `tip-convert`, `tip-convert-confirm`, `media-upload-input`.
+`review-card`, `review-inspect`, `archive-row`, `archive-filter-status`, `archive-filter-confidence`, `archive-filter-batch`, `archive-source-link`, `archive-approve`, `archive-reject`, `archive-open-editor`, `archive-publish-blocked`, `tip-list`, `tip-card`, `tip-convert`, `tip-convert-confirm`, `media-upload-input`.

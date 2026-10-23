@@ -13,6 +13,7 @@ import { expect, test } from '@playwright/test'
 import { Api, Evidence, getConfig, trackCmsCalls, uniq } from './support/helpers'
 import { freshContext, loginUi, logoutUi, requireNewsroom, slugify } from './support/newsroom'
 import { PUBLIC_CORRECTION_KEYS, reporterSubmitStory, sectionEditorPublishStory } from './support/corrections'
+import { articlePath } from './support/articlePath'
 import { expectPublishedOnPublicSite } from './support/public'
 
 const cfg = getConfig()
@@ -204,7 +205,7 @@ test.describe('I. correction notes on a published story (REAL UI)', () => {
       const ssr = await page.evaluate(async (url) => {
         const res = await fetch(url, { credentials: 'omit', cache: 'no-store' })
         return { status: res.status, html: await res.text() }
-      }, `${cfg.publicOrigin}/reports/${s.slug}/`)
+      }, `${cfg.publicOrigin}${articlePath(cfg, s.slug)}`)
       expect(ssr.status).toBe(200)
       const ssrHtml = ssr.html
       expect(ssrHtml).toContain('Corrections & updates')

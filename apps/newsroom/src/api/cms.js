@@ -14,6 +14,7 @@ import { createCountCache } from './count-cache.js';
 import { liveUpdatePayload } from '../live-photo.js';
 import { loadLiveTimeline } from '../live-timeline.js';
 import { liveStatusBody, transitionBody, contentPatchBody } from '../stale-guard.js';
+import { archiveWhere, normalizeProvenance, reviewPatchBody, REVIEW_STATUSES, CONFIDENCE_LEVELS } from '../archive-review.js';
 import { withTimeout, RequestTimeoutError, timeoutFor } from '../http-guard.js';
 
 const ID_RE = /^\d+$/;
@@ -95,7 +96,9 @@ function normalizeArticle(doc) {
     publishedAt: doc.publishedAt || null,
     scheduledFor: doc.scheduledFor || null,
     reviewNotes: doc.reviewNotes || '',
-    corrections: Array.isArray(doc.corrections) ? doc.corrections : []
+    corrections: Array.isArray(doc.corrections) ? doc.corrections : [],
+    // Staff-only archive provenance (null for ordinary stories). Never rendered on a public page.
+    provenance: normalizeProvenance(doc.provenance)
   };
 }
 
@@ -438,6 +441,50 @@ export class CmsAdapter {
       method: 'PATCH', json: { status: 'scheduled', scheduledFor: when.toISOString() }, query: { depth: '1' }
     });
     return { data: normalizeArticle(data.doc) };
+  }
+
+  // ---- archive review (recovered archive drafts; docs/archive-candidate-schema.md) ----------------------------
+
+  /** Recovered drafts, filtered. Server-side filters only; the CMS lists them for editors and never publicly. */
+  async getArchiveCandidates(filters = {}, { limit = 25, page = 1 } = {}) {
+    const q = new URLSearchParams({ depth: '1', limit: String(limit), page: String(page), sort: '-updatedAt' });
+    for (const [k, v] of archiveWhere(filters)) q.set(k, v);
+    const data = await this.request('/articles', { query: q });
+    return {
+      data: (data?.docs || []).map(normalizeArticle),
+      totalDocs: data?.totalDocs ?? 0,
+      totalPages: data?.totalPages ?? 1,
+      page: data?.page ?? page
+    };
+  }
+
+  /** Counts per review status (ignoring the status filter) and per confidence (ignoring the confidence filter). */
+  async getArchiveCounts(filters = {}) {
+    const count = async (omit, extra) => {
+      const q = new URLSearchParams({ limit: '1', depth: '0' });
+      for (const [k, v] of archiveWhere(filters, omit)) q.set(k, v);
+      for (const [k, v] of extra) q.set(k, v);
+      return (await this.request('/articles', { query: q }))?.totalDocs ?? 0;
+    };
+    const [statusEntries, confidenceEntries] = await Promise.all([
+      Promise.all(REVIEW_STATUSES.map(async s => [s, await count('reviewStatus', [['where[provenance.reviewStatus][equals]', s]])])),
+      Promise.all(CONFIDENCE_LEVELS.map(async c => [c, await count('confidence', [['where[provenance.confidence][equals]', c]])]))
+    ]);
+    return { reviewStatus: Object.fromEntries(statusEntries), confidence: Object.fromEntries(confidenceEntries) };
+  }
+
+  /**
+   * Approve ("reviewed") or reject a recovered draft: PATCH of provenance.reviewStatus only. The CMS accepts it from editors
+   * in scope (others are refused), writes an audit entry (who, when) and keeps the story a draft; 409 when it changed meanwhile.
+   */
+  async setArchiveReview(id, reviewStatus, { expectedUpdatedAt } = {}) {
+    const body = reviewPatchBody(reviewStatus, expectedUpdatedAt);
+    try {
+      const data = await this.request(`/articles/${encodeURIComponent(safeId(id))}`, { method: 'PATCH', json: body, query: { depth: '1' } });
+      return { data: normalizeArticle(data.doc) };
+    } finally {
+      this.articleCounts.invalidate();
+    }
   }
 
   async deleteArticle(id) {
