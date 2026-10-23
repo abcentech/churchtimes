@@ -157,6 +157,7 @@ async function main(): Promise<number> {
       SCHEDULER_ENABLED: 'false',
       PAYLOAD_DB_PUSH: 'false',
       CMS_PUBLIC_URL: 'http://localhost:3000',
+      SEARCH_RATE_LIMIT: '1000000',
     })
     delete process.env.TURNSTILE_SECRET_KEY
 
@@ -166,6 +167,7 @@ async function main(): Promise<number> {
     const { runImport } = await import('../src/import/run')
     const { publicRedirectsEndpoint, resetRedirectsCache } = await import('../src/endpoints/publicRedirects')
     const { publicAdvertisingEndpoint } = await import('../src/endpoints/publicAdvertising')
+    const { publicSearchEndpoints } = await import('../src/endpoints/publicSearch')
     const { publicLegacyCommentsEndpoints } = await import('../src/endpoints/publicLegacyComments')
 
     const resolved = await config
@@ -340,6 +342,24 @@ async function main(): Promise<number> {
       const r = await payload.find({ collection: 'articles', where: { and: [{ status: { equals: 'published' } }, { or: [{ title: { like: 'story 12' } }, { slug: { like: 'story-12' } }] }] }, limit: 20, depth: 0, ...pub })
       return JSON.stringify(r).length
     })
+    // Search (C8). The importer fills the projection through the same hooks, so its row count must equal the published count.
+    const searchRows = Number((await sql('SELECT count(*)::int AS n FROM article_search'))[0].n)
+    if (searchRows !== counts.published) throw new Error(`article_search has ${searchRows} rows for ${counts.published} published articles`)
+    const searchGet = handler(publicSearchEndpoints[0])
+    const searchCase = (label: string, qs: string) =>
+      measure(`search API: ${label}`, { p95: 250, queries: 2 }, async () => {
+        const res = await searchGet(fakeReq(qs))
+        if (res.status !== 200) throw new Error(`search ${qs} -> ${res.status}`)
+        return body(res)
+      })
+    await searchCase('one common word (church)', 'q=church&limit=20')
+    await searchCase('two common words (church community)', 'q=church%20community&limit=20')
+    await searchCase('rare word (nigeria youth outreach)', 'q=nigeria%20youth%20outreach&limit=20')
+    await searchCase('phrase + exclusion ("grace service" -clinic)', 'q=%22grace%20service%22%20-clinic&limit=20')
+    await searchCase('common word, deep page (page 50, limit 20)', 'q=church&limit=20&page=50')
+    await searchCase('common word + category filter', `q=church&limit=20&category=${category}`)
+    await searchCase('common word + year filter', 'q=church&limit=20&year=2023')
+    await searchCase('no match (zzzunmatched)', 'q=zzzunmatched')
     await measure('redirects list GET /api/public/redirects (cold build)', { p95: 1500, queries: 20 }, async () => body(await handler(publicRedirectsEndpoint)(fakeReq(''))), { iterations: 10, before: resetRedirectsCache })
     await measure('redirects list GET /api/public/redirects (warm, in-process memo)', { p95: 5, queries: 0 }, async () => body(await handler(publicRedirectsEndpoint)(fakeReq(''))))
     const comments = handler(publicLegacyCommentsEndpoints[0])
