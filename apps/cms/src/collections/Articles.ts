@@ -41,10 +41,20 @@ import {
 } from '../workflow/articleWorkflow'
 import { reconcileCorrections } from '../workflow/corrections'
 import { articlePath, resolveArticlePathTemplate } from '../lib/redirectPaths'
+import { isReservedSlug } from '../lib/reservedSlugs'
 
 export { ARTICLE_STATUSES }
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+
+/** Under `/{slug}/` an article sits at the site root, so the reserved route names are refused (lib/reservedSlugs.ts). */
+const rootSlugsApply = (): boolean => {
+  try {
+    return resolveArticlePathTemplate() === '/{slug}/'
+  } catch {
+    return true
+  }
+}
 
 type Doc = Record<string, unknown>
 const asUser = (u: unknown): UserLike | null => (u ? (u as UserLike) : null)
@@ -147,7 +157,13 @@ const autoSlug: CollectionBeforeValidateHook = async ({ data, operation, origina
   const title = typeof data.title === 'string' ? data.title : String((originalDoc as Doc)?.title ?? '')
   const base = slugify(title)
   let candidate = base
+  const blockRoot = rootSlugsApply()
   for (let i = 2; i < 50; i++) {
+    if (blockRoot && isReservedSlug(candidate)) {
+      const suffix = `-${i}`
+      candidate = base.slice(0, 160 - suffix.length).replace(/-+$/, '') + suffix
+      continue
+    }
     const hit = await req.payload.find({
       collection: 'articles',
       where: {
@@ -617,6 +633,7 @@ export const Articles: CollectionConfig = {
         if (typeof value !== 'string' || value.length === 0) return 'Slug is required.'
         if (value.length > 160) return 'Slug must be at most 160 characters.'
         if (!SLUG_RE.test(value)) return 'Use lowercase letters, numbers and single hyphens only.'
+        if (rootSlugsApply() && isReservedSlug(value)) return `"${value}" is reserved for a site page; choose another slug.`
         return true
       },
     },

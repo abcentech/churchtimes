@@ -7,7 +7,7 @@ const runId = newRunId()
 let f: Fixtures
 
 beforeAll(async () => {
-  delete process.env.PUBLIC_ARTICLE_PATH_TEMPLATE // default /reports/{slug}/
+  delete process.env.PUBLIC_ARTICLE_PATH_TEMPLATE // default /{slug}/
   f = await setupFixtures(runId)
 })
 
@@ -44,9 +44,9 @@ describe('slug of a published article', () => {
     const a = await published()
     const res = await patch(f.tokens.eic, a.id, { slug: `${a.slug}-b` })
     expect(res.status).toBe(200)
-    const rules = await redirectsFrom(`/reports/${a.slug}/`)
+    const rules = await redirectsFrom(`/${a.slug}/`)
     expect(rules).toHaveLength(1)
-    expect(rules[0]).toMatchObject({ to: `/reports/${a.slug}-b/`, status: 301 })
+    expect(rules[0]).toMatchObject({ to: `/${a.slug}-b/`, status: 301 })
     const audit = (await f.payload.find({
       collection: 'audit-logs',
       where: { and: [{ collection: { equals: 'articles' } }, { docId: { equals: String(a.id) } }, { action: { equals: 'article.slug-change' } }] },
@@ -56,18 +56,18 @@ describe('slug of a published article', () => {
 
     // second rename by an admin: the earlier rule is re-pointed, no chain
     expect((await patch(f.tokens.admin, a.id, { slug: `${a.slug}-c` })).status).toBe(200)
-    expect((await redirectsFrom(`/reports/${a.slug}/`))[0].to).toBe(`/reports/${a.slug}-c/`)
-    expect((await redirectsFrom(`/reports/${a.slug}-b/`))[0].to).toBe(`/reports/${a.slug}-c/`)
+    expect((await redirectsFrom(`/${a.slug}/`))[0].to).toBe(`/${a.slug}-c/`)
+    expect((await redirectsFrom(`/${a.slug}-b/`))[0].to).toBe(`/${a.slug}-c/`)
 
     // renaming back removes the rule that would shadow the live address
     expect((await patch(f.tokens.eic, a.id, { slug: a.slug })).status).toBe(200)
-    expect(await redirectsFrom(`/reports/${a.slug}/`)).toHaveLength(0)
+    expect(await redirectsFrom(`/${a.slug}/`)).toHaveLength(0)
   })
 
   it('is free on drafts (no redirect) and for the server-side importer', async () => {
     const d = await f.seedArticle({ status: 'draft' })
     expect((await patch(f.tokens.sectionEditor, d.id, { slug: `${d.slug}-x` })).status).toBe(200)
-    expect(await redirectsFrom(`/reports/${d.slug}/`)).toHaveLength(0)
+    expect(await redirectsFrom(`/${d.slug}/`)).toHaveLength(0)
 
     const a = await published()
     await f.payload.update({
@@ -77,6 +77,24 @@ describe('slug of a published article', () => {
       overrideAccess: true,
       context: { import: true },
     })
-    expect(await redirectsFrom(`/reports/${a.slug}/`)).toHaveLength(0)
+    expect(await redirectsFrom(`/${a.slug}/`)).toHaveLength(0)
+  })
+})
+
+describe('reserved root slugs under /{slug}/ (owner decision D1)', () => {
+  it('refuses a slug that equals a real route, for a draft too', async () => {
+    const d = await f.seedArticle({ status: 'draft' })
+    for (const slug of ['admin', 'search', 'wp-json', 'Newsletter']) {
+      const res = await patch(f.tokens.sectionEditor, d.id, { slug })
+      expect(res.status, slug).toBeGreaterThanOrEqual(400)
+      expect(res.status, slug).toBeLessThan(500)
+    }
+    const stored = (await f.payload.findByID({ collection: 'articles', id: d.id, overrideAccess: true })) as { slug: string }
+    expect(stored.slug).toBe(d.slug)
+  })
+
+  it('numbers a generated slug that would be a reserved route', async () => {
+    const created = await f.seedArticle({ title: 'Search', slug: '' })
+    expect(created.slug).toBe('search-2')
   })
 })

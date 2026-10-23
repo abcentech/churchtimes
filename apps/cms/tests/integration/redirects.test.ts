@@ -203,7 +203,7 @@ describe('C7 redirects collection: loops and chains are refused at write time, n
 
   it('refuses a rule at the live address of a published article', async () => {
     const live = await f.seedArticle({ status: 'published', legacyUrl: `https://old.example.test/${runId}-wl-live/` })
-    const hide = await post(f.tokens.eic, { from: `/reports/${live.slug}/`, to: '/x/' })
+    const hide = await post(f.tokens.eic, { from: `/${live.slug}/`, to: '/x/' })
     expect(hide.status).toBe(400)
     expect(messages(hide)).toContain(live.slug)
   })
@@ -239,7 +239,7 @@ describe('C7 redirects collection: loops and chains are refused at write time, n
     resetRedirectsCache()
     const rules = (await getList()).json.rules
     expect(rules.filter((r: any) => r.from === p('ovr'))).toEqual([{ from: p('ovr'), to: '/chosen/', status: 301, source: 'manual' }])
-    expect(rules.some((r: any) => r.to === `/reports/${art.slug}/` && r.from === p('ovr'))).toBe(false)
+    expect(rules.some((r: any) => r.to === `/${art.slug}/` && r.from === p('ovr'))).toBe(false)
   })
 
   it('treats a gone (410) target as a chain: refuses a manual row, accepts an imported row (served as a 410)', async () => {
@@ -286,7 +286,7 @@ describe('C7.3 GET /api/public/redirects', () => {
     await f.payload.update({
       collection: 'articles',
       id: sameAddress.id,
-      data: { legacyUrl: `https://old.example.test/reports/${sameAddress.slug}/` } as never,
+      data: { legacyUrl: `https://old.example.test/${sameAddress.slug}/` } as never,
       overrideAccess: true,
       context: { seed: true },
     })
@@ -317,7 +317,7 @@ describe('C7.3 GET /api/public/redirects', () => {
     expect(rules.find((r: any) => r.from === p('pub-gone'))).toEqual({ from: p('pub-gone'), to: null, status: 410, source: 'manual' })
     expect(rules.find((r: any) => r.from === `/2019/05/${runId}-pub-old/`)).toEqual({
       from: `/2019/05/${runId}-pub-old/`,
-      to: `/reports/${published.slug}/`,
+      to: `/${published.slug}/`,
       status: 301,
       source: 'legacy-url',
     })
@@ -325,7 +325,7 @@ describe('C7.3 GET /api/public/redirects', () => {
 
   it('emits no rule when the legacy address already equals the current one', async () => {
     const rules = (await getList()).json.rules
-    expect(rules.some((r: any) => r.from === `/reports/${sameAddress.slug}/`)).toBe(false)
+    expect(rules.some((r: any) => r.from === `/${sameAddress.slug}/`)).toBe(false)
   })
 
   it('never exposes unpublished or archived articles, notes, ids or staff data', async () => {
@@ -370,18 +370,18 @@ describe('C7.3 GET /api/public/redirects', () => {
     await rule(p('chain-entry'), p('chain-old'), { source: 'rank-math' })
     resetRedirectsCache()
     const rules = (await getList()).json.rules
-    expect(rules.find((r: any) => r.from === p('chain-entry'))?.to).toBe(`/reports/${art.slug}/`)
-    expect(rules.find((r: any) => r.from === p('chain-old'))?.to).toBe(`/reports/${art.slug}/`)
+    expect(rules.find((r: any) => r.from === p('chain-entry'))?.to).toBe(`/${art.slug}/`)
+    expect(rules.find((r: any) => r.from === p('chain-old'))?.to).toBe(`/${art.slug}/`)
   })
 
   it('follows PUBLIC_ARTICLE_PATH_TEMPLATE and refuses an invalid value loudly', async () => {
-    env.PUBLIC_ARTICLE_PATH_TEMPLATE = '/{slug}/'
+    env.PUBLIC_ARTICLE_PATH_TEMPLATE = '/reports/{slug}/'
     try {
       resetRedirectsCache()
       const rules = (await getList()).json.rules
-      expect(rules.find((r: any) => r.from === `/2019/05/${runId}-pub-old/`)?.to).toBe(`/${published.slug}/`)
-      // with the short template an article whose legacy address was /reports/<slug>/ now needs a rule
-      expect(rules.find((r: any) => r.from === `/reports/${sameAddress.slug}/`)?.to).toBe(`/${sameAddress.slug}/`)
+      expect(rules.find((r: any) => r.from === `/2019/05/${runId}-pub-old/`)?.to).toBe(`/reports/${published.slug}/`)
+      // with the /reports/ template an article whose legacy address was /<slug>/ now needs a rule
+      expect(rules.find((r: any) => r.from === `/${sameAddress.slug}/`)?.to).toBe(`/reports/${sameAddress.slug}/`)
 
       env.PUBLIC_ARTICLE_PATH_TEMPLATE = '/news/{slug}/'
       resetRedirectsCache()
@@ -401,7 +401,7 @@ describe('C7.3 GET /api/public/redirects', () => {
     const res = await getList()
     expect(res.status).toBe(200)
     const rules = res.json.rules.filter((r: any) => r.from === p('clash'))
-    expect(rules).toEqual([{ from: p('clash'), to: `/reports/${one.slug}/`, status: 301, source: 'legacy-url' }])
+    expect(rules).toEqual([{ from: p('clash'), to: `/${one.slug}/`, status: 301, source: 'legacy-url' }])
     expect(res.text).not.toContain(two.slug)
   })
 
@@ -419,7 +419,7 @@ describe('C7.3 GET /api/public/redirects', () => {
     expect(res.status).toBe(200)
     const rules = res.json.rules
     expect(rules.find((r: any) => r.from === p('shadow'))).toMatchObject({ to: '/staff-wins/', source: 'rank-math' })
-    expect(rules.some((r: any) => r.to === `/reports/${art.slug}/` && r.from === p('shadow'))).toBe(false)
+    expect(rules.some((r: any) => r.to === `/${art.slug}/` && r.from === p('shadow'))).toBe(false)
     for (const gone of ['dloop-a', 'dloop-b', 'dloop-in']) expect(rules.some((r: any) => r.from === p(gone))).toBe(false)
     expect(rules.find((r: any) => r.from === p('pub-manual'))).toBeTruthy() // the rest is still served
     await f.payload.delete({ collection: 'redirects', where: { from: { like: `${runId}-dloop` } }, overrideAccess: true })
@@ -574,7 +574,7 @@ describe('C7.3 commands (called as functions against the real database)', () => 
       `https://old.example.test/${runId}-chk-old`,
       p('chk-moved'),
       `${p('chk-gone')}?utm_source=x`,
-      `/reports/${live.slug}/`,
+      `/${live.slug}/`,
     ]
     writeFileSync(urls, addresses.join('\n'))
     const ok = capture()
