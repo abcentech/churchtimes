@@ -79,6 +79,12 @@ export type ImportReport = {
     featuredImageResolved: number
     featuredImageRejected: number
     youtube: number
+    /** Audio/video blocks written with a media file. */
+    avResolved: number
+    /** Audio/video blocks kept with the legacy address because the file was not found (reason code `unresolved-media`). */
+    avUnresolvedMedia: number
+    /** Audio/video of a type the CMS does not host (linked or dropped). */
+    avUnsupported: number
     tablesFlattened: number
     embedsDropped: number
   }
@@ -121,7 +127,7 @@ export function newReport(mode: 'dry-run' | 'apply', update: boolean): ImportRep
     },
     authors: { distinct: 0, withByline: 0, unmapped: 0, postsWithoutByline: 0 },
     media: { reused: 0, created: 0, unresolved: t() },
-    content: { imagesResolved: 0, imagesUnresolved: 0, linksUnmapped: 0, featuredImageMissing: 0, featuredImageResolved: 0, featuredImageRejected: 0, youtube: 0, tablesFlattened: 0, embedsDropped: 0 },
+    content: { imagesResolved: 0, imagesUnresolved: 0, linksUnmapped: 0, featuredImageMissing: 0, featuredImageResolved: 0, featuredImageRejected: 0, youtube: 0, avResolved: 0, avUnresolvedMedia: 0, avUnsupported: 0, tablesFlattened: 0, embedsDropped: 0 },
     comments: { created: 0, existing: 0, skipped: t(), orphanedParents: 0, truncated: 0 },
     notes: [],
   }
@@ -208,6 +214,7 @@ export function formatImportReport(rep: ImportReport): string {
     `  featured images rejected (unsafe or refused by the media rules): ${rep.content.featuredImageRejected}`,
     `  articles without a featured image where one was expected: ${rep.content.featuredImageMissing}`,
     `  YouTube embeds: ${rep.content.youtube}`,
+    `  audio/video blocks: ${rep.content.avResolved} with a file, ${rep.content.avUnresolvedMedia} unresolved-media (legacy address kept), ${rep.content.avUnsupported} unsupported type`,
     `  tables flattened: ${rep.content.tablesFlattened}`,
     `  embeds dropped: ${rep.content.embedsDropped}`,
     '',

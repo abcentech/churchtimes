@@ -4,6 +4,7 @@ import path from 'node:path'
 import { createLocalReq, type Payload, type PayloadRequest } from 'payload'
 
 import { writeAuditLog } from '../lib/audit'
+import { avKindFromPath } from '../lib/avMedia'
 import { legacyPathFromUrl } from '../lib/legacyMediaPath'
 import { cleanText, slugify } from '../lib/sanitize'
 import { isReservedSlug } from '../lib/reservedSlugs'
@@ -475,6 +476,7 @@ type Converted = { content: { root: unknown }; report: ConversionReport }
 /** Two passes: the first collects image addresses, they are resolved (async), the second builds the body. */
 async function convert(ctx: Ctx, item: WxrItem, oldHosts: readonly string[], slugMap: Record<string, string>): Promise<Converted> {
   const wanted = new Map<string, { alt: string; caption: string }>()
+  const wantedMedia = new Map<string, { title: string; caption: string }>()
   const options = { oldHosts, slugMap, articleTitle: plain(item.title, 240) }
   htmlToLexical(item.contentHtml, {
     ...options,
@@ -482,16 +484,29 @@ async function convert(ctx: Ctx, item: WxrItem, oldHosts: readonly string[], slu
       if (!wanted.has(src)) wanted.set(src, { alt: c.alt, caption: c.caption })
       return { mediaId: 1 }
     },
+    resolveMedia: (src, c) => {
+      if (!wantedMedia.has(src)) wantedMedia.set(src, { title: c.title, caption: c.caption })
+      return { mediaId: 1 }
+    },
   })
   const resolved = new Map<string, number>()
+  const resolvedMedia = new Map<string, number>()
   for (const [src, meta] of wanted) {
     const r = await ctx.media.resolveUrl(src, { ...meta, articleTitle: options.articleTitle })
     if (r.ok) resolved.set(src, r.mediaId)
+  }
+  for (const [src, meta] of wantedMedia) {
+    const r = await ctx.media.resolveUrl(src, { alt: meta.title, caption: meta.caption, articleTitle: options.articleTitle })
+    if (r.ok) resolvedMedia.set(src, r.mediaId)
   }
   const result = htmlToLexical(item.contentHtml, {
     ...options,
     resolveImage: (src) => {
       const id = resolved.get(src)
+      return id === undefined ? null : { mediaId: id }
+    },
+    resolveMedia: (src) => {
+      const id = resolvedMedia.get(src)
       return id === undefined ? null : { mediaId: id }
     },
   })
@@ -507,7 +522,8 @@ async function featuredImageFor(ctx: Ctx, item: WxrItem, attachments: Map<number
       ? att.attachedFile
       : (legacyPathFromUrl(att.url) ?? legacyPathFromUrl(att.attachedFile))
     : null
-  const r = rel
+  // Audio/video is never a featured image (the Articles rule would refuse it): count it as missing, like any unusable attachment.
+  const r = rel && avKindFromPath(rel) === null
     ? await ctx.media.resolvePath(rel, { alt: att?.altText ?? '', articleTitle: plain(item.title, 240) })
     : { ok: false as const, reason: 'no-attachment' }
   if (!r.ok) {
@@ -575,6 +591,9 @@ function addConversionStats(rep: ImportReport, c: ConversionReport): void {
   rep.content.imagesUnresolved += c.images.unresolved.length
   rep.content.linksUnmapped += c.links.unmapped.length
   rep.content.youtube += c.youtube
+  rep.content.avResolved += c.audioVideo.resolved
+  rep.content.avUnresolvedMedia += c.audioVideo.unresolvedMedia
+  rep.content.avUnsupported += c.audioVideo.unsupported
   rep.content.tablesFlattened += c.tables.flattened.length
   rep.content.embedsDropped += c.embeds.dropped.length
 }

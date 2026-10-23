@@ -26,7 +26,10 @@ const nextConfig = {
   // src/proxy.ts exists, so Next buffers every request body in memory and silently truncates it at this
   // size (default 10 MB). Keep it above the largest accepted body (11 MB for /api/media, see
   // lib/requestLimits.ts) so uploads are never cut off; the proxy itself rejects bigger requests first.
-  experimental: { proxyClientMaxBodySize: '12mb' },
+  // Opt-in: MEDIA_UPLOAD_MAX_MB (11 to 500) raises it to that size + 2 MB; the proxy still refuses other routes above 1 MB.
+  experimental: {
+    proxyClientMaxBodySize: `${Math.max(12, Number.isInteger(Number(process.env.MEDIA_UPLOAD_MAX_MB)) ? Math.min(Number(process.env.MEDIA_UPLOAD_MAX_MB), 500) + 2 : 0)}mb`,
+  },
   async headers() {
     return [
       { source: '/:path*', headers: securityHeaders },
