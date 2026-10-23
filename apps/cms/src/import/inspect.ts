@@ -35,6 +35,24 @@ export type InspectReport = {
   postsByStatus: Record<string, number>
   publishedPasswordProtected: number
   categories: { channelTerms: number; distinctUsedByPosts: number; postsWithMoreThanOne: number }
+  /** Published posts only, counts only. */
+  tags: { postsWithTags: number; distinctTags: number; uncategorisedPostsWithTags: number }
+  yoast: {
+    title: number
+    description: number
+    titleWithVariables: number
+    descriptionWithVariables: number
+    canonical: number
+    noindex: number
+    social: number
+    primaryCategory: number
+    /** Primary category ids that are a category of the export. */
+    primaryCategoryResolves: number
+    /** Published posts with no WordPress category, and how many of them the Yoast primary category would place. */
+    uncategorisedPosts: number
+    uncategorisedWithResolvablePrimary: number
+    uncategorisedWithTagsOrPrimary: number
+  }
   distinctAuthors: number
   commentsByStatus: Record<string, number>
   attachments: number
@@ -53,6 +71,11 @@ export async function inspectWxr(records: AsyncIterable<WxrRecord>): Promise<Ins
   const authors = new Set<string>()
   const cats = new Set<string>()
   let channelTerms = 0
+  const termIds = new Set<number>()
+  const tagSlugs = new Set<string>()
+  const y = { title: 0, description: 0, titleWithVariables: 0, descriptionWithVariables: 0, canonical: 0, noindex: 0, social: 0, primaryCategory: 0, primaryCategoryResolves: 0, uncategorisedPosts: 0, uncategorisedWithResolvablePrimary: 0, uncategorisedWithTagsOrPrimary: 0 }
+  let postsWithTags = 0
+  let uncatWithTags = 0
   let items = 0
   let password = 0
   let attachments = 0
@@ -60,7 +83,10 @@ export async function inspectWxr(records: AsyncIterable<WxrRecord>): Promise<Ins
   let largest = 0
   let depth = 0
   for await (const rec of records) {
-    if (rec.record === 'category') channelTerms += 1
+    if (rec.record === 'category') {
+      channelTerms += 1
+      if (rec.category.termId !== null) termIds.add(rec.category.termId)
+    }
     if (rec.record !== 'item') continue
     const it = rec.item
     items += 1
@@ -74,6 +100,34 @@ export async function inspectWxr(records: AsyncIterable<WxrRecord>): Promise<Ins
     const named = new Set(it.categories.map((c) => c.nicename).filter(Boolean))
     for (const n of named) cats.add(n)
     if (named.size > 1) multi += 1
+    if (it.status === 'publish') {
+      const tagged = it.tags.some((t) => t.nicename)
+      if (tagged) postsWithTags += 1
+      for (const t of it.tags) if (t.nicename) tagSlugs.add(t.nicename)
+      const sx = it.seo
+      if (sx.yoastTitle) {
+        y.title += 1
+        if (/%%/.test(sx.yoastTitle)) y.titleWithVariables += 1
+      }
+      if (sx.yoastDescription) {
+        y.description += 1
+        if (/%%/.test(sx.yoastDescription)) y.descriptionWithVariables += 1
+      }
+      if (sx.yoastCanonical) y.canonical += 1
+      if (sx.yoastNoindex === '1') y.noindex += 1
+      if (sx.yoastSocialTitle || sx.yoastSocialDescription) y.social += 1
+      const primaryOk = !!sx.yoastPrimaryCategory && /^[0-9]{1,10}$/.test(sx.yoastPrimaryCategory.trim()) && termIds.has(Number(sx.yoastPrimaryCategory.trim()))
+      if (sx.yoastPrimaryCategory) {
+        y.primaryCategory += 1
+        if (primaryOk) y.primaryCategoryResolves += 1
+      }
+      if (named.size === 0) {
+        y.uncategorisedPosts += 1
+        if (primaryOk) y.uncategorisedWithResolvablePrimary += 1
+        if (tagged) uncatWithTags += 1
+        if (tagged || sx.yoastPrimaryCategory) y.uncategorisedWithTagsOrPrimary += 1
+      }
+    }
     largest = Math.max(largest, Buffer.byteLength(it.contentHtml, 'utf8'))
     depth = Math.max(depth, maxHtmlDepth(it.contentHtml))
     for (const rem of stripShortcodes(it.contentHtml).removals) {
@@ -91,6 +145,8 @@ export async function inspectWxr(records: AsyncIterable<WxrRecord>): Promise<Ins
     postsByStatus: statusObj,
     publishedPasswordProtected: password,
     categories: { channelTerms, distinctUsedByPosts: cats.size, postsWithMoreThanOne: multi },
+    tags: { postsWithTags, distinctTags: tagSlugs.size, uncategorisedPostsWithTags: uncatWithTags },
+    yoast: y,
     distinctAuthors: authors.size,
     commentsByStatus: commentObj,
     attachments,
@@ -108,6 +164,10 @@ export function formatInspectReport(r: InspectReport): string {
     'posts by status:', ...kv(r.postsByStatus),
     `published password-protected: ${r.publishedPasswordProtected}`,
     `categories: ${r.categories.channelTerms} in the file, ${r.categories.distinctUsedByPosts} used by posts, ${r.categories.postsWithMoreThanOne} posts with more than one`,
+    `tags (published posts): ${r.tags.postsWithTags} posts have tags, ${r.tags.distinctTags} distinct tags, ${r.tags.uncategorisedPostsWithTags} of the posts without a category have tags`,
+    `yoast (published posts): title ${r.yoast.title} (${r.yoast.titleWithVariables} with variables), description ${r.yoast.description} (${r.yoast.descriptionWithVariables} with variables), canonical ${r.yoast.canonical}, noindex ${r.yoast.noindex}, social ${r.yoast.social}`,
+    `yoast primary category: ${r.yoast.primaryCategory} posts, ${r.yoast.primaryCategoryResolves} resolve to a category of the file`,
+    `posts without a category: ${r.yoast.uncategorisedPosts}, of which ${r.yoast.uncategorisedWithResolvablePrimary} have a resolvable Yoast primary category and ${r.yoast.uncategorisedWithTagsOrPrimary} have tags or a primary category`,
     `distinct authors: ${r.distinctAuthors}`,
     'comments by status:', ...kv(r.commentsByStatus),
     `attachments: ${r.attachments}`,

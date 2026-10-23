@@ -221,7 +221,7 @@ export function formatWxrReport(rep: WxrReport): string {
     ...pairs(rep.comments.byApprovedAndType),
     `attachments: ${rep.attachments.total} (url ${rep.attachments.withUrl}, alt text ${rep.attachments.withAltText}, attached file ${rep.attachments.withAttachedFile})`,
     `Rank Math title present: ${rep.seo.rankMathTitle} (with %variables%: ${rep.seo.rankMathTitleWithVariables}); description present: ${rep.seo.rankMathDescription} (with %variables%: ${rep.seo.rankMathDescriptionWithVariables})`,
-    `Yoast title present: ${rep.seo.yoastTitle}; description present: ${rep.seo.yoastDescription} (not read by the importer)`,
+    `Yoast title present: ${rep.seo.yoastTitle}; description present: ${rep.seo.yoastDescription} (read by the importer; variables are resolved)`,
   ].join('\n')
 }
 
