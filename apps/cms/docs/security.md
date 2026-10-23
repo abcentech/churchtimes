@@ -243,7 +243,7 @@ Never loosen an entry to make a test pass: a 200 where the matrix says 401/403 i
 - **F-2 (low)**: a NUL byte in an uploaded file name (multipart) ends in a generic 500 (nothing leaked). Documented as `it.fails` in `content.test.ts`. TODO issue: "CMS: reject NUL in upload filenames with 400".
 - **Info**: `legacyId` and `legacyUrl` on published articles are returned to anonymous callers (documented contract in
   `docs/api-contracts.md`; the old URL is public anyway). Pinned by a test so removing or exposing more is a deliberate decision.
-## 6. Newsroom CSP and archive link review
+## 7. Newsroom CSP and archive link review
 
 The staff newsroom (`apps/newsroom`) is a static single-page app. Two controls limit what hostile content recovered from the compromised old site can do there.
 

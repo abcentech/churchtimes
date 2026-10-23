@@ -132,6 +132,7 @@ export const endpointMatrix: Record<string, EndpointEntry> = {
   'GET /api/public/search': { anon: [200, 400], public: true },
   'HEAD /api/public/search': { anon: [200, 400], public: true },
   'OPTIONS /api/public/search': { anon: [204], public: true },
+  'POST /api/staff/related-articles': { anon: [401], note: 'staff session only' },
   'GET /api/preview/articles': { anon: [401], note: 'needs a signed, unexpired preview token' },
   // --- Payload built-ins that are not collection routes
   'GET /api/access': { anon: [200], note: "Payload: the caller's own permissions (anonymous: the public set)" },
