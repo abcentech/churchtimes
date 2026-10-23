@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 /** Real path of the nearest existing ancestor plus the not-yet-existing remainder (defeats symlinks and junctions). */
-function realish(p: string): string {
+export function realish(p: string): string {
   const abs = path.resolve(p)
   const rest: string[] = []
   let cur = abs

@@ -464,12 +464,14 @@ cd apps/cms
 npm run import:uploads-check -- --uploads D:\churchtimes-private\uploads-raw --wxr D:\churchtimes-private\export.xml --out D:\churchtimes-private\reports\uploads-detail.jsonl
 ```
 
-`--uploads` and `--wxr` are required; `--out` is optional and receives one JSON line per file and per reference (real file names: private, owner-only permissions on Linux and macOS). Both
-folders and `--out` must be outside every git work tree (the command refuses otherwise) and `--out` must not be inside the uploads folder. Nothing is written except `--out`; nothing is executed, no database, no network.
+`--uploads` and `--wxr` are required; `--out` is optional (a NEW file: the command refuses an existing file, the export itself and a place inside the uploads folder, judged by real paths; it never overwrites) and receives one JSON line per file and per reference (real file names: private, owner-only permissions on Linux and macOS). Both
+folders and `--out` must be outside every git work tree (the command refuses otherwise) and `--out` must not be inside the uploads folder. The same exclusive-create rule applies to `--detail-file` of `import:convert-wxr`, `import:convert` and `import:rehearse`, and to `--uploads-detail-file` (one shared helper, `privateOut.ts`). Nothing is written except `--out`; nothing is executed, no database, no network.
 Only counts are printed. Exit code: 0 done, 1 failed, 2 bad usage or location, 3 done but unsafe files were found (the loader still refuses them, so that is a finding, not a blocker).
 
-- **Rejected as unsafe, by reason**: `dangerous-extension` (php, phtml, phar, sh, exe, js, html, svg, zip and other archives, a `.php` inside a name such as `x.php.jpg`), `hidden-file` (a name that starts with a dot, such as `.htaccess`),
-  `bad-name` (control characters, backslash), `symlink` (a link or junction; never followed), `zero-byte`, `magic-mismatch` (an image extension whose first bytes are not that image type), `polyglot` (`<?php`, `<?=` or `<script` anywhere in the file), `not-a-file`, `unreadable`.
+- **Importable** means a `.jpg`, `.jpeg`, `.png` or `.webp` file (allow-list, after lower-casing and stripping trailing dots and spaces) whose first bytes are that image type, not empty and at most 25 MB (`MEDIA_MAX_BYTES`, shared with the loader and the Media collection). Reasons below are rejections. The real protection is the Media collection: it takes JPEG/PNG/WebP by magic bytes, refuses more than 40 megapixels and re-saves every picture with sharp, so a script hidden after the image data is not stored.
+- **Rejected, by reason**: `dangerous-extension` (php, phtml, phar, sh, exe, js, html, svg, zip and other archives, a dangerous extension inside a name such as `x.php.jpg`, `x.html.jpg`, `x.svg.png`), `hidden-file` (a name that starts with a dot, such as `.htaccess`),
+  `bad-name` (control characters, backslash, colon, a Windows device name such as `con.png`, a trailing dot or space), `symlink` (a link or junction; never followed), `hard-link` (a file with more than one name), `zero-byte`, `magic-mismatch` (an image extension whose first bytes are not that image type), `not-media` (any other extension or none), `unsupported-type` (gif, bmp, ico, avif, pdf: real files that the CMS does not take; counted apart as `not importable`, never as safe or present), `too-large` (over the cap; never read), `not-a-file`, `unreadable`.
+  A script marker (`<?php` or `<script`) inside an otherwise valid JPEG/PNG/WebP is NOT a rejection: it is counted as an advisory `warning` among the safe files (random image data contains such bytes by chance, and the re-save removes any payload). `<?=` is no longer searched for.
   WordPress itself leaves an `index.php` ("silence is golden") in some upload folders: it is rejected like any other script and does no harm.
 - **Attachments in the export**: distinct paths, `present`, `missing`, `only size variants on disk` (the original is gone but `name-300x200.jpg` files exist; the loader cannot use them), name differs by Unicode form (NFC against NFD)
   or by letter case (the loader looks files up exactly, so these need a rename on a case-sensitive file system), and rejected as unsafe.
@@ -477,7 +479,7 @@ Only counts are printed. Exit code: 0 done, 1 failed, 2 bad usage or location, 3
 - **Featured images of published posts**: present, missing, attachment not in the export, rejected.
 - **Rest of the folder**: size variants of listed images, unreferenced files, and duplicate content (same SHA-256) as groups and extra copies.
 
-The loader repeats the safety checks itself (`media.ts`, via `uploadSafety.ts`): a file that fails any of them is never ingested, even when `--uploads` is used without the check; it is counted as `rejected-unsafe` under
+The loader repeats the safety checks itself (`media.ts`, via `uploadSafety.ts`): a file that fails any of them is never ingested (the file is read once, up to the cap, checked from that buffer, and the buffer is what is uploaded; a refused file counts as `rejected-unsafe`, `too-large` or `unsupported-type`), even when `--uploads` is used without the check; it is counted under
 `media.unresolved`. The import report also prints `featured images resolved` and `featured images rejected`. `import:rehearse` with `--file` and `--uploads` prints the same counts first, so one command reads the whole picture
 (add `--uploads-detail-file <path>` for the per-file detail).
 

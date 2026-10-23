@@ -16,13 +16,13 @@ import { editorInChiefOnly, idOf, isEditorInChief, isEditorRole, isStaff, staffO
 import { writeAuditLog } from '../lib/audit'
 import { clampLimit } from '../lib/clampLimit'
 import { liveCampaignClauses, requirePayment } from '../lib/advertising'
+import { ALLOWED_MIME } from '../lib/mediaLimits'
 import { LEGACY_PATH_MAX, isValidLegacyPath } from '../lib/legacyMediaPath'
 import { verifyPreviewToken } from '../lib/previewToken'
 import { nextCounter } from './LiveUpdates'
 
 const asUser = (u: unknown): UserLike | null => (u ? (u as UserLike) : null)
 
-const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp'] as const
 
 /** Returns the mimetype implied by magic bytes, or null when not a supported image. */
 export function sniffImageMime(buf: Uint8Array): (typeof ALLOWED_MIME)[number] | null {

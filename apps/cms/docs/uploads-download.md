@@ -1,9 +1,10 @@
 # Getting the old site's pictures (uploads) safely
 
-Plain-language guide for the owner. Goal: copy the folder `wp-content/uploads` (all the pictures of the old website, about 4.7 GB) from the old server to your own computer, check that nothing was lost or changed on the way, check that nothing dangerous came with it, and put it in a folder the new CMS can read.
+Plain-language guide for the owner. Goal: copy the folder `wp-content/uploads` (all the pictures of the old website, about 4.7 GB) from the old server to your own computer, check that the copy arrived complete, check that nothing dangerous came with it, and put it in a folder the new CMS can read.
 
 Read this first, it is short:
 
+- **What the fingerprints prove, and what they do not.** The list of fingerprints (SHA-256) in step 1c is made *by the hacked server*. Comparing it in step 3 only proves that the download was **intact** (nothing was cut off or damaged on the way). It does **not** prove that a picture is genuine: a hacked server can hand out altered files together with matching fingerprints. Safety does not come from the fingerprints. It comes from (1) the checks on your PC (step 4), (2) the allow-list of file types, and (3) the CMS itself: the Media collection accepts only JPEG, PNG and WebP (judged by the first bytes of the file, not the name), refuses anything over 40 megapixels, and **decodes and re-saves every picture**, so nothing hidden inside a picture (a script after the image data, metadata) is kept. The check in step 4 is a first filter; the re-save is the real protection.
 - **The old server was hacked** (root malware, October 2026). Treat every single file that comes from it as untrusted, like an email attachment from a stranger.
 - **Copy only the `uploads` folder.** Not the whole home folder, not `plugins`, not `themes`, not a full-site backup. Pictures live in `uploads`; the hacker's programs live elsewhere.
 - **Never open, double-click, preview or run** anything you copied. Especially not `.php`, `.html`, `.js`, `.svg` or `.exe` files. You do not need to open anything: the computer checks the files for you.
@@ -56,7 +57,12 @@ The last command prints one long line starting with `ssh-ed25519`. That line is 
 
 ### 1b. On the server: create the account
 
-Log in the way you normally do (`ssh root@SERVER_IP`, typing the password only in the terminal). Then:
+**Do not log in as root with the root password over ssh** if you can avoid it: the server is compromised, and a password typed into it (or into a fake login prompt on it) can be captured. Prefer, in this order:
+
+1. The hosting provider's **web console / rescue mode** (Truehost panel: the VPS console, or a rescue boot) to run the commands below, so no password crosses the possibly hacked ssh service.
+2. A **key-only** login (a key you already installed for root; password login switched off), not a typed password.
+
+If you do have to type a password to get in, then **that password must be treated as stolen**: change it on every place you used it (the server, the hosting panel, e-mail, anything that shares it) **after** this job, from a clean computer, and never reuse it. The same holds for any password you have typed into this server before. Then, in the console (or your key-only session):
 
 ```bash
 # ON THE SERVER (root@...)
@@ -76,7 +82,7 @@ If `setfacl` says "command not found", run `apt-get install -y acl` (or `dnf ins
 
 ### 1c. On the server: count and fingerprint the pictures
 
-Types that must never come along are skipped, both here and in the copy: scripts, web pages, programs, archives and hidden files. First see how many such files exist (this number is interesting but not alarming; WordPress puts a harmless `index.php` in some folders):
+Types that must never come along are skipped, both here and in the copy: scripts, web pages, programs, archives and hidden files. The exclusions on the server side are a **courtesy** (they save time and space); a hacked server can ignore them or lie. The **real** check is the one on your PC in step 4, which looks at every file that arrived. First see how many such files exist (this number is interesting but not alarming; WordPress puts a harmless `index.php` in some folders):
 
 ```bash
 # ON THE SERVER
@@ -90,10 +96,12 @@ find . -type l | wc -l
 ```bash
 # ON THE SERVER, same folder
 EXCL="! -iname *.php* ! -iname *.phtml ! -iname *.phar ! -iname *.pht ! -iname *.sh ! -iname *.js ! -iname *.html ! -iname *.htm ! -iname *.svg ! -iname *.exe ! -iname *.zip ! -iname *.tar ! -iname *.gz ! -name .*"
-set -f
+set -f      # no wildcard expansion while $EXCL is used (find gets the literal patterns)
 echo "files:"; find . -type f $EXCL | wc -l
 echo "bytes:"; find . -type f $EXCL -printf '%s\n' | awk '{s+=$1} END {print s}'
-echo "year folders:"; ls -d [0-9][0-9][0-9][0-9] | wc -l
+set +f      # wildcards must work again for the next line, otherwise it prints 0
+echo "year folders:"; find . -mindepth 1 -maxdepth 1 -type d -name '[0-9][0-9][0-9][0-9]' | wc -l
+set -f
 # the fingerprint list (takes a few minutes: the server is small). It is written to the temporary user's home, NOT to /tmp and NOT to public_html.
 find . -type f $EXCL -print0 | sort -z | xargs -0 sha256sum > /home/ctpull/uploads.sha256
 set +f
@@ -107,11 +115,18 @@ Write the three numbers (files, bytes, year folders) on paper or in a note on yo
 
 Pick **one** of the routes. The first is the preferred one; all of them use an encrypted connection. Do not use plain FTP (port 21): it sends the password in the open and should be closed on the server anyway.
 
-All routes skip the dangerous file types, do not copy links, and put the result in `uploads-raw`. Keep your Windows up to date: a hacked server can also try to attack the program that downloads from it.
+All routes skip the dangerous file types, do not copy links, and put the result in `uploads-raw`. Keep your Windows up to date: a hacked server can also try to attack the program that downloads from it. (The skipping is done by your side of the command where the tool allows it; the server-side part is a courtesy, see step 1c. The check in step 4 is what counts.)
 
-### Route A (preferred): rsync (Linux, macOS, or Windows with WSL "Ubuntu")
+### Route A: rsync (Linux, macOS, or Windows with WSL "Ubuntu"), only with a patched rsync
 
-rsync can stop and carry on exactly where it left off, which matters for 4.7 GB.
+rsync can stop and carry on exactly where it left off, which matters for 4.7 GB. **But rsync has had serious flaws in which a malicious server can write files on the computer that pulls from it** (CVE-2024-12086, CVE-2024-12087 and CVE-2024-12088, fixed in rsync 3.4.0). Pulling from a hacked server with an old rsync is exactly that situation. So:
+
+```bash
+# ON YOUR PC: in the WSL/Ubuntu terminal too. Windows' own tools do not count: WSL has its own copy.
+rsync --version | head -1
+```
+
+It must say `version 3.4.0` or higher (a distribution may also have a patched older number; if in doubt, treat it as too old). If it is lower, run `sudo apt-get update && sudo apt-get install --only-upgrade rsync`, check again, and if it is still lower **use Route B or C (SFTP/tar) instead**. Those routes are the safer default for this job anyway.
 
 ```bash
 # ON YOUR PC (a WSL/Ubuntu or Linux/macOS terminal). On Windows the PC folders are under /mnt/c/...
@@ -135,8 +150,9 @@ Windows has `ssh` and `tar` built in. This route makes one archive file per year
 $base = "C:\Users\HP\Documents\churchtimes\private"
 $key  = "$HOME\.ssh\ct_pull"
 $year = "2023"
-cmd /c "ssh -i $key ctpull@SERVER_IP ""cd /home/DOMAIN/public_html/wp-content/uploads && tar -cf - --exclude=*.php* --exclude=*.phtml --exclude=*.phar --exclude=*.sh --exclude=*.js --exclude=*.html --exclude=*.htm --exclude=*.svg --exclude=*.exe --exclude=*.zip --exclude=*.tar --exclude=*.gz --exclude=.* $year"" > ""$base\year-$year.tar"""
-# extract into the raw folder (tar will refuse names that climb out of the folder)
+cmd /c "ssh -i $key ctpull@SERVER_IP ""cd /home/DOMAIN/public_html/wp-content/uploads && tar -cf - --exclude='*.php*' --exclude='*.phtml' --exclude='*.phar' --exclude='*.pht' --exclude='*.sh' --exclude='*.js' --exclude='*.html' --exclude='*.htm' --exclude='*.svg' --exclude='*.exe' --exclude='*.zip' --exclude='*.tar' --exclude='*.gz' --exclude='.*' $year"" > ""$base\year-$year.tar"""
+# extract into the raw folder (tar will refuse names that climb out of the folder). The patterns above are quoted so that the
+# SERVER's shell does not expand them; they are a courtesy only, the check in step 4 is the real one.
 tar -xf "$base\year-$year.tar" -C "$base\uploads-raw"
 ```
 
@@ -154,7 +170,14 @@ tar -xf "$base\year-$year.tar" -C "$base\uploads-raw"
 
 - Ask the hosting company (Truehost) for **SFTP access limited to the uploads folder**, or for the folder as a download link that they create outside the website folder. They already hold a full site copy.
 - **Host file-manager zip** (the CyberPanel *File Manager > Compress*): only as a last resort. The zip is created inside the website folder, which means anyone can download it while it exists. Give it a random name, download it at once, delete it from the server at once. Do the zip of `wp-content/uploads` only. Extract it on your PC into a **new, empty** folder, never into the project.
-- **A backup**: a full-site backup (CyberPanel backup, a WP Staging backup, or the copy held by Truehost) contains the uploads folder together with the hacked program files. On 15 October 2026 a 6.4 GB WP Staging backup was moved to `/root/churchtimes-private-backup-20261015/` on the server (readable by root only); that is a copy of the site from before the break-in (16 October), so it is the cleanest source of pictures. Download it with one of the routes above (as root, or move it where `ctpull` can read it), then extract **only** the `wp-content/uploads` part on your PC, into `uploads-raw`, with 7-Zip or `tar -xf backup.tar.gz --wildcards "*wp-content/uploads/*"`. The WP Staging `.wpstg` format may need that plugin to open: if so, ask me before trying anything else.
+- **A backup**: a full-site backup (CyberPanel backup, a WP Staging backup, or the copy held by Truehost) contains the uploads folder together with the hacked program files. On 15 October 2026 a 6.4 GB WP Staging backup was moved to `/root/churchtimes-private-backup-20261015/` on the server (readable by root only); it was meant to be a copy from before the break-in (16 October), but **that is not verified**: the break-in may be older than the backup, and the backup sits on the compromised server, so it could have been changed. Check its date and contents (file dates, size, what is inside) before trusting it, and treat it exactly like the live folder: the same checks in steps 3 to 5 apply. Download it with one of the routes above (move it where `ctpull` can read it rather than logging in as root), then extract **only** the `wp-content/uploads` part on your PC, into a **new, empty** folder next to `uploads-raw` first, with 7-Zip or, with GNU tar (Linux, macOS or WSL; the `tar` that comes with Windows is bsdtar and its options differ, so use 7-Zip there):
+
+```bash
+# ON YOUR PC (GNU tar: WSL/Linux). DEST must exist, be empty and be outside every Git folder.
+tar -xzf backup.tar.gz -C DEST --wildcards '*wp-content/uploads/*'
+```
+
+then move the `wp-content/uploads` folder inside it to `uploads-raw`. The WP Staging `.wpstg` format may need that plugin to open: if so, ask me before trying anything else.
 
 ### If your internet is slow or limited
 
@@ -187,6 +210,8 @@ Get-Content -LiteralPath "$base\reports\uploads.sha256" -Encoding UTF8 | ForEach
   if ($_.StartsWith('\')) { $script:escaped++; return }          # odd file names (newline or backslash): counted, not compared
   $hash = $_.Substring(0, 64)
   $rel  = $_.Substring(66); if ($rel.StartsWith('./')) { $rel = $rel.Substring(2) }
+  # the list comes from the hacked server: never follow a path that climbs out of the raw folder or is absolute
+  if ($rel -match '(^|/)\.\.(/|$)' -or $rel.Contains(':') -or $rel.StartsWith('/') -or $rel.Contains('\')) { $script:escaped++; return }
   $path = Join-Path $raw ($rel -replace '/', '\')
   if (-not (Test-Path -LiteralPath $path)) { $script:missing++ }
   elseif ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ieq $hash) { $script:ok++ }
@@ -230,6 +255,8 @@ npm run import:uploads-check -- --uploads C:\Users\HP\Documents\churchtimes\priv
 
 (`export.xml` is the WordPress export file, kept outside the project too.) It prints **only counts**: how many files, how many were refused and why, how many of the export's pictures are present, missing, only available as size variants, or differently named (capital letters or accented letters written another way), how many look like duplicates. Nothing is changed or opened as a program; the detail with real names goes to the `--out` file. What the numbers mean is in `docs/import.md`, section "Checking the uploads folder".
 
+Only JPEG, PNG and WebP pictures (`.jpg`, `.jpeg`, `.png`, `.webp`) are importable. Everything else is counted under its own reason and removed in step 5: `unsupported-type` (a gif, bmp, ico, avif or pdf: real files, but the CMS does not take them), `too-large` (over 25 MB), `not-media` (any other extension, or none), `dangerous-extension`, `hard-link`, and so on. A script marker (`<?php`, `<script`) *inside* a picture is only reported as a **warning count**: random picture data can contain such bytes, and the CMS re-saves the picture, which removes anything hidden in it. The `--out` file must be a **new** file (the command refuses an existing file, the export itself, or a place inside the uploads folder, so it can never overwrite your export); delete an old detail file first if you run it again.
+
 The exact exit result: `0` clean, `3` some unsafe files were found (the loader refuses them anyway), `2` a folder is in the wrong place (inside Git), `1` failed.
 
 ### What to count and write down (send me only these numbers)
@@ -244,15 +271,38 @@ The exact exit result: `0` clean, `3` some unsafe files were found (the loader r
 
 Only when step 3 shows `changed: 0`, Defender found nothing, and you have read the step 4b numbers.
 
-1. If step 4b reported unsafe files, remove exactly those from `uploads-raw` (this does not print names):
+1. If step 4b reported rejected files, remove exactly those from `uploads-raw` (this does not print names). **Careful with links:** in Windows PowerShell 5.1, `Remove-Item` on a folder link (a junction or symbolic link) can delete the contents of the folder the link points to. So files are removed with .NET, links and junctions are removed as links only (never followed), and you **preview first** with `-WhatIf` (nothing is deleted while `$WhatIf = $true`):
 
 ```powershell
-# ON YOUR PC (PowerShell)
+# ON YOUR PC (PowerShell). First run: preview only. It prints one line per removal; look at the count, not at the names.
+$WhatIf = $true            # change to $false only after the preview count matches the rejected count of step 4b
 $base = "C:\Users\HP\Documents\churchtimes\private"; $raw = "$base\uploads-raw"
+$rawFull = [IO.Path]::GetFullPath($raw).TrimEnd('\') + '\'
+$n = 0
 Get-Content -LiteralPath "$base\reports\uploads-detail.jsonl" -Encoding UTF8 | ForEach-Object { $_ | ConvertFrom-Json } |
   Where-Object { $_.kind -eq 'file' -and $_.status -ne 'safe' } |
-  ForEach-Object { Remove-Item -LiteralPath (Join-Path $raw ($_.path -replace '/', '\')) -Force }
+  ForEach-Object {
+    $rel = $_.path
+    if ($rel -match '(^|/)\.\.(/|$)' -or $rel.Contains(':') -or $rel.StartsWith('/')) { return }   # never touch a path outside the raw folder
+    $full = [IO.Path]::GetFullPath((Join-Path $raw ($rel -replace '/', '\')))
+    if (-not $full.StartsWith($rawFull, [StringComparison]::OrdinalIgnoreCase)) { return }
+    $item = Get-Item -LiteralPath $full -Force -ErrorAction SilentlyContinue
+    if ($null -eq $item) { return }
+    $n++
+    if ($WhatIf) { return }
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+      # a link or junction (status symlink / not-a-file): remove the LINK ITSELF, never what it points to
+      if ($item.PSIsContainer) { [IO.Directory]::Delete($full) } else { [IO.File]::Delete($full) }
+    } elseif ($item.PSIsContainer) {
+      cmd /c rmdir "$full"      # only removes an EMPTY folder; a non-empty one stays and is reported by the next check
+    } else {
+      [IO.File]::Delete($full)
+    }
+  }
+"entries " + $(if ($WhatIf) { "that would be removed: " } else { "removed: " }) + $n
 ```
+
+   Run it once with `$WhatIf = $true`, compare the count with the number of rejected files in the step 4b report, then set `$WhatIf = $false` and run it again. (Use `[IO.Directory]::Delete` or `cmd /c rmdir` on a link, never `Remove-Item -Recurse`.)
 
 2. Run step 4b again. It must now exit with `0` and show `rejected as unsafe: (none)`.
 3. Copy to the verified folder (no junctions, no permissions, data only):

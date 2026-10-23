@@ -46,7 +46,7 @@ beforeAll(async () => {
   const items: FixtureItem[] = [
     att(base + 11, `${DIR}/a.png`),
     att(base + 12, `${DIR}/b.png`),
-    att(base + 13, `${DIR}/poly.png`),
+    att(base + 13, `${DIR}/shell.jpg`),
     att(base + 14, `${DIR}/c.png`),
     {
       id: base + 1,
@@ -74,28 +74,33 @@ afterAll(async () => {
 describe('import with an untrusted uploads folder', () => {
   it('the checker finds the unsafe files and reconciles with the export', async () => {
     const r = await checkUploads(uploads, exportFile)
-    expect(r.files.rejected['polyglot']).toBe(2)
+    expect(r.files.rejected['polyglot']).toBeUndefined() // a script marker after valid image data is only a warning
+    expect(r.files.warnings).toBe(2)
     expect(r.files.rejected['magic-mismatch']).toBeGreaterThanOrEqual(3)
     expect(r.attachments).toMatchObject({ inExport: 4, present: 2, rejectedUnsafe: 1, sizeVariantOnly: 1 })
-    expect(r.bodyImages).toMatchObject({ distinctReferenced: 4, present: 1, rejectedUnsafe: 2, missing: 1 })
-    expect(r.featured).toEqual({ posts: 3, present: 1, missing: 1, rejectedUnsafe: 1, noAttachment: 0 })
+    expect(r.bodyImages).toMatchObject({ distinctReferenced: 4, present: 2, rejectedUnsafe: 1, missing: 1 })
+    expect(r.featured).toEqual({ posts: 3, present: 1, missing: 1, rejectedUnsafe: 1, notImportable: 0, noAttachment: 0 })
   })
 
   it('a dry run counts resolved, rejected and missing images and featured images', async () => {
     const rep = await runImport(f.payload, options('dry', { dryRun: true, manifestPath: undefined }))
-    expect(rep.media.created).toBe(2)
-    expect(rep.media.unresolved).toEqual({ 'rejected-unsafe': 2 + 1, 'missing-file': 2 })
-    expect(rep.content).toMatchObject({ imagesResolved: 1, imagesUnresolved: 3, featuredImageResolved: 1, featuredImageRejected: 1, featuredImageMissing: 2 })
+    expect(rep.media.created).toBe(3)
+    expect(rep.media.unresolved).toEqual({ 'rejected-unsafe': 1, 'missing-file': 2 })
+    expect(rep.content).toMatchObject({ imagesResolved: 2, imagesUnresolved: 2, featuredImageResolved: 1, featuredImageRejected: 1, featuredImageMissing: 2 })
     expect(await mediaDocs()).toHaveLength(0)
   })
 
   it('apply imports only the safe images; the loader refuses the rest by itself', async () => {
     const rep = await runImport(f.payload, options('apply'))
     expect(rep.articles.created).toBe(3)
-    expect(rep.media.created).toBe(2)
-    expect(rep.media.unresolved).toEqual({ 'rejected-unsafe': 3, 'missing-file': 2 })
-    expect(rep.content).toMatchObject({ imagesResolved: 1, imagesUnresolved: 3, featuredImageResolved: 1, featuredImageRejected: 1, featuredImageMissing: 2 })
-    expect((await mediaDocs()).map((m) => m.legacyPath).sort()).toEqual([`${DIR}/a.png`, `${DIR}/b.png`])
+    expect(rep.media.created).toBe(3)
+    expect(rep.media.unresolved).toEqual({ 'rejected-unsafe': 1, 'missing-file': 2 })
+    expect(rep.content).toMatchObject({ imagesResolved: 2, imagesUnresolved: 2, featuredImageResolved: 1, featuredImageRejected: 1, featuredImageMissing: 2 })
+    expect((await mediaDocs()).map((m) => m.legacyPath).sort()).toEqual([`${DIR}/a.png`, `${DIR}/b.png`, `${DIR}/poly2.png`])
+    // The real protection: the picture that carried a script marker was decoded and re-saved, so nothing of it is stored.
+    const poly = (await mediaDocs()).find((m) => m.legacyPath === `${DIR}/poly2.png`)
+    const stored = path.resolve('media', String(poly?.filename))
+    if (poly?.filename && fs.existsSync(stored)) expect(fs.readFileSync(stored).toString('latin1').toLowerCase()).not.toContain('<script')
     const text = formatImportReport(rep)
     expect(text).toContain('rejected-unsafe')
     expect(text).toContain('featured images resolved: 1')
@@ -104,10 +109,10 @@ describe('import with an untrusted uploads folder', () => {
 
   it('rolls back: the created articles and media are gone', async () => {
     const m = readManifest(path.join(dir, 'manifest-apply.jsonl'))
-    expect(m.media).toHaveLength(2)
+    expect(m.media).toHaveLength(3)
     const rb = await runRollback(f.payload, { manifestPath: path.join(dir, 'manifest-apply.jsonl'), apply: true, minIncompleteAgeMs: 0 })
     expect(rb.articles.deleted).toBe(3)
-    expect(rb.media.deleted).toBe(2)
+    expect(rb.media.deleted).toBe(3)
     expect(await mediaDocs()).toHaveLength(0)
   })
 })
