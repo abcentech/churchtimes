@@ -294,7 +294,7 @@ jobs:
           <channel><title>t</title><link>https://old.example.org</link></channel>
           </rss>
           XML
-          chmod -R a+rX "$t"; sudo chown 1000:1000 "$t/private"; chmod 700 "$t/private"
+          chmod -R a+rX "$t"; chmod 700 "$t/private"; sudo chown 1000:1000 "$t/private"
           echo "ci-only-not-a-secret" > "$t/secrets/pg"; : > "$t/dummy.env"
           export CMS_IMAGE=example.invalid/cms@sha256:0000000000000000000000000000000000000000000000000000000000000000
           export CMS_MIGRATOR_IMAGE="$CMS_IMAGE" CMS_IMPORTER_IMAGE="$IMPORTER_IMAGE" CMS_ENV_FILE="$t/dummy.env" POSTGRES_PASSWORD_FILE_PATH="$t/secrets/pg"
