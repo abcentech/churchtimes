@@ -140,7 +140,12 @@ media_hashes() {
   (cd "$WORK/media" && find . -type f -print0 | sort -z | xargs -0 sha256sum)
 }
 search_total() {
-  curl -fsS --max-time 30 "$BASE/api/public/search?q=drill&limit=5" | jq -er '.totalDocs'
+  local body code
+  body=$(curl -sS --max-time 30 -w '\n%{http_code}' "$BASE/api/public/search?q=drill&limit=5") || { echo 0; return 0; }
+  code=${body##*$'\n'}
+  body=${body%$'\n'*}
+  if [ "$code" != 200 ]; then echo "search answered HTTP $code: ${body:0:200}" >&2; echo 0; return 0; fi
+  printf '%s' "$body" | jq -er '.totalDocs' || echo 0
 }
 http_code_json() { # method url jsonfile [extra curl args]
   local m="$1" u="$2" f="$3"
@@ -184,6 +189,7 @@ $C --profile ops run --rm -e ADMIN_EMAIL -e ADMIN_NEW_PASSWORD migrate npm run a
 $C --profile ops run --rm migrate npm run search:reindex
 wait_cms
 check_health
+log "article_search rows: $($PGX psql -U churchtimes -d churchtimes -Atc "select count(*) from article_search")"
 [ "$(search_total)" -ge 1 ] || fail "search finds nothing before the backup"
 snapshot_db >"$WORK/state/db.before"
 media_hashes >"$WORK/state/media.before"
