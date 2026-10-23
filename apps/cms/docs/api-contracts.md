@@ -995,6 +995,8 @@ Additive; YouTube/Vimeo/other-site handling is unchanged.
 - New Lexical block `audioVideo` (`kind`, `media`, `sourceUrl`, `poster`, `title`, `caption`, `transcriptUrl`, `duration`) accepted in `articles.content`; validation, `bodyMedia` derivation and the public projection are described in §2 "Audio/video block".
 - Media accepts `video/mp4`, `video/webm`, `audio/mpeg`, `audio/mp4`, `audio/ogg` (magic bytes verified, size cap `MEDIA_AV_MAX_MB`, default 100 MB); images keep their rules and the 10 MB cap. No other type, and never SVG or HTML.
 - Importer: `<video>`, `<audio>`, `<source>`, `[fvplayer]`, `[video]`, `[audio]` map to the block; unresolved files keep the legacy address and are counted as `unresolved-media` in the run report (`content.avUnresolvedMedia`). Rollback is unchanged: created Media and articles are already in the manifest.
+- `articles.featuredImage` must now be a JPEG/PNG/WebP image (`400` otherwise; audio/video Media is for the block only). The importer counts an audio/video featured attachment as a missing featured image.
+- Opt-in `MEDIA_UPLOAD_MAX_MB` (11 to 500) raises the `/api/media` request limit only (default unchanged at 11 MB); the reverse-proxy cap must be raised with it, see operations.md section 4.4.
 - No database migration (blocks live inside the Lexical JSON; `media.mime_type` is free text).
 
 ### v1.18: Articles live at `/{slug}/` (owner decision D1)

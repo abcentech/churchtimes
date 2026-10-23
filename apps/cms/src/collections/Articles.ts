@@ -30,7 +30,7 @@ import { deepEqual } from '../lib/deepEqual'
 import { collectAvBlocks, collectAvMedia, findEmbedProblem } from '../lib/lexicalEmbeds'
 import { assertExpectedUpdatedAt, captureExpectedUpdatedAt } from '../lib/expectedUpdatedAt'
 import { collectUploadNodes, uploadValueId } from '../lib/lexicalMedia'
-import { assertAttachableAv, assertAttachableImage, isMediaId } from '../lib/mediaChecks'
+import { ALLOWED_IMAGE_MIME, assertAttachableAv, assertAttachableImage, isMediaId } from '../lib/mediaChecks'
 import { SEO_DESCRIPTION_MAX, SEO_FIELD_KEYS, SEO_TITLE_MAX, cleanSeoValue, seoFieldValidator } from '../lib/seoFields'
 import {
   ARTICLE_STATUSES,
@@ -257,6 +257,23 @@ const validateAvMedia: CollectionBeforeValidateHook = async ({ data, req }) => {
   for (const entry of collectAvBlocks(data.content)) {
     if (entry.media !== undefined) await assertAttachableAv(req, entry.media, entry.kind, `The audio/video file (media ${entry.media})`)
     if (entry.poster !== undefined) await assertAttachableImage(req, entry.poster, `The audio/video poster (media ${entry.poster})`)
+  }
+  return data
+}
+
+/**
+ * The featured image must be an image (JPEG/PNG/WebP): audio and video files in the Media library are for the
+ * `audioVideo` block only. Checked whenever a featured image is set (create or update); skipped for trusted seed calls.
+ */
+const validateFeaturedImage: CollectionBeforeValidateHook = async ({ data, req }) => {
+  const ctx = (req.context ?? {}) as { seed?: boolean }
+  if (ctx.seed === true || !data || data.featuredImage === undefined || data.featuredImage === null) return data
+  const id = idOf(data.featuredImage)
+  const media = (await req.payload
+    .findByID({ collection: 'media', id: id as number, depth: 0, overrideAccess: true, req })
+    .catch(() => null)) as { mimeType?: string | null } | null
+  if (media && !(typeof media.mimeType === 'string' && ALLOWED_IMAGE_MIME.includes(media.mimeType))) {
+    throw new APIError('The featured image must be a JPEG, PNG or WebP image.', 400)
   }
   return data
 }
@@ -631,7 +648,7 @@ export const Articles: CollectionConfig = {
   },
   hooks: {
     beforeOperation: [clampLimit, markRestore, captureExpectedUpdatedAt],
-    beforeValidate: [autoSlug, normalizeSeoFields, validateEmbeds, validateBodyImages, validateAvMedia],
+    beforeValidate: [autoSlug, normalizeSeoFields, validateEmbeds, validateBodyImages, validateAvMedia, validateFeaturedImage],
     beforeChange: [assertExpectedUpdatedAt('articles'), deriveBodyMedia, guardPublishedSlug, enforceWorkflow],
     beforeDelete: [refuseDeleteWithLegacyComments],
     afterChange: [auditChanges, redirectOnSlugChange],

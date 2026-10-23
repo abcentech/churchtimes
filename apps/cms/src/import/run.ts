@@ -4,6 +4,7 @@ import path from 'node:path'
 import { createLocalReq, type Payload, type PayloadRequest } from 'payload'
 
 import { writeAuditLog } from '../lib/audit'
+import { avKindFromPath } from '../lib/avMedia'
 import { legacyPathFromUrl } from '../lib/legacyMediaPath'
 import { cleanText, slugify } from '../lib/sanitize'
 import { isReservedSlug } from '../lib/reservedSlugs'
@@ -413,7 +414,8 @@ async function featuredImageFor(ctx: Ctx, item: WxrItem, attachments: Map<number
       ? att.attachedFile
       : (legacyPathFromUrl(att.url) ?? legacyPathFromUrl(att.attachedFile))
     : null
-  const r = rel
+  // Audio/video is never a featured image (the Articles rule would refuse it): count it as missing, like any unusable attachment.
+  const r = rel && avKindFromPath(rel) === null
     ? await ctx.media.resolvePath(rel, { alt: att?.altText ?? '', articleTitle: plain(item.title, 240) })
     : { ok: false as const, reason: 'no-attachment' }
   if (!r.ok) {

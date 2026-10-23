@@ -109,6 +109,22 @@ describe('audio/video uploads', () => {
   })
 })
 
+describe('featured image', () => {
+  it('accepts an image and refuses audio/video, on create and update', async () => {
+    const img = await mustImage('feat-img')
+    const v = await must('feat-video', MP4, 'video/mp4', 'mp4')
+    const ok = await f.createArticle(f.tokens.reporter, { featuredImage: img.id })
+    expect(ok.status, ok.text.slice(0, 200)).toBe(201)
+    const bad = await f.createArticle(f.tokens.reporter, { featuredImage: v.id })
+    expect(bad.status).toBe(400)
+    expect(bad.text).toMatch(/featured image must be a JPEG, PNG or WebP/)
+    const upd = await api('PATCH', `/api/articles/${ok.id}`, { token: f.tokens.reporter, body: { featuredImage: v.id } })
+    expect(upd.status).toBe(400)
+    const cleared = await api('PATCH', `/api/articles/${ok.id}`, { token: f.tokens.reporter, body: { featuredImage: null } })
+    expect(cleared.status).toBe(200)
+  })
+})
+
 describe('audioVideo block: validation', () => {
   it('accepts a media block with a poster and records the files in bodyMedia', async () => {
     const v = await must('ok-video', MP4, 'video/mp4', 'mp4')
