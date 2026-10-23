@@ -41,3 +41,38 @@ the client when `serverArticle.featuredImage` is null, and log when the origin c
 `docker-smoke` and `public-quality` are required checks but only run when `apps/cms/**` (and public paths) change. If a PR of yours touches
 only paths that skip a required check, GitHub will block the merge: make sure the PR touches a path those workflows watch, or tell the
 owner so the filters can be widened.
+
+## Public host settings to set (D1 is settled)
+
+Articles are served at `/{slug}/` on `churchtimesnigeria.net` for all 4,343 published posts (owner decision D1). Set
+`PUBLIC_ARTICLE_PATH_TEMPLATE=/{slug}/` on the public host. It must equal the CMS's `PUBLIC_ARTICLE_PATH_TEMPLATE`, which now defaults to `/{slug}/`
+(the other accepted value is `/reports/{slug}/`; anything else stops CMS startup). Remove any assumption of `/reports/{slug}/` from the Wave 4
+spec and from tests. The CMS renames an imported slug that equals a reserved root name (`admin`, `api`, `search`, and so on), so the host may
+reserve those routes.
+
+## Update 2026-10-23
+
+For Codex. Nothing below changes your ownership of `src/`, `index.html` and `tools/`.
+
+**What the CMS lane has done and is doing.** The CMS importer now handles the REAL export (rehearsed on a throwaway database; PR #92 is open):
+4,343 published posts, 101 drafts (never imported), 1,348 approved comments, 485 pingbacks skipped, 6,142 attachments, 15 categories and one
+author name (byline text only). Yoast SEO import and the uncategorised fallback chain are merged (#91), and D1 (`/{slug}/`) is merged (#90).
+These are being built now, with PRs coming: a video and audio block (so `video`, `audio`, `fvplayer` and `gallery` shortcode content stops being
+dropped), categorisation improvements, a link audit in the importer, an `import:uploads-check` command, and the C8 search endpoint
+(`GET /api/public/search`, contract in `apps/cms/docs/api-contracts.md` when it lands). Public article JSON will gain video and audio blocks:
+please make your renderer ignore unknown block types safely until you build them.
+
+**What to do next, in this order** (full text in `docs/codex-wave5-archive-spec.md`):
+
+1. **E1 uploads pack (`tools/uploads-pack/`).** Highest priority; it blocks the real media import. Start now.
+2. **E2 archive recovery** (rebase #18, `archive-candidate/1`, dedup against the 4,343 posts). Independent of E1; start now.
+3. **E3 old-host redirect map** and 4. **E4 link audit**, once the private inventory from E2 exists. D1 is settled, so E3 targets `/{slug}/`.
+   E4 and the CMS's own link audit should report on the same categories; compare your counts with the CMS importer's "links" section.
+5. **E5 search**: the benchmark can start now; the UI waits for the C8 endpoint.
+
+**Agreement needed on the uploads manifest.** The CMS's `npm run import:uploads-check` and your `tools/uploads-pack` must agree on the manifest
+field names. You own `uploads-pack/1`: document the exact schema (field names, types, status values, path normalisation) in `docs/uploads-pack.md`
+early, as a short PR before the full tool, and do not rename fields afterwards without bumping the version. The CMS lane will read that file and
+implement the check against it; tell us if a field needs to change and we will change the CMS side, not the other way round. Both tools must treat
+the pack the same way: NFC-normalised relative paths under `wp-content/uploads`, SHA-256 over file bytes, MIME from magic bytes, and a refused or
+quarantined status for anything executable or mismatched. Counts only in anything committed; no file names or hashes of real data in the repo.
