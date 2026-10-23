@@ -434,8 +434,10 @@ async function featuredImageFor(ctx: Ctx, item: WxrItem, attachments: Map<number
     : { ok: false as const, reason: 'no-attachment' }
   if (!r.ok) {
     ctx.report.content.featuredImageMissing++
+    if (r.reason === 'rejected-unsafe' || r.reason === 'rejected-by-media-rules') ctx.report.content.featuredImageRejected++
     return undefined
   }
+  ctx.report.content.featuredImageResolved++
   return r.mediaId
 }
 
