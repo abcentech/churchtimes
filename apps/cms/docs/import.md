@@ -413,11 +413,12 @@ $C                                                       # smoke: read-only uplo
 $C npm run import:uploads-check -- --uploads /import/uploads --wxr /import/export.xml --out /import/private/uploads-detail.jsonl
 $C npm run import:wxr -- --file /import/export.xml --uploads /import/uploads                       # dry run (default), writes nothing
 $C npm run import:wxr -- --file /import/export.xml --uploads /import/uploads --apply --manifest /import/private/run-1.jsonl
+$C npm run search:reindex                                                                           # after every apply: rebuild the search index (safe to repeat)
 $C npm run import:rollback -- --manifest /import/private/run-1.jsonl                               # rollback dry run, read the counts
 $C npm run import:rollback -- --manifest /import/private/run-1.jsonl --apply
 ```
 
-Other commands (`import:inspect`, `import:wxr-report`, `import:convert-wxr`) take the same `/import/...` paths. The manifest must not exist yet; keep it, it is the only way to undo a run. Rollback needs the same `IMPORT_PRIVATE_DIR`. After a successful apply, rebuild the search index with the search reindex command, if that command exists in the release you deployed (it was not in the package scripts when this was written; check `npm run` in the importer image), and then start `cms`. Do the first import against a scratch database (`DATABASE_URL` in the env file), never the live one.
+Other commands (`import:inspect`, `import:wxr-report`, `import:convert-wxr`) take the same `/import/...` paths. The manifest must not exist yet; keep it, it is the only way to undo a run. Rollback needs the same `IMPORT_PRIVATE_DIR`. After every successful apply, run `npm run search:reindex` (the command above) so the public search finds the imported articles, and then start `cms`. Run it again after a rollback, which also changes the articles. Do the first import against a scratch database (`DATABASE_URL` in the env file), never the live one.
 
 ## Rehearsal against a real export
 
