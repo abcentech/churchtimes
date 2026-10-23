@@ -425,7 +425,14 @@ Payload's core routes read request bodies without a size limit, and the rate lim
 the proxy reports. So the proxy must (1) cap request bodies at **12 MB** (the largest legitimate request is an 11 MB
 media upload; everything else is under 1 MB and the app itself rejects `Content-Length` above 1 MB with `413`, above 11 MB
 on `/api/media`, see `src/proxy.ts`), (2) **overwrite** the client-address headers instead of passing client values
-through, (3) terminate TLS, and (4) compress text. The app listens on `127.0.0.1:3000` only.
+through, (3) terminate TLS, and (4) compress text.
+
+**Larger staff uploads (opt-in, default off).** Audio/video files through `POST /api/media` are limited to the 11 MB above. To allow up to N MB
+(N from 11 to 500, matching `MEDIA_AV_MAX_MB`, which is the per-file cap, default 100), change these together (the env variable is read in two code places, plus the proxy), or the smallest wins:
+(1) set `MEDIA_UPLOAD_MAX_MB=N` in the app environment (read by `src/lib/requestLimits.ts`, which then allows N + 1 MB on `/api/media` only, and by
+`next.config.mjs`, which raises the buffered body size to N + 2 MB: rebuild/restart); (2) raise the reverse proxy cap to at least N + 2 MB (`request_body max_size` /
+`client_max_body_size`); other routes stay at 1 MB in the app, but the proxy limit is global, so the proxy then lets bigger bodies reach the app, which refuses them with 413
+by their `Content-Length`. Leave both unset to keep the defaults. The app listens on `127.0.0.1:3000` only.
 
 Pick the block that matches your setup and set `TRUST_PROXY=true` (required) plus the matching variables:
 

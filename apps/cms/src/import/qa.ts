@@ -40,7 +40,11 @@ export type ImportReport = {
     postsWithExtraCategories: number
     extraCategoriesDropped: number
     /** Where each created article's category came from (the chain: WordPress, Yoast primary, tag map, generic, fallback). */
-    bySource: { wordpress: number; yoastPrimary: number; tagMap: number; generic: number; fallback: number }
+    bySource: { wordpress: number; yoastPrimary: number; tagMap: number; rules: number; generic: number; fallback: number }
+    /** Rules mode: posts left in the fallback with a low-confidence suggestion (listed in the review file when one is given). */
+    rulesLowConfidence: number
+    /** The category mode of this run. */
+    mode: 'strict' | 'rules'
     /** Posts naming a Yoast primary category that is not a category of the export. */
     yoastPrimaryUnresolved: number
     /** Tag-map entries whose target category does not exist (nothing is created from a tag): the next step applied. */
@@ -71,7 +75,16 @@ export type ImportReport = {
     imagesUnresolved: number
     linksUnmapped: number
     featuredImageMissing: number
+    /** Featured images resolved to a media document, and those refused by the safety or media rules (also in `media.unresolved`). */
+    featuredImageResolved: number
+    featuredImageRejected: number
     youtube: number
+    /** Audio/video blocks written with a media file. */
+    avResolved: number
+    /** Audio/video blocks kept with the legacy address because the file was not found (reason code `unresolved-media`). */
+    avUnresolvedMedia: number
+    /** Audio/video of a type the CMS does not host (linked or dropped). */
+    avUnsupported: number
     tablesFlattened: number
     embedsDropped: number
   }
@@ -95,7 +108,9 @@ export function newReport(mode: 'dry-run' | 'apply', update: boolean): ImportRep
       fallbackUsed: 0,
       postsWithExtraCategories: 0,
       extraCategoriesDropped: 0,
-      bySource: { wordpress: 0, yoastPrimary: 0, tagMap: 0, generic: 0, fallback: 0 },
+      bySource: { wordpress: 0, yoastPrimary: 0, tagMap: 0, rules: 0, generic: 0, fallback: 0 },
+      rulesLowConfidence: 0,
+      mode: 'strict',
       yoastPrimaryUnresolved: 0,
       tagMapTargetMissing: 0,
     },
@@ -112,7 +127,7 @@ export function newReport(mode: 'dry-run' | 'apply', update: boolean): ImportRep
     },
     authors: { distinct: 0, withByline: 0, unmapped: 0, postsWithoutByline: 0 },
     media: { reused: 0, created: 0, unresolved: t() },
-    content: { imagesResolved: 0, imagesUnresolved: 0, linksUnmapped: 0, featuredImageMissing: 0, youtube: 0, tablesFlattened: 0, embedsDropped: 0 },
+    content: { imagesResolved: 0, imagesUnresolved: 0, linksUnmapped: 0, featuredImageMissing: 0, featuredImageResolved: 0, featuredImageRejected: 0, youtube: 0, avResolved: 0, avUnresolvedMedia: 0, avUnsupported: 0, tablesFlattened: 0, embedsDropped: 0 },
     comments: { created: 0, existing: 0, skipped: t(), orphanedParents: 0, truncated: 0 },
     notes: [],
   }
@@ -169,7 +184,8 @@ export function formatImportReport(rep: ImportReport): string {
     'Categories',
     `  created: ${rep.categories.created}`,
     `  articles placed in the fallback category (or kept as WordPress "Uncategorised"): ${rep.categories.fallbackUsed}`,
-    `  category source: WordPress ${rep.categories.bySource.wordpress}, Yoast primary ${rep.categories.bySource.yoastPrimary}, tag map ${rep.categories.bySource.tagMap}, generic ${rep.categories.bySource.generic}, fallback ${rep.categories.bySource.fallback}`,
+    `  category source: WordPress ${rep.categories.bySource.wordpress}, Yoast primary ${rep.categories.bySource.yoastPrimary}, tag map ${rep.categories.bySource.tagMap}, rules ${rep.categories.bySource.rules}, generic ${rep.categories.bySource.generic}, fallback ${rep.categories.bySource.fallback}`,
+    `  category mode: ${rep.categories.mode}${rep.categories.mode === 'rules' ? `; low-confidence suggestions left in the fallback: ${rep.categories.rulesLowConfidence}` : ''}`,
     `  Yoast primary category not in the export: ${rep.categories.yoastPrimaryUnresolved}; tag-map targets that do not exist: ${rep.categories.tagMapTargetMissing}`,
     `  posts with more categories than the schema holds (one): ${rep.categories.postsWithExtraCategories} (${rep.categories.extraCategoriesDropped} extra categories not kept)`,
     '',
@@ -194,8 +210,11 @@ export function formatImportReport(rep: ImportReport): string {
     `  images resolved: ${rep.content.imagesResolved}`,
     `  images unresolved (now text): ${rep.content.imagesUnresolved}`,
     `  links unmapped: ${rep.content.linksUnmapped}`,
+    `  featured images resolved: ${rep.content.featuredImageResolved}`,
+    `  featured images rejected (unsafe or refused by the media rules): ${rep.content.featuredImageRejected}`,
     `  articles without a featured image where one was expected: ${rep.content.featuredImageMissing}`,
     `  YouTube embeds: ${rep.content.youtube}`,
+    `  audio/video blocks: ${rep.content.avResolved} with a file, ${rep.content.avUnresolvedMedia} unresolved-media (legacy address kept), ${rep.content.avUnsupported} unsupported type`,
     `  tables flattened: ${rep.content.tablesFlattened}`,
     `  embeds dropped: ${rep.content.embedsDropped}`,
     '',

@@ -4,10 +4,33 @@ import {
   checkRequestLimits,
   MAX_JSON_BODY_BYTES,
   MAX_MEDIA_BODY_BYTES,
+  mediaBodyLimitBytes,
 } from '../../src/lib/requestLimits'
 
 const check = (method: string, pathname: string, headers: Record<string, string> = {}) =>
   checkRequestLimits({ method, pathname, headers: new Headers(headers) })
+
+describe('mediaBodyLimitBytes (opt-in MEDIA_UPLOAD_MAX_MB)', () => {
+  it('keeps 11 MB unless a valid value of 11 or more is set, and caps at 500 MB + 1', () => {
+    expect(mediaBodyLimitBytes({})).toBe(MAX_MEDIA_BODY_BYTES)
+    for (const bad of ['', 'abc', '10', '0', '-5', '50.5']) expect(mediaBodyLimitBytes({ MEDIA_UPLOAD_MAX_MB: bad })).toBe(MAX_MEDIA_BODY_BYTES)
+    expect(mediaBodyLimitBytes({ MEDIA_UPLOAD_MAX_MB: '100' })).toBe(101 * 1024 * 1024)
+    expect(mediaBodyLimitBytes({ MEDIA_UPLOAD_MAX_MB: '9999' })).toBe(501 * 1024 * 1024)
+  })
+
+  it('only the media route follows it; JSON routes keep 1 MB', () => {
+    const before = process.env.MEDIA_UPLOAD_MAX_MB
+    process.env.MEDIA_UPLOAD_MAX_MB = '100'
+    try {
+      expect(check('POST', '/api/media', { 'content-length': String(50 * 1024 * 1024) })).toEqual({ ok: true })
+      expect(check('POST', '/api/media', { 'content-length': String(102 * 1024 * 1024) })).toMatchObject({ ok: false, status: 413 })
+      expect(check('POST', '/api/articles', { 'content-length': String(2 * 1024 * 1024) })).toMatchObject({ ok: false, status: 413 })
+    } finally {
+      if (before === undefined) delete process.env.MEDIA_UPLOAD_MAX_MB
+      else process.env.MEDIA_UPLOAD_MAX_MB = before
+    }
+  })
+})
 
 describe('checkRequestLimits (request-size policy for /api/*)', () => {
   it('lets ordinary requests through', () => {
