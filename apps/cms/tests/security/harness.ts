@@ -10,6 +10,10 @@ export const ipHeaders = (extra: Record<string, string> = {}) => ({ 'x-forwarded
 
 type Method = Parameters<typeof api>[0]
 
+/** Body as the proxy would see it (only multipart bodies are inspected there). */
+const bodyOf = (body: unknown): BodyInit | undefined =>
+  body instanceof FormData ? body : undefined
+
 /**
  * One request through the same two layers the running app has: src/proxy.ts (body/shape/filter guards, Vary: Origin)
  * and then the Payload REST route handler. Black-box: nothing is mocked except the Turnstile/mail transports where a test
@@ -19,7 +23,7 @@ export async function send(method: Method, url: string, options: ApiOptions = {}
   const u = new URL(url, ORIGIN)
   const headers = new Headers(options.headers)
   if (options.token) headers.set('Authorization', `JWT ${options.token}`)
-  const gate = proxy(new NextRequest(u, { method, headers }))
+  const gate = await proxy(new NextRequest(u, { method, headers, body: bodyOf(options.body), ...(options.body !== undefined ? { duplex: 'half' } : {}) } as never))
   if (!gate.headers.get('x-middleware-next')) {
     const text = await gate.text()
     let json: unknown = null

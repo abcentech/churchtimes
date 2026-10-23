@@ -108,6 +108,8 @@ export function checkRequestShape(pathname: string, rawSearch: string): ShapeDec
   if (decodedPath.includes('\u0000') || decodedSearch.includes('\u0000') || /%00/i.test(pathname + rawSearch)) {
     return { ok: false, status: 400, message: 'Invalid characters in the request URL.' }
   }
+  const statusDecision = checkStatusFilters(pathname, new URLSearchParams(rawSearch))
+  if (!statusDecision.ok) return statusDecision
   const parts = pathname.split('/').filter(Boolean) // ['api', collection, seg, ...]
   if (parts[1] === 'users' && parts[2] === 'verify') {
     return { ok: false, status: 404, message: 'Not found.' }
@@ -119,4 +121,56 @@ export function checkRequestShape(pathname: string, rawSearch: string): ShapeDec
     }
   }
   return { ok: true }
+}
+
+/**
+ * Every value any `select` field called `status` can hold, across all collections (articles, submissions, contact messages, live
+ * events and updates, legacy comments, subscribers, ad campaigns). tests/security checks this list against payload.config so a
+ * new status value cannot be refused here by mistake. PostgreSQL rejects an unknown enum literal, which Payload turns into a
+ * generic 500 for an anonymous `?where[status][equals]=bogus`.
+ */
+export const STATUS_FILTER_VALUES: ReadonlySet<string> = new Set([
+  'draft', 'in_review', 'changes_requested', 'approved', 'scheduled', 'published', 'archived',
+  'new', 'under_review', 'accepted', 'rejected', 'converted',
+  'read', 'replied', 'spam',
+  'live', 'ended',
+  'pending', 'hidden',
+  'confirmed', 'unsubscribed', 'bounced', 'erased',
+  'pending_approval', 'paused', 'cancelled',
+])
+
+const STATUS_KEY = /\[(?:[A-Za-z]+\.)*status\]\[(equals|not_equals|in|not_in)\](?:\[\d{1,4}\])?$/
+
+/** `where[...status][equals|not_equals|in|not_in]` values must be real status values (400 otherwise). */
+export function checkStatusFilters(pathname: string, searchParams: URLSearchParams): ShapeDecision {
+  if (pathname !== '/api' && !pathname.startsWith('/api/')) return { ok: true }
+  for (const [key, value] of searchParams) {
+    if (!key.startsWith('where')) continue
+    const m = STATUS_KEY.exec(key)
+    if (!m) continue
+    const values = m[1] === 'in' || m[1] === 'not_in' ? value.split(',') : [value]
+    for (const v of values) {
+      if (!STATUS_FILTER_VALUES.has(v.trim())) {
+        return { ok: false, status: 400, message: 'Filter on "status" uses an unknown value.' }
+      }
+    }
+  }
+  return { ok: true }
+}
+
+/**
+ * A NUL byte (or other control character) in a multipart part header (file name) makes busboy throw "Malformed part header",
+ * which Payload reports as a generic 500. Scans only the Content-Disposition header lines of a buffered body.
+ */
+export function multipartHeadersAreClean(body: Uint8Array): boolean {
+  const buf = Buffer.from(body.buffer, body.byteOffset, body.byteLength)
+  let from = 0
+  for (;;) {
+    const at = buf.indexOf('ontent-Disposition', from, 'latin1')
+    if (at < 0) return true
+    const end = buf.indexOf('\r\n\r\n', at, 'latin1')
+    const stop = end < 0 ? Math.min(buf.length, at + 2048) : Math.min(end, at + 2048)
+    for (let i = at; i < stop; i++) if (buf[i] === 0) return false
+    from = at + 1
+  }
 }

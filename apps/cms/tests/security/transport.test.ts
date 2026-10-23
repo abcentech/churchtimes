@@ -503,6 +503,31 @@ describe('body limits, chunked bodies and malformed input', () => {
     }
   })
 
+  it('chunked (Transfer-Encoding) writes are refused with 411 on every API route, even with a session', async () => {
+    for (const [method, url] of [['POST', '/api/articles'], ['PATCH', '/api/articles/1'], ['POST', '/api/media'], ['POST', '/api/public/contact']] as const) {
+      const res = await send(method, url, { body: '{}', token: f.tokens.reporter, headers: from(ip(), { 'transfer-encoding': 'chunked', ...json }) })
+      expect(res.status, `${method} ${url}`).toBe(411)
+    }
+  })
+
+  it('the larger media allowance needs a VERIFIED session: forged Authorization/Cookie tokens still get the 11 MB cap (413)', async () => {
+    const forged = [
+      'forged.token.value',
+      `${Buffer.from('{"alg":"none"}').toString('base64url')}.${Buffer.from('{"exp":9999999999}').toString('base64url')}.`,
+      `${Buffer.from('{"alg":"HS256"}').toString('base64url')}.${Buffer.from('{"exp":9999999999,"id":1}').toString('base64url')}.AAAA`,
+    ]
+    const big = String(40 * 1024 * 1024)
+    for (const t of forged) {
+      for (const headers of [{ authorization: `JWT ${t}` }, { cookie: `payload-token=${t}` }] as Array<Record<string, string>>) {
+        const res = await send('POST', '/api/media', { body: new FormData(), headers: from(ip(), { 'content-length': big, ...headers }) })
+        expect(res.status, t.slice(0, 20)).toBe(413)
+      }
+    }
+    // a genuine session is only allowed more when the deployment configured it; by default the cap is the same 11 MB
+    const real = await send('POST', '/api/media', { body: new FormData(), token: f.tokens.reporter, headers: from(ip(), { 'content-length': big }) })
+    expect(real.status).toBe(413)
+  })
+
   it('malformed JSON and wrong content types never reach a 500 or leak internals', async () => {
     for (const body of ['{', '[]', 'null', '"x"', '{"a":' + '['.repeat(5000), '\u0000', '{"email":{"$ne":null},"password":{"$ne":null}}']) {
       for (const url of ['/api/users/login', '/api/public/contact', '/api/public/submissions', '/api/public/newsletter/subscribe', '/api/users/forgot-password']) {

@@ -229,20 +229,22 @@ Never loosen an entry to make a test pass: a 200 where the matrix says 401/403 i
 ### Findings from the first run (fixed in the same change)
 
 - **Login timing oracle (medium)**: a wrong password for an existing account took ~1.4 s (PBKDF2, 600k iterations) but an unknown e-mail answered in ~10 ms, so response time revealed which staff addresses exist. `src/lib/loginTiming.ts` now runs the same PBKDF2 against a throw-away hash for unknown e-mails.
-- **Preview endpoint returns `provenance` and legacy fields (low)**: `GET /api/preview/articles?token=` returned the article's `provenance` group to any token holder. Fixed by PR #104 (not duplicated here); the probe in `content.test.ts` is `it.fails` until that source change lands, then becomes a normal test automatically.
 - `NUL` byte (`%00`) in any API URL, a non-numeric id on a numeric-id collection (`/api/articles/not-a-number`) and
   `POST /api/users/verify/:token` (verification is not enabled) all ended in a generic 500 from PostgreSQL or Payload. They are now
   answered 400/404 by `checkRequestShape` in `src/lib/queryGuards.ts`, applied by `src/proxy.ts`.
 
-### Open findings (documented as `it.fails`, remove the marker when fixed)
+### Also fixed after the first run
 
-- **F-1 (low)**: an out-of-range value in a select/enum filter (`/api/articles?where[status][equals]=bogus`) is a generic 500 for anonymous
-  callers (Payload does not validate select values in `where`; PostgreSQL rejects the enum literal). No data or SQL is returned, but the
-  error is attacker-triggerable noise. Fix: validate select-field filter values centrally in `queryGuards.ts` (one list per queryable
-  select field). TODO issue: "CMS: validate enum filter values on public reads".
-- **F-2 (low)**: a NUL byte in an uploaded file name (multipart) ends in a generic 500 (nothing leaked). Documented as `it.fails` in `content.test.ts`. TODO issue: "CMS: reject NUL in upload filenames with 400".
+- **F-1**: an out-of-range enum filter (`?where[status][equals]=bogus`) was an anonymous 500. `checkStatusFilters` (`queryGuards.ts`, applied by `proxy.ts`) now answers 400; a security test checks its value list against every `status` select in payload.config so staff filters are never refused by mistake.
+- **F-2**: a NUL byte in an uploaded file name (busboy "Malformed part header") was a 500. `proxy.ts` now inspects the multipart part headers and answers 400.
+- The preview endpoint stripping `provenance` and legacy fields comes from PR #104; the probe is a normal test now. The chunked-body 411 and the verified-session-only large media allowance from #104 are probed in `transport.test.ts`.
+
+### Open findings
+
+None open, apart from the informational item below.
 - **Info**: `legacyId` and `legacyUrl` on published articles are returned to anonymous callers (documented contract in
   `docs/api-contracts.md`; the old URL is public anyway). Pinned by a test so removing or exposing more is a deliberate decision.
+
 ## 7. Newsroom CSP and archive link review
 
 The staff newsroom (`apps/newsroom`) is a static single-page app. Two controls limit what hostile content recovered from the compromised old site can do there.

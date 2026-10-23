@@ -238,12 +238,35 @@ describe('GraphQL is disabled (introspection and playground)', () => {
   })
 })
 
-describe('known gap (documented, see docs/security.md "Open findings")', () => {
-  // F-1 (low): PostgreSQL rejects an out-of-range value for an ENUM column filter, and Payload does not validate select
-  // values in `where`, so an anonymous `where[status][equals]=bogus` answers a generic 500 (no data or SQL in the body,
-  // but it is attacker-triggerable error noise). Fix = validate select-field filter values centrally; tracked as TODO.
-  it.fails('F-1: an invalid enum filter value is a 4xx, not a 500', async () => {
-    const res = await anon('GET', '/api/articles?where[status][equals]=bogus')
-    expect(res.status).toBeLessThan(500)
+describe('select-field filters (was F-1)', () => {
+  it('an invalid enum filter value is a 400, not a 500', async () => {
+    for (const q of [
+      'where[status][equals]=bogus',
+      'where[status][in]=draft,bogus',
+      'where[status][not_equals]=%27',
+      'where[and][0][status][equals]=bogus',
+      'where[category.status][equals]=bogus',
+    ]) {
+      const res = await anon('GET', `/api/articles?${q}`)
+      expect(res.status, q).toBe(400)
+    }
+    expect((await anon('GET', '/api/articles?where[status][equals]=published')).status).toBe(200)
+    expect((await anon('GET', '/api/live-events?where[status][in]=live,ended')).status).toBe(200)
+  })
+
+  it('the guard list contains every value of every select field named "status" in payload.config (no staff filter is refused by mistake)', async () => {
+    const { STATUS_FILTER_VALUES } = await import('../../src/lib/queryGuards')
+    const cfg = await config
+    const missing: string[] = []
+    for (const col of cfg.collections) {
+      for (const field of col.flattenedFields as Array<{ name: string; type: string; options?: Array<string | { value: string }> }>) {
+        if (field.name !== 'status' || field.type !== 'select') continue
+        for (const o of field.options ?? []) {
+          const v = typeof o === 'string' ? o : o.value
+          if (!STATUS_FILTER_VALUES.has(v)) missing.push(`${col.slug}.status=${v}`)
+        }
+      }
+    }
+    expect(missing, 'add these to STATUS_FILTER_VALUES in src/lib/queryGuards.ts').toEqual([])
   })
 })

@@ -5,10 +5,6 @@
  * - field-level filter oracles (querying on a field the caller cannot read);
  * - preview token misuse; media privacy and Range; uploads (SVG / HTML / PHP polyglots); redirects (open redirect).
  */
-import fs from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
-
 import sharp from 'sharp'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
@@ -19,7 +15,6 @@ import { createPreviewToken } from '../../src/lib/previewToken'
 import { lexical, newRunId, setupFixtures, type Fixtures } from '../integration/helpers'
 import { anon, forbiddenKeysIn, send } from './harness'
 
-const here = path.dirname(fileURLToPath(import.meta.url))
 const runId = newRunId()
 let f: Fixtures
 const word = (label: string) => `${runId}${label}`
@@ -300,10 +295,7 @@ describe('provenance, legacy, e-mail and staff-only fields are never in an anony
 describe('preview tokens', () => {
   const previewUrl = (token: string) => `/api/preview/articles?token=${encodeURIComponent(token)}`
 
-  // The preview endpoint returned `provenance` (and legacy fields) on this base; fixed by PR #104 (agent/claude-review-fixes-2).
-  // Until that is merged this probe is expected to fail; it flips to a normal test as soon as the source strips `provenance`.
-  const previewStrips = fs.readFileSync(path.resolve(here, '../../src/endpoints/previewArticle.ts'), 'utf8').includes('provenance')
-  ;(previewStrips ? it : it.fails)('a valid token shows exactly its article, without staff fields', async () => {
+  it('a valid token shows exactly its article, without staff fields', async () => {
     const { token } = createPreviewToken({ articleId: seeded.draft!.id })
     const res = await anon('GET', previewUrl(token))
     expect(res.status).toBe(200)
@@ -469,15 +461,15 @@ describe('uploads: only real images are accepted, whatever the name or declared 
   })
 })
 
-describe('known gap: NUL byte in an uploaded file name', () => {
-  // F-2 (low): a NUL byte in the multipart filename ends in a generic 500 (parser/storage layer, nothing leaked). Expected: 400.
-  // TODO issue: "CMS: reject NUL in upload filenames with 400". Remove it.fails when fixed.
-  it.fails('F-2: a file name containing a NUL byte is a 4xx', async () => {
+describe('NUL byte in an uploaded file name (was F-2)', () => {
+  it('is a 400 from the proxy shape guard, never a 500, and nothing is stored', async () => {
     const form = new FormData()
     form.set('_payload', JSON.stringify({ alt: `${runId} nul` }))
     form.set('file', new Blob([new Uint8Array(png)], { type: 'image/png' }), 'a' + String.fromCharCode(0) + '.php.png')
     const res = await send('POST', '/api/media', { token: f.tokens.reporter, body: form })
-    expect(res.status).toBeLessThan(500)
+    expect(res.status).toBe(400)
+    const found = await f.payload.find({ collection: 'media', where: { alt: { equals: `${runId} nul` } }, overrideAccess: true })
+    expect(found.totalDocs).toBe(0)
   })
 })
 
