@@ -291,7 +291,7 @@ async function refreshLiveStream(container, event, setError) {
             ${canApprove ? `
             <span style="display:inline-flex; gap:0.35rem;">
               <button type="button" class="btn btn-success btn-sm" data-testid="live-approve" data-approve-upd-id="${escapeHtml(u.id)}" data-updated-at="${escapeHtml(u.updatedAt || '')}">Approve &amp; Push Live</button>
-              <button type="button" class="btn btn-outline btn-sm" data-testid="live-reject" data-reject-upd-id="${escapeHtml(u.id)}" data-updated-at="${escapeHtml(u.updatedAt || '')}" style="color:#DC2626;">Reject</button>
+              <button type="button" class="btn btn-outline btn-sm" data-testid="live-reject" data-reject-upd-id="${escapeHtml(u.id)}" data-updated-at="${escapeHtml(u.updatedAt || '')}" style="color:#B91C1C;">Reject</button>
             </span>` : '<span class="badge badge-pending">Awaiting editor</span>'}
           </div>
           <div style="white-space: pre-wrap;">${escapeHtml(u.body)}</div>
