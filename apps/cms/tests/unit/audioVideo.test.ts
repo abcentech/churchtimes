@@ -3,14 +3,19 @@ import { describe, expect, it } from 'vitest'
 import { htmlToLexical } from '../../src/import/htmlToLexical'
 import {
   AV_MIME,
+  avSourceHosts,
   avKindFromPath,
   avMaxBytes,
+  isSafeAvSourceUrl,
   isSafeAvUrl,
   mimeAllowedForKind,
   sniffAvMimes,
 } from '../../src/lib/avMedia'
 import { collectAvBlocks, collectAvMedia, findEmbedProblem } from '../../src/lib/lexicalEmbeds'
 import { type N, assertValidBody, baseOptions } from './htmlToLexical.helpers'
+
+// Legacy source addresses must be https on an allowed host (isSafeAvSourceUrl): the fixtures use these.
+process.env.LEGACY_SITE_HOSTS = 'old.example.test,cdn.old.example.test'
 
 /** `clip-5.mp4` resolves to media 5 (any extension); anything else does not resolve. */
 const resolveMedia = (src: string) => {
@@ -89,6 +94,40 @@ describe('avMedia helpers', () => {
     for (const bad of ['javascript:alert(1)', 'data:video/mp4;base64,AAAA', 'file:///etc/passwd', '//evil.test/a.mp4', 'https://u:p@x.test/a.mp4', 'https://x.test/a b.mp4', '', 'a.mp4', 'https://x.test/<a>']) {
       expect(isSafeAvUrl(bad)).toBe(false)
     }
+  })
+})
+
+describe('isSafeAvSourceUrl (legacy source address)', () => {
+  const hosts = ['old.example.test', 'cms.example.test']
+  it('accepts https on an allowed host and /wp-content/uploads/ paths only', () => {
+    expect(isSafeAvSourceUrl('https://old.example.test/wp-content/uploads/a.mp4', hosts)).toBe(true)
+    expect(isSafeAvSourceUrl('https://OLD.example.test/a.mp3', hosts)).toBe(true)
+    expect(isSafeAvSourceUrl('/wp-content/uploads/2020/05/a.mp4', hosts)).toBe(true)
+  })
+  it('refuses plain http, other hosts, other paths, traversal and unsafe forms', () => {
+    for (const bad of [
+      'http://old.example.test/a.mp3',
+      'https://evil.example.test/a.mp3',
+      'https://old.example.test.evil.test/a.mp3',
+      '/api/users/me',
+      '/admin',
+      '/wp-content/uploads/../../etc/passwd',
+      '/wp-content/uploads/%2e%2e/%2e%2e/etc/passwd',
+      '/wp-content/uploads/a%2fb.mp4',
+      String.raw`/wp-content/uploads/..\x.mp4`,
+      '//old.example.test/a.mp3',
+      'javascript:alert(1)',
+      'https://u:p@old.example.test/a.mp4',
+      '',
+    ]) {
+      expect(isSafeAvSourceUrl(bad, hosts), bad).toBe(false)
+    }
+  })
+  it('the default host list follows LEGACY_SITE_HOSTS and CMS_PUBLIC_URL', () => {
+    const env = { LEGACY_SITE_HOSTS: 'legacy.example.test', CMS_PUBLIC_URL: 'https://cms.example.test' }
+    const list = avSourceHosts(env)
+    expect(list).toEqual(expect.arrayContaining(['legacy.example.test', 'cms.example.test', 'www.legacy.example.test', 'churchtimesnigeria.net']))
+    expect(avSourceHosts({})).not.toContain('legacy.example.test')
   })
 })
 

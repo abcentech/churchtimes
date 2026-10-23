@@ -5,30 +5,69 @@ import {
   MAX_JSON_BODY_BYTES,
   MAX_MEDIA_BODY_BYTES,
   mediaBodyLimitBytes,
+  wantsLargeMediaBody,
 } from '../../src/lib/requestLimits'
 
 const check = (method: string, pathname: string, headers: Record<string, string> = {}) =>
   checkRequestLimits({ method, pathname, headers: new Headers(headers) })
 
-describe('mediaBodyLimitBytes (opt-in MEDIA_UPLOAD_MAX_MB)', () => {
-  it('keeps 11 MB unless a valid value of 11 or more is set, and caps at 500 MB + 1', () => {
+const MB = 1024 * 1024
+
+describe('mediaBodyLimitBytes (anonymous vs verified session, configured sizes only)', () => {
+  it('unverified callers never exceed 11 MB, whatever the env says', () => {
     expect(mediaBodyLimitBytes({})).toBe(MAX_MEDIA_BODY_BYTES)
-    for (const bad of ['', 'abc', '10', '0', '-5', '50.5']) expect(mediaBodyLimitBytes({ MEDIA_UPLOAD_MAX_MB: bad })).toBe(MAX_MEDIA_BODY_BYTES)
-    expect(mediaBodyLimitBytes({ MEDIA_UPLOAD_MAX_MB: '100' })).toBe(101 * 1024 * 1024)
-    expect(mediaBodyLimitBytes({ MEDIA_UPLOAD_MAX_MB: '9999' })).toBe(501 * 1024 * 1024)
+    expect(mediaBodyLimitBytes({ MEDIA_UPLOAD_MAX_MB: '400', MEDIA_AV_MAX_MB: '400' })).toBe(MAX_MEDIA_BODY_BYTES)
   })
 
-  it('only the media route follows it; JSON routes keep 1 MB', () => {
-    const before = process.env.MEDIA_UPLOAD_MAX_MB
-    process.env.MEDIA_UPLOAD_MAX_MB = '100'
+  it('a verified session stays at 11 MB unless a larger size is configured', () => {
+    expect(mediaBodyLimitBytes({}, true)).toBe(MAX_MEDIA_BODY_BYTES)
+    expect(mediaBodyLimitBytes({ MEDIA_AV_MAX_MB: '' }, true)).toBe(MAX_MEDIA_BODY_BYTES)
+    expect(mediaBodyLimitBytes({ MEDIA_AV_MAX_MB: 'abc' }, true)).toBe(MAX_MEDIA_BODY_BYTES)
+  })
+
+  it('a verified session: MEDIA_AV_MAX_MB (explicit) sets max(10, it) + 1 MB; MEDIA_UPLOAD_MAX_MB (11-500) overrides it', () => {
+    expect(mediaBodyLimitBytes({ MEDIA_AV_MAX_MB: '40' }, true)).toBe(41 * MB)
+    expect(mediaBodyLimitBytes({ MEDIA_AV_MAX_MB: '5' }, true)).toBe(11 * MB)
+    expect(mediaBodyLimitBytes({ MEDIA_AV_MAX_MB: '9999' }, true)).toBe(501 * MB)
+    expect(mediaBodyLimitBytes({ MEDIA_UPLOAD_MAX_MB: '200', MEDIA_AV_MAX_MB: '40' }, true)).toBe(201 * MB)
+    expect(mediaBodyLimitBytes({ MEDIA_UPLOAD_MAX_MB: '9999' }, true)).toBe(501 * MB)
+    for (const bad of ['', 'abc', '10', '0', '-5', '50.5']) expect(mediaBodyLimitBytes({ MEDIA_UPLOAD_MAX_MB: bad, MEDIA_AV_MAX_MB: '30' }, true), bad).toBe(31 * MB)
+  })
+
+  it('/api/media: more than 11 MB only when the proxy verified the session and a size is configured; JSON routes keep 1 MB', () => {
+    const before = { up: process.env.MEDIA_UPLOAD_MAX_MB, av: process.env.MEDIA_AV_MAX_MB }
+    process.env.MEDIA_AV_MAX_MB = '100'
+    delete process.env.MEDIA_UPLOAD_MAX_MB
     try {
-      expect(check('POST', '/api/media', { 'content-length': String(50 * 1024 * 1024) })).toEqual({ ok: true })
-      expect(check('POST', '/api/media', { 'content-length': String(102 * 1024 * 1024) })).toMatchObject({ ok: false, status: 413 })
-      expect(check('POST', '/api/articles', { 'content-length': String(2 * 1024 * 1024) })).toMatchObject({ ok: false, status: 413 })
+      const big = { 'content-length': String(50 * MB) }
+      const run = (headers: Record<string, string>, authenticated?: boolean) =>
+        checkRequestLimits({ method: 'POST', pathname: '/api/media', headers: new Headers(headers), authenticated })
+      expect(run(big)).toMatchObject({ ok: false, status: 413 })
+      // forged credential headers do not help: only the proxy's verified flag does
+      expect(run({ ...big, authorization: 'JWT forged', cookie: 'payload-token=forged' })).toMatchObject({ ok: false, status: 413 })
+      expect(run(big, true)).toEqual({ ok: true })
+      expect(run({ 'content-length': String(102 * MB) }, true)).toMatchObject({ ok: false, status: 413 })
+      expect(check('POST', '/api/articles', { 'content-length': String(2 * MB) })).toMatchObject({ ok: false, status: 413 })
+      expect(wantsLargeMediaBody('/api/media', new Headers(big))).toBe(true)
+      expect(wantsLargeMediaBody('/api/media', new Headers({ 'content-length': '1000' }))).toBe(false)
+      expect(wantsLargeMediaBody('/api/articles', new Headers(big))).toBe(false)
     } finally {
-      if (before === undefined) delete process.env.MEDIA_UPLOAD_MAX_MB
-      else process.env.MEDIA_UPLOAD_MAX_MB = before
+      if (before.up === undefined) delete process.env.MEDIA_UPLOAD_MAX_MB
+      else process.env.MEDIA_UPLOAD_MAX_MB = before.up
+      if (before.av === undefined) delete process.env.MEDIA_AV_MAX_MB
+      else process.env.MEDIA_AV_MAX_MB = before.av
     }
+  })
+
+  it('a chunked body (Transfer-Encoding) on ANY /api write is refused with 411', () => {
+    for (const path of ['/api/media', '/api/media/5', '/api/users/login', '/api/articles', '/api/public/submissions', '/api/public/newsletter/subscribe', '/api/staff/related-articles', '/api/live-updates']) {
+      for (const method of ['POST', 'PATCH', 'PUT']) {
+        expect(check(method, path, { 'transfer-encoding': 'chunked' }), `${method} ${path}`).toMatchObject({ ok: false, status: 411 })
+      }
+    }
+    // also when a Content-Length is sent alongside (request smuggling shape)
+    expect(check('POST', '/api/articles', { 'transfer-encoding': 'chunked', 'content-length': '5' })).toMatchObject({ ok: false, status: 411 })
+    expect(check('GET', '/api/media/file/a.jpg')).toEqual({ ok: true })
   })
 })
 
@@ -66,8 +105,7 @@ describe('checkRequestLimits (request-size policy for /api/*)', () => {
       expect(check(method, '/api/users/7', { 'transfer-encoding': 'chunked' })).toMatchObject({ ok: false, status: 411 })
     }
     expect(check('POST', '/api/users', { 'transfer-encoding': 'chunked' })).toMatchObject({ ok: false, status: 411 })
-    // Other routes and methods are not subject to the 411 rule.
-    expect(check('POST', '/api/articles', { 'transfer-encoding': 'chunked' })).toEqual({ ok: true })
+    // GET is not subject to the 411 rule.
     expect(check('GET', '/api/users/me')).toEqual({ ok: true })
     // A declared length (even 0) satisfies the rule.
     expect(check('POST', '/api/users/logout', { 'content-length': '0' })).toEqual({ ok: true })

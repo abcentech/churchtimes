@@ -16,6 +16,8 @@ import { api, lexical, newRunId, setupFixtures, type Fixtures } from './helpers'
  * upload rules, block validation, the public projection, withdrawn/draft rules, and the importer with its rollback.
  */
 const runId = newRunId()
+// A legacy source address must be https on an allowed host (isSafeAvSourceUrl); the synthetic old site is this one.
+process.env.LEGACY_SITE_HOSTS = 'old.example.test'
 const base = 9_100_000 + (parseInt(runId.slice(1, 5), 16) % 60_000) * 10
 let f: Fixtures
 let dir: string
@@ -156,6 +158,9 @@ describe('audioVideo block: validation', () => {
     await bad({ media: 99999999 }, /does not exist|invalid media id/)
     await bad({ media: v.id, html: '<video>' }, /unexpected fields/)
     await bad({ media: undefined, sourceUrl: 'javascript:alert(1)' }, /source/)
+    await bad({ media: undefined, sourceUrl: 'http://old.example.test/wp-content/uploads/a.mp3' }, /source/)
+    await bad({ media: undefined, sourceUrl: 'https://evil.example.test/a.mp3' }, /source/)
+    await bad({ media: undefined, sourceUrl: '/api/users/me' }, /source/)
     await bad({ media: v.id, title: '' }, /title/)
   })
 })

@@ -12,7 +12,7 @@
  * the bound is REFUSED, never silently accepted (a node past the bound could otherwise hide an embed).
  */
 
-import { AV_BLOCK_SLUG, AV_CAPTION_MAX, AV_KINDS, AV_TITLE_MAX, avTextProblem, isSafeAvUrl } from './avMedia'
+import { AV_BLOCK_SLUG, AV_CAPTION_MAX, AV_KINDS, AV_TITLE_MAX, avTextProblem, isSafeAvSourceUrl, isSafeAvUrl } from './avMedia'
 
 export const YOUTUBE_BLOCK_SLUG = 'youtubeEmbed'
 export const YOUTUBE_TITLE_MAX = 120
@@ -113,7 +113,7 @@ function avBlockProblem(rec: Record<string, unknown>, fields: Record<string, unk
   if (fields.poster !== undefined && fields.poster !== null && !isRelId(relId(fields.poster))) {
     return 'An audio/video block has an invalid poster id (expected an integer from 1 to 2147483647).'
   }
-  if (hasSource && !isSafeAvUrl(fields.sourceUrl)) return 'An audio/video block source must be an http(s) address or a root-relative path.'
+  if (hasSource && !isSafeAvSourceUrl(fields.sourceUrl)) return 'An audio/video block source must be an https address on the old site or this CMS, or a /wp-content/uploads/ path.'
   if (fields.transcriptUrl !== undefined && fields.transcriptUrl !== null && fields.transcriptUrl !== '' && !isSafeAvUrl(fields.transcriptUrl)) {
     return 'An audio/video block transcript link must be an http(s) address or a root-relative path.'
   }

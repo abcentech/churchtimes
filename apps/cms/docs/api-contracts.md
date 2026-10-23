@@ -1013,15 +1013,15 @@ search reads a projection table (`article_search`) that holds nothing else, and 
 | --- | --- |
 | `q` | required; whitespace-trimmed, control characters and lone surrogates removed; at most 200 characters (`400` when empty, missing or longer) |
 | `page` | 1 to 100, default 1 (larger is clamped, invalid becomes 1) |
-| `limit` | 1 to 50, default 10 (larger is clamped to 50, invalid becomes 10) |
+| `limit` | 1 to 20, default 10 (larger is clamped to `SEARCH_MAX_LIMIT`, default 20, at most 100; invalid becomes 10) |
 | `category` | category slug, or its numeric id; an unknown category gives an empty list |
 | `year` | four-digit year of `publishedAt` (UTC), 1900 to 2100; anything else is `400` |
 
-`200 { docs: [{ id, slug, title, excerpt, snippet, publishedAt, category: { id, slug, title }, rank }], totalDocs, limit, page, totalPages, hasNextPage,
-hasPrevPage, nextPage, prevPage }`. `snippet` is a plain-text extract of the article body around the match (about 30 words, at most 240
+`200 { docs: [{ id, slug, title, excerpt, snippet, publishedAt, category: { id, slug, title }, rank }], totalDocs, totalCapped, limit, page, totalPages, hasNextPage,
+hasPrevPage, nextPage, prevPage }`. **`totalDocs` is capped (v1.23):** counting stops after 1000 matches (`SEARCH_COUNT_CAP`, default 1000), so `totalDocs` is never more than 1000 and `totalCapped: true` means "more than that exist" (read `totalDocs: 1000, totalCapped: true` as "1000+"). `totalPages` is `null` while `totalCapped` is true (the real number of pages is unknown; there is no misleading lower bound), a number otherwise; while capped, `hasNextPage` / `nextPage` stay true as long as the page is full (up to page 100), and a page past the real end returns an empty `docs`. `snippet` is a plain-text extract of the article body around the match (about 30 words, at most 240
 characters, no markup: `<` and `>` never appear; JSON-escaped like every field), falling back to the excerpt. The result carries no staff fields.
 Order: `rank` descending (title weight A, excerpt B, body C, `ts_rank`), then `publishedAt` descending, then id. Page numbers past the
-end return an empty `docs` with the real `totalDocs`.
+end return an empty `docs` with the (capped) `totalDocs`. Snippets are cut from the first 20,000 characters of the body.
 
 **Query language.** `q` is parsed by PostgreSQL `websearch_to_tsquery` (never `to_tsquery`), passed as a bound parameter: words are AND-ed,
 `"quoted phrases"`, `or` and a leading `-` work, and every other punctuation (`& | ! : * ( )`, quotes) is harmless. A query made only of stop-words or
@@ -1032,7 +1032,7 @@ and stop-words (the, of, and) do not dominate. Names are stemmed identically at 
 miss plurals. `unaccent` is not used (the extension is not guaranteed in the test cluster or every production image); accented letters therefore
 match only themselves.
 
-**Transport.** `Cache-Control: public, max-age=60` on `200` (errors: `no-store`), `Vary: Origin`, `X-Content-Type-Options: nosniff`. `403` for an `Origin` not in
+**Transport.** `Cache-Control: public, max-age=60` on `200` ONLY when exactly one public origin is configured in `PUBLIC_SUBMISSION_ORIGINS`: every `200` then carries that same `Access-Control-Allow-Origin` whatever Origin the request sent, so all responses for a URL are identical and a shared cache cannot replay one caller's grant to another (Cloudflare's default cache ignores `Vary: Origin`; any other Origin gets an uncached `403`, so the cache cannot be poisoned). With none or several configured origins the grant is echoed per request and the response is `private, max-age=60`. Errors: `no-store`; `Vary: Origin` always, `X-Content-Type-Options: nosniff`. `403` for an `Origin` not in
 `PUBLIC_SUBMISSION_ORIGINS` (same rule and exact-origin CORS echo as the other public endpoints; `Retry-After` is exposed). Per-client rate limit (the shared in-memory
 limiter, same client-address rules): `SEARCH_RATE_LIMIT` (default 60) per `SEARCH_RATE_WINDOW_SECONDS` (default 60), then `429` with `Retry-After`. A database failure is
 `500 { ok: false, errors: [{ message }] }`.
@@ -1058,6 +1058,17 @@ limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/op
 ### v1.24: Staff related articles
 Additive: new endpoint `POST /api/staff/related-articles` (section 6.4); no existing shape changes.
 - Request bodies are read as a stream and refused with `413` as soon as they exceed 256 KiB measured in **bytes** (not characters), without buffering the remainder. The headline snippet is computed over the first 20,000 characters of an article body only.
+
+### v1.23: Review follow-ups (preview, search cost, upload limits, review rules)
+Additive except where a rule is tightened (listed first); the search response only gains a field.
+- **Preview** (`GET /api/preview/articles?token=`): the response never contains `provenance`, `legacyId` or `legacyUrl` (nor, as before, `reviewNotes`, `author`, `scheduledFor`, `bodyMedia`).
+- **Approve and publish are separate requests.** A recovered archive article (`provenance.importBatch` set) cannot be approved (`provenance.reviewStatus` becoming `reviewed`) and published or scheduled in the SAME write by a non-admin: `409` (also for bulk `PATCH ?where=`). Clients cannot clear or change `importBatch` (server-owned, ignored on write), so the rule cannot be dodged that way. **Admins are exempt** from the one-write rule (their approval is still audited as `archive.review`). A four-eyes rule (the reviewer and the publisher must be different people) is NOT implemented: it is an open owner decision. `provenance.reviewStatus` is refused (`400`) on an article without an import batch, and an article created already `reviewed` or `rejected` writes an `archive.review` row at creation. `restoreVersion` never changes `provenance`: the stored provenance wins over the old snapshot, so restoring cannot turn a `rejected` article back into a publishable one (the 409 publish guard then applies).
+- `PATCH` with `"provenance": null` is treated as "not sent" (it used to be a 500).
+- **Search:** new `totalCapped` field and the capped `totalDocs`, `totalPages: null` while capped (see "Go-live C8"); `SEARCH_MAX_LIMIT` default lowered from 50 to 20 (env `SEARCH_MAX_LIMIT`, 1 to 100); `SEARCH_COUNT_CAP` (default 1000); `Cache-Control` is `public` only when one public origin is configured (identical ACAO on every response), else `private`.
+- **Request size (`src/proxy.ts`):** a write (`POST`/`PATCH`/`PUT`) to ANY `/api/*` route with a `Transfer-Encoding` header (a chunked body, which cannot be size-checked) is refused with `411`; a bodyless POST (no `Content-Length`, no `Transfer-Encoding`) is fine. `/api/media`: 11 MB for everyone, except that a caller with a VERIFIED session (a genuine, unexpired Payload JWT in the `payload-token` cookie or `Authorization: JWT`; merely sending such a header does not count) gets the configured larger limit, but only when one is configured: `MEDIA_UPLOAD_MAX_MB` (11 to 500) if set, else `MEDIA_AV_MAX_MB` when set explicitly (`max(10, it) + 1` MB). With neither set the limit stays 11 MB and Next's body buffer stays 12 MB (`MEDIA_AV_MAX_MB` alone still sets the per-file audio/video cap, default 100). Next reads the body (up to `proxyClientMaxBodySize`) before the proxy runs, so the reverse proxy must enforce the real limits per location (operations.md 4.4); this is the second layer.
+- **Audio/video legacy `sourceUrl`:** only `https:` addresses on an allowed host (`CMS_PUBLIC_URL`, `LEGACY_SITE_HOSTS`, the known old-site names) or a root-relative `/wp-content/uploads/...` path; any other root-relative path and plain `http:` are refused (400), and so are percent-encoding and backslashes in the path. Transcript links are unchanged. The importer upgrades `http://` and protocol-relative addresses on allowed hosts to `https:` and drops the rest.
+- **Import tooling:** `import:rollback --force` never deletes a published article or one with `provenance.reviewStatus = reviewed` (skip code `published-or-reviewed`) unless `--include-published` is also given. CSV files the importer, link audit and categorisation eval write prefix cells starting with `=`, `+`, `-`, `@`, tab or CR with a single quote.
+- No migration. (`articles.category_id` is NOT NULL in the database, so a published article without a category cannot exist and the search projection needs no change for it.)
 
 ### v1.22: Archive review audit entry
 Additive; no request or response shape changes.

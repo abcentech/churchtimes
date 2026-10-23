@@ -330,7 +330,8 @@ message listing every problem (missing secrets, http or wildcard origins, dummy 
 | `PUBLIC_SITE_URL` | for the newsletter | `https://www.example.org` | Public **site** origin that confirmation e-mails link to (`<origin>/newsletter/confirm?token=...`, never an API URL). Bare origin, https only in production (a malformed or http value stops startup). While unset or http in production, `POST /api/public/newsletter/subscribe` answers `503` and stores nothing. |
 | `NEWSLETTER_TOKEN_SECRET` | **yes (production)** | 64 hex chars | HMAC key for unsubscribe links, at least 32 characters, different from `PAYLOAD_SECRET` and `PREVIEW_SECRET`. Startup fails in production without it (the loopback-only disposable staging stack derives a throw-away key instead). Rotating it breaks every unsubscribe link already sent. |
 | `NEWSLETTER_RATE_LIMIT` / `NEWSLETTER_RATE_WINDOW_SECONDS` | no | `5` / `900` | Newsletter sign-ups per IP per window. Per e-mail address the limit is fixed at 3 per hour. |
-| `SEARCH_RATE_LIMIT` / `SEARCH_RATE_WINDOW_SECONDS` | no | `60` / `60` | Public search requests per client IP per window. After deploying the search migration, and after every archive import, run `npm run search:reindex` (idempotent). |
+| `SEARCH_MAX_LIMIT` / `SEARCH_COUNT_CAP` | no | `20` / `1000` | Largest page size of public search (1 to 100) and the number of matches counted for `totalDocs` (1 to 10000; above it `totalCapped` is true). Both bound the work one anonymous request can cause. |
+| `SEARCH_RATE_LIMIT` / `SEARCH_RATE_WINDOW_SECONDS` | no | `60` / `60` | Public search requests per client IP per window. Behind Cloudflare this limiter only works per visitor when `CLIENT_IP_HEADER=cf-connecting-ip` is set (section 4.4): without it every visitor shares the Cloudflare edge address and one heavy user can exhaust everyone's allowance. Search responses to requests with an `Origin` header are `Cache-Control: private` because Cloudflare ignores `Vary: Origin`. After deploying the search migration, and after every archive import, run `npm run search:reindex` (idempotent). |
 | `STAFF_RELATED_RATE_LIMIT` / `STAFF_RELATED_RATE_WINDOW_SECONDS` | no | `30` / `60` | Staff related-articles requests per user per window (`POST /api/staff/related-articles`). |
 | `NEWSLETTER_TOKEN_RATE_LIMIT` | no | `20` | Per-IP limit (same window) for the confirm and unsubscribe endpoints combined. |
 | `NEWSLETTER_RESEND_COOLDOWN_SECONDS` | no | `600` | If a confirmation e-mail went to an address within this many seconds, a new sign-up gets the same neutral `202` and nothing is sent (`0` disables). |
@@ -432,12 +433,20 @@ media upload; everything else is under 1 MB and the app itself rejects `Content-
 on `/api/media`, see `src/proxy.ts`), (2) **overwrite** the client-address headers instead of passing client values
 through, (3) terminate TLS, and (4) compress text.
 
-**Larger staff uploads (opt-in, default off).** Audio/video files through `POST /api/media` are limited to the 11 MB above. To allow up to N MB
-(N from 11 to 500, matching `MEDIA_AV_MAX_MB`, which is the per-file cap, default 100), change these together (the env variable is read in two code places, plus the proxy), or the smallest wins:
-(1) set `MEDIA_UPLOAD_MAX_MB=N` in the app environment (read by `src/lib/requestLimits.ts`, which then allows N + 1 MB on `/api/media` only, and by
-`next.config.mjs`, which raises the buffered body size to N + 2 MB: rebuild/restart); (2) raise the reverse proxy cap to at least N + 2 MB (`request_body max_size` /
-`client_max_body_size`); other routes stay at 1 MB in the app, but the proxy limit is global, so the proxy then lets bigger bodies reach the app, which refuses them with 413
-by their `Content-Length`. Leave both unset to keep the defaults. The app listens on `127.0.0.1:3000` only.
+**Layer the limits per location.** Next.js reads a request body (up to `proxyClientMaxBodySize`) BEFORE the app can look at it, so the app's checks (`src/proxy.ts`) are a second layer, not the first. Configure the reverse proxy like this: `client_max_body_size 1m;` globally (Caddy: `request_body { max_size 1MB }`), and the large value ONLY on the `/api/media` location, together with a request-rate limit there (nginx `limit_req`, Caddy rate-limit module) and a short `client_body_timeout`:
+
+```nginx
+client_max_body_size 1m;
+location /api/media {
+    client_max_body_size 12m;      # raise to the configured staff limit + 2 MB only if you enable larger uploads (below)
+    limit_req zone=media burst=5 nodelay;
+    proxy_pass http://127.0.0.1:3000;
+}
+```
+
+The app refuses (with `411`) every write to `/api/*` that uses a chunked body, and refuses `Content-Length` above 1 MB (above 11 MB on `/api/media`). Defaults: 11 MB for uploads, and Next's body buffer is 12 MB.
+
+**Larger staff uploads (audio/video, opt-in).** Set `MEDIA_AV_MAX_MB=N` (per-file audio/video cap, default 100 when unset, maximum 500; setting it explicitly also raises the upload request limit): a caller with a VERIFIED session (a genuine, unexpired session token; a forged `Authorization` or cookie header does not count) may then send max(10, N) + 1 MB to `POST /api/media`, everyone else stays at 11 MB. Optional explicit override: `MEDIA_UPLOAD_MAX_MB` (11 to 500) replaces that value (precedence: `MEDIA_UPLOAD_MAX_MB`, then `MEDIA_AV_MAX_MB`, then the 11 MB default). `src/lib/requestLimits.ts` and `next.config.mjs` (Next's buffer = limit + 1 MB, applies to every `/api` route, hence small by default) both follow it: rebuild and restart after changing it. Raise the `/api/media` location in the reverse proxy to the same limit + 2 MB; leave every other location at 1 MB. Without the proxy change the proxy's own 413 wins.
 
 Pick the block that matches your setup and set `TRUST_PROXY=true` (required) plus the matching variables:
 
