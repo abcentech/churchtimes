@@ -18,6 +18,8 @@ export function parseRollbackArgs(argv: readonly string[], env: Record<string, s
   if (i >= 0 && (v === undefined || v.startsWith('--'))) return null
   // An apply names its manifest explicitly on the command line: no environment fallback for a destructive run.
   if (argv.includes('--apply') && i < 0) return null
+  // --include-published only widens --force: on its own it is a mistake, refused (usage, exit 2).
+  if (argv.includes('--include-published') && !argv.includes('--force')) return null
   const manifestPath = v ?? env.IMPORT_MANIFEST_PATH
   if (!manifestPath) return null
   return {

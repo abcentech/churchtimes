@@ -432,10 +432,20 @@ media upload; everything else is under 1 MB and the app itself rejects `Content-
 on `/api/media`, see `src/proxy.ts`), (2) **overwrite** the client-address headers instead of passing client values
 through, (3) terminate TLS, and (4) compress text.
 
-**Larger staff uploads (audio/video).** One variable decides: `MEDIA_AV_MAX_MB` (per-file audio/video cap, default 100, maximum 500). An AUTHENTICATED request (auth cookie or `Authorization` header) to `POST /api/media` may be max(10, `MEDIA_AV_MAX_MB`) + 1 MB; an anonymous one stays at 11 MB, and a chunked body without `Content-Length` is refused (`411`), because Next buffers a request body before Payload authenticates it. Optional explicit override: `MEDIA_UPLOAD_MAX_MB` (11 to 500) replaces the derived value (precedence: `MEDIA_UPLOAD_MAX_MB`, then `MEDIA_AV_MAX_MB`, then 100). `src/lib/requestLimits.ts` and `next.config.mjs` (buffered body size = limit + 1 MB) both follow it: rebuild and restart after changing it. Defaults therefore accept up to 101 MB from staff, so the reverse proxy must be raised too or it is the smallest cap that wins:
-(1) the app limit follows `MEDIA_AV_MAX_MB` (nothing else to set); (2) raise the reverse proxy cap to at least that limit + 2 MB (102 MB with the default 100) (`request_body max_size` /
-`client_max_body_size`); other routes stay at 1 MB in the app, but the proxy limit is global, so the proxy then lets bigger bodies reach the app, which refuses them with 413
-by their `Content-Length`. If you do not raise the proxy, staff uploads above its cap fail with the proxy's own 413. The app listens on `127.0.0.1:3000` only.
+**Layer the limits per location.** Next.js reads a request body (up to `proxyClientMaxBodySize`) BEFORE the app can look at it, so the app's checks (`src/proxy.ts`) are a second layer, not the first. Configure the reverse proxy like this: `client_max_body_size 1m;` globally (Caddy: `request_body { max_size 1MB }`), and the large value ONLY on the `/api/media` location, together with a request-rate limit there (nginx `limit_req`, Caddy rate-limit module) and a short `client_body_timeout`:
+
+```nginx
+client_max_body_size 1m;
+location /api/media {
+    client_max_body_size 12m;      # raise to the configured staff limit + 2 MB only if you enable larger uploads (below)
+    limit_req zone=media burst=5 nodelay;
+    proxy_pass http://127.0.0.1:3000;
+}
+```
+
+The app refuses (with `411`) every write to `/api/*` that uses a chunked body, and refuses `Content-Length` above 1 MB (above 11 MB on `/api/media`). Defaults: 11 MB for uploads, and Next's body buffer is 12 MB.
+
+**Larger staff uploads (audio/video, opt-in).** Set `MEDIA_AV_MAX_MB=N` (per-file audio/video cap, default 100 when unset, maximum 500; setting it explicitly also raises the upload request limit): a caller with a VERIFIED session (a genuine, unexpired session token; a forged `Authorization` or cookie header does not count) may then send max(10, N) + 1 MB to `POST /api/media`, everyone else stays at 11 MB. Optional explicit override: `MEDIA_UPLOAD_MAX_MB` (11 to 500) replaces that value (precedence: `MEDIA_UPLOAD_MAX_MB`, then `MEDIA_AV_MAX_MB`, then the 11 MB default). `src/lib/requestLimits.ts` and `next.config.mjs` (Next's buffer = limit + 1 MB, applies to every `/api` route, hence small by default) both follow it: rebuild and restart after changing it. Raise the `/api/media` location in the reverse proxy to the same limit + 2 MB; leave every other location at 1 MB. Without the proxy change the proxy's own 413 wins.
 
 Pick the block that matches your setup and set `TRUST_PROXY=true` (required) plus the matching variables:
 

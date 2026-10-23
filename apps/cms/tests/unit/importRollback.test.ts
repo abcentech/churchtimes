@@ -22,6 +22,7 @@ describe('rollback arguments', () => {
     expect(parseRollbackArgs(['--manifest', 'm.jsonl'], {})).toEqual({ manifestPath: 'm.jsonl', apply: false, force: false, includePublished: false, allowIncomplete: false })
     expect(parseRollbackArgs(['--manifest', 'm.jsonl', '--apply', '--force', '--allow-incomplete'], {})).toMatchObject({ apply: true, force: true, allowIncomplete: true, includePublished: false })
     expect(parseRollbackArgs(['--manifest', 'm.jsonl', '--force', '--include-published'], {})).toMatchObject({ force: true, includePublished: true })
+    expect(parseRollbackArgs(['--manifest', 'm.jsonl', '--include-published'], {})).toBeNull()
     expect(parseRollbackArgs([], { IMPORT_MANIFEST_PATH: 'env.jsonl' })?.manifestPath).toBe('env.jsonl')
   })
 })

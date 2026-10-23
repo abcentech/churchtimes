@@ -472,6 +472,15 @@ const guardUnreviewedImport: CollectionBeforeChangeHook = async ({ data, origina
   if ((req.context as { restoreVersion?: boolean } | undefined)?.restoreVersion === true && orig && orig.provenance !== undefined) {
     ;(data as Record<string, unknown>).provenance = orig.provenance
   }
+  // A review decision only means something on a recovered archive article (one with an import batch, which only the importer sets).
+  {
+    const incoming = (data as Record<string, unknown>).provenance as { reviewStatus?: unknown; importBatch?: unknown } | undefined
+    if (incoming && typeof incoming === 'object' && incoming.reviewStatus !== undefined && incoming.reviewStatus !== null) {
+      const storedBatch = (orig?.provenance as { importBatch?: unknown } | undefined)?.importBatch
+      const batch = 'importBatch' in incoming ? incoming.importBatch : storedBatch
+      if (typeof batch !== 'string' || batch === '') return fail(400, 'A review status can only be set on a recovered archive article.')
+    }
+  }
   // Approving and publishing a recovered article are separate decisions: not in one request, unless the actor is an admin.
   const actor = asUser(req.user)
   if (actor && actor.role !== 'admin' && reviewAndPublishInOneWrite(data as Record<string, unknown>, orig)) {
@@ -577,6 +586,19 @@ const auditChanges: CollectionAfterChangeHook = async ({ doc, previousDoc, opera
       summary: title,
       actorRole,
     })
+    // An article created already approved or rejected is a review decision too.
+    const createdReview = (doc.provenance as { reviewStatus?: unknown } | null | undefined)?.reviewStatus
+    if (typeof createdReview === 'string' && createdReview !== 'pending') {
+      await writeAuditLog(req, {
+        action: 'archive.review',
+        collection: 'articles',
+        docId: doc.id,
+        toStatus: doc.status,
+        summary: `Archive review status none -> ${createdReview} (at creation): ${title}`.slice(0, 1000),
+        details: { from: null, to: createdReview },
+        actorRole,
+      })
+    }
     return doc
   }
   const prev = (previousDoc ?? {}) as Doc

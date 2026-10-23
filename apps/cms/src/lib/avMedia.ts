@@ -141,6 +141,8 @@ export function isSafeAvSourceUrl(value: unknown, hosts: readonly string[] = avS
   const v = value as string
   if (v.startsWith('/')) {
     const path = v.split('#')[0].split('?')[0]
+    // No percent-encoding or backslashes: an encoded `..` or separator could slip past the prefix check.
+    if (/[%\\]/.test(path)) return false
     return path.startsWith('/wp-content/uploads/') && !path.split('/').some((seg) => seg === '..' || seg === '.')
   }
   try {

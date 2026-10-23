@@ -232,12 +232,12 @@ describe('GET /api/public/search: counting, categories and uncategorised article
     process.env.SEARCH_COUNT_CAP = '3'
     try {
       const r = await search(q(t, '&limit=2'))
-      expect(r.json).toMatchObject({ totalDocs: 3, totalCapped: true, hasNextPage: true, nextPage: 2 })
+      expect(r.json).toMatchObject({ totalDocs: 3, totalCapped: true, totalPages: null, hasNextPage: true, nextPage: 2 })
       expect(r.json.docs).toHaveLength(2)
       const p2 = await search(q(t, '&limit=2&page=2'))
       expect(p2.json.docs).toHaveLength(2)
       const far = await search(q(t, '&limit=2&page=9'))
-      expect(far.json).toMatchObject({ docs: [], totalDocs: 3, totalCapped: true })
+      expect(far.json).toMatchObject({ docs: [], totalDocs: 3, totalCapped: true, totalPages: null, hasNextPage: false })
     } finally {
       if (before === undefined) delete process.env.SEARCH_COUNT_CAP
       else process.env.SEARCH_COUNT_CAP = before
@@ -256,24 +256,45 @@ describe('GET /api/public/search: counting, categories and uncategorised article
 })
 
 describe('GET /api/public/search: transport', () => {
-  it('sends a short cache lifetime (public without an Origin, private with one), nosniff and Vary: Origin', async () => {
+  it('without a configured public origin the response is private (CORS echo varies per request); nosniff and Vary: Origin always', async () => {
+    delete process.env.PUBLIC_SUBMISSION_ORIGINS
     const r = await search(q('anything'))
-    expect(r.headers.get('cache-control')).toBe('public, max-age=60')
+    expect(r.headers.get('cache-control')).toBe('private, max-age=60')
+    expect(r.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(r.headers.get('vary')).toBe('Origin')
+  })
+
+  it('with exactly one public origin every 200 is identical (same ACAO, with or without an Origin) and public; others get an uncached 403', async () => {
     process.env.PUBLIC_SUBMISSION_ORIGINS = 'https://allowed.test'
     try {
+      const plain = await search(q('anything'))
       const cors = await search(q('anything'), { origin: 'https://allowed.test' })
-      expect(cors.status).toBe(200)
-      expect(cors.headers.get('cache-control')).toBe('private, max-age=60')
-      expect(cors.headers.get('vary')).toBe('Origin')
+      for (const r of [plain, cors]) {
+        expect(r.status).toBe(200)
+        expect(r.headers.get('cache-control')).toBe('public, max-age=60')
+        expect(r.headers.get('access-control-allow-origin')).toBe('https://allowed.test')
+        expect(r.headers.get('vary')).toBe('Origin')
+      }
       const bad = await search(q('anything'), { origin: 'https://evil.test' })
       expect(bad.status).toBe(403)
       expect(bad.headers.get('cache-control')).toBe('no-store')
+      expect(bad.headers.get('access-control-allow-origin')).toBeNull()
     } finally {
       if (saved.origins === undefined) delete process.env.PUBLIC_SUBMISSION_ORIGINS
       else process.env.PUBLIC_SUBMISSION_ORIGINS = saved.origins
     }
-    expect(r.headers.get('x-content-type-options')).toBe('nosniff')
-    expect(r.headers.get('vary')).toBe('Origin')
+  })
+
+  it('with several public origins the grant is echoed per request, so the response is private', async () => {
+    process.env.PUBLIC_SUBMISSION_ORIGINS = 'https://a.test,https://b.test'
+    try {
+      const r = await search(q('anything'), { origin: 'https://b.test' })
+      expect(r.headers.get('cache-control')).toBe('private, max-age=60')
+      expect(r.headers.get('access-control-allow-origin')).toBe('https://b.test')
+    } finally {
+      if (saved.origins === undefined) delete process.env.PUBLIC_SUBMISSION_ORIGINS
+      else process.env.PUBLIC_SUBMISSION_ORIGINS = saved.origins
+    }
   })
 
   it('applies the Origin allowlist and CORS like the other public endpoints', async () => {

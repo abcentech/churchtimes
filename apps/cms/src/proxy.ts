@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server'
 
 import { checkRelationFilters } from './lib/queryGuards'
-import { checkRequestLimits } from './lib/requestLimits'
+import { checkRequestLimits, wantsLargeMediaBody } from './lib/requestLimits'
+import { hasValidSession } from './lib/sessionToken'
 import { csv, normaliseOrigin } from './lib/securityConfig'
 
 /**
@@ -32,7 +33,9 @@ const corsHeaders = (origin: string | null): Record<string, string> => {
 
 export function proxy(request: NextRequest) {
   const { pathname, searchParams } = request.nextUrl
-  const limits = checkRequestLimits({ method: request.method, pathname, headers: request.headers })
+  // The larger /api/media allowance is for verified staff sessions only (a forged header or cookie does not count).
+  const authenticated = wantsLargeMediaBody(pathname, request.headers) && hasValidSession(request.headers)
+  const limits = checkRequestLimits({ method: request.method, pathname, headers: request.headers, authenticated })
   const decision = limits.ok
     ? (() => {
         const q = checkRelationFilters(pathname, searchParams)

@@ -87,6 +87,63 @@ describe('approve and publish are separate requests', () => {
   })
 })
 
+describe('one-PATCH rule: edge cases', () => {
+  it('a client cannot clear the import batch to dodge the rule or the publish guard', async () => {
+    const a = await candidate()
+    const res = await patch(f.tokens.eic, a.id, { status: 'published', provenance: { importBatch: '' } })
+    expect(res.status).toBe(409)
+    const after = await stored(a.id)
+    expect(after.status).toBe('draft')
+    expect(after.provenance.importBatch).toBe(`b-${runId}`)
+    const both = await patch(f.tokens.eic, a.id, { status: 'published', provenance: { importBatch: '', reviewStatus: 'reviewed' } })
+    expect(both.status).toBe(409)
+    expect((await stored(a.id)).status).toBe('draft')
+  })
+
+  it('a bulk PATCH (where) cannot review and publish in one request for a non-admin', async () => {
+    const a = await candidate()
+    const b = await candidate()
+    const res = await api('PATCH', `/api/articles?where[id][in]=${a.id},${b.id}`, {
+      token: f.tokens.eic,
+      body: { status: 'published', provenance: { reviewStatus: 'reviewed' } },
+    })
+    expect(res.status).toBeLessThan(500)
+    for (const id of [a.id, b.id]) {
+      const after = await stored(id)
+      expect(after.status, `article ${id}`).toBe('draft')
+      expect(after.provenance.reviewStatus).toBe('pending')
+    }
+  })
+
+  it('a review status is refused on an ordinary article (no import batch) and writes no audit row', async () => {
+    const plain = await f.seedArticle({ status: 'draft' })
+    const res = await patch(f.tokens.eic, plain.id, { provenance: { reviewStatus: 'reviewed' } })
+    expect(res.status).toBe(400)
+    expect((await stored(plain.id)).provenance?.reviewStatus ?? null).toBeNull()
+    expect(await reviewRows(plain.id)).toHaveLength(0)
+  })
+
+  it('an article created already reviewed is audited at creation (no seed context)', async () => {
+    const doc = (await f.payload.create({
+      collection: 'articles',
+      data: {
+        title: `${runId} created reviewed`,
+        slug: `${runId}-created-reviewed`,
+        content: (await import('./helpers')).lexical(),
+        category: f.catA.id,
+        status: 'draft',
+        provenance: provenance({ reviewStatus: 'reviewed' }),
+      } as never,
+      overrideAccess: true,
+      context: { import: true },
+    })) as { id: number }
+    f.created.articles.push(doc.id)
+    const rows = await reviewRows(doc.id)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.details).toMatchObject({ from: null, to: 'reviewed' })
+  })
+})
+
 describe('provenance: null', () => {
   it('a PATCH with provenance null is ignored (not a 500) and keeps the stored provenance', async () => {
     const a = await candidate()
