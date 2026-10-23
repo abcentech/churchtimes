@@ -429,6 +429,63 @@ What is printed (counts and fixed codes only; the only strings taken from the fi
 
 The detail file is JSON: `textShrink`, `emptyOutput`, `failed` (id and code), `inputOverCap`, `maxDepthHit` and `applyFailed`, all WordPress post ids. Open a post by id in the old WordPress admin to look at it. Do not paste the file, or what is in it, anywhere shared.
 
+## Links in article bodies (`npm run import:link-audit`)
+
+Every link in a body is classified by one shared module (`src/import/linkClassify.ts`); the converter rewrites with it and the audit counts with it.
+The article path is `PUBLIC_ARTICLE_PATH_TEMPLATE` (`/{slug}/` once D1 is set; the audit takes `--article-path` to override). A rewrite is always a root-relative
+path on the site itself, never another host. Old hosts are the export's own site address plus `churchtimesnigeria.net`, `.org` and `.com`.
+
+| Link type | Rule |
+|---|---|
+| article (`/{slug}/`, `/YYYY/MM/{slug}/`, `?p=N`) on an old host or root-relative | rewritten to the article path when the post is imported (slug through the FINAL slug map, `?p=N` through `wp:post_id`) |
+| article whose post is a draft, private, password-protected or not imported; slug or id not in the export | kept as written, reported (`article is not published or not imported`, `slug is not in the slug map`, `post id is not in the export`) |
+| home | rewritten to `/` |
+| category archive (`/category/a/b/`, `?cat=N`) | rewritten to `/category/{leaf}/` when the import creates that category (it is some article's category); else kept, reported. Nested old paths get an exact 301 rule |
+| tag archive | kept, reported: the CMS has no tag pages. `--tag-path` can name a target when the public host has one |
+| page (`wp:post_type` page, `?page_id=N`) | kept, reported: there is no pages collection yet |
+| attachment page, author, date archive, feed, search, WordPress admin | kept, reported (nothing to point at) |
+| `wp-content/uploads` file | kept, reported; rewritten only when the media map can carry it (hook `uploadPath`, not wired yet) |
+| `mailto:` | unchanged. `tel:` and other schemes: unchanged (the words stay, the link goes) |
+| external site | unchanged, not counted as a site link |
+
+The command is read-only (no database). From `apps/cms`:
+
+```
+npm run import:link-audit -- --file <export.xml> [--out <rows.jsonl>] [--redirects-out <rules.csv>] [--article-path '/{slug}/'] [--category-path '/category/{slug}/'] [--tag-path '/tag/{slug}/'] [--old-host a.test]
+```
+
+It prints counts only (types, resolved, unresolved, resolved before this change, unresolved reasons, redirect rules and what was dropped). `--out` (one JSON line per link, addresses
+included) and `--redirects-out` must be outside every git work tree; a path inside one is refused (exit 2). `--redirects-out` writes exact-match 301 rules in the
+`import:redirects` format (`from,to,status`) for nested category and tag archives and dated permalinks (a dated permalink that is the post's own permalink is already an
+article rule and is dropped). Rules are canonical, identical ones are dropped, one target per address, chains are flattened, loops and conflicts are dropped, no 410 is ever invented.
+`?p=N` cannot be an exact rule (a rule cannot carry a query string); the public host resolves it through `legacyId`, and the body links are already rewritten.
+Anchors that wrap an image (a lightbox link to the full-size file) are counted separately: the converter keeps the image, not the link.
+
+Real export (`2026-10-13`, published posts, counts only; "before" means resolved by the rewriter before this change):
+
+| Type | Total | Resolved | Unresolved | Resolved before |
+|---|---|---|---|---|
+| article (plain slug) | 501 | 501 | 0 | 501 |
+| home | 29 | 29 | 0 | 29 |
+| article, slug not in the export | 16 | 0 | 16 | 0 |
+| uploads file | 3119 (3105 wrap an image) | 0 | 3119 | 0 |
+| other path (2 or 3 segments) | 6 | 0 | 6 | 0 |
+| category, tag, page, attachment, author, date archive, `?p=N`, `?page_id=N`, feed, admin | 0 | 0 | 0 | 0 |
+| mailto / tel / other scheme / anchor / no leading slash / external | 135 / 107 / 3 / 18 / 41 / 3532 | not site links | | |
+
+One link is on `churchtimesnigeria.org` or `.com` (its slug is not in the export, so it stays unresolved). Resolved links are the same before and after (530): this export has none of the
+newly handled types. The converter, which counts links after image anchors and nesting are resolved, rewrites 549 (548 in the previous rehearsal) and keeps 419 unmapped (397 uploaded files, 16 unknown slugs, 6 other paths). The export has no category, tag, page, author, date, `?p=N` or feed links, so the
+redirect file is empty (header only) for this export. Run the audit again after every re-export.
+
+What is left, and who does it:
+
+- **Owner**: decide what the 16 links to slugs that are not in the export should do (remove the link, or point at a replacement), and the 6 other paths. Details are in the private rows file (`--out`).
+- **Owner**: set `PUBLIC_ARTICLE_PATH_TEMPLATE=/{slug}/` (D1) before the real run so rewritten links use it; the importer now reads it (it used to write `/article/{slug}`).
+- **Owner**: `churchtimesnigeria.org` and `.com` must reach the same public host (DNS or host-level redirect) and be listed in `LEGACY_SITE_HOSTS`; path rules do not carry a host.
+- **Codex (E3, old-host redirect map)**: covered on the CMS side for exact rules by `--redirects-out`; still the public host's job: pattern rules (`/category/*`, `/tag/*`, `/page/N/`, `/feed/`), `?p=N` through `legacyId`, the `/category/{slug}/` route itself (the CMS only emits and rewrites to that form; change it with `--category-path`), and tag pages if wanted.
+- **Codex (E4, link audit)**: covered on the CMS side by this command (read-only, counts, private rows). Still open: the 3119 uploads links (they need the media map, `export:media-map`, to resolve) and pages (a pages collection, then `pagePath`).
+- **Import**: `npm run import:redirects -- --file <rules.csv>` (dry run first) after the articles are imported.
+
 ## Categories: the rules mode (`--category-mode=rules`)
 
 **Default is `strict`** (the behaviour before this existed): WordPress category, Yoast primary category, tag map, generic "Uncategorised", fallback category. `--category-mode=rules` is opt-in and awaits the owner's approval before it becomes the default. In rules mode a classifier runs only for posts the earlier steps could not place; it never overrides a WordPress or Yoast category or a tag-map entry.

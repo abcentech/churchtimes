@@ -222,6 +222,12 @@ export type LinkOptions = {
   slugMap: ReadonlyMap<string, string> | Readonly<Record<string, string>>
   /** The new root-relative path of an article, e.g. `(slug) => '/' + slug + '/'`. Must return a path starting `/`. */
   articlePath: (slug: string) => string
+  /**
+   * Optional resolver for old-host and root-relative links (`import/linkClassify.ts`): returns the new root-relative path, or
+   * `to: null` with a fixed reason. When absent, only the plain `/<slug>/` rule below applies. A `to` that is not a
+   * root-relative path is never used, so a rewrite can never leave the site origin.
+   */
+  classify?: (url: string) => { to: string | null; reason: string }
 }
 
 export type LinkReport = {
@@ -275,6 +281,8 @@ function lookupSlug(map: LinkOptions['slugMap'], key: string): string | undefine
 // eslint-disable-next-line no-control-regex
 const UNSAFE_URL_CHARS_RE = /[\u0000- \u007F-\u009F\\]/
 
+const isLocalPath = (p: string): boolean => p.startsWith('/') && !p.startsWith('//') && !UNSAFE_URL_CHARS_RE.test(p)
+
 const safeHash = (hash: string): string => (hash && !UNSAFE_URL_CHARS_RE.test(hash) ? hash : '')
 
 /**
@@ -295,6 +303,11 @@ function decideInner(raw: string, opts: LinkOptions, report: LinkReport): Decisi
   const url = raw.trim()
   if (url === '') return { action: 'text', reason: 'empty link' }
   if (url.startsWith('//')) return { action: 'text', reason: 'protocol-relative link' }
+  if (url.startsWith('/') && opts.classify) {
+    if (UNSAFE_URL_CHARS_RE.test(url)) return { action: 'text', reason: 'unsafe characters in link' }
+    const r = opts.classify(url)
+    return r.to !== null && isLocalPath(r.to) && r.to !== url ? { action: 'rewrite', url: r.to } : { action: 'keep' }
+  }
   if (url.startsWith('/')) {
     return UNSAFE_URL_CHARS_RE.test(url) ? { action: 'text', reason: 'unsafe characters in link' } : { action: 'keep' }
   }
@@ -321,6 +334,11 @@ function decideInner(raw: string, opts: LinkOptions, report: LinkReport): Decisi
     return { action: 'keep' }
   }
   const hash = safeHash(parsed.hash)
+  if (opts.classify) {
+    const r = opts.classify(url)
+    if (r.to !== null && isLocalPath(r.to)) return { action: 'rewrite', url: r.to }
+    return keepUnmapped(r.reason)
+  }
   if (parsed.search) {
     return keepUnmapped('has a query string (for example ?p=ID, which the public host resolves through legacyId)')
   }
@@ -437,8 +455,8 @@ export function sanitizeLegacyLinks<T>(root: T, opts: LinkOptions): { root: T; r
       let rewrote = false
       for (const d of decisions) {
         if (d.decision.action === 'rewrite') {
+          if (d.slot.holder[d.slot.key] !== d.decision.url) rewrote = true
           d.slot.holder[d.slot.key] = d.decision.url
-          rewrote = true
         }
       }
       if (rewrote) report.rewritten++

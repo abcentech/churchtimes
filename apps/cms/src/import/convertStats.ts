@@ -1,4 +1,6 @@
+import { articlePath as buildArticlePath, resolveArticlePathTemplate } from '../lib/redirectPaths'
 import { extractYoutubeId, HtmlConversionError, htmlToLexical, type ConversionReport } from './htmlToLexical'
+import { KNOWN_LEGACY_HOSTS, LinkContextBuilder, linkClassifyHook } from './linkClassify'
 import type { WxrRecord } from './wxr'
 
 /**
@@ -144,8 +146,10 @@ export async function convertWxrStats(open: () => AsyncIterable<WxrRecord>, opti
   const stats = emptyStats()
   const detail: ConvertDetail = { textShrink: [], failed: [], emptyOutput: [], inputOverCap: [], maxDepthHit: [] }
   const slugMap: Record<string, string> = {}
-  const hosts = new Set<string>((options.oldHosts ?? []).map((h) => h.toLowerCase()))
+  const builder = new LinkContextBuilder()
+  const hosts = new Set<string>([...KNOWN_LEGACY_HOSTS, ...(options.oldHosts ?? [])].map((h) => h.toLowerCase()))
   for await (const rec of open()) {
+    builder.add(rec)
     if (rec.record === 'site') {
       for (const u of [rec.site.baseSiteUrl, rec.site.baseBlogUrl]) {
         try {
@@ -158,6 +162,9 @@ export async function convertWxrStats(open: () => AsyncIterable<WxrRecord>, opti
       slugMap[rec.item.slug] = rec.item.slug
     }
   }
+  const template = resolveArticlePathTemplate(process.env)
+  const articlePath = (slug: string) => buildArticlePath(template, slug)
+  const classify = linkClassifyHook(builder.build({ articlePath, slugMap, extraHosts: [...hosts] }))
   for await (const rec of open()) {
     if (rec.record !== 'item' || rec.item.kind !== 'post' || rec.item.status !== 'publish') continue
     const item = rec.item
@@ -172,6 +179,8 @@ export async function convertWxrStats(open: () => AsyncIterable<WxrRecord>, opti
       const result = htmlToLexical(item.contentHtml, {
         oldHosts: [...hosts],
         slugMap,
+        articlePath,
+        classify,
         resolveImage: options.assumeImages ? () => ({ mediaId: 1 }) : () => null,
       })
       stats.converted++

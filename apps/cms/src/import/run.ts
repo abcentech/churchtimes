@@ -4,11 +4,11 @@ import path from 'node:path'
 import { createLocalReq, type Payload, type PayloadRequest } from 'payload'
 
 import { writeAuditLog } from '../lib/audit'
+import { articlePath as buildArticlePath, resolveArticlePathTemplate } from '../lib/redirectPaths'
 import { avKindFromPath } from '../lib/avMedia'
 import { legacyPathFromUrl } from '../lib/legacyMediaPath'
 import { cleanText, slugify } from '../lib/sanitize'
 import { isReservedSlug } from '../lib/reservedSlugs'
-import { resolveArticlePathTemplate } from '../lib/redirectPaths'
 import { SEO_DESCRIPTION_MAX, SEO_TITLE_MAX } from '../lib/seoFields'
 import { safeErrorSummary } from '../lib/safeLog'
 import { classify, compileRules, EraIndex, parseCategoryRules, textForClassification, type Classification, type CompiledRules } from './categoryRules'
@@ -16,6 +16,7 @@ import { DEFAULT_CATEGORY_RULES } from './categoryRulesDefault'
 import { bylineFor, chooseCategoryChain, cleanLegacyUrl, isCategorySlug, parseCategoryMap, resolveSeoText, validCanonical, type CategoryLookups, type SeoOutcome } from './mapping'
 import { cleanDisplayName, prepareComments, writeComments } from './comments'
 import { HtmlConversionError, htmlToLexical, type ConversionReport } from './htmlToLexical'
+import { KNOWN_LEGACY_HOSTS, LinkContextBuilder, linkClassifyHook } from './linkClassify'
 import { openManifest, type ManifestSink } from './manifest'
 import { createMediaResolver, isSafeRelativeUploadPath, type MediaResolver } from './media'
 import { bumpTally, newReport, statusKey, type ImportReport } from './qa'
@@ -143,6 +144,9 @@ type Ctx = {
   authorKeys: Map<string, boolean>
   /** Media ids created for the post being written (to find their `upload` audit rows). */
   postMedia: number[]
+  /** Link resolver (slug, ?p=N, category, old hosts) built from pass 1 with the FINAL slugs. */
+  classify: (url: string) => { to: string | null; reason: string }
+  articlePath: (slug: string) => string
 }
 
 type ExistingArticle = { id: number; slug?: string; updatedAt?: string }
@@ -218,6 +222,7 @@ type Pass1 = {
   catByNicename: Map<string, WxrTerm>
   /** Old slug -> the FINAL slug the article has or will get (after collision handling). */
   slugMap: Record<string, string>
+  links: LinkContextBuilder
   /** wp id -> final slug, or the reason the post cannot be given one. */
   slugs: Map<number, string | { skip: string }>
   /** Rules mode: dates and categories of the importable posts, to build the neighbour evidence once the channel categories are known. */
@@ -225,9 +230,10 @@ type Pass1 = {
 }
 
 async function pass1(file: string, payload: Payload, req: PayloadRequest, report: ImportReport, collectEra: boolean): Promise<Pass1> {
-  const out: Pass1 = { attachments: new Map(), authors: new Map(), siteHosts: [], catByTermId: new Map(), catByNicename: new Map(), slugMap: {}, slugs: new Map(), eraSources: [] }
+  const out: Pass1 = { attachments: new Map(), authors: new Map(), siteHosts: [], catByTermId: new Map(), catByNicename: new Map(), slugMap: {}, links: new LinkContextBuilder(), slugs: new Map(), eraSources: [] }
   const claimed = new Set<string>()
   for await (const rec of readWxrFile(file)) {
+    out.links.add(rec)
     if (rec.record === 'site') out.siteHosts = hostsOf(rec.site.baseSiteUrl, rec.site.baseBlogUrl)
     else if (rec.record === 'category') {
       const c = rec.category
@@ -477,7 +483,13 @@ type Converted = { content: { root: unknown }; report: ConversionReport }
 async function convert(ctx: Ctx, item: WxrItem, oldHosts: readonly string[], slugMap: Record<string, string>): Promise<Converted> {
   const wanted = new Map<string, { alt: string; caption: string }>()
   const wantedMedia = new Map<string, { title: string; caption: string }>()
-  const options = { oldHosts, slugMap, articleTitle: plain(item.title, 240) }
+  const options = {
+    oldHosts: [...new Set([...oldHosts, ...KNOWN_LEGACY_HOSTS])],
+    slugMap,
+    articleTitle: plain(item.title, 240),
+    articlePath: ctx.articlePath,
+    classify: ctx.classify,
+  }
   htmlToLexical(item.contentHtml, {
     ...options,
     resolveImage: (src, c) => {
@@ -662,6 +674,9 @@ export async function runImport(payload: Payload, opts: ImportOptions): Promise<
         postMedia.push(id)
       },
     })
+    const template = resolveArticlePathTemplate(process.env)
+    const articlePath = (slug: string) => buildArticlePath(template, slug)
+    const classify = linkClassifyHook(first.links.build({ articlePath, slugMap: first.slugMap, extraHosts: [...oldHosts, ...KNOWN_LEGACY_HOSTS] }))
     const lookups = pass1Lookups(first, tagMap)
     const ctx: Ctx = {
       payload,
@@ -678,6 +693,8 @@ export async function runImport(payload: Payload, opts: ImportOptions): Promise<
       siteHosts: first.siteHosts,
       authorKeys: new Map(),
       postMedia,
+      classify,
+      articlePath,
     }
 
     const seenLegacyIds: number[] = []
