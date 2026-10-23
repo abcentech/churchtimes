@@ -177,7 +177,8 @@ export default buildConfig({
   ],
   editor: lexicalEditor(),
   db: postgresAdapter({
-    pool: { connectionString: process.env.DATABASE_URL },
+    // PG_POOL_MAX: size of the PostgreSQL pool of this process (pg default 10). Size it with docs/performance.md.
+    pool: { connectionString: process.env.DATABASE_URL, max: Number.parseInt(process.env.PG_POOL_MAX ?? '', 10) > 0 ? Number.parseInt(process.env.PG_POOL_MAX ?? '', 10) : 10 },
     migrationDir: path.resolve(dirname, 'migrations'),
     push: process.env.NODE_ENV !== 'production' && process.env.PAYLOAD_DB_PUSH === 'true',
   }),
