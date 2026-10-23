@@ -38,6 +38,8 @@ export type HtmlToLexicalOptions = {
   articleTitle?: string
   /** New root-relative article path, default `/article/<slug>`. */
   articlePath?: (slug: string) => string
+  /** Old-host and root-relative link resolver (see `LinkOptions.classify`). */
+  classify?: (url: string) => { to: string | null; reason: string }
   /** Default 5 MB. */
   maxInputBytes?: number
   /** Element nesting past this is flattened to text. Default and maximum 64. */
@@ -594,6 +596,7 @@ function convert(html: string, options: HtmlToLexicalOptions): HtmlToLexicalResu
     oldHosts: options.oldHosts,
     slugMap: options.slugMap,
     articlePath: options.articlePath ?? ((slug: string) => `/article/${slug}`),
+    classify: options.classify,
   })
   content = linkResult.root as { root: LexicalNode }
   root = content.root
