@@ -172,7 +172,7 @@ code (`IMPORT_USAGE`, `IMPORT_FILE_INSIDE_REPO`, `IMPORT_FILE_UNREADABLE`, `IMPO
   to `media.legacyPath` (exact path, then without a `-300x200` size suffix); when there is none the file is read from
   `--uploads` and created as Media (the Media rules apply: JPEG/PNG/WebP, alt text). Unresolved images become text in
   the body and are counted by reason: `missing-file`, `bad-path`, `outside-root`, `external-host`, `not-an-upload`,
-  `no-uploads-root`, `not-a-file`, `too-large`, `rejected-by-media-rules`.
+  `no-uploads-root`, `not-a-file`, `too-large`, `rejected-by-media-rules`, `rejected-unsafe` (see "Checking the uploads folder" below).
 
 ### Safety
 
@@ -390,12 +390,12 @@ cd apps/cms
 # 1. Dry run only (inspect stats, conversion stats, loader dry run). About 3 to 5 minutes for a 100 MB export.
 npm run import:rehearse -- --file D:\churchtimes-private\export.xml --dry-run-only --detail-file D:\churchtimes-private\reports\rehearse-detail.json
 # 2. Full rehearsal: also apply, second apply (must change nothing) and rollback, all on the throwaway database.
-npm run import:rehearse -- --file D:\churchtimes-private\export.xml --uploads D:\churchtimes-private\uploads --detail-file D:\churchtimes-private\reports\rehearse-detail-2.json
+npm run import:rehearse -- --file D:\churchtimes-private\export.xml --uploads D:\churchtimes-private\uploads --detail-file D:\churchtimes-private\reports\rehearse-detail-2.json --uploads-detail-file D:\churchtimes-private\reports\uploads-detail.jsonl
 # Conversion statistics alone (no database at all):
 npm run import:convert-wxr -- --file D:\churchtimes-private\export.xml --detail-file D:\churchtimes-private\reports\convert-detail.json
 ```
 
-Options: `--file` (required, outside every repository), `--uploads <dir>` (a copy of `wp-content/uploads`), `--dry-run-only`, `--detail-file <path>` (must not exist yet,
+Options: `--file` (required, outside every repository), `--uploads <dir>` (a copy of `wp-content/uploads`; it is checked first, see "Checking the uploads folder"), `--uploads-detail-file <path>` (per-file detail of that check, same rules as `--detail-file`), `--dry-run-only`, `--detail-file <path>` (must not exist yet,
 outside every repository, owner-only permissions) and `--keep` (keep the temp folder for debugging; it holds the throwaway database and, after an apply, copied media).
 A failed article write is reported as one line of error class, SQLSTATE and invalid field names (never values); its post id goes to the detail file (`applyFailed`). Exit code 0 only when every PASS/FAIL check passes and nothing failed to convert.
 
@@ -454,6 +454,32 @@ public legacy path. `0600` has no effect on Windows; protect the folder with its
   downloaded cannot be recalled.
 - **Aliases.** Thumbnail addresses (`photo-300x200.jpg`) are served only when recorded in the `--aliases` JSON as
   `[{"alias":"2023/10/photo-300x200.jpg","path":"2023/10/photo.jpg"}]`; they are never guessed, and an alias never overrides a real file with that name.
+
+## Checking the uploads folder
+
+The uploads folder comes from a server that was compromised, so every file in it is untrusted. How to get it off the old server safely is in `docs/uploads-download.md`. Before the first import run the read-only check on the copy:
+
+```
+cd apps/cms
+npm run import:uploads-check -- --uploads D:\churchtimes-private\uploads-raw --wxr D:\churchtimes-private\export.xml --out D:\churchtimes-private\reports\uploads-detail.jsonl
+```
+
+`--uploads` and `--wxr` are required; `--out` is optional and receives one JSON line per file and per reference (real file names: private, owner-only permissions on Linux and macOS). Both
+folders and `--out` must be outside every git work tree (the command refuses otherwise) and `--out` must not be inside the uploads folder. Nothing is written except `--out`; nothing is executed, no database, no network.
+Only counts are printed. Exit code: 0 done, 1 failed, 2 bad usage or location, 3 done but unsafe files were found (the loader still refuses them, so that is a finding, not a blocker).
+
+- **Rejected as unsafe, by reason**: `dangerous-extension` (php, phtml, phar, sh, exe, js, html, svg, zip and other archives, a `.php` inside a name such as `x.php.jpg`), `hidden-file` (a name that starts with a dot, such as `.htaccess`),
+  `bad-name` (control characters, backslash), `symlink` (a link or junction; never followed), `zero-byte`, `magic-mismatch` (an image extension whose first bytes are not that image type), `polyglot` (`<?php`, `<?=` or `<script` anywhere in the file), `not-a-file`, `unreadable`.
+  WordPress itself leaves an `index.php` ("silence is golden") in some upload folders: it is rejected like any other script and does no harm.
+- **Attachments in the export**: distinct paths, `present`, `missing`, `only size variants on disk` (the original is gone but `name-300x200.jpg` files exist; the loader cannot use them), name differs by Unicode form (NFC against NFD)
+  or by letter case (the loader looks files up exactly, so these need a rename on a case-sensitive file system), and rejected as unsafe.
+- **Images in published article bodies**: the same, plus `present as the original of a size variant` (the body points at `name-300x200.jpg`, the loader finds `name.jpg`).
+- **Featured images of published posts**: present, missing, attachment not in the export, rejected.
+- **Rest of the folder**: size variants of listed images, unreferenced files, and duplicate content (same SHA-256) as groups and extra copies.
+
+The loader repeats the safety checks itself (`media.ts`, via `uploadSafety.ts`): a file that fails any of them is never ingested, even when `--uploads` is used without the check; it is counted as `rejected-unsafe` under
+`media.unresolved`. The import report also prints `featured images resolved` and `featured images rejected`. `import:rehearse` with `--file` and `--uploads` prints the same counts first, so one command reads the whole picture
+(add `--uploads-detail-file <path>` for the per-file detail).
 
 ## Running the rehearsal on a clean CI runner
 
