@@ -1,6 +1,6 @@
 # Message to relay to Codex (paste as is)
 
-Written for: the Codex session that owns the public site (`src/`, `index.html`, `tools/`). Date: 2026-10-22.
+Written for: the Codex session that owns the public site (`src/`, `index.html`, `tools/`). Date: 2026-10-22, updated 2026-10-23.
 
 ---
 
@@ -50,29 +50,77 @@ Articles are served at `/{slug}/` on `churchtimesnigeria.net` for all 4,343 publ
 spec and from tests. The CMS renames an imported slug that equals a reserved root name (`admin`, `api`, `search`, and so on), so the host may
 reserve those routes.
 
-## Update 2026-10-23
+## Update 2026-10-23 (supersedes anything above that disagrees)
 
-For Codex. Nothing below changes your ownership of `src/`, `index.html` and `tools/`.
+For Codex. Nothing below changes your ownership of `src/`, `index.html` and `tools/`. Everything listed as merged is on `feat/newsroom-mvp`
+(PRs #92 to #100 and #72). Contracts: `apps/cms/docs/api-contracts.md` v1.19 to v1.21; importer: `apps/cms/docs/import.md`.
 
-**What the CMS lane has done and is doing.** The CMS importer now handles the REAL export (rehearsed on a throwaway database; PR #92 is open):
-4,343 published posts, 101 drafts (never imported), 1,348 approved comments, 485 pingbacks skipped, 6,142 attachments, 15 categories and one
-author name (byline text only). Yoast SEO import and the uncategorised fallback chain are merged (#91), and D1 (`/{slug}/`) is merged (#90).
-These are being built now, with PRs coming: a video and audio block (so `video`, `audio`, `fvplayer` and `gallery` shortcode content stops being
-dropped), categorisation improvements, a link audit in the importer, an `import:uploads-check` command, and the C8 search endpoint
-(`GET /api/public/search`, contract in `apps/cms/docs/api-contracts.md` when it lands). Public article JSON will gain video and audio blocks:
-please make your renderer ignore unknown block types safely until you build them.
+### What is merged now
 
-**What to do next, in this order** (full text in `docs/codex-wave5-archive-spec.md`):
+**1. Audio/video block (`audioVideo`, contract v1.19).** Public article JSON now carries this block. Your renderer must draw it (and keep ignoring
+unknown block types safely). Fields on `fields` of the block (read with `depth >= 1` so media is populated):
 
-1. **E1 uploads pack (`tools/uploads-pack/`).** Highest priority; it blocks the real media import. Start now.
-2. **E2 archive recovery** (rebase #18, `archive-candidate/1`, dedup against the 4,343 posts). Independent of E1; start now.
-3. **E3 old-host redirect map** and 4. **E4 link audit**, once the private inventory from E2 exists. D1 is settled, so E3 targets `/{slug}/`.
-   E4 and the CMS's own link audit should report on the same categories; compare your counts with the CMS importer's "links" section.
-5. **E5 search**: the benchmark can start now; the UI waits for the C8 endpoint.
+- `kind`: `"video"` or `"audio"`; `title` (accessible name, always present); `caption` (optional); `duration` (seconds, optional); `transcriptUrl` (optional link).
+- `media.url` (absolute file URL on the CMS origin; never build a player URL from anything else) and `media.mimeType` (one of `video/mp4`, `video/webm`,
+  `audio/mpeg`, `audio/mp4`, `audio/ogg`); `poster.url` (optional image).
+- `sourceUrl`: only when there is no `media` (the importer could not find the file). It may be dead: render the title as a plain link, or nothing.
+- If `media` is a bare id (not an object) the file is not public: render nothing. Use native `<video controls preload="none">` / `<audio controls>`; no third-party player.
 
-**Agreement needed on the uploads manifest.** The CMS's `npm run import:uploads-check` and your `tools/uploads-pack` must agree on the manifest
-field names. You own `uploads-pack/1`: document the exact schema (field names, types, status values, path normalisation) in `docs/uploads-pack.md`
-early, as a short PR before the full tool, and do not rename fields afterwards without bumping the version. The CMS lane will read that file and
-implement the check against it; tell us if a field needs to change and we will change the CMS side, not the other way round. Both tools must treat
-the pack the same way: NFC-normalised relative paths under `wp-content/uploads`, SHA-256 over file bytes, MIME from magic bytes, and a refused or
-quarantined status for anything executable or mismatched. Counts only in anything committed; no file names or hashes of real data in the repo.
+**2. C8 public search (`GET /api/public/search`, v1.20).** Query: `q` (required, trimmed, at most 200 characters, else 400), `page` (1 to 100, default 1),
+`limit` (1 to 50, default 10), `category` (slug or id; unknown gives an empty list), `year` (four digits, 1900 to 2100, else 400). Response `200`:
+`{ docs: [{ id, slug, title, excerpt, snippet, publishedAt, category: { id, slug, title }, rank }], totalDocs, limit, page, totalPages, hasNextPage, hasPrevPage,
+nextPage, prevPage }`. `snippet` is plain text (never markup). Published articles only. `Cache-Control: public, max-age=60` on 200 (`no-store` on errors).
+Per client rate limit, default 60 per 60 seconds, then `429` with `Retry-After` (exposed to the browser): the UI must show "try again in N seconds" and not retry in a loop.
+Your site origin must be in the CMS `PUBLIC_SUBMISSION_ORIGINS` (403 otherwise). Query language is PostgreSQL `websearch_to_tsquery` (quoted phrases, `or`, leading `-`),
+English stemming, no accent folding. **Your benchmark script and the search UI both call this endpoint** (do not build another index). After a deploy or any archive import
+the operator runs `npm run search:reindex`.
+
+**3. Uploads check (CMS) and your E1 pack.** `npm run import:uploads-check -- --uploads <folder> --wxr <export.xml> --out <new detail.jsonl>` is merged (#93, #100).
+It reads the uploads folder itself; it does NOT read a pack manifest yet. So there is **no agreed manifest field list yet**: you own `uploads-pack/1`, document it
+in `docs/uploads-pack.md` first (see the to-do list), and the CMS lane will then decide whether to read your manifest or keep reading the folder. Both must reject the same
+things. What the CMS importer accepts as media: images `.jpg`, `.jpeg`, `.png`, `.webp` (magic bytes must match; at most 10 MB) and audio/video `.mp4`, `.m4v`, `.webm`, `.mp3`, `.m4a`,
+`.ogg`, `.oga` (cap `MEDIA_AV_MAX_MB`, default 100). Everything else is refused, by reason code, and your pack should use the same words where it can: `dangerous-extension` (php, html, js,
+svg, archives, double extensions such as `x.php.jpg`), `hidden-file`, `bad-name`, `symlink`, `hard-link`, `zero-byte`, `magic-mismatch`, `not-media`, `unsupported-type` (gif, bmp, ico, avif, pdf),
+`too-large`. A script marker inside a valid JPEG/PNG/WebP is only a warning (the CMS re-saves every picture); in audio/video it is a rejection (`polyglot`). Counts only in anything committed.
+Owner decision pending: whether the 10 MB image cap should be larger.
+
+**4. archive-candidate/1 (#99).** The schema is `apps/cms/docs/archive-candidate-schema.md` (the executable form is `apps/cms/src/lib/archiveCandidate.ts`; if they disagree the code wins).
+Your converter must write exactly that: JSON Lines, strict keys (an unknown key rejects the line): `schema`, `title`, `byline`, `date`, `bodyHtml`, `originalUrl`, `canonicalUrl`, `host`, `captureTimestamp`,
+`rawSha256`, `media[]` (`url`, `localSha256`, `mime`, `alt`), `confidence` (`partial`, `citation-only`, `missing`; `verified-full` is rejected), `reviewer`. The file lives outside every checkout. The CMS command
+`npm run import:archive-candidates` makes **draft-only** articles with provenance; publishing is blocked (409) until an editor marks them reviewed (a newsroom review screen is being built).
+Nothing recovered is ever published automatically. The CMS also skips duplicates by source URL, `rawSha256` and slug plus title, but you still produce your own dedup report.
+
+**5. Link audit (#94) and what it found.** `npm run import:link-audit` is merged. On the real export the links are fine: 530 article links resolve, and 3,119 uploads links
+(3,105 of them wrap an image) are dropped to the image. Only 16 links point at slugs not in the export and 6 at odd multi-segment paths. There are no category, tag, page, `?p=` or feed links, and the generated redirect
+file has 0 rules. So E3 and E4 shrink a lot (see the to-do list). The owner decides about the 16 and the 6.
+
+**6. Categories (#91, #97).** One category per article (a schema limit; tags and multi-category are an owner decision). Default `strict` chain: WordPress category, then Yoast primary, then tag map, then News. About 1,392 posts are
+uncategorised; an opt-in rule classifier (`--category-mode=rules`, not the default until the owner approves) is about 68% precise and would place 672 of them, leaving 720 in News. Your site must not assume extra categories.
+
+**7. Real-export rehearsal (#92, counts only).** 4,343 published posts, 101 drafts (never imported), 1,348 approved comments, 485 pingbacks skipped, 6,142 attachments, 15 categories, one author (byline text only),
+3,192 images in 1,735 posts. The importer dry run accounts for every published post (difference 0). A synthetic 4,346-post rehearsal on a CI runner: all 15 checks pass, apply 77 s.
+
+**8. Also merged:** article path default `/{slug}/` (#90; set `PUBLIC_ARTICLE_PATH_TEMPLATE=/{slug}/` on the public host), owner runbook and hardening docs (#72), importer compose override (#98).
+Not merged yet (do not wait for them): newsroom archive review screen, staff retriever, a path-default rehearsal PR.
+
+### To-do for Codex, in this order
+
+1. Fix the Wave 2 MUSTs and merge as in the list above (#41 to #51), then #57, #58 (update to `media-map/1`), #65, then #64 as the single carrier. Set `PUBLIC_ARTICLE_PATH_TEMPLATE=/{slug}/`.
+2. Render the `audioVideo` block (fields above), with tests for the contract's example block, a bare-id media, and a `sourceUrl`-only block.
+3. **E1**: a short PR first with `docs/uploads-pack.md` (field names, types, status values, path normalisation: NFC relative paths under `wp-content/uploads`, SHA-256, MIME from magic bytes), then `tools/uploads-pack/`
+   using the accept and refuse lists in item 3 above. Highest priority: it blocks the real media import.
+4. **E5 search**: point your benchmark at `GET /api/public/search` (golden queries, precision at 5, MRR, empty rate, latency; ids and counts only), then build the lazy search page behind a flag. Handle 429 with `Retry-After`.
+5. **E2**: rebase #18, write `archive-candidate/1` exactly per the schema doc, dedup report (counts only). Drafts only.
+6. **E3 (reduced)**: only needed if the old hosts `churchtimesnigeria.org` and `.com` must be served (owner decision D2). If yes, produce `from,to,status` rules for the 676 old-host URLs in the `import:redirects` format
+   (`?p=N` cannot be an exact rule: the public host resolves it through `legacyId`). The new host needs no rules for its own posts (same `/{slug}/` address). **E4 (reduced)**: do not rebuild the audit; run
+   `import:link-audit` and compare your counts with item 5. Open question for the owner and you: is `/category/{slug}/` a real public route? The importer rewrites category links to it, but this export had none.
+7. Close #19 and the stale PRs per E6; one rebuild-site PR at the very end.
+
+### What Codex must NOT do
+
+- Do not edit `apps/cms` or `apps/newsroom` (CMS lane), and do not merge anything yourself: Claude reviews, the owner approves each merge.
+- Do not commit real data: no export, uploads, captures, file names or hashes of real files; counts only. Fixtures are synthetic.
+- Do not run any tool against the old or production server; work on copies the owner downloaded, outside every checkout.
+- Do not rename `uploads-pack/1` fields after publishing the doc without bumping the version. Do not invent another search index or a second media format.
+- Do not publish recovered archive pages or write `verified-full`. Do not commit `site/` or the script hash in `index.html` in feature PRs.
+- Do not send search queries to analytics, and do not load any third-party player or script for audio/video.
