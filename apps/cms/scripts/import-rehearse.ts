@@ -34,7 +34,8 @@ import { checkUploads, formatUploadsCheck } from '../src/import/uploadsCheck'
 import { readWxrFile } from '../src/import/wxr'
 import { IMAGE_DIR, imageName, largeWxr } from '../tests/fixtures/wxr/large'
 
-const argv = process.argv.slice(2)
+// --name=value is accepted as well as --name value
+const argv = process.argv.slice(2).flatMap((a) => (/^--[a-z-]+=/.test(a) ? [a.slice(0, a.indexOf('=')), a.slice(a.indexOf('=') + 1)] : [a]))
 const num = (name: string, dflt: number): number => {
   const i = argv.indexOf(name)
   const n = i >= 0 ? Number(argv[i + 1]) : dflt
@@ -183,6 +184,30 @@ async function realRehearsal(r: Real): Promise<number> {
     const m2 = r.readManifest(r.manifestOf('apply2'))
     check('second apply changed nothing', same(await dbCounts(), afterApply) && second.articles.created === 0 && second.media.created === 0 && second.comments.created === 0)
     check('second apply manifest lists no ids', m2.articles.created.length + m2.articles.updated.length + m2.media.length + m2.comments.length + m2.categories.length + m2.audits.length === 0)
+    // Search projection and provenance (counts only): reindex, row count equals published count, generic public search smoke,
+    // and no archive provenance on imported rows.
+    {
+      const { reindexArticleSearch, searchArticles } = await import('../src/lib/articleSearch')
+      const { sql } = await import('drizzle-orm')
+      const db = (r.payload as unknown as { db: { drizzle: { execute: (q: unknown) => Promise<{ rows: Array<Record<string, unknown>> }> } } }).db.drizzle
+      const scalar = async (q: unknown) => Number(Object.values((await db.execute(q)).rows[0])[0])
+      const published = await scalar(sql`select count(*) from "articles" where "status"::text = 'published'`)
+      const before = await scalar(sql`select count(*) from "article_search"`)
+      const ri = await timed('search:reindex', total, () => reindexArticleSearch(r.payload as never, { batchSize: 200 }))
+      const rows = await scalar(sql`select count(*) from "article_search"`)
+      console.log(`Search: published ${published}, article_search rows before reindex ${before}, after ${rows}; reindex scanned ${ri.scanned}, indexed ${ri.indexed}, removed stale ${ri.removedStale}`)
+      check('article_search row count equals published count', rows === published && published > 0)
+      const smoke: Record<string, number> = {}
+      for (const q of ['church', 'nigeria', 'bishop', 'the', 'zzqxjvk']) {
+        const res = await searchArticles(r.payload as never, { q, page: 1, limit: 10 })
+        smoke[q] = res.totalDocs
+      }
+      console.log(`Search smoke (generic queries, total hits): ${JSON.stringify(smoke)}`)
+      check('search smoke: generic queries hit, nonsense query does not', smoke.church > 0 && smoke.nigeria > 0 && smoke.zzqxjvk === 0)
+      const prov = await scalar(sql`select count(*) from "articles" where "provenance_import_batch" is not null or "provenance_source_url" is not null or "provenance_source_host" is not null or "provenance_capture_timestamp" is not null or "provenance_original_date" is not null or "provenance_confidence" is not null or "provenance_review_status" is not null`)
+      console.log(`Imported rows carrying archive provenance: ${prov}`)
+      check('no archive provenance on imported rows', prov === 0)
+    }
     const rbDry = await timed('rollback dry run', total, () => r.runRollback(payload, { manifestPath: r.manifestOf('apply'), force: true }))
     check('rollback dry run deleted nothing', same(await dbCounts(), afterApply))
     const rb = await timed('rollback apply', total, () => r.runRollback(payload, { manifestPath: r.manifestOf('apply'), apply: true, force: true }))
