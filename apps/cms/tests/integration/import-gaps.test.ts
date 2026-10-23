@@ -70,7 +70,7 @@ describe('importer gaps', () => {
     const made = await f.payload.find({ collection: 'categories', where: { slug: { like: runId } }, limit: 20, depth: 0, overrideAccess: true })
     expect((made.docs as unknown as Array<{ slug: string }>).map((c) => c.slug).filter((s) => !s.includes('-cat-')).sort()).toEqual([`${runId}-news`])
     expect(rep.categories).toMatchObject({ postsWithExtraCategories: 1, extraCategoriesDropped: 3, fallbackUsed: 1 })
-    expect(rep.categories.bySource).toEqual({ wordpress: 3, yoastPrimary: 0, tagMap: 0, generic: 0, fallback: 1 })
+    expect(rep.categories.bySource).toEqual({ wordpress: 3, yoastPrimary: 0, tagMap: 0, rules: 0, generic: 0, fallback: 1 })
     expect(rep.seo.titleFrom.none).toBe(4)
 
     // the manifest records the created category ids exactly

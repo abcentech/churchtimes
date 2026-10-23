@@ -23,14 +23,15 @@ import {
   userSectionIds,
 } from '../access/roles'
 import { articleContentEditor } from './articleEditor'
+import { removeArticleSearch, syncArticleSearch } from '../lib/articleSearch'
 import { articlePreviewTokenEndpoint } from '../endpoints/articlePreviewToken'
 import { writeAuditLog } from '../lib/audit'
 import { clampLimit } from '../lib/clampLimit'
 import { deepEqual } from '../lib/deepEqual'
-import { findEmbedProblem } from '../lib/lexicalEmbeds'
+import { collectAvBlocks, collectAvMedia, findEmbedProblem } from '../lib/lexicalEmbeds'
 import { assertExpectedUpdatedAt, captureExpectedUpdatedAt } from '../lib/expectedUpdatedAt'
 import { collectUploadNodes, uploadValueId } from '../lib/lexicalMedia'
-import { assertAttachableImage, isMediaId } from '../lib/mediaChecks'
+import { ALLOWED_IMAGE_MIME, assertAttachableAv, assertAttachableImage, isMediaId } from '../lib/mediaChecks'
 import { SEO_DESCRIPTION_MAX, SEO_FIELD_KEYS, SEO_TITLE_MAX, cleanSeoValue, seoFieldValidator } from '../lib/seoFields'
 import {
   ARTICLE_STATUSES,
@@ -247,6 +248,39 @@ const validateBodyImages: CollectionBeforeValidateHook = async ({ data, req }) =
 }
 
 /**
+ * Every `audioVideo` block that names a media file must point at a real audio/video file whose type is allowed for the
+ * block kind (video: mp4/webm; audio: mp3/m4a/ogg) with a description, and a poster must be a JPEG/PNG/WebP image.
+ * A block with only a legacy `sourceUrl` has nothing to check here (its shape is checked by validateEmbeds). Runs
+ * after validateEmbeds, on every write that carries `content`; skipped for trusted seed/system calls.
+ */
+const validateAvMedia: CollectionBeforeValidateHook = async ({ data, req }) => {
+  const ctx = (req.context ?? {}) as { seed?: boolean }
+  if (ctx.seed === true || !data || data.content === undefined) return data
+  for (const entry of collectAvBlocks(data.content)) {
+    if (entry.media !== undefined) await assertAttachableAv(req, entry.media, entry.kind, `The audio/video file (media ${entry.media})`)
+    if (entry.poster !== undefined) await assertAttachableImage(req, entry.poster, `The audio/video poster (media ${entry.poster})`)
+  }
+  return data
+}
+
+/**
+ * The featured image must be an image (JPEG/PNG/WebP): audio and video files in the Media library are for the
+ * `audioVideo` block only. Checked whenever a featured image is set (create or update); skipped for trusted seed calls.
+ */
+const validateFeaturedImage: CollectionBeforeValidateHook = async ({ data, req }) => {
+  const ctx = (req.context ?? {}) as { seed?: boolean }
+  if (ctx.seed === true || !data || data.featuredImage === undefined || data.featuredImage === null) return data
+  const id = idOf(data.featuredImage)
+  const media = (await req.payload
+    .findByID({ collection: 'media', id: id as number, depth: 0, overrideAccess: true, req })
+    .catch(() => null)) as { mimeType?: string | null } | null
+  if (media && !(typeof media.mimeType === 'string' && ALLOWED_IMAGE_MIME.includes(media.mimeType))) {
+    throw new APIError('The featured image must be a JPEG, PNG or WebP image.', 400)
+  }
+  return data
+}
+
+/**
  * `bodyMedia` is derived, server-only: the distinct media ids referenced by the body's upload nodes. It exists
  * so the media freeze (collections/Media.ts) can find "media shown in a published article body" with a plain
  * query instead of scanning jsonb. Recomputed whenever `content` is written (client values are stripped by field
@@ -259,6 +293,8 @@ const deriveBodyMedia: CollectionBeforeChangeHook = ({ data }) => {
     const id = uploadValueId(node.value)
     if (node.relationTo === 'media' && isMediaId(id) && !ids.includes(id)) ids.push(id)
   }
+  const av = collectAvMedia(data.content)
+  for (const id of [...av.media, ...av.poster]) if (!ids.includes(id)) ids.push(id)
   data.bodyMedia = ids
   return data
 }
@@ -590,6 +626,17 @@ const refuseDeleteWithLegacyComments: CollectionBeforeDeleteHook = async ({ id, 
   }
 }
 
+/** Keep the public search projection in step (published: upsert; any other status: remove). Also runs for the importer and seeds. */
+const syncSearch: CollectionAfterChangeHook = async ({ doc, req }) => {
+  await syncArticleSearch(req, doc)
+  return doc
+}
+
+const dropSearch: CollectionAfterDeleteHook = async ({ doc, req }) => {
+  await removeArticleSearch(req, doc.id)
+  return doc
+}
+
 const auditDelete: CollectionAfterDeleteHook =async ({ doc, req }) => {
   if ((req.context as { seed?: boolean } | undefined)?.seed === true) return doc
   await writeAuditLog(req, {
@@ -625,11 +672,11 @@ export const Articles: CollectionConfig = {
   },
   hooks: {
     beforeOperation: [clampLimit, markRestore, captureExpectedUpdatedAt],
-    beforeValidate: [autoSlug, normalizeSeoFields, validateEmbeds, validateBodyImages],
+    beforeValidate: [autoSlug, normalizeSeoFields, validateEmbeds, validateBodyImages, validateAvMedia, validateFeaturedImage],
     beforeChange: [assertExpectedUpdatedAt('articles'), guardUnreviewedImport, deriveBodyMedia, guardPublishedSlug, enforceWorkflow],
     beforeDelete: [refuseDeleteWithLegacyComments],
-    afterChange: [auditChanges, redirectOnSlugChange],
-    afterDelete: [auditDelete],
+    afterChange: [auditChanges, redirectOnSlugChange, syncSearch],
+    afterDelete: [auditDelete, dropSearch],
   },
   fields: [
     { name: 'title', type: 'text', required: true, maxLength: 240 },

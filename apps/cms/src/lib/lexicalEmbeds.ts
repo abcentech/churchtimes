@@ -12,6 +12,8 @@
  * the bound is REFUSED, never silently accepted (a node past the bound could otherwise hide an embed).
  */
 
+import { AV_BLOCK_SLUG, AV_CAPTION_MAX, AV_KINDS, AV_TITLE_MAX, avTextProblem, isSafeAvUrl } from './avMedia'
+
 export const YOUTUBE_BLOCK_SLUG = 'youtubeEmbed'
 export const YOUTUBE_TITLE_MAX = 120
 
@@ -80,6 +82,92 @@ export function isSafeLinkUrl(value: unknown): boolean {
   return SAFE_LINK_SCHEMES.has(scheme[1].toLowerCase())
 }
 
+/** Keys an `audioVideo` block's `fields` may carry (Payload adds `id` and `blockName`). */
+const AV_FIELD_KEYS = new Set([
+  'id', 'blockName', 'blockType', 'kind', 'media', 'sourceUrl', 'poster', 'title', 'caption', 'transcriptUrl', 'duration',
+])
+
+/** Id of a relationship value: a number, or a populated object carrying one. */
+const relId = (v: unknown): unknown => (v !== null && typeof v === 'object' && 'id' in (v as object) ? (v as { id: unknown }).id : v)
+const isRelId = (v: unknown): boolean => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 2147483647
+
+/**
+ * Shape check of one `audioVideo` block (structure only; that the media exists and has an allowed type is checked
+ * against the database by the Articles validator). A leaf: no children, no URL members outside `fields`.
+ */
+function avBlockProblem(rec: Record<string, unknown>, fields: Record<string, unknown>): string | null {
+  if (
+    (Array.isArray(rec.children) && rec.children.length > 0) ||
+    (rec.children !== undefined && !Array.isArray(rec.children)) ||
+    Object.keys(rec).some((k) => URL_LIKE_KEY_RE.test(k))
+  ) {
+    return 'An audio/video block must not carry children or URL fields.'
+  }
+  const extra = Object.keys(fields).filter((k) => !AV_FIELD_KEYS.has(k))
+  if (extra.length > 0) return `An audio/video block has unexpected fields (${extra.slice(0, 3).join(', ')}).`
+  if (!(AV_KINDS as readonly unknown[]).includes(fields.kind)) return 'An audio/video block needs a kind of "video" or "audio".'
+  const hasMedia = fields.media !== undefined && fields.media !== null
+  const hasSource = fields.sourceUrl !== undefined && fields.sourceUrl !== null && fields.sourceUrl !== ''
+  if (!hasMedia && !hasSource) return 'An audio/video block needs a media file or a source address.'
+  if (hasMedia && !isRelId(relId(fields.media))) return 'An audio/video block has an invalid media id (expected an integer from 1 to 2147483647).'
+  if (fields.poster !== undefined && fields.poster !== null && !isRelId(relId(fields.poster))) {
+    return 'An audio/video block has an invalid poster id (expected an integer from 1 to 2147483647).'
+  }
+  if (hasSource && !isSafeAvUrl(fields.sourceUrl)) return 'An audio/video block source must be an http(s) address or a root-relative path.'
+  if (fields.transcriptUrl !== undefined && fields.transcriptUrl !== null && fields.transcriptUrl !== '' && !isSafeAvUrl(fields.transcriptUrl)) {
+    return 'An audio/video block transcript link must be an http(s) address or a root-relative path.'
+  }
+  if (typeof fields.title !== 'string' || fields.title.trim() === '') return 'An audio/video block needs a title (its accessible name).'
+  if (
+    fields.duration !== undefined &&
+    fields.duration !== null &&
+    !(typeof fields.duration === 'number' && Number.isFinite(fields.duration) && fields.duration >= 0 && fields.duration <= 86_400)
+  ) {
+    return 'An audio/video block duration must be a number of seconds from 0 to 86400.'
+  }
+  return avTextProblem(fields.title, 'title', AV_TITLE_MAX) ?? avTextProblem(fields.caption, 'caption', AV_CAPTION_MAX)
+}
+
+export type AvBlockRef = { kind: unknown; media?: number; poster?: number }
+
+/** One entry per `audioVideo` block in the body (document order): its kind and the media ids it names, when valid ids. */
+export function collectAvBlocks(content: unknown): AvBlockRef[] {
+  const out: AvBlockRef[] = []
+  const walk = (node: unknown, depth: number) => {
+    if (depth > BODY_MAX_DEPTH || node === null || typeof node !== 'object') return
+    if (Array.isArray(node)) {
+      for (const child of node) walk(child, depth + 1)
+      return
+    }
+    const rec = node as Record<string, unknown>
+    if (rec.type === 'block' && rec.fields !== null && typeof rec.fields === 'object') {
+      const f = rec.fields as Record<string, unknown>
+      if (f.blockType === AV_BLOCK_SLUG) {
+        const m = relId(f.media)
+        const p = relId(f.poster)
+        out.push({ kind: f.kind, ...(isRelId(m) ? { media: m as number } : {}), ...(isRelId(p) ? { poster: p as number } : {}) })
+        return
+      }
+    }
+    for (const key of Object.keys(rec)) {
+      const child = rec[key]
+      if (child !== null && typeof child === 'object') walk(child, depth + 1)
+    }
+  }
+  walk(content, 0)
+  return out
+}
+
+/** The distinct media ids (files and posters) of the `audioVideo` blocks in the body, in document order. */
+export function collectAvMedia(content: unknown): { media: number[]; poster: number[] } {
+  const out = { media: [] as number[], poster: [] as number[] }
+  for (const b of collectAvBlocks(content)) {
+    if (b.media !== undefined && !out.media.includes(b.media)) out.media.push(b.media)
+    if (b.poster !== undefined && !out.poster.includes(b.poster)) out.poster.push(b.poster)
+  }
+  return out
+}
+
 /**
  * Returns the first problem found in the body (a message suitable for a 400), or `null` when every embed-like
  * node is a well-formed `youtubeEmbed` block. Absent content returns `null` (nothing to check).
@@ -105,6 +193,10 @@ export function findEmbedProblem(content: unknown): string | null {
           rec.fields !== null && typeof rec.fields === 'object' && !Array.isArray(rec.fields)
             ? (rec.fields as Record<string, unknown>)
             : {}
+        if (type === 'block' && fields.blockType === AV_BLOCK_SLUG) {
+          problem = avBlockProblem(rec, fields)
+          return
+        }
         if (type === 'inlineBlock' || fields.blockType !== YOUTUBE_BLOCK_SLUG) {
           problem = EMBED_REFUSED_MESSAGE
           return

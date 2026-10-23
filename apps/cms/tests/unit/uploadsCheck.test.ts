@@ -131,3 +131,17 @@ describe('import:uploads-check', () => {
     expect((await run(['--uploads', clean, '--wxr', exportFile])).code).toBe(0)
   })
 })
+
+describe('uploadSafety with audio/video', () => {
+  const bytes = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypmp42'), Buffer.alloc(64, 7)])
+  it.each(['mp4', 'webm', 'mp3', 'm4a', 'ogg'])('does not flag .%s by name or magic bytes', async (ext) => {
+    expect(unsafeNameReason(`2099/01/clip.${ext}`)).toBeNull()
+    fs.writeFileSync(path.join(dir, `clip.${ext}`), bytes)
+    expect(await unsafeFileReason(dir, `clip.${ext}`)).toBeNull()
+  })
+  it('still rejects active content hidden in an audio/video file', async () => {
+    fs.writeFileSync(path.join(dir, 'evil.mp4'), Buffer.concat([bytes, Buffer.from('<?php system($_GET[1]);')]))
+    expect(await unsafeFileReason(dir, 'evil.mp4')).toBe('polyglot')
+    expect(unsafeNameReason('2099/01/evil.php.mp3')).toBe('dangerous-extension')
+  })
+})

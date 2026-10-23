@@ -326,6 +326,7 @@ message listing every problem (missing secrets, http or wildcard origins, dummy 
 | `PUBLIC_SITE_URL` | for the newsletter | `https://www.example.org` | Public **site** origin that confirmation e-mails link to (`<origin>/newsletter/confirm?token=...`, never an API URL). Bare origin, https only in production (a malformed or http value stops startup). While unset or http in production, `POST /api/public/newsletter/subscribe` answers `503` and stores nothing. |
 | `NEWSLETTER_TOKEN_SECRET` | **yes (production)** | 64 hex chars | HMAC key for unsubscribe links, at least 32 characters, different from `PAYLOAD_SECRET` and `PREVIEW_SECRET`. Startup fails in production without it (the loopback-only disposable staging stack derives a throw-away key instead). Rotating it breaks every unsubscribe link already sent. |
 | `NEWSLETTER_RATE_LIMIT` / `NEWSLETTER_RATE_WINDOW_SECONDS` | no | `5` / `900` | Newsletter sign-ups per IP per window. Per e-mail address the limit is fixed at 3 per hour. |
+| `SEARCH_RATE_LIMIT` / `SEARCH_RATE_WINDOW_SECONDS` | no | `60` / `60` | Public search requests per client IP per window. After deploying the search migration, and after every archive import, run `npm run search:reindex` (idempotent). |
 | `NEWSLETTER_TOKEN_RATE_LIMIT` | no | `20` | Per-IP limit (same window) for the confirm and unsubscribe endpoints combined. |
 | `NEWSLETTER_RESEND_COOLDOWN_SECONDS` | no | `600` | If a confirmation e-mail went to an address within this many seconds, a new sign-up gets the same neutral `202` and nothing is sent (`0` disables). |
 | `NEWSLETTER_MAX_CONFIRM_MAILS_PER_DAY` | no | `5` | Daily cap (rolling 24 h) of confirmation e-mails per address; beyond it, same neutral `202`, nothing sent. `bounced` addresses are never mailed automatically. |
@@ -424,7 +425,14 @@ Payload's core routes read request bodies without a size limit, and the rate lim
 the proxy reports. So the proxy must (1) cap request bodies at **12 MB** (the largest legitimate request is an 11 MB
 media upload; everything else is under 1 MB and the app itself rejects `Content-Length` above 1 MB with `413`, above 11 MB
 on `/api/media`, see `src/proxy.ts`), (2) **overwrite** the client-address headers instead of passing client values
-through, (3) terminate TLS, and (4) compress text. The app listens on `127.0.0.1:3000` only.
+through, (3) terminate TLS, and (4) compress text.
+
+**Larger staff uploads (opt-in, default off).** Audio/video files through `POST /api/media` are limited to the 11 MB above. To allow up to N MB
+(N from 11 to 500, matching `MEDIA_AV_MAX_MB`, which is the per-file cap, default 100), change these together (the env variable is read in two code places, plus the proxy), or the smallest wins:
+(1) set `MEDIA_UPLOAD_MAX_MB=N` in the app environment (read by `src/lib/requestLimits.ts`, which then allows N + 1 MB on `/api/media` only, and by
+`next.config.mjs`, which raises the buffered body size to N + 2 MB: rebuild/restart); (2) raise the reverse proxy cap to at least N + 2 MB (`request_body max_size` /
+`client_max_body_size`); other routes stay at 1 MB in the app, but the proxy limit is global, so the proxy then lets bigger bodies reach the app, which refuses them with 413
+by their `Content-Length`. Leave both unset to keep the defaults. The app listens on `127.0.0.1:3000` only.
 
 Pick the block that matches your setup and set `TRUST_PROXY=true` (required) plus the matching variables:
 

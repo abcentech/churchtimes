@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
+import { sql } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { runArchiveImport, type ArchiveImportOptions } from '../../src/import/archiveCandidates'
@@ -43,6 +44,11 @@ const run = (file: string, extra: Partial<ArchiveImportOptions> = {}) =>
 const code = async (p: Promise<unknown>) => await p.then(() => null, (e: { code?: string }) => e.code ?? 'other')
 const bySha = async (hash: string) =>
   (await f.payload.find({ collection: 'articles', where: { 'provenance.sourceSha256': { equals: hash } }, limit: 5, depth: 0, overrideAccess: true })).docs as unknown as Array<Record<string, any>>
+const searchRows = async (ids: number[]): Promise<number> => {
+  const db = (f.payload.db as unknown as { drizzle: { execute: (q: unknown) => Promise<{ rows: unknown[] }> } }).drizzle
+  const res = await db.execute(sql`select 1 from "article_search" where "article_id" in (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`)
+  return res.rows.length
+}
 const countAll = async () => (await f.payload.count({ collection: 'articles', where: { 'provenance.importBatch': { exists: true } }, overrideAccess: true })).totalDocs
 
 beforeAll(async () => {
@@ -134,6 +140,9 @@ describe('apply: drafts only, never public, review gate, dedup, rollback', () =>
     expect(new Date(doc.provenance.captureTimestamp).toISOString()).toBe('2020-01-15T10:20:30.000Z')
     expect(new Date(doc.provenance.originalDate).toISOString()).toBe('2013-05-06T00:00:00.000Z')
     expect(JSON.stringify(doc.content)).toContain('Synthetic paragraph one')
+    // Drafts are never in the public search projection.
+    const ids = [doc.id, (await bySha(r2.rawSha256 as string))[0].id]
+    expect(await searchRows(ids)).toBe(0)
   })
 
   it('is never public: anonymous reads see nothing, staff see the provenance', async () => {
@@ -209,6 +218,8 @@ describe('apply: drafts only, never public, review gate, dedup, rollback', () =>
     const open = await api('GET', `/api/articles/${articleId}`)
     expect(open.status).toBe(200)
     expect(open.json).not.toHaveProperty('provenance')
+    // Only once reviewed and published does the article enter the search projection.
+    expect(await searchRows([articleId])).toBe(1)
   })
 
   it('is idempotent: a second run over the same file creates nothing', async () => {
