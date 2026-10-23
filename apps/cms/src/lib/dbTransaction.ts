@@ -14,7 +14,7 @@ import type { PayloadRequest } from 'payload'
 type Executor = { execute: (query: unknown) => Promise<{ rows?: unknown[]; rowCount?: number | null }> }
 type Adapter = { drizzle: Executor; sessions?: Record<string, { db: Executor } | undefined> }
 
-async function executor(req: PayloadRequest): Promise<{ db: Executor; inTransaction: boolean }> {
+export async function executor(req: PayloadRequest): Promise<{ db: Executor; inTransaction: boolean }> {
   const adapter = req.payload.db as unknown as Adapter
   const id = req.transactionID ? await req.transactionID : undefined
   const session = id ? adapter.sessions?.[String(id)] : undefined

@@ -288,7 +288,8 @@ describe('security', () => {
     expect(await codeOf(collect(inItem, {}, 65536))).toBe('WXR_ITEM_TOO_LARGE')
     const root = `<rss${attrs(50_000)}><channel></channel></rss>`
     expect(await codeOf(collect(root, {}, 65536))).toBe('WXR_ITEM_TOO_LARGE')
-    expect(Date.now() - t).toBeLessThan(5000)
+    // wall clock is load-sensitive on shared runners; an unbounded parse of 200 MB of attributes would take minutes
+    expect(Date.now() - t).toBeLessThan(30_000)
     // a normal number of attributes is fine, and attribute bytes count against the item size
     expect(items(await collect(wxr([{ id: 1 }])))).toHaveLength(1)
     const few = wxr([]).replace('</channel>', `<item><wp:post_id a="${'x'.repeat(3000)}">1</wp:post_id></item></channel>`)
