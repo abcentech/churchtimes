@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 
 import { type DefaultTreeAdapterMap, defaultTreeAdapter, parseFragment } from 'parse5'
 
-import { AV_BLOCK_SLUG, AV_CAPTION_MAX, AV_TITLE_MAX, type AvKind, avKindFromPath, avTextProblem, isSafeAvUrl } from '../lib/avMedia'
+import { AV_BLOCK_SLUG, AV_CAPTION_MAX, AV_TITLE_MAX, type AvKind, avKindFromPath, avTextProblem, isSafeAvSourceUrl } from '../lib/avMedia'
 import { stripShortcodes, sanitizeLegacyLinks } from '../lib/legacyContent'
 import { articlePath, resolveArticlePathTemplate } from '../lib/redirectPaths'
 import { findEmbedProblem, YOUTUBE_BLOCK_SLUG, YOUTUBE_ID_RE, YOUTUBE_TITLE_MAX, youtubeTitleProblem } from '../lib/lexicalEmbeds'
@@ -1566,11 +1566,11 @@ function handleAvElement(ctx: Ctx, el: Elem, col: Collector): void {
   emitAv(ctx, { tag: el.tagName, src, poster: (attr(el, 'poster') ?? '').trim(), caption, title: squash(attr(el, 'title') ?? attr(el, 'aria-label') ?? '') }, col)
 }
 
-/** Address kept in a block that has no media file: absolute http(s) or root-relative, protocol-relative made https. */
+/** Address kept in a block that has no media file: https on an allowed host (http and protocol-relative are upgraded) or a /wp-content/uploads/ path; anything else is dropped. */
 function avSourceUrl(raw: string): string | null {
   const t = raw.trim()
-  const full = t.startsWith('//') ? `https:${t}` : t
-  return isSafeAvUrl(full) ? full : null
+  const full = t.startsWith('//') ? `https:${t}` : t.replace(/^http:\/\//i, 'https://')
+  return isSafeAvSourceUrl(full) ? full : null
 }
 
 function emitAv(ctx: Ctx, spec: AvSpec, col: Collector): void {

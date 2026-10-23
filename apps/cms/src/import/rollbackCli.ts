@@ -5,13 +5,13 @@ import type { CliIo } from './cli'
 import { formatRollbackReport, RollbackError, rollbackHadFailures, runRollback, type RollbackOptions } from './rollback'
 
 /**
- * `npm run import:rollback -- --manifest <path> [--apply] [--force] [--allow-incomplete]`
+ * `npm run import:rollback -- --manifest <path> [--apply] [--force [--include-published]] [--allow-incomplete]`
  *
  * DRY RUN unless `--apply`. Output is counts only; errors print one short code. Exit codes: 0 clean, 1 some item
  * failed, 2 usage or refusal (missing, unreadable or incomplete manifest).
  */
 export function parseRollbackArgs(argv: readonly string[], env: Record<string, string | undefined>): RollbackOptions | null {
-  const known = new Set(['--manifest', '--apply', '--force', '--allow-incomplete'])
+  const known = new Set(['--manifest', '--apply', '--force', '--include-published', '--allow-incomplete'])
   for (const a of argv) if (a.startsWith('--') && !known.has(a)) return null
   const i = argv.indexOf('--manifest')
   const v = i >= 0 ? argv[i + 1] : undefined
@@ -24,6 +24,7 @@ export function parseRollbackArgs(argv: readonly string[], env: Record<string, s
     manifestPath,
     apply: argv.includes('--apply'),
     force: argv.includes('--force'),
+    includePublished: argv.includes('--include-published'),
     allowIncomplete: argv.includes('--allow-incomplete'),
   }
 }

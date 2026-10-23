@@ -15,7 +15,7 @@ import { csv, normaliseOrigin } from './lib/securityConfig'
  * the origin only when it is in CMS_CORS_ORIGINS (never `*`), exactly like Payload does.
  *
  * Note: while a proxy file exists Next buffers each request body (up to
- * `experimental.proxyClientMaxBodySize`, set to 12 MB in next.config.mjs so uploads are never truncated).
+ * `experimental.proxyClientMaxBodySize`, sized in next.config.mjs from MEDIA_AV_MAX_MB so uploads are never truncated).
  */
 const corsHeaders = (origin: string | null): Record<string, string> => {
   if (!origin) return {}

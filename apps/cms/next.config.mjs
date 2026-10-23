@@ -18,17 +18,27 @@ const securityHeaders = [
   ...(isProd ? [{ key: 'Strict-Transport-Security', value: 'max-age=15552000' }] : []),
 ]
 
+/** Largest authenticated upload (MB) + 2 MB, never below 12. Keep in step with mediaBodyLimitBytes in src/lib/requestLimits.ts. */
+function mediaBufferMb() {
+  const override = Number(process.env.MEDIA_UPLOAD_MAX_MB)
+  if (Number.isInteger(override) && override >= 11) return Math.min(override, 500) + 2
+  const av = Number(process.env.MEDIA_AV_MAX_MB)
+  const avMb = Number.isFinite(av) && av >= 1 ? Math.min(Math.floor(av), 500) : 100
+  return Math.max(12, Math.max(10, avMb) + 2)
+}
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // Payload recommends keeping these external for the server bundle.
   serverExternalPackages: ['embedded-postgres'],
   poweredByHeader: false,
   // src/proxy.ts exists, so Next buffers every request body in memory and silently truncates it at this
-  // size (default 10 MB). Keep it above the largest accepted body (11 MB for /api/media, see
-  // lib/requestLimits.ts) so uploads are never cut off; the proxy itself rejects bigger requests first.
-  // Opt-in: MEDIA_UPLOAD_MAX_MB (11 to 500) raises it to that size + 2 MB; the proxy still refuses other routes above 1 MB.
+  // size (default 10 MB). Keep it above the largest accepted body so uploads are never cut off; the proxy itself rejects
+  // bigger requests first by Content-Length. Same rule as lib/requestLimits.ts (mediaBodyLimitBytes, authenticated):
+  // MEDIA_UPLOAD_MAX_MB (11 to 500) if set, else max(10, MEDIA_AV_MAX_MB (default 100, at most 500)); + 2 MB framing.
+  // Anonymous /api/media requests are still limited to 11 MB by the proxy, other routes to 1 MB.
   experimental: {
-    proxyClientMaxBodySize: `${Math.max(12, Number.isInteger(Number(process.env.MEDIA_UPLOAD_MAX_MB)) ? Math.min(Number(process.env.MEDIA_UPLOAD_MAX_MB), 500) + 2 : 0)}mb`,
+    proxyClientMaxBodySize: `${mediaBufferMb()}mb`,
   },
   async headers() {
     return [

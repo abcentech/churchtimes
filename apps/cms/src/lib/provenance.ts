@@ -28,3 +28,23 @@ export function publishBlockedByProvenance(data: Record<string, unknown>, orig: 
   const reviewStatus = incoming && 'reviewStatus' in incoming ? incoming.reviewStatus : stored?.reviewStatus
   return reviewStatus !== 'reviewed'
 }
+
+const REVIEW_AND_PUBLISH = new Set(['published', 'scheduled'])
+
+/**
+ * True when one write both approves a recovered archive article (reviewStatus becomes "reviewed") and puts it into a
+ * publishing status (published or scheduled). Approving and publishing are two decisions: by default they must be two
+ * requests (so the approval is audited as its own `archive.review` row before anything goes live). `data` is the incoming
+ * partial data, `orig` the stored document (undefined on create).
+ */
+export function reviewAndPublishInOneWrite(data: Record<string, unknown>, orig: Record<string, unknown> | undefined): boolean {
+  const incoming = asProv(data.provenance)
+  if (!incoming || !('reviewStatus' in incoming) || incoming.reviewStatus !== 'reviewed') return false
+  const stored = asProv(orig?.provenance)
+  if (stored?.reviewStatus === 'reviewed') return false
+  const importBatch = 'importBatch' in incoming ? incoming.importBatch : stored?.importBatch
+  if (typeof importBatch !== 'string' || importBatch.length === 0) return false
+  const status = (data.status ?? orig?.status) as unknown
+  const prevStatus = orig?.status as unknown
+  return typeof status === 'string' && REVIEW_AND_PUBLISH.has(status) && status !== prevStatus
+}

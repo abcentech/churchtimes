@@ -356,7 +356,7 @@ Imports pages recovered from web captures (format `archive-candidate/1`, fully s
 
 ## Rehearsal and rollback
 
-### `npm run import:rollback -- --manifest <path> [--apply] [--force] [--allow-incomplete]`
+### `npm run import:rollback -- --manifest <path> [--apply] [--force [--include-published]] [--allow-incomplete]`
 
 Undoes ONE import run from its manifest (`src/import/rollback.ts`). A DRY RUN unless `--apply`.
 
@@ -373,7 +373,7 @@ Undoes ONE import run from its manifest (`src/import/rollback.ts`). A DRY RUN un
   transaction never committed left no rows, so its ids are simply "already gone". Nothing is ever looked up by legacy id: only ids written in the manifest are deleted.
   `--apply` needs `--manifest` on the command line (no `IMPORT_MANIFEST_PATH` fallback); the report prints the manifest's start time so you can see you picked the right file.
 - Skips a row changed after it was created (`updatedAt` more than a second after `createdAt`: staff edited it, or a later `--update` run rewrote it): `edited-since-import`.
-  `--force` deletes those too; nothing else is overridden. After an `--update` run, rolling back the FIRST manifest therefore needs `--force`.
+  `--force` deletes those too, except an article that is published or whose `provenance.reviewStatus` is `reviewed` (`published-or-reviewed`): those need the separate explicit flag `--include-published` as well. Nothing else is overridden. After an `--update` run, rolling back the FIRST manifest therefore needs `--force`.
 - Skips rows something else still needs, never deleting them: an article with comments that are not being deleted (`has-remaining-comments`),
   media used by an article, a live update, or ANY creative field of ANY placement of an ad campaign, a category used by an article, live event or user (`still-used`), and a media
   file name that is not a plain name (no separator, drive or stream colon, control character or leading dot; spaces, non-ASCII and a leading underscore are fine) inside

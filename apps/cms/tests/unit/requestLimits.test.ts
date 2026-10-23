@@ -4,31 +4,59 @@ import {
   checkRequestLimits,
   MAX_JSON_BODY_BYTES,
   MAX_MEDIA_BODY_BYTES,
+  hasAuthCredentials,
   mediaBodyLimitBytes,
 } from '../../src/lib/requestLimits'
 
 const check = (method: string, pathname: string, headers: Record<string, string> = {}) =>
   checkRequestLimits({ method, pathname, headers: new Headers(headers) })
 
-describe('mediaBodyLimitBytes (opt-in MEDIA_UPLOAD_MAX_MB)', () => {
-  it('keeps 11 MB unless a valid value of 11 or more is set, and caps at 500 MB + 1', () => {
+const MB = 1024 * 1024
+const COOKIE = { cookie: 'payload-token=abc.def.ghi' }
+
+describe('mediaBodyLimitBytes (anonymous vs authenticated, one variable)', () => {
+  it('anonymous requests never exceed 11 MB, whatever the env says', () => {
     expect(mediaBodyLimitBytes({})).toBe(MAX_MEDIA_BODY_BYTES)
-    for (const bad of ['', 'abc', '10', '0', '-5', '50.5']) expect(mediaBodyLimitBytes({ MEDIA_UPLOAD_MAX_MB: bad })).toBe(MAX_MEDIA_BODY_BYTES)
-    expect(mediaBodyLimitBytes({ MEDIA_UPLOAD_MAX_MB: '100' })).toBe(101 * 1024 * 1024)
-    expect(mediaBodyLimitBytes({ MEDIA_UPLOAD_MAX_MB: '9999' })).toBe(501 * 1024 * 1024)
+    expect(mediaBodyLimitBytes({ MEDIA_UPLOAD_MAX_MB: '400', MEDIA_AV_MAX_MB: '400' })).toBe(MAX_MEDIA_BODY_BYTES)
   })
 
-  it('only the media route follows it; JSON routes keep 1 MB', () => {
-    const before = process.env.MEDIA_UPLOAD_MAX_MB
-    process.env.MEDIA_UPLOAD_MAX_MB = '100'
-    try {
-      expect(check('POST', '/api/media', { 'content-length': String(50 * 1024 * 1024) })).toEqual({ ok: true })
-      expect(check('POST', '/api/media', { 'content-length': String(102 * 1024 * 1024) })).toMatchObject({ ok: false, status: 413 })
-      expect(check('POST', '/api/articles', { 'content-length': String(2 * 1024 * 1024) })).toMatchObject({ ok: false, status: 413 })
-    } finally {
-      if (before === undefined) delete process.env.MEDIA_UPLOAD_MAX_MB
-      else process.env.MEDIA_UPLOAD_MAX_MB = before
+  it('authenticated: derived from MEDIA_AV_MAX_MB (default 100), never below the image cap', () => {
+    expect(mediaBodyLimitBytes({}, true)).toBe(101 * MB)
+    expect(mediaBodyLimitBytes({ MEDIA_AV_MAX_MB: '40' }, true)).toBe(41 * MB)
+    expect(mediaBodyLimitBytes({ MEDIA_AV_MAX_MB: '5' }, true)).toBe(11 * MB)
+    expect(mediaBodyLimitBytes({ MEDIA_AV_MAX_MB: '9999' }, true)).toBe(501 * MB)
+  })
+
+  it('authenticated: MEDIA_UPLOAD_MAX_MB, when valid (11-500), overrides the derived value', () => {
+    expect(mediaBodyLimitBytes({ MEDIA_UPLOAD_MAX_MB: '200', MEDIA_AV_MAX_MB: '40' }, true)).toBe(201 * MB)
+    expect(mediaBodyLimitBytes({ MEDIA_UPLOAD_MAX_MB: '9999' }, true)).toBe(501 * MB)
+    for (const bad of ['', 'abc', '10', '0', '-5', '50.5']) expect(mediaBodyLimitBytes({ MEDIA_UPLOAD_MAX_MB: bad, MEDIA_AV_MAX_MB: '30' }, true), bad).toBe(31 * MB)
+  })
+
+  it('hasAuthCredentials: Authorization header or a *-token cookie', () => {
+    expect(hasAuthCredentials(new Headers())).toBe(false)
+    expect(hasAuthCredentials(new Headers({ authorization: 'JWT x' }))).toBe(true)
+    expect(hasAuthCredentials(new Headers(COOKIE))).toBe(true)
+    expect(hasAuthCredentials(new Headers({ cookie: 'theme=dark; payload-token=zzz' }))).toBe(true)
+    expect(hasAuthCredentials(new Headers({ cookie: 'theme=dark' }))).toBe(false)
+    expect(hasAuthCredentials(new Headers({ cookie: 'payload-token=' }))).toBe(false)
+  })
+
+  it('/api/media: more than 11 MB only with credentials; JSON routes keep 1 MB', () => {
+    const big = { 'content-length': String(50 * MB) }
+    expect(check('POST', '/api/media', big)).toMatchObject({ ok: false, status: 413 })
+    expect(check('POST', '/api/media', { ...big, ...COOKIE })).toEqual({ ok: true })
+    expect(check('POST', '/api/media', { ...big, authorization: 'JWT x' })).toEqual({ ok: true })
+    expect(check('POST', '/api/media', { 'content-length': String(102 * MB), ...COOKIE })).toMatchObject({ ok: false, status: 413 })
+    expect(check('POST', '/api/articles', { 'content-length': String(2 * MB), ...COOKIE })).toMatchObject({ ok: false, status: 413 })
+  })
+
+  it('/api/media: a chunked body (no Content-Length) is refused with 411, with or without credentials', () => {
+    for (const method of ['POST', 'PATCH', 'PUT']) {
+      expect(check(method, '/api/media', { 'transfer-encoding': 'chunked' })).toMatchObject({ ok: false, status: 411 })
+      expect(check(method, '/api/media/5', { 'transfer-encoding': 'chunked', ...COOKIE })).toMatchObject({ ok: false, status: 411 })
     }
+    expect(check('GET', '/api/media/file/a.jpg')).toEqual({ ok: true })
   })
 })
 

@@ -1,4 +1,4 @@
-# Church Times CMS — API contracts (v1.22)
+# Church Times CMS — API contracts (v1.23)
 
 Status: implemented on `agent/payload-core`. v1.1 added Turnstile, duplicate detection, staff auth/session
 contract and security hardening; v1.2 closes the verified security-review findings: media ownership, version
@@ -989,15 +989,15 @@ search reads a projection table (`article_search`) that holds nothing else, and 
 | --- | --- |
 | `q` | required; whitespace-trimmed, control characters and lone surrogates removed; at most 200 characters (`400` when empty, missing or longer) |
 | `page` | 1 to 100, default 1 (larger is clamped, invalid becomes 1) |
-| `limit` | 1 to 50, default 10 (larger is clamped to 50, invalid becomes 10) |
+| `limit` | 1 to 20, default 10 (larger is clamped to `SEARCH_MAX_LIMIT`, default 20, at most 100; invalid becomes 10) |
 | `category` | category slug, or its numeric id; an unknown category gives an empty list |
 | `year` | four-digit year of `publishedAt` (UTC), 1900 to 2100; anything else is `400` |
 
-`200 { docs: [{ id, slug, title, excerpt, snippet, publishedAt, category: { id, slug, title }, rank }], totalDocs, limit, page, totalPages, hasNextPage,
-hasPrevPage, nextPage, prevPage }`. `snippet` is a plain-text extract of the article body around the match (about 30 words, at most 240
+`200 { docs: [{ id, slug, title, excerpt, snippet, publishedAt, category: { id, slug, title }, rank }], totalDocs, totalCapped, limit, page, totalPages, hasNextPage,
+hasPrevPage, nextPage, prevPage }`. **`totalDocs` is capped (v1.23):** counting stops after 1000 matches (`SEARCH_COUNT_CAP`, default 1000), so `totalDocs` is never more than 1000 and `totalCapped: true` means "more than that exist" (read `totalDocs: 1000, totalCapped: true` as "1000+"). `totalPages` is computed from the capped `totalDocs`; while `totalCapped` is true, `hasNextPage` / `nextPage` stay true as long as a page is full (up to page 100). `snippet` is a plain-text extract of the article body around the match (about 30 words, at most 240
 characters, no markup: `<` and `>` never appear; JSON-escaped like every field), falling back to the excerpt. The result carries no staff fields.
 Order: `rank` descending (title weight A, excerpt B, body C, `ts_rank`), then `publishedAt` descending, then id. Page numbers past the
-end return an empty `docs` with the real `totalDocs`.
+end return an empty `docs` with the (capped) `totalDocs`. Snippets are cut from the first 20,000 characters of the body.
 
 **Query language.** `q` is parsed by PostgreSQL `websearch_to_tsquery` (never `to_tsquery`), passed as a bound parameter: words are AND-ed,
 `"quoted phrases"`, `or` and a leading `-` work, and every other punctuation (`& | ! : * ( )`, quotes) is harmless. A query made only of stop-words or
@@ -1008,7 +1008,7 @@ and stop-words (the, of, and) do not dominate. Names are stemmed identically at 
 miss plurals. `unaccent` is not used (the extension is not guaranteed in the test cluster or every production image); accented letters therefore
 match only themselves.
 
-**Transport.** `Cache-Control: public, max-age=60` on `200` (errors: `no-store`), `Vary: Origin`, `X-Content-Type-Options: nosniff`. `403` for an `Origin` not in
+**Transport.** `Cache-Control: public, max-age=60` on `200` when the request has no `Origin` header, `private, max-age=60` when it has one (the response then echoes that origin in `Access-Control-Allow-Origin`, and Cloudflare's default cache ignores `Vary: Origin`, so a shared cache must not store it); errors: `no-store`; `Vary: Origin`, `X-Content-Type-Options: nosniff`. `403` for an `Origin` not in
 `PUBLIC_SUBMISSION_ORIGINS` (same rule and exact-origin CORS echo as the other public endpoints; `Retry-After` is exposed). Per-client rate limit (the shared in-memory
 limiter, same client-address rules): `SEARCH_RATE_LIMIT` (default 60) per `SEARCH_RATE_WINDOW_SECONDS` (default 60), then `429` with `Retry-After`. A database failure is
 `500 { ok: false, errors: [{ message }] }`.
@@ -1030,6 +1030,17 @@ proxy) and https-only `CMS_PUBLIC_URL`/CORS/CSRF settings (`docs/security.md`). 
 limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/operations.md` §4).
 
 ## 9. Changelog
+
+### v1.23: Review follow-ups (preview, search cost, upload limits, review rules)
+Additive except where a rule is tightened (listed first); the search response only gains a field.
+- **Preview** (`GET /api/preview/articles?token=`): the response never contains `provenance`, `legacyId` or `legacyUrl` (nor, as before, `reviewNotes`, `author`, `scheduledFor`, `bodyMedia`).
+- **Approve and publish are separate requests.** A recovered archive article (`provenance.importBatch` set) cannot be approved (`provenance.reviewStatus` becoming `reviewed`) and published or scheduled in the SAME write by a non-admin: `409`. An admin may do both; the approval is audited either way (`archive.review`, v1.22). `restoreVersion` never changes `provenance`: the stored provenance wins over the old snapshot, so restoring cannot turn a `rejected` article back into a publishable one (the 409 publish guard then applies).
+- `PATCH` with `"provenance": null` is treated as "not sent" (it used to be a 500).
+- **Search:** new `totalCapped` field and the capped `totalDocs` (see "Go-live C8"); `SEARCH_MAX_LIMIT` default lowered from 50 to 20 (env `SEARCH_MAX_LIMIT`, 1 to 100); `SEARCH_COUNT_CAP` (default 1000); `Cache-Control` is `private` for requests with an `Origin` header.
+- **`/api/media` request size:** an anonymous request (no auth cookie, no `Authorization` header) is limited to 11 MB; an authenticated request gets max(10 MB image cap, `MEDIA_AV_MAX_MB`, default 100) + 1 MB. `MEDIA_UPLOAD_MAX_MB` (11 to 500) stays as an optional explicit override (precedence: `MEDIA_UPLOAD_MAX_MB`, then `MEDIA_AV_MAX_MB`, then 100). A chunked body (no `Content-Length`) on `/api/media` is refused with `411`. The reverse proxy must allow the same size (operations.md 4.4).
+- **Audio/video legacy `sourceUrl`:** only `https:` addresses on an allowed host (`CMS_PUBLIC_URL`, `LEGACY_SITE_HOSTS`, the known old-site names) or a root-relative `/wp-content/uploads/...` path; any other root-relative path and plain `http:` are refused (400). Transcript links are unchanged. The importer upgrades `http://` and protocol-relative addresses on allowed hosts to `https:` and drops the rest.
+- **Import tooling:** `import:rollback --force` never deletes a published article or one with `provenance.reviewStatus = reviewed` (skip code `published-or-reviewed`) unless `--include-published` is also given. CSV files the importer, link audit and categorisation eval write prefix cells starting with `=`, `+`, `-`, `@`, tab or CR with a single quote.
+- No migration. (`articles.category_id` is NOT NULL in the database, so a published article without a category cannot exist and the search projection needs no change for it.)
 
 ### v1.22: Archive review audit entry
 Additive; no request or response shape changes.
