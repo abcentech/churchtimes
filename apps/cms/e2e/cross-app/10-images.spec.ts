@@ -19,6 +19,7 @@ import fs from 'node:fs'
 
 import { expect, test, type Page } from '@playwright/test'
 
+import { articlePath } from './support/articlePath'
 import { Api, Evidence, getConfig, logLine, makePng, trackCmsCalls, uniq } from './support/helpers'
 import { bodyReadingOrder, expectImagesLoaded, placeCaretAfter, uploadNodeMediaId, uploadThroughPicker } from './support/images'
 import { anonymousGet, LiveApi } from './support/live'
@@ -364,7 +365,7 @@ test.describe('Images in stories and live updates (REAL UI)', () => {
     const ctx = await freshContext(browser, info)
     const reader = await ctx.newPage()
     try {
-      await reader.goto(`${cfg.publicOrigin}/reports/${s.slug}/`)
+      await reader.goto(`${cfg.publicOrigin}${articlePath(cfg, s.slug)}`)
       const body = reader.locator('#cms-report .newsroom-article-body')
       await expect(body.locator('figure.cms-figure')).toHaveCount(2)
       await expectImagesLoaded(body.locator('figure.cms-figure img.cms-image'), 2, 'public body image after the refused edits')
