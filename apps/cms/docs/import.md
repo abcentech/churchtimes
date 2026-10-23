@@ -104,11 +104,18 @@ deterministic `id`). Attributes (class, style, event handlers, ...) are never ca
   blocks fall back to their inner HTML and are listed. `wp:more` and `<!--more-->` are a paragraph break, never a join.
 - Classic: documents without block comments get `wpautop`-like handling: a blank line ends a paragraph, a single
   newline is a line break. In Gutenberg documents newlines are plain whitespace.
-- Video: only YouTube is kept. The 11-character id is taken from `iframe` sources (`youtube.com/embed`,
+- Video: YouTube stays a `youtubeEmbed` block; files hosted on the old site become `audioVideo` blocks (see the audio/video bullet below). The 11-character id is taken from `iframe` sources (`youtube.com/embed`,
   `youtube-nocookie.com/embed`, `youtu.be`, `watch?v=`, shorts), `[youtube ...]` and `[embed]` shortcodes, `wp:embed`
   blocks, old `object`/`embed` markup and bare YouTube URLs on their own line. Any other iframe/embed becomes a
-  paragraph with the https link, or is dropped; always reported. `video`, `audio`, `script`, `style`, `form`, `input`,
+  paragraph with the https link, or is dropped; always reported. `script`, `style`, `form`, `input`,
   `svg` and similar are dropped with their contents.
+- Audio and video files (API contract v1.19): `<video>`, `<audio>` (with `src` or `<source>` children, preferring the first mp4/webm/mp3/m4a/ogg address) and the
+  shortcodes `[fvplayer src=.. splash=.. caption=..]`, `[video mp4=.. poster=..]`, `[audio src=..]` become one `audioVideo` block each (`kind`, `media`, optional `poster`,
+  `title`, `caption`). The title is the element title, else the caption, else the article title, else "Video"/"Audio". The file is found like an image: `media.legacyPath`, then the
+  copied uploads folder (the Media rules check the bytes; the audio/video size cap is `MEDIA_AV_MAX_MB`, default 100 MB, not the 25 MB image cap). When the file cannot be found or
+  is refused, the block is kept with the legacy address (`sourceUrl`) and the report counts it as `unresolved-media` (`content.avUnresolvedMedia`; the reason by code is in the media
+  `unresolved` table). Counts only: no address or file name is printed. Types the CMS does not host (`.mov`, `.wav`, streams, other players) stay a link paragraph or are dropped
+  (`content.avUnsupported`); a YouTube address in these tags still becomes a YouTube block. The new Media rows are in the rollback manifest like image media, so rollback needs no change.
 - Links: after conversion `sanitizeLegacyLinks` (C1.5) runs; unsafe or unknown schemes become plain text.
   Shortcodes are removed with `stripShortcodes` (also when the opening and closing marker sit in different text
   nodes). Entities are decoded by the parser. Whitespace is normalised without joining words; `&nbsp;`-only blocks are

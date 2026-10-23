@@ -27,10 +27,10 @@ import { articlePreviewTokenEndpoint } from '../endpoints/articlePreviewToken'
 import { writeAuditLog } from '../lib/audit'
 import { clampLimit } from '../lib/clampLimit'
 import { deepEqual } from '../lib/deepEqual'
-import { findEmbedProblem } from '../lib/lexicalEmbeds'
+import { collectAvBlocks, collectAvMedia, findEmbedProblem } from '../lib/lexicalEmbeds'
 import { assertExpectedUpdatedAt, captureExpectedUpdatedAt } from '../lib/expectedUpdatedAt'
 import { collectUploadNodes, uploadValueId } from '../lib/lexicalMedia'
-import { assertAttachableImage, isMediaId } from '../lib/mediaChecks'
+import { assertAttachableAv, assertAttachableImage, isMediaId } from '../lib/mediaChecks'
 import { SEO_DESCRIPTION_MAX, SEO_FIELD_KEYS, SEO_TITLE_MAX, cleanSeoValue, seoFieldValidator } from '../lib/seoFields'
 import {
   ARTICLE_STATUSES,
@@ -246,6 +246,22 @@ const validateBodyImages: CollectionBeforeValidateHook = async ({ data, req }) =
 }
 
 /**
+ * Every `audioVideo` block that names a media file must point at a real audio/video file whose type is allowed for the
+ * block kind (video: mp4/webm; audio: mp3/m4a/ogg) with a description, and a poster must be a JPEG/PNG/WebP image.
+ * A block with only a legacy `sourceUrl` has nothing to check here (its shape is checked by validateEmbeds). Runs
+ * after validateEmbeds, on every write that carries `content`; skipped for trusted seed/system calls.
+ */
+const validateAvMedia: CollectionBeforeValidateHook = async ({ data, req }) => {
+  const ctx = (req.context ?? {}) as { seed?: boolean }
+  if (ctx.seed === true || !data || data.content === undefined) return data
+  for (const entry of collectAvBlocks(data.content)) {
+    if (entry.media !== undefined) await assertAttachableAv(req, entry.media, entry.kind, `The audio/video file (media ${entry.media})`)
+    if (entry.poster !== undefined) await assertAttachableImage(req, entry.poster, `The audio/video poster (media ${entry.poster})`)
+  }
+  return data
+}
+
+/**
  * `bodyMedia` is derived, server-only: the distinct media ids referenced by the body's upload nodes. It exists
  * so the media freeze (collections/Media.ts) can find "media shown in a published article body" with a plain
  * query instead of scanning jsonb. Recomputed whenever `content` is written (client values are stripped by field
@@ -258,6 +274,8 @@ const deriveBodyMedia: CollectionBeforeChangeHook = ({ data }) => {
     const id = uploadValueId(node.value)
     if (node.relationTo === 'media' && isMediaId(id) && !ids.includes(id)) ids.push(id)
   }
+  const av = collectAvMedia(data.content)
+  for (const id of [...av.media, ...av.poster]) if (!ids.includes(id)) ids.push(id)
   data.bodyMedia = ids
   return data
 }
@@ -613,7 +631,7 @@ export const Articles: CollectionConfig = {
   },
   hooks: {
     beforeOperation: [clampLimit, markRestore, captureExpectedUpdatedAt],
-    beforeValidate: [autoSlug, normalizeSeoFields, validateEmbeds, validateBodyImages],
+    beforeValidate: [autoSlug, normalizeSeoFields, validateEmbeds, validateBodyImages, validateAvMedia],
     beforeChange: [assertExpectedUpdatedAt('articles'), deriveBodyMedia, guardPublishedSlug, enforceWorkflow],
     beforeDelete: [refuseDeleteWithLegacyComments],
     afterChange: [auditChanges, redirectOnSlugChange],

@@ -40,6 +40,9 @@ export function summarise(reports: readonly ConversionReport[]): Totals {
     add(t, 'images.resolved', r.images.resolved)
     add(t, 'images.unresolved', r.images.unresolved.length)
     add(t, 'youtube', r.youtube)
+    add(t, 'audioVideo.resolved', r.audioVideo.resolved)
+    add(t, 'audioVideo.unresolved-media', r.audioVideo.unresolvedMedia)
+    add(t, 'audioVideo.unsupported', r.audioVideo.unsupported)
     add(t, 'embeds.linked', r.embeds.linked.length)
     add(t, 'embeds.dropped', r.embeds.dropped.length)
     add(t, 'tables.kept', r.tables.kept)
@@ -112,6 +115,7 @@ export async function runConvertReport(argv: readonly string[], log: Log): Promi
         slugMap,
         articleTitle: name.replace(/\.html$/i, ''),
         resolveImage: assume ? () => ({ mediaId: 1 }) : () => null,
+        resolveMedia: assume ? () => ({ mediaId: 1 }) : () => null,
       })
       converted++
       reports.push(result.report)
