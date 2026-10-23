@@ -1,4 +1,4 @@
-# Church Times CMS — API contracts (v1.18)
+# Church Times CMS — API contracts (v1.19)
 
 Status: implemented on `agent/payload-core`. v1.1 added Turnstile, duplicate detection, staff auth/session
 contract and security hardening; v1.2 closes the verified security-review findings: media ownership, version
@@ -944,6 +944,47 @@ archive data and the relation is required, so silently removing them for an edit
 `(article_id, status, commented_at, legacy_id)` for the public list), reversible (down, up, down is tested). **Production needs a UTF8 database**
 (`docs/operations.md`).
 
+### Go-live C8: public search
+
+`GET /api/public/search?q=&page=&limit=&category=&year=` (anonymous, read-only; also HEAD and an OPTIONS preflight). Published articles only: the
+search reads a projection table (`article_search`) that holds nothing else, and the endpoint also requires `status = published` and
+`publishedAt <= now`, so drafts, in-review, approved, scheduled, archived (withdrawn) and future-dated articles are never returned.
+
+| Query | Meaning |
+| --- | --- |
+| `q` | required; whitespace-trimmed, control characters and lone surrogates removed; at most 200 characters (`400` when empty, missing or longer) |
+| `page` | 1 to 100, default 1 (larger is clamped, invalid becomes 1) |
+| `limit` | 1 to 50, default 10 (larger is clamped to 50, invalid becomes 10) |
+| `category` | category slug, or its numeric id; an unknown category gives an empty list |
+| `year` | four-digit year of `publishedAt` (UTC), 1900 to 2100; anything else is `400` |
+
+`200 { docs: [{ id, slug, title, excerpt, snippet, publishedAt, category: { id, slug, title }, rank }], totalDocs, limit, page, totalPages, hasNextPage,
+hasPrevPage, nextPage, prevPage }`. `snippet` is a plain-text extract of the article body around the match (about 30 words, at most 240
+characters, no markup: `<` and `>` never appear; JSON-escaped like every field), falling back to the excerpt. The result carries no staff fields.
+Order: `rank` descending (title weight A, excerpt B, body C, `ts_rank`), then `publishedAt` descending, then id. Page numbers past the
+end return an empty `docs` with the real `totalDocs`.
+
+**Query language.** `q` is parsed by PostgreSQL `websearch_to_tsquery` (never `to_tsquery`), passed as a bound parameter: words are AND-ed,
+`"quoted phrases"`, `or` and a leading `-` work, and every other punctuation (`& | ! : * ( )`, quotes) is harmless. A query made only of stop-words or
+punctuation returns `200` with an empty list. The raw `q` is not logged.
+
+**Language configuration: `english`**, chosen deliberately: the archive is English-language Nigerian news, stemming lets "elections" find "election",
+and stop-words (the, of, and) do not dominate. Names are stemmed identically at index and query time, so they still find themselves. `simple` would
+miss plurals. `unaccent` is not used (the extension is not guaranteed in the test cluster or every production image); accented letters therefore
+match only themselves.
+
+**Transport.** `Cache-Control: public, max-age=60` on `200` (errors: `no-store`), `Vary: Origin`, `X-Content-Type-Options: nosniff`. `403` for an `Origin` not in
+`PUBLIC_SUBMISSION_ORIGINS` (same rule and exact-origin CORS echo as the other public endpoints; `Retry-After` is exposed). Per-client rate limit (the shared in-memory
+limiter, same client-address rules): `SEARCH_RATE_LIMIT` (default 60) per `SEARCH_RATE_WINDOW_SECONDS` (default 60), then `429` with `Retry-After`. A database failure is
+`500 { ok: false, errors: [{ message }] }`.
+
+**Projection and operations.** Migration `20261023_090000_article_search` creates `article_search` (FK to `articles` with `ON DELETE CASCADE`, a GENERATED weighted `tsv` column, GIN index
+on it, and btree indexes on `(category_id, published_at)` and `published_at`) and seeds published articles with title and excerpt only. Articles hooks keep it current on every
+create, update (including status changes: any status other than `published` removes the row) and delete, for REST, the scheduler and the importer alike (they all use the Local API
+and fire the same hooks). **After the first deploy and after every archive import run `npm run search:reindex`** (`-- --batch 200`): idempotent, keyset-batched, fills body text, and removes rows of
+articles that are no longer published. It prints counts only. Plain article text is the Lexical text nodes (embeds and images contribute nothing), capped at 200,000 characters. The table is
+hand-written SQL, not a Payload collection: do not run Payload's dev `push` mode against a database that matters (it is already off in production).
+
 ## 8. Environment variables
 
 See `apps/cms/.env.example` (annotated) and `docs/operations.md` §4. Secrets (`PAYLOAD_SECRET`, `PREVIEW_SECRET`,
@@ -954,6 +995,11 @@ proxy) and https-only `CMS_PUBLIC_URL`/CORS/CSRF settings (`docs/security.md`). 
 limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/operations.md` §4).
 
 ## 9. Changelog
+
+### v1.19: Go-live C8 public search
+Additive; no existing response changes.
+- New `GET /api/public/search` (see "Go-live C8: public search"), migration `20261023_090000_article_search`, Articles hooks that maintain the projection, and `npm run search:reindex`.
+- New environment variables `SEARCH_RATE_LIMIT` and `SEARCH_RATE_WINDOW_SECONDS`.
 
 ### v1.18: Articles live at `/{slug}/` (owner decision D1)
 **Behaviour change** for the default of `PUBLIC_ARTICLE_PATH_TEMPLATE` (C7, O1) and for slug validation; no response shape changes.

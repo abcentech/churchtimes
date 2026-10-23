@@ -23,6 +23,7 @@ import {
   userSectionIds,
 } from '../access/roles'
 import { articleContentEditor } from './articleEditor'
+import { removeArticleSearch, syncArticleSearch } from '../lib/articleSearch'
 import { articlePreviewTokenEndpoint } from '../endpoints/articlePreviewToken'
 import { writeAuditLog } from '../lib/audit'
 import { clampLimit } from '../lib/clampLimit'
@@ -578,6 +579,17 @@ const refuseDeleteWithLegacyComments: CollectionBeforeDeleteHook = async ({ id, 
   }
 }
 
+/** Keep the public search projection in step (published: upsert; any other status: remove). Also runs for the importer and seeds. */
+const syncSearch: CollectionAfterChangeHook = async ({ doc, req }) => {
+  await syncArticleSearch(req, doc)
+  return doc
+}
+
+const dropSearch: CollectionAfterDeleteHook = async ({ doc, req }) => {
+  await removeArticleSearch(req, doc.id)
+  return doc
+}
+
 const auditDelete: CollectionAfterDeleteHook =async ({ doc, req }) => {
   if ((req.context as { seed?: boolean } | undefined)?.seed === true) return doc
   await writeAuditLog(req, {
@@ -616,8 +628,8 @@ export const Articles: CollectionConfig = {
     beforeValidate: [autoSlug, normalizeSeoFields, validateEmbeds, validateBodyImages],
     beforeChange: [assertExpectedUpdatedAt('articles'), deriveBodyMedia, guardPublishedSlug, enforceWorkflow],
     beforeDelete: [refuseDeleteWithLegacyComments],
-    afterChange: [auditChanges, redirectOnSlugChange],
-    afterDelete: [auditDelete],
+    afterChange: [auditChanges, redirectOnSlugChange, syncSearch],
+    afterDelete: [auditDelete, dropSearch],
   },
   fields: [
     { name: 'title', type: 'text', required: true, maxLength: 240 },

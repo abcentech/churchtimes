@@ -21,6 +21,7 @@
     "import:subscribers": "payload run src/seed/importSubscribers.ts --",
     "newsletter:reconfirm": "payload run src/seed/reconfirmSubscribers.ts --",
     "newsletter:purge-unconfirmed": "payload run src/seed/purgeUnconfirmedSubscribers.ts --",
+    "search:reindex": "payload run src/scripts/reindexSearch.ts --",
     "export:redirects": "payload run src/scripts/exportRedirects.ts --",
     "export:media-map": "payload run src/scripts/exportMediaMap.ts --",
     "check:redirects": "payload run src/scripts/checkRedirects.ts --",
