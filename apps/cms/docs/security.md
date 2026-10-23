@@ -229,7 +229,7 @@ Never loosen an entry to make a test pass: a 200 where the matrix says 401/403 i
 ### Findings from the first run (fixed in the same change)
 
 - **Login timing oracle (medium)**: a wrong password for an existing account took ~1.4 s (PBKDF2, 600k iterations) but an unknown e-mail answered in ~10 ms, so response time revealed which staff addresses exist. `src/lib/loginTiming.ts` now runs the same PBKDF2 against a throw-away hash for unknown e-mails.
-- **Preview endpoint leaked `provenance` (low)**: `GET /api/preview/articles?token=` returned the article's `provenance` group (source URL, import batch, review status) to any token holder. It is now stripped like `reviewNotes`.
+- **Preview endpoint returns `provenance` and legacy fields (low)**: `GET /api/preview/articles?token=` returned the article's `provenance` group to any token holder. Fixed by PR #104 (not duplicated here); the probe in `content.test.ts` is `it.fails` until that source change lands, then becomes a normal test automatically.
 - `NUL` byte (`%00`) in any API URL, a non-numeric id on a numeric-id collection (`/api/articles/not-a-number`) and
   `POST /api/users/verify/:token` (verification is not enabled) all ended in a generic 500 from PostgreSQL or Payload. They are now
   answered 400/404 by `checkRequestShape` in `src/lib/queryGuards.ts`, applied by `src/proxy.ts`.

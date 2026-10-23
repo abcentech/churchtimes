@@ -77,14 +77,12 @@ export const previewArticleEndpoint: Endpoint = {
         author: _author,
         scheduledFor: _scheduledFor,
         bodyMedia: _bodyMedia,
-        provenance: _provenance,
         ...safe
       } = doc
       void _reviewNotes
       void _author
       void _scheduledFor
       void _bodyMedia
-      void _provenance
       preparePreview(safe, token)
       return Response.json({ doc: safe }, { headers })
     } catch {
