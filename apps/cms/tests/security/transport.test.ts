@@ -131,6 +131,35 @@ describe('response headers', () => {
   })
 })
 
+describe('shared-cache headers on public reads (src/proxy.ts publicReadCacheControl)', () => {
+  const cc = async (url: string, headers: Record<string, string> = {}, method: 'GET' | 'POST' = 'GET') =>
+    ((await send(method, url, { headers: from(ip(), headers) })).headers.get('cache-control') ?? '')
+
+  it('anonymous list reads of articles and categories are publicly cacheable, briefly', async () => {
+    expect(await cc('/api/articles')).toBe('public, max-age=60')
+    expect(await cc('/api/categories')).toBe('public, max-age=300')
+  })
+
+  it('anything personal is never given a public policy: cookie, Authorization (even forged), draft, preview, writes, other routes', async () => {
+    const u = await mkUser('reporter')
+    const token = (await login(u.email, u.password)).json.token as string
+    for (const [url, h] of [
+      ['/api/articles', { cookie: 'payload-token=x' }],
+      ['/api/articles', { authorization: 'JWT forged' }],
+      ['/api/articles', { cookie: `payload-token=${token}` }],
+      ['/api/articles?draft=true', {}],
+      ['/api/articles?preview=abc', {}],
+      ['/api/categories', { authorization: `JWT ${token}` }],
+    ] as Array<[string, Record<string, string>]>) {
+      expect(await cc(url, h), `${url} ${Object.keys(h)}`).not.toMatch(/public/)
+    }
+    expect(await cc('/api/articles', {}, 'POST')).not.toMatch(/public/)
+    for (const url of ['/api/users/me', '/api/submissions', '/api/subscribers', '/api/articles/1', '/api/media', '/api/live-events']) {
+      expect(await cc(url), url).not.toMatch(/public/)
+    }
+  })
+})
+
 describe('CORS, Origin and Vary', () => {
   it('REST: only CMS_CORS_ORIGINS get a grant; never * ; foreign, null and look-alike origins get none', async () => {
     for (const origin of ['http://evil.test', 'null', 'http://cors-allowed.test.evil.test', 'http://evilcors-allowed.test', 'http://cors-allowed.test@evil.test', 'https://cors-allowed.test', 'http://CORS-ALLOWED.test.']) {

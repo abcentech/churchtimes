@@ -37,6 +37,8 @@ export async function send(method: Method, url: string, options: ApiOptions = {}
   const res = await api(method, url, options)
   const merged = new Headers(res.headers)
   merged.append('Vary', 'Origin')
+  const cc = gate.headers.get('cache-control')
+  if (cc) merged.set('Cache-Control', cc) // headers set by the proxy are merged onto the final response by Next
   return { ...res, headers: merged }
 }
 
