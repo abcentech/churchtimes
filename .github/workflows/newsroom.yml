@@ -39,6 +39,8 @@ jobs:
       - run: npm ci
       - run: npm run test:newsroom-unit
       - run: npx playwright install --with-deps chromium
+      # Includes tests/newsroom-a11y.spec.js (axe on every screen, keyboard, reflow, reduced motion): serious/critical fail
+      # the job, minor/moderate findings surface as ::warning annotations. Allowlist and rules: apps/newsroom/README.md.
       - run: npm run test:newsroom-app
       - uses: actions/upload-artifact@v4
         if: failure()

@@ -24,7 +24,7 @@
   --color-sage: #DFE5D8;
   --color-sage-soft: #F0F4EC;
   --color-muted: #61675E;
-  --color-muted-light: #7E857B;
+  --color-muted-light: #646A61;
   --color-rule: #D7D8CC;
   --color-rule-soft: #E7E9DF;
 
@@ -72,6 +72,13 @@
   --color-sage: #2C3A32;
   --color-sage-soft: #1F2A24;
   --focus-ring: 2px solid #81C784;
+  /* Forest is both a surface and a text colour; on a dark canvas it becomes a light green so text and surfaces keep contrast. */
+  --color-forest: #8FCB9B;
+  --color-forest-light: #A8D9B2;
+  --color-forest-dark: #7FBF8D;
+  --color-muted-light: #A3AAA0;
+  --status-published-text: #B7E4C0;
+  --status-published-bg: #243B30;
 }
 
 /* Reset & Base */
@@ -278,7 +285,7 @@ html, body {
 }
 .badge-role {
   background-color: rgba(255, 255, 255, 0.2);
-  color: var(--color-sage-light);
+  color: #FFFFFF;
   font-size: 0.625rem;
   padding: 0.1rem 0.35rem;
   border-radius: 3px;
@@ -348,9 +355,9 @@ html, body {
 }
 
 @keyframes pulse-ring {
-  0% { transform: scale(0.95); opacity: 1; }
-  50% { transform: scale(1.1); opacity: 0.8; }
-  100% { transform: scale(0.95); opacity: 1; }
+  0% { transform: scale(0.95); }
+  50% { transform: scale(1.1); }
+  100% { transform: scale(0.95); }
 }
 
 /* Quick Launch Action in Nav */
@@ -495,11 +502,11 @@ html, body {
   background-color: #B91C1C;
 }
 .btn-success {
-  background-color: #059669;
+  background-color: #047857;
   color: #FFFFFF;
 }
 .btn-success:hover:not(:disabled) {
-  background-color: #047857;
+  background-color: #065F46;
 }
 .btn-sm {
   padding: 0.35rem 0.65rem;
@@ -545,7 +552,7 @@ html, body {
 }
 .badge-live {
   background-color: #FEE2E2;
-  color: #DC2626;
+  color: #B91C1C;
   border: 1px solid #FCA5A5;
 }
 .badge-category {
@@ -678,7 +685,7 @@ html, body {
 .launch-card.live {
   border-left-color: var(--status-live-pulse);
 }
-.launch-info h3 {
+.launch-info h2, .launch-info h3 {
   font-size: 0.9375rem;
   font-weight: 700;
   color: var(--color-ink);
@@ -902,7 +909,8 @@ html, body {
 }
 .form-input:focus, .form-select:focus, .form-textarea:focus {
   border-color: var(--color-forest);
-  outline: none;
+  outline: var(--focus-ring);
+  outline-offset: 1px;
 }
 
 /* Formatting toolbar */
@@ -1152,7 +1160,7 @@ html, body {
   border-radius: var(--radius-sm);
   margin-bottom: 1.75rem;
 }
-.ethics-notice-box h4 {
+.ethics-notice-box h2, .ethics-notice-box h4 {
   font-size: 0.9375rem;
   font-weight: 700;
   color: #92400E;
@@ -1567,6 +1575,36 @@ body[data-auth="out"] .session-chip:empty {
   border-radius: var(--radius-sm);
   font-size: 0.8125rem;
 }
+
+/* Reduced motion: no animations or smooth scrolling; transitions collapse to instant (state changes still apply). */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Text areas that suppress the default outline keep a visible keyboard focus ring. */
+.headline-textarea:focus-visible, .standfirst-textarea:focus-visible, .body-textarea:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Dark theme: forest is a light green, so text placed on it is dark. */
+[data-theme="dark"] .btn-primary,
+[data-theme="dark"] .badge-role { color: var(--color-parchment); }
+[data-theme="dark"] .badge-role { background-color: rgba(0, 0, 0, 0.15); }
+
+/* Reflow at 320 CSS px (WCAG 1.4.10): the masthead wraps instead of forcing a horizontal page scroll. */
+@media (max-width: 400px) {
+  .masthead { flex-wrap: wrap; }
+  .masthead-controls { flex-wrap: wrap; justify-content: flex-end; max-width: 100%; }
+}
+
+/* The masthead is a forest surface: a forest focus ring would vanish there, so use the contrasting canvas colour. */
+.masthead :focus-visible { outline-color: var(--color-parchment); }
 
 /* ---- Archive review (recovered archive drafts) ---- */
 .archive-filters { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-end; margin-bottom: 1rem; }

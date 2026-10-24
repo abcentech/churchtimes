@@ -226,7 +226,7 @@ async function renderSubmissionsTab(area, container, isCurrent = () => true) {
 
   area.innerHTML = `
     <div class="ethics-notice-box" style="margin-bottom: 1.5rem;">
-      <h4>Crucial Newsroom Requirement</h4>
+      <h2>Crucial Newsroom Requirement</h2>
       <p>
         Reader tips arrive through ${publicLink}. They are <strong>NEVER published automatically</strong>.
         Every tip must be corroborated by a reporter, converted to a draft story and taken through the full workflow.
@@ -416,7 +416,7 @@ function inspectStoryModal(article, container, notice = '') {
             </div>
           </div>` : ''}
         ${article.lossy ? `<div class="ethics-notice-box" data-testid="inspect-lossy-banner" role="alert"><p style="margin:0;"><strong>Body contains video/table content not shown; open in CMS admin before approving.</strong> Most imported articles can only have their body edited in the CMS admin.</p></div>` : ''}
-        <div class="preview-body" data-testid="inspect-body" style="max-height: 250px; overflow-y: auto; background: var(--color-parchment-light); padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--color-rule);">
+        <div class="preview-body" data-testid="inspect-body" tabindex="0" role="region" aria-label="Story body" style="max-height: 250px; overflow-y: auto; background: var(--color-parchment-light); padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--color-rule);">
           ${markdownToHtml(article.bodyMd, { media: id => article.bodyMedia?.[id] })}
         </div>
 
