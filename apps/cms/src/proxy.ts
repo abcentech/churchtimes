@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 
-import { checkRelationFilters } from './lib/queryGuards'
+import { checkRelationFilters, checkRequestShape, scanMultipartPrefix } from './lib/queryGuards'
 import { checkRequestLimits, wantsLargeMediaBody } from './lib/requestLimits'
 import { hasValidSession } from './lib/sessionToken'
 import { csv, normaliseOrigin } from './lib/securityConfig'
@@ -55,17 +55,30 @@ export function publicReadCacheControl(
   return PUBLIC_READ_CACHE.find((r) => r.path.test(pathname))?.cacheControl ?? null
 }
 
-export function proxy(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname, searchParams } = request.nextUrl
   // The larger /api/media allowance is for verified staff sessions only (a forged header or cookie does not count).
   const authenticated = wantsLargeMediaBody(pathname, request.headers) && hasValidSession(request.headers)
   const limits = checkRequestLimits({ method: request.method, pathname, headers: request.headers, authenticated })
-  const decision = limits.ok
-    ? (() => {
-        const q = checkRelationFilters(pathname, searchParams)
-        return q.ok ? q : { ...q, errors: [{ field: q.field, message: q.message }] }
-      })()
-    : { ...limits, errors: [{ message: limits.message }] }
+  const shape = checkRequestShape(pathname, request.nextUrl.search)
+  const decision = !shape.ok
+    ? { ...shape, errors: [{ message: shape.message }] }
+    : limits.ok
+      ? (() => {
+          const q = checkRelationFilters(pathname, searchParams)
+          return q.ok ? q : { ...q, errors: [{ field: q.field, message: q.message }] }
+        })()
+      : { ...limits, errors: [{ message: limits.message }] }
+  if (decision.ok && (request.headers.get('content-type') ?? '').toLowerCase().startsWith('multipart/form-data') && ['POST', 'PATCH', 'PUT'].includes(request.method)) {
+    // busboy throws "Malformed part header" (a generic 500) for a NUL in a part header such as the file name.
+    // Bounded: only the first 64 KiB of a clone is read (never the whole upload), after the size refusals above.
+    if (!(await scanMultipartPrefix(request.clone().body)).clean) {
+      return NextResponse.json(
+        { ok: false, errors: [{ message: 'Invalid characters in the upload headers.' }] },
+        { status: 400, headers: { 'Cache-Control': 'no-store', ...corsHeaders(request.headers.get('origin')) } },
+      )
+    }
+  }
   if (decision.ok) {
     // Payload echoes the request Origin in Access-Control-Allow-Origin, so a shared cache (CDN, reverse
     // proxy) must key API responses on Origin or it could replay one origin's grant to another.

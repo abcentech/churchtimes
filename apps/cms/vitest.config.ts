@@ -40,6 +40,21 @@ export default defineConfig({
           hookTimeout: 180000,
         },
       },
+      {
+        // Black-box security regression suite (docs/security.md). Same database bootstrap as integration.
+        resolve: { alias },
+        test: {
+          name: 'security',
+          environment: 'node',
+          include: ['tests/security/**/*.test.ts'],
+          globalSetup: ['tests/integration/global-setup.ts'],
+          pool: 'forks',
+          fileParallelism: false,
+          maxWorkers: 1,
+          testTimeout: 60000,
+          hookTimeout: 180000,
+        },
+      },
     ],
   },
 })

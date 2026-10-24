@@ -127,11 +127,59 @@ jobs:
           TEST_DATABASE_URL: postgres://churchtimes:churchtimes-ci@127.0.0.1:5432/churchtimes_test
         run: npx vitest run --project integration --shard=${{ matrix.shard }}/3
 
+  security:
+    name: security regression suite
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/cms
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: churchtimes
+          POSTGRES_PASSWORD: churchtimes-ci
+          POSTGRES_DB: churchtimes_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U churchtimes -d churchtimes_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: apps/cms/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate CI-only secrets
+        run: |
+          echo "PAYLOAD_SECRET=ci-only-$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "PREVIEW_SECRET=ci-only-$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "IP_HASH_SALT=ci-only-$(openssl rand -hex 16)" >> "$GITHUB_ENV"
+
+      - name: Migrate database
+        env:
+          DATABASE_URL: postgres://churchtimes:churchtimes-ci@127.0.0.1:5432/churchtimes_test
+        run: npm run migrate
+
+      - name: Security regression suite (anonymous route matrix, leaks, abuse cases)
+        env:
+          TEST_DATABASE_URL: postgres://churchtimes:churchtimes-ci@127.0.0.1:5432/churchtimes_test
+        run: npm run test:security
+
   verify:
-    needs: [static, integration]
+    needs: [static, integration, security]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: All CMS checks passed
         run: |
-          [ "${{ needs.static.result }}" = success ] && [ "${{ needs.integration.result }}" = success ]
+          [ "${{ needs.static.result }}" = success ] && [ "${{ needs.integration.result }}" = success ] && [ "${{ needs.security.result }}" = success ]
