@@ -16,6 +16,9 @@ window.turnstile={
 async function widget(page){ await page.route(SCRIPT,route=>route.fulfill({contentType:'application/javascript',body:widgetScript})); }
 async function complete(page){ await page.getByRole('button',{name:'Complete test verification',exact:true}).click(); }
 async function fill(page,kind='story'){
+  // The controller is lazy-loaded. Inert inputs can make Playwright fill()
+  // resolve without changing their value, so wait for actual form readiness.
+  await expect(page.locator('#public-form')).toHaveJSProperty('inert',false);
   await page.getByLabel('Your name').fill('A reader');
   await page.getByLabel('Email address').fill('reader@example.test');
   await page.getByLabel('Phone number (required)',{exact:true}).fill('+234 803 123 4567');
@@ -230,4 +233,23 @@ test('CMS minimum story length prevents invalid sending before verification is c
  await widget(page);let calls=0;await page.route('**/api/public/submissions',route=>{calls++;return route.fulfill({json:{ok:true,reference:'SHOULD-NOT-SEND'}});});
  await page.goto('/#submit');await fill(page);await page.getByLabel('Your story or tip').fill('Too short.');await complete(page);await submit(page).click();
  await expect(page.locator('#error-message')).toContainText('at least 30 characters');expect(calls).toBe(0);
+});
+
+// Synthetic delayed module transport and challenge STUB: no CMS endpoint is called.
+test('lazy controller readiness preserves the first field when its module is delayed',async({page})=>{
+  await widget(page);
+  let release,requested;
+  const held=new Promise(resolve=>release=resolve);
+  const seen=new Promise(resolve=>requested=resolve);
+  await page.route('**/src/forms/public-form.js',async route=>{requested();await held;await route.continue();});
+  try {
+    await page.goto('/#submit',{waitUntil:'domcontentloaded'});await seen;
+    await expect(page.locator('#public-form')).toHaveJSProperty('inert',true);
+    const filling=fill(page);
+    await expect(page.getByLabel('Your name')).toHaveValue('');
+    release();
+    await filling;
+    await expect(page.getByLabel('Your name')).toHaveValue('A reader');
+    await expect(page.getByLabel('Email address')).toHaveValue('reader@example.test');
+  } finally {release();}
 });
