@@ -4,6 +4,7 @@ on:
     branches: [feat/newsroom-mvp]
     paths:
       - 'src/**'
+      - 'public/**'
       - 'apps/cms/**'
       - 'cms-integration-tests/**'
       - 'tools/*public-cms*'
@@ -12,12 +13,14 @@ on:
       - 'tools/audit-public.mjs'
       - 'playwright.cms.config.js'
       - 'package*.json'
+      - 'vite.config.js'
       - 'tools/*public-quality*'
       - '.github/workflows/public-quality.yml'
   pull_request:
     branches: [feat/newsroom-mvp]
     paths:
       - 'src/**'
+      - 'public/**'
       - 'apps/cms/**'
       - 'cms-integration-tests/**'
       - 'tools/*public-cms*'
@@ -26,12 +29,14 @@ on:
       - 'tools/audit-public.mjs'
       - 'playwright.cms.config.js'
       - 'package*.json'
+      - 'vite.config.js'
       - 'tools/*public-quality*'
       - '.github/workflows/public-quality.yml'
 permissions:
   contents: read
 jobs:
   public-quality:
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -59,6 +64,27 @@ jobs:
       - run: npm ci --prefix apps/cms
       - run: npx playwright install --with-deps chromium
       - run: npm run test:quality
+        timeout-minutes: 8
+      - name: Report sanitized quality failure
+        if: failure()
+        run: |
+          node --input-type=module <<'NODE'
+          import {readFile} from 'node:fs/promises';
+          const encode=value=>String(value).replaceAll('%','%25').replaceAll('\r','%0D').replaceAll('\n','%0A');
+          try {
+            // This aggregate contains fixed validator messages and numeric metrics,
+            // never raw Lighthouse reports, page content, URLs or configuration.
+            const report=JSON.parse(await readFile('public-quality-results/quality.json','utf8'));
+            const fields=['performance','accessibility','bestPractices','lcpMs','cls'];
+            const pages=(report.pages || []).map(row=>({
+              page:['home','latest','article','live'].includes(row.page)?row.page:'unknown',
+              ...Object.fromEntries(fields.map(key=>[key,Number.isFinite(row[key])?row[key]:null])),
+            }));
+            console.log('::error title=Public quality gate::'+encode(JSON.stringify({failures:report.failures,pages})));
+          } catch {
+            console.log('::error title=Public quality gate::Sanitized quality aggregate is unavailable; gate did not complete.');
+          }
+          NODE
       - uses: actions/upload-artifact@v4
         if: always()
         with:
