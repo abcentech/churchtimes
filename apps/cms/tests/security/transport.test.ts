@@ -528,6 +528,44 @@ describe('body limits, chunked bodies and malformed input', () => {
     expect(real.status).toBe(413)
   })
 
+  it('the multipart header scan reads only a bounded prefix of a large body and still finds a NUL in the first part', async () => {
+    const { scanMultipartPrefix, MULTIPART_SCAN_BYTES } = await import('../../src/lib/queryGuards')
+    const chunk = new Uint8Array(16 * 1024).fill(97)
+    let pulled = 0
+    const total = 400 // 6.4 MB if fully read
+    const big = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (pulled >= total) return controller.close()
+        pulled++
+        controller.enqueue(chunk)
+      },
+    })
+    const res = await scanMultipartPrefix(big)
+    expect(res.clean).toBe(true)
+    expect(res.bytesRead).toBeLessThanOrEqual(MULTIPART_SCAN_BYTES + chunk.byteLength)
+    expect(pulled).toBeLessThan(total / 10)
+
+    const NUL = String.fromCharCode(0)
+    const CRLF = String.fromCharCode(13, 10)
+    const head = new TextEncoder().encode(['--b', `Content-Disposition: form-data; name="file"; filename="a${NUL}.png"`, '', ''].join(CRLF))
+    const withNul = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(head)
+        c.enqueue(chunk)
+        c.close()
+      },
+    })
+    expect((await scanMultipartPrefix(withNul)).clean).toBe(false)
+  })
+
+  it('a large multipart request that is not refused is not fully read by the proxy scan (original body stays intact)', async () => {
+    const form = new FormData()
+    form.set('file', new Blob([new Uint8Array(3 * 1024 * 1024).fill(1)], { type: 'image/png' }), 'big.png')
+    const res = await send('POST', '/api/media', { body: form, token: f.tokens.reporter })
+    expect(res.text).not.toContain('upload headers') // not refused by the proxy scan; Payload rejects the non-image itself
+    expect(res.status).toBeLessThan(500)
+  })
+
   it('malformed JSON and wrong content types never reach a 500 or leak internals', async () => {
     for (const body of ['{', '[]', 'null', '"x"', '{"a":' + '['.repeat(5000), '\u0000', '{"email":{"$ne":null},"password":{"$ne":null}}']) {
       for (const url of ['/api/users/login', '/api/public/contact', '/api/public/submissions', '/api/public/newsletter/subscribe', '/api/users/forgot-password']) {

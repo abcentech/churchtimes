@@ -174,3 +174,33 @@ export function multipartHeadersAreClean(body: Uint8Array): boolean {
     from = at + 1
   }
 }
+
+/** How much of a multipart body is inspected for control characters in part headers. */
+export const MULTIPART_SCAN_BYTES = 64 * 1024
+
+/**
+ * Reads at most MULTIPART_SCAN_BYTES (plus the chunk that crossed the limit) from `stream` and cancels it, then checks the part
+ * headers inside that prefix. A form puts its small parts (`_payload`, the file part header) first, so the file name is within
+ * the prefix; the rest of an upload is never read by this scan. Returns how many bytes were consumed (for tests).
+ */
+export async function scanMultipartPrefix(
+  stream: ReadableStream<Uint8Array> | null,
+  limit = MULTIPART_SCAN_BYTES,
+): Promise<{ clean: boolean; bytesRead: number }> {
+  if (!stream) return { clean: true, bytesRead: 0 }
+  const reader = stream.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    while (total < limit) {
+      const { done, value } = await reader.read()
+      if (done) break
+      chunks.push(value)
+      total += value.byteLength
+    }
+  } finally {
+    // Not awaited: on a tee()d request clone the cancel promise only settles when BOTH branches are cancelled.
+    void reader.cancel().catch(() => undefined)
+  }
+  return { clean: multipartHeadersAreClean(Buffer.concat(chunks.map((c) => Buffer.from(c.buffer, c.byteOffset, c.byteLength)))), bytesRead: total }
+}

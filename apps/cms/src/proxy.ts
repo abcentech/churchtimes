@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 
-import { checkRelationFilters, checkRequestShape, multipartHeadersAreClean } from './lib/queryGuards'
+import { checkRelationFilters, checkRequestShape, scanMultipartPrefix } from './lib/queryGuards'
 import { checkRequestLimits, wantsLargeMediaBody } from './lib/requestLimits'
 import { hasValidSession } from './lib/sessionToken'
 import { csv, normaliseOrigin } from './lib/securityConfig'
@@ -47,8 +47,8 @@ export async function proxy(request: NextRequest) {
       : { ...limits, errors: [{ message: limits.message }] }
   if (decision.ok && (request.headers.get('content-type') ?? '').toLowerCase().startsWith('multipart/form-data') && ['POST', 'PATCH', 'PUT'].includes(request.method)) {
     // busboy throws "Malformed part header" (a generic 500) for a NUL in a part header such as the file name.
-    const body = new Uint8Array(await request.clone().arrayBuffer())
-    if (!multipartHeadersAreClean(body)) {
+    // Bounded: only the first 64 KiB of a clone is read (never the whole upload), after the size refusals above.
+    if (!(await scanMultipartPrefix(request.clone().body)).clean) {
       return NextResponse.json(
         { ok: false, errors: [{ message: 'Invalid characters in the upload headers.' }] },
         { status: 400, headers: { 'Cache-Control': 'no-store', ...corsHeaders(request.headers.get('origin')) } },
