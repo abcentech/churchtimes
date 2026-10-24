@@ -36,6 +36,7 @@
     "import:link-audit": "tsx scripts/import-link-audit.ts",
     "import:categorise-eval": "tsx scripts/import-categorise-eval.ts",
     "perf:read": "tsx scripts/perf-read-paths.ts",
+    "load:test": "tsx scripts/load-test.ts",
     "import:redirects": "payload run src/scripts/importRedirects.ts --",
     "import:convert": "tsx src/scripts/convertHtmlReport.ts",
     "db:local": "node scripts/local-db.mjs",

@@ -21,21 +21,48 @@ const CACHE_MS = 10_000
 const CACHE_CONTROL = 'public, max-age=300'
 
 type Outcome = { ok: true; result: BuildResult } | { ok: false; error: unknown }
-let cache: { at: number; payload: Payload; outcome: Promise<Outcome> } | undefined
+let cache: { at: number; payload: Payload; outcome: Promise<Outcome>; settled?: Outcome } | undefined
+let refreshing = false
 
 /** Test helper: forget the in-process memo. */
 export function resetRedirectsCache(): void {
   cache = undefined
+  refreshing = false
 }
 
-function build(payload: Payload): Promise<Outcome> {
-  const now = Date.now()
-  if (cache && cache.payload === payload && now - cache.at < CACHE_MS) return cache.outcome
-  const outcome: Promise<Outcome> = generateRedirectMap(payload).then(
+const generate = (payload: Payload): Promise<Outcome> =>
+  generateRedirectMap(payload).then(
     (result): Outcome => ({ ok: true, result }),
     (error): Outcome => ({ ok: false, error }),
   )
-  cache = { at: now, payload, outcome }
+
+/**
+ * Memoised for CACHE_MS. Once a good map exists, an expired memo is served STALE while ONE background rebuild runs
+ * (stale-while-revalidate): the rebuild costs 0.3 to 1.5 s of CPU, and making requests wait for it stalled every other
+ * endpoint of the process under load. A rebuild that fails replaces the memo with the error, exactly as before.
+ */
+function build(payload: Payload): Promise<Outcome> {
+  const now = Date.now()
+  if (cache && cache.payload === payload) {
+    if (now - cache.at < CACHE_MS) return cache.outcome
+    if (cache.settled?.ok) {
+      if (!refreshing) {
+        refreshing = true
+        void generate(payload).then((o) => {
+          if (!refreshing) return // the memo was reset meanwhile
+          refreshing = false
+          cache = { at: Date.now(), payload, outcome: Promise.resolve(o), settled: o }
+        })
+      }
+      return cache.outcome
+    }
+  }
+  const outcome = generate(payload)
+  const entry: NonNullable<typeof cache> = { at: now, payload, outcome }
+  cache = entry
+  void outcome.then((o) => {
+    entry.settled = o
+  })
   return outcome
 }
 
