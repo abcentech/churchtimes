@@ -35,6 +35,11 @@ export function openModal({ title, contentHtml, onRender, onClose }) {
 
   document.body.appendChild(overlay);
   activeModal = { overlay, onClose };
+  // aria-modal is not honoured everywhere: make the page behind the dialog inert (also removes it from the tab order).
+  // The toast region stays live so save/error announcements raised while a dialog is open are still spoken.
+  activeModal.inerted = [...document.querySelectorAll('.app-container > :not(#toast-container)')]
+    .filter(el => !el.hasAttribute('inert'));
+  activeModal.inerted.forEach(el => el.setAttribute('inert', ''));
 
   const closeBtn = overlay.querySelector('#modal-close-btn');
   closeBtn.addEventListener('click', closeModal);
@@ -46,6 +51,17 @@ export function openModal({ title, contentHtml, onRender, onClose }) {
   const handleKeyDown = (e) => {
     if (e.key === 'Escape') {
       closeModal();
+      return;
+    }
+    if (e.key === 'Tab') { // keep keyboard focus inside the dialog (wrap at both ends)
+      const stops = [...overlay.querySelectorAll('a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+        .filter(el => !el.disabled && el.getClientRects().length > 0);
+      if (!stops.length) { e.preventDefault(); return; }
+      const first = stops[0];
+      const last = stops[stops.length - 1];
+      if (!overlay.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+      else if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
     }
   };
   document.addEventListener('keydown', handleKeyDown);
@@ -64,6 +80,7 @@ export function closeModal() {
     const current = activeModal;
     activeModal = null;
     if (current.cleanupKeydown) current.cleanupKeydown();
+    (current.inerted || []).forEach(el => el.removeAttribute('inert'));
     if (current.overlay && current.overlay.parentNode) {
       current.overlay.parentNode.removeChild(current.overlay);
     }
