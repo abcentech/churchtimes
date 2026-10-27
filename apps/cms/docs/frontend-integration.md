@@ -1,5 +1,7 @@
 # Frontend integration notes (newsroom UI and public site)
 
+Public-site note: the public review evidence is recorded in docs/public-go-live-contract-review.md (this line also runs the required CMS checks).
+
 For: the newsroom/editor UI lane (`apps/newsroom`, `agent/gemini-ui-support`) and the public
 site lane (`agent/chatgpt-frontend`). The backend contract is [api-contracts.md](api-contracts.md);
 this file lists what the current consumer code needs to change to work against it.
