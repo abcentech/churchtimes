@@ -342,6 +342,7 @@ Imports pages recovered from web captures (format `archive-candidate/1`, fully s
 - **Publishing is gated**: an article with an `importBatch` cannot be set to `published` or `scheduled` (409) until an editor sets
   `provenance.reviewStatus` to `reviewed` in the admin. The rule runs server-side in the Articles `beforeChange` hook for every caller
   (REST, admin, scheduler, seed, importer). Only `reviewStatus` is editable (editors); the other provenance fields are server-owned.
+- **Four-eyes**: the editor who approves a recovered article (`reviewStatus` becomes `reviewed`) is recorded server-side in `provenance.reviewedBy`, `reviewedByName` and `reviewedAt` (editor roles can read them; clients cannot write them) and cannot also publish or schedule it (409, "A different editor must publish a recovered article you approved."). Admins may do both. The scheduler is not blocked: the rule applies when the article is scheduled. Articles approved before this rule have no stamp and are not blocked.
 - **Never public**: the `provenance` group has staff-only read access, so it is absent from every anonymous response, including
   published articles; the drafts themselves are invisible to anonymous reads.
 - **Rollback**: the manifest is compatible with `import:rollback` (below). An imported article is recognised by its `importBatch`
