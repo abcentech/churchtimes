@@ -25,7 +25,7 @@ export function renderAudioVideo(fields, {baseUrl, inline = false} = {}) {
   // A bare id (not public) renders nothing; only a populated media doc is playable.
   const isDoc = media && typeof media === 'object';
   const src = isDoc && AV_TYPES[kind].includes(media.mimeType) ? mediaUrl(media.url, baseUrl) : '';
-  const legacy = !isDoc ? webLink(fields.sourceUrl) : '';
+  const legacy = media == null ? webLink(fields.sourceUrl) : '';
   const transcript = webLink(fields.transcriptUrl);
   const label = title || (kind === 'audio' ? 'Audio' : 'Video');
   if (!src && !legacy) return '';
