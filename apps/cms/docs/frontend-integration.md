@@ -199,3 +199,4 @@ The public live page renders the `image` object of `GET /api/live-events/{slug}/
 
 Public-site note: legacy article rendering now preserves spaced absolute links and bounds video link titles; see docs/public-legacy-rendering.md (this line also runs the required CMS checks).
 Public-site note: the owner ads.txt record parser now rejects vertical whitespace; see docs/public-wave1-seo.md (this line also runs the required CMS checks).
+Public advertising delivery (C3): the public site origin must be listed in PUBLIC_SUBMISSION_ORIGINS before VITE_PUBLIC_ADVERTISING_URL is set; see docs/public-advertising-delivery.md.
