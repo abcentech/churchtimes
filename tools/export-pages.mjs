@@ -1,3 +1,4 @@
+import {exportPublicPushWorker} from './public-push-worker.mjs';
 import { access, cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
@@ -24,5 +25,6 @@ try {
   catch {throw new Error('Refusing to overwrite an existing newsletter/ folder without its generated marker.');}
 } catch(error) {if(error.code!=='ENOENT')throw error;}
 await cp(join(root,'dist/newsletter'),readerTarget,{recursive:true});
+await exportPublicPushWorker({sourceDirectory:join(root,'dist'),targetDirectory:root});
 await writeFile(join(root, '.nojekyll'), '');
 console.log('Exported compiled index.html and site/ for the existing main-branch Pages source.');

@@ -2,6 +2,7 @@ name: CMS Docker smoke
 # (Public-site PRs that touch no apps/cms path touch this file so the required docker-smoke check still reports: PR #51.)
 
 # Builds apps/cms/Dockerfile, migrates a throwaway PostgreSQL 16 with the image, boots the CMS container
+# (PR #64 touches this file only so the required docker-smoke check reports on a public-only PR.)
 # in NODE_ENV=production and smoke-tests it. Docker is not installed on the development machines, so this
 # workflow is the only place the image is ever built and run. No repository secrets are used: every secret
 # below is generated per run and exists only on this runner.
