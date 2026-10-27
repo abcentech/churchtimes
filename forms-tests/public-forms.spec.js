@@ -52,7 +52,7 @@ test('mocked success sends one anonymous request, clears text and promises revie
   await page.route('**/api/public/submissions',async route=>{
     calls++;const body=route.request().postDataJSON();
     expect(body.turnstileToken).toBe('test-token-0');expect(body.body).toContain('key facts');
-    expect(body.status).toBeUndefined();expect(body.categorySuggestion).toBe('News');expect(body.category).toBeUndefined();expect(body.website).toBe('');expect(body.consent).toBeUndefined();expect(route.request().headers().authorization).toBeUndefined();
+    expect(body.status).toBeUndefined();expect(body.categorySuggestion).toBe('News');expect(body.category).toBeUndefined();expect(body.website).toBe('');expect(body.consent).toBe(true);expect(body.consentTextVersion).toBe('2026-10');expect(route.request().headers().authorization).toBeUndefined();
     await pending;await route.fulfill({status:201,json:{ok:true,reference:'MOCK-ONLY-123'}});
   });
   await page.goto('/#submit');await fill(page);await complete(page);
@@ -217,7 +217,7 @@ for (const kind of ['story','contact']) {
 test('CMS contract STUB success maps location/categorySuggestion and uses only the returned reference',async({page})=>{
  await widget(page);let calls=0;
  await page.route('**/api/public/submissions',route=>{
-  calls++;const data=route.request().postDataJSON();expect(data.categorySuggestion).toBe('News');expect(data.location).toBe('Lagos');expect(data.website).toBe('');expect(data.category).toBeUndefined();expect(data.consent).toBeUndefined();
+  calls++;const data=route.request().postDataJSON();expect(data.categorySuggestion).toBe('News');expect(data.location).toBe('Lagos');expect(data.website).toBe('');expect(data.category).toBeUndefined();expect(data.consent).toBe(true);expect(data.consentTextVersion).toBe('2026-10');
   return route.fulfill({status:201,json:{ok:true,reference:'SUB-ABCDEFGH',message:'Received. An editor will review your submission.'}});
  });
  await page.goto('/#submit');await fill(page);await page.getByLabel('Location (optional)').fill('Lagos');await complete(page);await submit(page).click();

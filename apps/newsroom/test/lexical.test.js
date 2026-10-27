@@ -224,3 +224,48 @@ test('ordered list start != 1, checklists, empty paragraphs and in-line breaks s
   assert.equal(lossyOf(P([T('a'), BR, T('b')])), false);
   assert.equal(lossyOf({ type: 'quote', format: '', indent: 0, children: [T('a'), BR, T('b')] }), false);
 });
+
+// ---- Real importer output (apps/cms/src/import/htmlToLexical.ts): link target=_blank, h4, YouTube block, table, upload with fields:null.
+import { readFileSync } from 'node:fs';
+const IMPORTED = JSON.parse(readFileSync(new URL('./fixtures/imported-body.json', import.meta.url), 'utf8'));
+
+test('imported body (YouTube block, table, h4, new-tab link, upload fields:null) is flagged lossy and not rewritten', () => {
+  const { lossy, markdown } = lexicalToMarkdown(IMPORTED);
+  assert.equal(lossy, true);
+  assert.ok(markdown.includes('Closing paragraph.'));
+  assert.ok(!/dQw4w9WgXcQ/.test(markdown), 'video is not representable in markdown');
+  assert.ok(!markdown.includes('Score'), 'table content is dropped from the markdown view');
+  // Converting it back would destroy the video and the table: this is why the body must stay read-only.
+  assert.notDeepEqual(markdownToLexical(markdown), IMPORTED);
+});
+
+test('imported body: the lossy reviewer view omits content, so the lossy flag is the only warning', () => {
+  const html = markdownToHtml(lexicalToMarkdown(IMPORTED).markdown);
+  assert.ok(!html.includes('dQw4w9WgXcQ'));
+  assert.ok(!html.includes('Score'));
+});
+
+test('imported body: a title edit sends only `title` and the stored content stays byte-identical', async () => {
+  // cms.js reads Vite's import.meta.env; shim it for node with a load hook (production code is untouched).
+  const { register } = await import('node:module');
+  register('data:text/javascript,' + encodeURIComponent('export async function load(u,c,n){const r=await n(u,c);if(r.format==="module"&&u.includes("/apps/newsroom/src/")){r.source=String(r.source).replaceAll("import.meta.env","({DEV:false})");}return r;}'), import.meta.url);
+  const { CmsAdapter } = await import('../src/api/cms.js');
+  const stored = { id: 9, title: 'Old title', slug: 'old-title', status: 'published', publishedAt: '2020-01-01T00:00:00.000Z',
+    excerpt: 'x', updatedAt: '2020-01-02T00:00:00.000Z', content: structuredClone(IMPORTED) };
+  const before = JSON.stringify(stored.content);
+  const bodies = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init = {}) => {
+    if (init.method === 'PATCH') { const b = JSON.parse(init.body); bodies.push(b); Object.assign(stored, b); }
+    return new Response(JSON.stringify(init.method === 'PATCH' ? { doc: stored } : stored), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  try {
+    const api = new CmsAdapter();
+    const { data } = await api.getArticle(9);
+    assert.equal(data.lossy, true); // editor renders the body read-only and computeChanges drops bodyMd
+    assert.ok(data.publishedAt);    // editor renders the slug read-only
+    await api.updateArticle(9, { title: 'New title' });
+  } finally { globalThis.fetch = realFetch; }
+  assert.deepEqual(bodies.map(b => Object.keys(b)), [['title']]);
+  assert.equal(JSON.stringify(stored.content), before);
+});
