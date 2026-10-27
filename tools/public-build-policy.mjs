@@ -3,7 +3,7 @@ import {appendFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
-const exported=path=>path==='index.html'||path==='.nojekyll'||path.startsWith('site/')||path.startsWith('newsletter/');
+const exported=path=>path==='index.html'||path==='.nojekyll'||path==='OneSignalSDKWorker.js'||path.startsWith('site/')||path.startsWith('newsletter/');
 export function publicBuildMode({eventName,baseRef='',refName='',headRef='',changedFiles=[]}) {
   const integration=eventName==='pull_request'?baseRef==='feat/newsroom-mvp':refName==='feat/newsroom-mvp';
   if(!integration)return 'strict'; // Main/release validation retains the committed-export check.

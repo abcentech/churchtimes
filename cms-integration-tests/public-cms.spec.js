@@ -12,6 +12,8 @@ async function fill(page,data){
   await page.getByLabel('Section (required)',{exact:true}).selectOption('News');
   await page.getByLabel('Your story or tip').fill(data.body);
   await page.getByLabel('I agree that the newsroom').check();
+  const permission=page.getByRole('button',{name:'Allow spam protection',exact:true});
+  if(await permission.isVisible())await permission.click();
 }
 const send=page=>page.getByRole('button',{name:'Submit for editorial review',exact:true});
 test('real published API shows populated media, byline, correction and no draft/staff fields',async({page,request})=>{

@@ -37,3 +37,8 @@ performance/accessibility budgets.
 Unit checks use explicitly synthetic local build files and a temporary real
 Git repository; they do not claim CMS or browser integration. CI's source check
 uses the actual Vite build output.
+
+Notes. `OneSignalSDKWorker.js` at the repository root is a generated export like `index.html` and `.nojekyll` (the inactive web push worker is
+written there by the dedicated rebuild only), so feature PRs may not change it. A pull request whose base is not `feat/newsroom-mvp`, and every
+`main` or release check, falls into strict mode and validates the committed export. The source check reads the entry script and stylesheet tags of the
+built `index.html`; it does not walk lazy chunks or `modulepreload` links, so the log says the entry assets were validated, not every chunk.

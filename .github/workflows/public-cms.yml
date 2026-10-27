@@ -56,7 +56,7 @@ jobs:
       - run: npm ci
       - run: npm ci --prefix apps/cms
       - run: npx playwright install --with-deps chromium
-      - run: npm run test:cms
+      - run: npm run test:cms -- --reporter=list,github
         env:
           PUBLIC_LEGACY_SAMPLES: 'true'
       - uses: actions/upload-artifact@v4

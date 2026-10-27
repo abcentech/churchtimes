@@ -761,8 +761,8 @@ media scan and no staff credential on the public host. The CMS side is an offlin
   leading or trailing slash, no `.`/`..`, case-sensitive, exact match); `file` is the CMS public file URL path, matching
   `^/api/media/file/[A-Za-z0-9][A-Za-z0-9._-]*$`; `mime` is `image/jpeg|png|webp`; `size` is bytes. Sorted by `path` in code-unit order.
   `aliases[]` = `{ alias, path }`, sorted by `alias`.
-  **This differs from the flat proposal in PR #58** (`entries[{legacyPath, mediaPath, mimeType}]` with aliases as ordinary entries, plus `revision`):
-  #58 must be updated to this contract, or the host must adapt. The host must validate every entry at load itself (`validateMediaMapBody` is a reference).
+  **This differs from the flat proposal first made in PR #58** (`entries[{legacyPath, mediaPath, mimeType}]` with aliases as ordinary entries, plus `revision`);
+  #58's design note (`docs/public-legacy-media-design.md`) has been updated to this contract. The host must validate every entry at load itself (`validateMediaMapBody` is a reference).
 - **Limits** (aligned with #58): at most 50,000 entries counting map entries plus aliases, and 8 MiB serialised. The export fails with
   `media-map-too-many-entries` / `media-map-too-large` and writes nothing.
 - **Aliases.** A size-suffix alias (`photo-300x200.jpg` -> `photo.jpg`) exists only when it is recorded in the owner's `--aliases` JSON
