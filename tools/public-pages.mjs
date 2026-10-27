@@ -4,13 +4,14 @@ import {fetchPublishedPage,fetchPublicCategory} from '../src/lib/published-artic
 import {publicPageRoute} from '../src/lib/public-page-routes.js';
 import {siteCanonical,escapeAttribute as escape,replaceSocialHTML,SITE_NAME} from '../src/lib/public-metadata.js';
 import {reportPath,articlePathTemplate as validateArticlePathTemplate} from '../src/lib/public-routes.js';
+import {createLookupCache} from './public-lookup-cache.mjs';
 import {cmsImage} from '../src/lib/cms-media.js';
 const staticPages={
   about:{title:'About Church Times Nigeria',description:'Professional journalism on the church, the people and the world we share.',body:'Church Times Nigeria is a publication of Churchtimes Agency Ltd. Its published mission reaches across politics, business, education, health and other spheres of life.'},
   contact:{title:'Contact the newsroom',description:'News tips, reader correspondence and commercial enquiries for Church Times Nigeria.',body:'For a news tip or correction, include the relevant article link and enough detail for the newsroom to understand your enquiry.'},
   advertise:{title:'Advertise with Church Times',description:'Talk to the publication about print and digital advertising, publishing projects and special editions.',body:'Contact the publication to confirm current options, availability, pricing and tax treatment. Request written deliverables and clear advertising labels before committing.'},
 };
-export function createPublicPages({dist,cmsUrl,siteUrl,basePath,indexable,fetchImpl,articlePathTemplate,extraHead=''}) {
+export function createPublicPages({dist,cmsUrl,siteUrl,basePath,indexable,fetchImpl,articlePathTemplate,extraHead='',lookupCache=createLookupCache()}) {
   return async function publicPages(url,respond) {
     const route=publicPageRoute(url.pathname,basePath);if(!route)return false;
     if(!url.pathname.endsWith('/')){respond(308,'text/plain','Canonical page path',{Location:url.pathname+'/'});return true;}
@@ -22,7 +23,7 @@ export function createPublicPages({dist,cmsUrl,siteUrl,basePath,indexable,fetchI
         body=`<p>${escape(staticPages[name].body)}</p>${name==='about'?'':`<p><a href="mailto:info@churchtimesnigeria.net">info@churchtimesnigeria.net</a></p>`}`;
       } else {
         const options={baseUrl:cmsUrl,fetchImpl,timeoutMs:6000};
-        const category=name==='category'?await fetchPublicCategory({...options,slug}):null;
+        const category=name==='category'?await lookupCache.get('category:'+slug,()=>fetchPublicCategory({...options,slug})):null;
         if(name==='category'&&!category){status=404;title='Section unavailable';description='This section is not available.';body='';}
         else {
           title=category?.title || 'The latest reports';description=category?.description || 'Published reporting from Church Times Nigeria.';

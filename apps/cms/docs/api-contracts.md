@@ -1,4 +1,4 @@
-# Church Times CMS — API contracts (v1.27)
+# Church Times CMS — API contracts (v1.28)
 
 Status: implemented on `agent/payload-core`. v1.1 added Turnstile, duplicate detection, staff auth/session
 contract and security hardening; v1.2 closes the verified security-review findings: media ownership, version
@@ -1071,6 +1071,10 @@ limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/op
 
 ## 9. Changelog
 
+### v1.28: Reserved root slugs match the public host
+Behavioural, no schema change and no migration. `RESERVED_ROOT_SLUGS` (`src/lib/reservedSlugs.ts`) gains `latest`, `site`, `index` and `saved`, so it is identical to the public host list (`src/lib/public-routes.js`; `unit-tests/public-reserved-slugs.test.js` fails if they drift). Under `/{slug}/` an article saved with one of these slugs is now refused (400) because the host serves `/latest/` as the list and `/site/`, `/index.html` and `/saved/` as shell routes, so such an article had no public URL (its cards rendered an empty href). The importer and `resolveSlugCollisions` already route reserved names through the existing reserved-collision path (`-<wp id>` / `-2`, counted in `articles.slugRenamedReserved`).
+- **Audit (no migration):** articles that were published with one of the four slugs before v1.28 are not rewritten. Find them with `SELECT id, slug, status FROM articles WHERE lower(slug) IN ('latest','site','index','saved');`. They stay readable by the API but have no public URL under `/{slug}/`; an editor renames each (a new slug passes the check) and, if the old address was ever public, adds a redirect for it.
+
 ### v1.27: Additional categories on articles
 Additive. `articles.categories` (relationship hasMany to categories, optional, max 5, never the primary, no duplicates) next to the unchanged
 required primary `articles.category` (section 3, "Additional categories"). Public article reads, the preview projection and `GET /api/articles?where[categories][in]=`
@@ -1136,7 +1140,7 @@ Additive; YouTube/Vimeo/other-site handling is unchanged.
 **Behaviour change** for the default of `PUBLIC_ARTICLE_PATH_TEMPLATE` (C7, O1) and for slug validation; no response shape changes.
 - `PUBLIC_ARTICLE_PATH_TEMPLATE` now defaults to `/{slug}/` (was `/reports/{slug}/`); `/reports/{slug}/` stays an accepted value; anything else stops startup. The public host must read the same value.
 - C7: with `/{slug}/` the WordPress address and the new address of an imported post are identical, so `GET /api/public/redirects` emits no rule for it (`sameAddress`). Rules remain only for genuine changes: slug renames made by the slug-lock feature, old-host or dated permalinks, and `?p=N` (resolved by the public host through `legacyId`).
-- Slugs equal to a reserved route name (`admin`, `api`, `newsletter`, `contact`, `search`, `category`, `tag`, `feed`, `sitemap`, `wp-content`, `wp-admin`, `wp-json`, ... see `src/lib/reservedSlugs.ts`) are refused on write (400) while the template is `/{slug}/`; a generated slug that would collide gets `-2`; the importer gives a colliding post its `-<wp id>` slug and counts it (`articles.slugRenamedReserved`); `resolveSlugCollisions` treats reserved names as taken.
+- Slugs equal to a reserved route name (`admin`, `api`, `newsletter`, `contact`, `search`, `category`, `tag`, `feed`, `sitemap`, `wp-content`, `wp-admin`, `wp-json`, `latest`, `site`, `index`, `saved` (v1.28), ... see `src/lib/reservedSlugs.ts`) are refused on write (400) while the template is `/{slug}/`; a generated slug that would collide gets `-2`; the importer gives a colliding post its `-<wp id>` slug and counts it (`articles.slugRenamedReserved`); `resolveSlugCollisions` treats reserved names as taken.
 - The importer's link rewriting now defaults to the configured article path (`/{slug}/`) instead of `/article/<slug>`.
 - Test vectors for root article paths added to `tests/fixtures/redirect-normalisation.json` (`rootArticlePath`).
 

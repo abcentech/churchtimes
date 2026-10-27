@@ -132,7 +132,9 @@ async function requestPublishedArticles({
   }
   if (categoryId !== undefined) {
     if (!/^\d{1,15}$/.test(String(categoryId))) throw new CMSReadError('configuration','Category filters require numeric IDs');
-    url.searchParams.set('where[category][equals]',String(categoryId));
+    // v1.27: primary OR additional category. Nested under `and` so it cannot collide with the top-level `or` used by text search.
+    url.searchParams.set('where[and][0][or][0][category][equals]',String(categoryId));
+    url.searchParams.set('where[and][0][or][1][categories][equals]',String(categoryId));
   }
   const term=typeof query==='string' ? query.trim().slice(0,120) : '';
   if(term) ['title','excerpt','bylineName'].forEach((field,i)=>url.searchParams.set(`where[or][${i}][${field}][like]`,term));

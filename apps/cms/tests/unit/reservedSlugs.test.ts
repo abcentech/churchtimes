@@ -25,6 +25,10 @@ describe("reserved root slugs (/{slug}/ must never shadow a real route)", () => 
     "wp-content",
     "wp-admin",
     "wp-json",
+    "latest",
+    "site",
+    "index",
+    "saved",
   ])("%s is reserved, in any case", (slug) => {
     expect(isReservedSlug(slug)).toBe(true);
     expect(isReservedSlug(slug.toUpperCase())).toBe(true);
@@ -46,16 +50,19 @@ describe("reserved root slugs (/{slug}/ must never shadow a real route)", () => 
     const r = resolveSlugCollisions([
       { slug: "search" },
       { slug: "Admin" },
+      { slug: "latest" },
       { slug: "fine-post" },
     ]);
     expect(r.items.map((i) => i.slug)).toEqual([
       "search-2",
       "admin-2",
+      "latest-2",
       "fine-post",
     ]);
     expect(r.renamed).toEqual([
       { old: "search", new: "search-2" },
       { old: "Admin", new: "admin-2" },
+      { old: "latest", new: "latest-2" },
     ]);
   });
 });

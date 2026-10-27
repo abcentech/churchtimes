@@ -57,20 +57,24 @@ read-only to the runtime account.
 | `HOST`, `PORT` | `127.0.0.1`, `5373`; loopback only. Port `0` is supported only for disposable smoke tests. |
 | `PUBLIC_DIST` | `dist` relative to the working directory; must contain a complete actual build. |
 | `PUBLIC_SITE_URL` | Required bare HTTPS origin, or loopback HTTP for local tests. It controls public canonical URLs. |
-| `PUBLIC_CMS_URL` | Approved anonymous CMS API origin; HTTPS or loopback HTTP, no credentials. Unset means genuine unavailable states, not sample success. |
+| `PUBLIC_CMS_URL` | Approved anonymous CMS API origin; HTTPS or loopback HTTP, no credentials. Unset means genuine unavailable states, not sample success. Media URLs are accepted only from this exact origin, so with an `https` `PUBLIC_SITE_URL` a loopback CMS origin is **refused at startup** (readers cannot reach it and every image would silently vanish). Loopback CMS is for local rehearsals with a loopback `PUBLIC_SITE_URL` only. There is deliberately no separate media-origin setting. |
 | `PUBLIC_BASE_PATH` | `/`; a mount prefix is supported, but newsletter email-link hosting requires the public root per C4. |
 | `PUBLIC_INDEXABLE` | Only exact `true` permits indexing; everything else remains staging/noindex. Owner approval is required before setting it. |
 | `PUBLIC_ARTICLE_PATH_TEMPLATE` | `/reports/{slug}/`; `/{slug}/` is available only after the owner settles D1. |
 | `PUBLIC_REDIRECTS_FILE` | Optional absolute private C7 map path. The file takes precedence over a configured endpoint. |
 | `PUBLIC_REDIRECTS_URL` | Optional reviewed `/api/public/redirects` endpoint. No inferred network endpoint. |
 | `PUBLIC_REDIRECT_ALLOWED_HOSTS`, `REDIRECT_ALLOWED_HOSTS` | Must agree when both exist, and match the CMS allowlist. No external target is inferred. |
-| `PUBLIC_REDIRECT_PATTERNS` | Unset; proposed category/tag/author/AMP targets stay inactive until approved. |
+| `PUBLIC_REDIRECT_PATTERNS` | Unset; proposed category/tag/author/AMP targets stay inactive until approved. **Cutover decision:** while it is unset, an old WordPress `/?p=N` address is not redirected and serves the home page with status 200 (not a 301 to the article). Decide before cutover whether to activate the pattern set. |
 | `PUBLIC_HOST_SHUTDOWN_MS` | 10000; bounded 1000–60000 ms. The reference unit allows 20 seconds for shutdown; increase that unit limit if the approved runtime deadline is raised above it. |
 | `PUBLIC_ADS_TXT_LINE`, `PUBLIC_SEARCH_CONSOLE_VERIFICATION` | Unset. Supply only reviewed owner values; this kit introduces no advertising or analytics script. |
 
 CMS credentials, provider keys, SMTP details and Turnstile secrets do not belong
 in this public process. Build-time `VITE_*` settings are public and must retain
 all existing configuration/consent gates; this kit does not enable any of them.
+
+## CMS lookup cache and HTML caching
+
+Every single-segment path (`/{slug}/`) and category page needs a CMS lookup. The Node host keeps a small bounded in-memory cache of those lookups per process: found articles/categories for 30 seconds, not-found results for 10 seconds, at most 500 keys, keyed by the validated slug, with concurrent identical lookups sharing one CMS request. CMS errors and timeouts are never cached (the next request retries; the visitor sees 503). The consequence is that an unpublish, slug change or correction can take up to 30 seconds to appear, and a newly published article up to 10 seconds if someone requested its address just before. HTML responses keep `Cache-Control: no-store` on purpose; a short public `max-age` would be an optional later change, owner-approved, and must not apply to errors, newsletter pages or previews.
 
 ## Start, health, refresh and stop
 
@@ -117,7 +121,7 @@ It retains Node cache headers, adds `Referrer-Policy: no-referrer`, the framing 
 no request/access log, since newsletter query strings can hold private tokens.
 The application sets no Content-Security-Policy of its own beyond `frame-ancestors`: both the Node host (every
 response) and the Caddy reference send `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors 'none'`, because the newsletter confirm and
-unsubscribe pages hold POST buttons another site could frame. A full script/style CSP is a separate owner decision; do not add a weaker proxy CSP or
+unsubscribe pages hold POST buttons another site could frame. There is **no script CSP yet**: a full script/style CSP is a separate owner decision, and `node tools/public-csp-hash.mjs` already prints the exact `sha256-` hash of the inline `public-base-bootstrap` script in the final build, which is the input that policy will need; do not add a weaker proxy CSP or
 blanket-cache HTML and errors. HSTS is a commented line in the Caddyfile and stays off until the owner approves it. The Caddy site address has no default, so
 an unset `PUBLIC_HOSTNAME` stops Caddy instead of serving a placeholder name. Hashed assets are immutable; HTML/errors
 remain no-store, robots/ads use their short server cache, and redirects retain
