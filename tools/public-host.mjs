@@ -7,9 +7,9 @@ import {checkPublicSource} from './check-public-source.mjs';
 import {publicOrigin} from '../src/lib/public-url.js';
 
 export function publicHostConfig(env=process.env) {
-  const host=env.HOST||'127.0.0.1',port=Number(env.PORT??5373);
+  const host=env.HOST||'127.0.0.1',port=Number(env.PORT||5373);
   if(!['127.0.0.1','::1','localhost'].includes(host))throw new Error('Public host must bind to loopback behind its TLS proxy.');
-  if(!Number.isInteger(port)||port<0||port>65535)throw new Error('Invalid public host port.');
+  if(!Number.isInteger(port)||port<0||port>65535||(port===0&&env.NODE_ENV!=='test'))throw new Error('Invalid public host port.');
   const siteUrl=publicOrigin(env.PUBLIC_SITE_URL);
   if(!siteUrl||new URL(env.PUBLIC_SITE_URL).pathname!=='/'||new URL(env.PUBLIC_SITE_URL).search||new URL(env.PUBLIC_SITE_URL).hash)throw new Error('PUBLIC_SITE_URL must be an explicit safe origin.');
   if(env.PUBLIC_CMS_URL&&!publicOrigin(env.PUBLIC_CMS_URL))throw new Error('PUBLIC_CMS_URL must be HTTPS or loopback HTTP without credentials.');
@@ -21,7 +21,7 @@ export function publicHostConfig(env=process.env) {
   return {host,port,shutdownMs,options:{
     dist,siteUrl,cmsUrl:env.PUBLIC_CMS_URL||undefined,
     basePath:env.PUBLIC_BASE_PATH||'/',indexable:env.PUBLIC_INDEXABLE==='true',
-    articlePathTemplate:env.PUBLIC_ARTICLE_PATH_TEMPLATE||'/reports/{slug}/',
+    articlePathTemplate:env.PUBLIC_ARTICLE_PATH_TEMPLATE||'/{slug}/',legacySiteHosts:env.LEGACY_SITE_HOSTS||undefined,
     adsTxtLine:env.PUBLIC_ADS_TXT_LINE||'',searchVerification:env.PUBLIC_SEARCH_CONSOLE_VERIFICATION||'',
     redirectsFile:env.PUBLIC_REDIRECTS_FILE||undefined,redirectsUrl:env.PUBLIC_REDIRECTS_URL||undefined,
     redirectPatterns:env.PUBLIC_REDIRECT_PATTERNS||undefined,
@@ -41,20 +41,28 @@ export async function startPublicHost({env=process.env,signals=process,log=recor
     if(!info.isFile())throw new Error('The private redirects path must be a regular file.');
   }
   const server=createPublicServer(config.options);
+  // Behind the TLS proxy: keep idle connections longer than the proxy's and bound slow headers.
+  server.keepAliveTimeout=65000;server.headersTimeout=66000;
   if((config.options.redirectsFile||config.options.redirectsUrl)&&typeof server.publicReloadRedirects!=='function')throw new Error('Redirect runtime requires the reviewed public reload hook.');
-  await server.publicReady;
-  if((config.options.redirectsFile||config.options.redirectsUrl)&&server.publicRedirectDiagnostics?.().loaded!==true) {
-    server.close();
-    throw new Error('Configured redirects require a validated initial generation.');
-  }
-  await new Promise((done,reject)=>{server.once('error',reject);server.listen(config.port,config.host,done);});
   let closing;
+  // Registered before the initial load: a SIGHUP during startup must not kill the process (default action).
   const reload=()=>{
     if(closing)return;
     if(!config.options.redirectsFile&&!config.options.redirectsUrl){log({event:'public_redirect_refresh_unconfigured'});return;}
-    // A failed generation preserves the old map and increments the existing warning counter.
-    Promise.resolve(server.publicReloadRedirects()).then(()=>log({event:'public_redirect_refresh_finished'})).catch(()=>log({event:'public_redirect_refresh_failed'}));
+    // refresh() never rejects; a failed generation keeps the old map and raises the counted warning, so compare the counter.
+    const before=server.publicRedirectDiagnostics?.().warningCount??0;
+    Promise.resolve(server.publicReloadRedirects()).then(()=>{
+      const after=server.publicRedirectDiagnostics?.()??{};
+      log({event:(after.warningCount??0)>before?'public_redirect_refresh_failed':'public_redirect_refresh_finished',ruleCount:after.ruleCount,warningCount:after.warningCount});
+    }).catch(()=>log({event:'public_redirect_refresh_failed'}));
   };
+  signals.on('SIGHUP',reload);
+  await server.publicReady;
+  if((config.options.redirectsFile||config.options.redirectsUrl)&&server.publicRedirectDiagnostics?.().loaded!==true) {
+    server.close();signals.off('SIGHUP',reload);
+    throw new Error('Configured redirects require a validated initial generation.');
+  }
+  await new Promise((done,reject)=>{server.once('error',reject);server.listen(config.port,config.host,done);});
   const stop=()=>{
     if(closing)return closing;
     signals.off('SIGHUP',reload);
@@ -66,7 +74,7 @@ export async function startPublicHost({env=process.env,signals=process,log=recor
     return closing;
   };
   const signalStop=()=>{void stop().then(clean=>{if(!clean)process.exitCode=1;});};
-  signals.on('SIGTERM',signalStop);signals.on('SIGINT',signalStop);signals.on('SIGHUP',reload);
+  signals.on('SIGTERM',signalStop);signals.on('SIGINT',signalStop);
   server.once('close',()=>{signals.off('SIGTERM',signalStop);signals.off('SIGINT',signalStop);signals.off('SIGHUP',reload);});
   log({event:'public_host_listening',port:server.address().port});
   return {server,stop,reload};

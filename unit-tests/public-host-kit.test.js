@@ -21,7 +21,7 @@ const map=to=>JSON.stringify({version:'sha256:syntheticmap',generatedAt:'2026-10
 ]});
 const waitFor=async predicate=>{for(let n=0;n<200;n++){if(await predicate())return;await new Promise(done=>setTimeout(done,50));}throw new Error('Expected local smoke event did not occur.');};
 test('draft runtime rejects unsafe host/origin/private-map configuration and preserves staging defaults',()=>{
- const config=publicHostConfig({PUBLIC_SITE_URL:origin});assert.equal(config.host,'127.0.0.1');assert.equal(config.options.indexable,false);assert.equal(config.options.articlePathTemplate,'/reports/{slug}/');
+ const config=publicHostConfig({PUBLIC_SITE_URL:origin});assert.equal(config.host,'127.0.0.1');assert.equal(config.options.indexable,false);assert.equal(config.options.articlePathTemplate,'/{slug}/');
  for(const env of [{HOST:'0.0.0.0'},{PORT:'not-a-port'},{PUBLIC_SITE_URL:'https://synthetic.example.test/path/'},{PUBLIC_SITE_URL:'http://outside.example.test'},{PUBLIC_REDIRECTS_FILE:'relative-private-map.json'},{PUBLIC_DIST:'/tmp/synthetic-build',PUBLIC_REDIRECTS_FILE:'/tmp/synthetic-build/private-map.json'},{PUBLIC_HOST_SHUTDOWN_MS:'0'}])assert.throws(()=>publicHostConfig({PUBLIC_SITE_URL:origin,...env}));
 });
 test('documented env-file startup serves staging health, ads and headers; SIGHUP keeps last good rules and SIGTERM stops cleanly',{skip:process.platform==='win32'?'This draft Linux host kit requires POSIX signals.':false},async t=>{
@@ -39,7 +39,7 @@ test('documented env-file startup serves staging health, ads and headers; SIGHUP
  let cmsCalls=0;const cms=createServer((_req,res)=>{cmsCalls++;res.writeHead(503,{'Content-Type':'application/json'});res.end('{}');});
  await new Promise(done=>cms.listen(0,'127.0.0.1',done));t.after(()=>new Promise(done=>cms.close(done)));
  const envFile=join(directory,'synthetic.env');
- await writeFile(envFile,[`HOST=127.0.0.1`,`PORT=0`,`PUBLIC_DIST=${selectedBuild}`,`PUBLIC_SITE_URL=${origin}`,`PUBLIC_CMS_URL=http://127.0.0.1:${cms.address().port}`,`PUBLIC_INDEXABLE=false`,`PUBLIC_ARTICLE_PATH_TEMPLATE=/reports/{slug}/`,`PUBLIC_REDIRECTS_FILE=${privateMap}`,`PUBLIC_ADS_TXT_LINE=example.test, synthetic-publisher, DIRECT`,`PUBLIC_HOST_SHUTDOWN_MS=1000`].join('\n')+'\n',{mode:0o600});
+ await writeFile(envFile,[`HOST=127.0.0.1`,`PORT=0`,`NODE_ENV=test`,`PUBLIC_DIST=${selectedBuild}`,`PUBLIC_SITE_URL=${origin}`,`PUBLIC_CMS_URL=http://127.0.0.1:${cms.address().port}`,`PUBLIC_INDEXABLE=false`,`PUBLIC_ARTICLE_PATH_TEMPLATE=/reports/{slug}/`,`PUBLIC_REDIRECTS_FILE=${privateMap}`,`PUBLIC_ADS_TXT_LINE=example.test, synthetic-publisher, DIRECT`,`PUBLIC_HOST_SHUTDOWN_MS=1000`].join('\n')+'\n',{mode:0o600});
  const env={...process.env};for(const key of Object.keys(env))if(key.startsWith('PUBLIC_')||['PORT','HOST','REDIRECT_ALLOWED_HOSTS'].includes(key))delete env[key];
  // STUB failures must prevent readiness before any listener is opened.
  for(const broken of [{PUBLIC_REDIRECTS_FILE:privateMap},{PUBLIC_REDIRECTS_FILE:'',PUBLIC_REDIRECTS_URL:`http://127.0.0.1:${cms.address().port}/api/public/redirects`}]) {

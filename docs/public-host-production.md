@@ -113,10 +113,13 @@ counted warnings omit map paths, publisher IDs and response bodies.
 
 `deploy/public-host/Caddyfile` and `churchtimes-public.service` are **drafts**.
 The Caddy reference terminates TLS and proxies only to the loopback Node process.
-It retains Node cache headers, adds `Referrer-Policy: no-referrer`, and configures
+It retains Node cache headers, adds `Referrer-Policy: no-referrer`, the framing headers below, and configures
 no request/access log, since newsletter query strings can hold private tokens.
-Keep the existing application CSP/consent policy; do not invent a weaker proxy
-CSP or blanket-cache HTML and errors. Hashed assets are immutable; HTML/errors
+The application sets no Content-Security-Policy of its own beyond `frame-ancestors`: both the Node host (every
+response) and the Caddy reference send `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors 'none'`, because the newsletter confirm and
+unsubscribe pages hold POST buttons another site could frame. A full script/style CSP is a separate owner decision; do not add a weaker proxy CSP or
+blanket-cache HTML and errors. HSTS is a commented line in the Caddyfile and stays off until the owner approves it. The Caddy site address has no default, so
+an unset `PUBLIC_HOSTNAME` stops Caddy instead of serving a placeholder name. Hashed assets are immutable; HTML/errors
 remain no-store, robots/ads use their short server cache, and redirects retain
 their existing short cache. CMS availability is deliberately not a proxy health
 condition.

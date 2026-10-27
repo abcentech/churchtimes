@@ -116,13 +116,31 @@ paths, elevated public 5xx/CMS failures, broken article/media rendering, consent
 leaks or a failed owner/staff journey. A cheap healthy robots response alone is
 not sufficient to continue a broken launch.
 
-The operator can restore the previous immutable public release/config and
-validated private map, drain/restart the public process, and rerun health and the
-full quiet checks. If the approved web DNS switch itself is being reverted, the
-DNS operator restores only the recorded web address values and monitors TTL
-propagation; never change mail or nameservers as a rollback shortcut. Claude
-controls any CMS/database rollback and the associated data-loss tradeoff. Keep
-the old WordPress service available until the owner releases the rollback gate.
+Rollback commands (the operator runs them on the public host; paths follow `docs/public-host-production.md`; <previous-sha> is the recorded last good release):
+
+```sh
+# 1. Switch the release link atomically (keep the old target recorded before the window).
+ln -sfn /opt/churchtimes-public/releases/<previous-sha> /opt/churchtimes-public/current.next
+mv -T /opt/churchtimes-public/current.next /opt/churchtimes-public/current
+# 2. Restore the matching reviewed env file and private redirect map (atomic same-directory rename), then RESTART.
+#    A reload (SIGHUP) is not enough: the process pins its build's real path at start and reads env only at start.
+sudo systemctl restart churchtimes-public
+# 3. Verify before telling anyone it is back.
+systemctl is-active churchtimes-public
+node tools/public-host-health.mjs                        # local health (robots, nosniff, indexing policy)
+node tools/check-redirects.mjs --target https://<final-hostname> --urls <private-checks.json> --rate 2 --quiet
+curl -sI https://<final-hostname>/ | grep -i -E '^(HTTP|x-frame-options|content-security-policy|x-robots-tag)'
+```
+
+The restart drops in-flight requests after the drain deadline (`PUBLIC_HOST_SHUTDOWN_MS`, default 10 seconds). A rollback is complete only when the
+health check passes, the redirect checks report zero failures, the canonical address and `X-Robots-Tag` match the intended state, and the owner or
+staff journey is repeated. CMS and database rollback stay with Claude (data-loss tradeoff).
+
+DNS TTL rule. Record the current TTL of every web A/AAAA record before the window. At least one full old TTL before the cutover, the DNS operator
+lowers the web records to 300 seconds (5 minutes); the cutover and the rollback window run at 300 seconds. If the approved web DNS switch itself is
+reverted, the DNS operator restores only the recorded web address values (mail and nameservers are never touched) and the old WordPress service must still be
+running; clients follow within about one TTL. Return the TTL to its recorded normal value (or 3600 seconds when none was recorded) only after the owner
+releases the rollback gate, and keep the old WordPress service until then.
 
 Monitor public status/latency, redirect failure counters and agreed missing-path
 counts, CMS availability, host memory/restarts, TLS and owner/staff reports.
