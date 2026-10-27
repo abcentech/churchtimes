@@ -16,7 +16,9 @@ import { DEFAULT_CATEGORY_RULES } from './categoryRulesDefault'
 import { bylineFor, chooseCategoryChain, cleanLegacyUrl, isCategorySlug, parseCategoryMap, resolveSeoText, validCanonical, type CategoryLookups, type SeoOutcome } from './mapping'
 import { cleanDisplayName, prepareComments, writeComments } from './comments'
 import { HtmlConversionError, htmlToLexical, type ConversionReport } from './htmlToLexical'
-import { KNOWN_LEGACY_HOSTS, LinkContextBuilder, linkClassifyHook } from './linkClassify'
+import { LinkContextBuilder, linkClassifyHook } from './linkClassify'
+import { createLinkFixer, LinkFixesError, readLinkFixesFile, type LinkFixer } from './linkFixes'
+import { resolveSiteHosts } from './linkSiteHosts'
 import { openManifest, type ManifestSink } from './manifest'
 import { createMediaResolver, isSafeRelativeUploadPath, type MediaResolver } from './media'
 import { bumpTally, newReport, statusKey, type ImportReport } from './qa'
@@ -69,6 +71,8 @@ export type ImportOptions = {
   forceUpdate?: boolean
   /** Extra old-site host names (the hosts in the export's own site header are always used). */
   oldHosts?: readonly string[]
+  /** A link-fixes file (CSV or JSON, outside the repository): old path or slug -> new path | remove-link | keep-text, for links that cannot be resolved. */
+  linkFixesFile?: string
   /** Stop after this many posts (trial runs). */
   limit?: number
   /** Checked between posts; the CLI sets it from SIGINT and SIGTERM. The run then ends cleanly. */
@@ -146,7 +150,8 @@ type Ctx = {
   /** Media ids created for the post being written (to find their `upload` audit rows). */
   postMedia: number[]
   /** Link resolver (slug, ?p=N, category, old hosts) built from pass 1 with the FINAL slugs. */
-  classify: (url: string) => { to: string | null; reason: string }
+  classify: (url: string) => { to: string | null; reason: string; remove?: boolean }
+  fixer?: LinkFixer
   articlePath: (slug: string) => string
 }
 
@@ -478,6 +483,12 @@ export function isEmptyBody(root: unknown): boolean {
   })
 }
 
+/** The primary host and the old host names (`LEGACY_SITE_HOSTS`): every one of them is this site. */
+const knownSiteHosts = (): string[] => {
+  const h = resolveSiteHosts(process.env)
+  return [h.primary, ...h.legacy]
+}
+
 type Converted = { content: { root: unknown }; report: ConversionReport }
 
 /** Two passes: the first collects image addresses, they are resolved (async), the second builds the body. */
@@ -485,12 +496,13 @@ async function convert(ctx: Ctx, item: WxrItem, oldHosts: readonly string[], slu
   const wanted = new Map<string, { alt: string; caption: string }>()
   const wantedMedia = new Map<string, { title: string; caption: string }>()
   const options = {
-    oldHosts: [...new Set([...oldHosts, ...KNOWN_LEGACY_HOSTS])],
+    oldHosts: [...new Set([...oldHosts, ...knownSiteHosts()])],
     slugMap,
     articleTitle: plain(item.title, 240),
     articlePath: ctx.articlePath,
     classify: ctx.classify,
   }
+  ctx.fixer?.counting(false)
   htmlToLexical(item.contentHtml, {
     ...options,
     resolveImage: (src, c) => {
@@ -502,6 +514,7 @@ async function convert(ctx: Ctx, item: WxrItem, oldHosts: readonly string[], slu
       return { mediaId: 1 }
     },
   })
+  ctx.fixer?.counting(true)
   const resolved = new Map<string, number>()
   const resolvedMedia = new Map<string, number>()
   for (const [src, meta] of wanted) {
@@ -677,7 +690,18 @@ export async function runImport(payload: Payload, opts: ImportOptions): Promise<
     })
     const template = resolveArticlePathTemplate(process.env)
     const articlePath = (slug: string) => buildArticlePath(template, slug)
-    const classify = linkClassifyHook(first.links.build({ articlePath, slugMap: first.slugMap, extraHosts: [...oldHosts, ...KNOWN_LEGACY_HOSTS] }))
+    const hostCfg = resolveSiteHosts(process.env)
+    const linkCtx = first.links.build({ articlePath, slugMap: first.slugMap, extraHosts: oldHosts, primaryHost: hostCfg.primary, legacyHosts: hostCfg.legacy })
+    let fixer: LinkFixer | undefined
+    if (opts.linkFixesFile) {
+      try {
+        fixer = createLinkFixer(readLinkFixesFile(opts.linkFixesFile, { articleTemplate: template, siteHosts: linkCtx.hosts }), linkCtx)
+      } catch (e) {
+        if (e instanceof LinkFixesError) throw new ImportError(e.code)
+        throw e
+      }
+    }
+    const classify = linkClassifyHook(linkCtx, fixer)
     const lookups = pass1Lookups(first, tagMap)
     const ctx: Ctx = {
       payload,
@@ -695,6 +719,7 @@ export async function runImport(payload: Payload, opts: ImportOptions): Promise<
       authorKeys: new Map(),
       postMedia,
       classify,
+      fixer,
       articlePath,
     }
 
@@ -783,6 +808,7 @@ export async function runImport(payload: Payload, opts: ImportOptions): Promise<
     } else {
       report.notes.push('dry-run-nothing-written')
     }
+    if (fixer) report.linkFixes = fixer.summary()
     if (stopped) report.notes.push('stopped-early-by-signal')
     endStatus = stopped ? 'stopped' : 'complete'
     return report

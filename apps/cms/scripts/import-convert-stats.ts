@@ -1,5 +1,5 @@
 /**
- * `npm run import:convert-wxr -- --file <export.xml> [--detail-file <path outside every repo>] [--old-host a.test] [--assume-images]`
+ * `npm run import:convert-wxr -- --file <export.xml> [--detail-file <path outside every repo>] [--old-host a.test] [--assume-images] [--link-fixes <csv or json outside every repo>]`
  * Converts every published post of a real export in memory (no database, no network) and prints COUNTS ONLY.
  * Legacy ids of posts needing attention go to `--detail-file` (outside every repository, owner-only).
  */
@@ -7,6 +7,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import { convertWxrStats, formatConvertStats } from '../src/import/convertStats'
+import { formatLinkFixes, LinkFixesError, readLinkFixesFile } from '../src/import/linkFixes'
+import { resolveSiteHosts } from '../src/import/linkSiteHosts'
+import { resolveArticlePathTemplate } from '../src/lib/redirectPaths'
 import { PrivateOutError, privateOutProblem, writePrivateOut } from '../src/import/privateOut'
 import { isInsideRepo } from '../src/import/safePaths'
 import { readWxrFile } from '../src/import/wxr'
@@ -20,6 +23,10 @@ async function main(): Promise<number> {
   }
   const file = val('--file')
   const detail = val('--detail-file')
+  if (val('--link-fixes') && isInsideRepo(val('--link-fixes') as string)) {
+    console.error('CONVERT_PATH_INSIDE_REPO')
+    return 2
+  }
   if (!file) {
     console.error('CONVERT_USAGE')
     return 2
@@ -34,11 +41,24 @@ async function main(): Promise<number> {
     console.error(`CONVERT_DETAIL_${problem}`)
     return 2
   }
-  const { stats, detail: d } = await convertWxrStats(() => readWxrFile(path.resolve(file)), {
+  const fixesFile = val('--link-fixes')
+  let linkFixes
+  if (fixesFile) {
+    try {
+      const h = resolveSiteHosts(process.env)
+      linkFixes = readLinkFixesFile(path.resolve(fixesFile), { articleTemplate: resolveArticlePathTemplate(process.env), siteHosts: new Set([h.primary, ...h.legacy]) })
+    } catch (e) {
+      console.error(e instanceof LinkFixesError ? e.code : 'LINK_FIXES_UNREADABLE')
+      return 2
+    }
+  }
+  const { stats, detail: d, linkFixes: fixSummary } = await convertWxrStats(() => readWxrFile(path.resolve(file)), {
+    linkFixes,
     oldHosts: (val('--old-host') ?? '').split(',').map((h) => h.trim()).filter(Boolean),
     assumeImages: argv.includes('--assume-images'),
   })
   console.log(formatConvertStats(stats))
+  if (fixSummary) console.log(formatLinkFixes(fixSummary))
   if (detail) {
     try {
       writePrivateOut(path.resolve(detail), `${JSON.stringify(d, null, 1)}\n`, { inputs: [path.resolve(file)] })
