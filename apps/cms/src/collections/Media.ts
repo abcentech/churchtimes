@@ -477,7 +477,8 @@ export const Media: CollectionConfig = {
     afterDelete: [auditDelete],
   },
   upload: {
-    staticDir: 'media',
+    // MEDIA_DIR is for the local demo (npm run demo) only; every real deployment keeps the default folder.
+    staticDir: process.env.MEDIA_DIR?.trim() || 'media',
     // Payload also checks the type its own sniffer reports; it reports M4A as audio/x-m4a and M4V as video/x-m4v (normalised in checkUpload).
     mimeTypes: [...ALLOWED_MIME, ...AV_MIME, ...AV_PAYLOAD_MIME_ALIASES],
     focalPoint: true,

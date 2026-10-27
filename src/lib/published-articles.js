@@ -82,6 +82,8 @@ export function normalizePublishedArticle(record, {baseUrl} = {}) {
     id: String(record.id ?? slug),
     slug,
     title,
+    seoTitle: plainText(record.seoTitle,70),
+    seoDescription: plainText(record.seoDescription,200),
     excerpt: plainText(record.excerpt || record.summary, 600),
     publishedAt: publicationDate(record.publishedAt),
     updatedAt: publicationDate(record.updatedAt),
