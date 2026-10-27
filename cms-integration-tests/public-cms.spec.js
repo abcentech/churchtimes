@@ -74,7 +74,7 @@ test('real CMS category selection resolves a numeric relationship and search inc
  await page.goto('/#latest');await expect(page.locator('#cms-category')).toBeVisible();
  await page.locator('#cms-category').selectOption(article.category.slug);
  await expect(page.locator('#cms-latest')).toContainText(article.title);
- expect(requests.some(u=>u.searchParams.get('where[category][equals]')===String(article.category.id))).toBe(true);
+ expect(requests.some(u=>u.searchParams.get('where[and][0][or][0][category][equals]')===String(article.category.id))).toBe(true);
  await page.goto('/#search/'+encodeURIComponent(article.bylineName));
  await expect(page.locator('#cms-search')).toContainText(article.title);
  expect(requests.some(u=>u.searchParams.get('where[or][2][bylineName][like]')===article.bylineName)).toBe(true);
