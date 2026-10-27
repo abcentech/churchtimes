@@ -13,8 +13,8 @@ export function socialMetadata(article,canonical) {
   const image=cmsSources(article?.featuredImage);
   return {
     'og:type':article?'article':'website',
-    'og:title':article?.title || HOME_TITLE,
-    'og:description':article?.excerpt || HOME_DESCRIPTION,
+    'og:title':article?.seoTitle || article?.title || HOME_TITLE,
+    'og:description':article?.seoDescription || article?.excerpt || HOME_DESCRIPTION,
     'og:site_name':SITE_NAME,
     ...(canonical?{'og:url':canonical}:{}),
     ...(image?{'og:image':image.url,'og:image:alt':article.featuredImage.alt || article.title,

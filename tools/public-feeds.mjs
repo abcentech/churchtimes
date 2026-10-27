@@ -8,7 +8,9 @@ const MAX_SITEMAP_PAGES=1000,MAX_CATEGORY_PAGES=20,CACHE_MS=60000;
 export const xml=value=>String(value ?? '').replace(/[^\u0009\u000a\u000d\u0020-\ud7ff\ue000-\ufffd\u{10000}-\u{10ffff}]/gu,'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
 const declaration='<?xml version="1.0" encoding="UTF-8"?>';
 export const PUBLIC_STATIC_PAGES=['','latest/','about/','contact/','advertise/'];
-export function createPublicFeeds({cmsUrl,siteUrl,basePath='/',indexable=false,fetchImpl=fetch}={}) {
+export function createPublicFeeds({cmsUrl,siteUrl,basePath='/',indexable=false,articlePathTemplate,fetchImpl=fetch,warn=record=>console.warn(JSON.stringify(record))}={}) {
+  let skippedCount=0;
+  const articlePath=slug=>{const path=reportPath(slug,basePath,articlePathTemplate);if(!path){skippedCount++;try{warn({code:'public_discovery_reserved_slug_skipped',count:skippedCount});}catch{}}return path;};
   const canonical=path=>siteCanonical(basePath+path,{siteUrl});
   const options={baseUrl:cmsUrl,fetchImpl,timeoutMs:6000};
   const cache=new Map();
@@ -43,15 +45,16 @@ export function createPublicFeeds({cmsUrl,siteUrl,basePath='/',indexable=false,f
     const seen=new Set();
     for(const article of result.articles.slice(0,SITEMAP_PAGE_SIZE)) {
       if(seen.has(article.slug))continue;seen.add(article.slug);
-      urls.push({url:siteCanonical(reportPath(article.slug,basePath),{siteUrl}),lastmod:article.updatedAt || article.publishedAt});
+      const path=articlePath(article.slug);if(!path)continue;
+      urls.push({url:siteCanonical(path,{siteUrl}),lastmod:article.updatedAt || article.publishedAt});
     }
     return declaration+'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'+urls.map(item=>`<url><loc>${xml(item.url)}</loc>${item.lastmod?`<lastmod>${xml(item.lastmod)}</lastmod>`:''}</url>`).join('')+'</urlset>';
   }
   async function feed() {
     const {articles}=await fetchPublishedPage({...options,limit:30});
     const seen=new Set();
-    const items=articles.filter(a=>!seen.has(a.slug)&&seen.add(a.slug)).slice(0,30).map(article=>{
-      const link=siteCanonical(reportPath(article.slug,basePath),{siteUrl});
+    const items=articles.filter(a=>articlePath(a.slug)&&!seen.has(a.slug)&&seen.add(a.slug)).slice(0,30).map(article=>{
+      const link=siteCanonical(articlePath(article.slug),{siteUrl});
       const media=article.featuredImage,image=cmsSources(media);
       const enclosure=media?.fileSize?`<enclosure url="${xml(media.url)}" length="${media.fileSize}" type="${xml(media.mimeType)}"/>`:'';
       return `<item><title>${xml(article.title)}</title><link>${xml(link)}</link><guid isPermaLink="true">${xml(link)}</guid>${article.publishedAt?`<pubDate>${xml(new Date(article.publishedAt).toUTCString())}</pubDate>`:''}<description>${xml(article.excerpt)}</description>${enclosure}${image?`<media:content url="${xml(image.url)}" medium="image"${image.width?` width="${image.width}" height="${image.height}"`:''}/>`:''}</item>`;
