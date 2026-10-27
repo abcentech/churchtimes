@@ -94,6 +94,43 @@ describe('POST /api/public/submissions', () => {
     expect(direct.status).toBe(403)
   })
 
+  it('stores consentAt (server time) and the text version when consent is true, readable by staff only', async () => {
+    const before = Date.now()
+    const payload = valid({ consent: true, consentTextVersion: '2026-10', consentAt: '1999-01-01T00:00:00.000Z' })
+    const res = await submit(payload)
+    expect(res.status).toBe(201)
+    const [doc] = await findByTitle(payload.title)
+    expect(doc!.consentTextVersion).toBe('2026-10')
+    const at = new Date(doc!.consentAt as string).getTime()
+    expect(at).toBeGreaterThanOrEqual(before - 1000) // client-supplied consentAt is ignored
+    expect(at).toBeLessThanOrEqual(Date.now() + 1000)
+    const eic = await api('GET', `/api/submissions/${doc!.id}`, { token: f.tokens.eic })
+    expect(eic.json.consentAt).toBeTruthy()
+  })
+
+  it('leaves consentAt empty when no consent is sent (default SUBMISSIONS_REQUIRE_CONSENT=false)', async () => {
+    const payload = valid()
+    expect((await submit(payload)).status).toBe(201)
+    const [doc] = await findByTitle(payload.title)
+    expect(doc!.consentAt ?? null).toBeNull()
+  })
+
+  it('answers 400 on field consent when SUBMISSIONS_REQUIRE_CONSENT=true and consent is missing', async () => {
+    const prev = process.env.SUBMISSIONS_REQUIRE_CONSENT
+    process.env.SUBMISSIONS_REQUIRE_CONSENT = 'true'
+    try {
+      const missing = valid()
+      const res = await submit(missing)
+      expect(res.status).toBe(400)
+      expect(res.json.errors.map((e: { field?: string }) => e.field)).toContain('consent')
+      expect(await findByTitle(missing.title)).toHaveLength(0)
+      expect((await submit(valid({ consent: true }))).status).toBe(201)
+    } finally {
+      if (prev === undefined) delete process.env.SUBMISSIONS_REQUIRE_CONSENT
+      else process.env.SUBMISSIONS_REQUIRE_CONSENT = prev
+    }
+  })
+
   it('rejects text/plain with 415', async () => {
     const res = await submit(undefined, {
       contentType: 'text/plain',

@@ -21,9 +21,35 @@ import { showApiError } from '../components/notify.js';
 import { openMediaPicker, mediaImageProblem } from '../components/media-picker.js';
 import { markdownToHtml, countWords, imageToken, insertBlockLine, listImages, removeImageLine, stripImageLabels } from '../lexical.js';
 import { ApiError } from '../api/errors.js';
-import { STALE_MESSAGE, isStaleConflict } from '../stale-guard.js';
+import { STALE_MESSAGE, CONTENT_CONFLICT_MESSAGE, isStaleConflict } from '../stale-guard.js';
+import { saveLocalCopy, readLocalCopy, clearLocalCopy, copyDiffers } from '../draft-guard.js';
 import { escapeHtml, slugify, statusBadge, formatDate } from '../util.js';
+import { MAX_EXTRA_CATEGORIES, cleanExtraIds, parseIds, toggleExtra } from '../categories.js';
+import { publishBlockReason, fourEyesReason } from '../archive-review.js';
 import { parseScheduleInput, isoToLocalInput, formatScheduled, defaultScheduleValue } from '../schedule.js';
+
+// Pointer to the editor currently on screen, used only by the page-unload guard below (story state stays in `states`).
+let activeEditor = null;
+
+function localStore() {
+  try { return window.sessionStorage; } catch { return null; }
+}
+
+if (typeof window !== 'undefined') {
+  // Closing / reloading the tab with unsaved edits: keep a local copy and make the browser ask first.
+  window.addEventListener('beforeunload', (e) => {
+    const c = activeEditor;
+    if (c && c.isConnected && isEditorDirty(c)) {
+      syncLocalCopy(c);
+      e.preventDefault();
+      e.returnValue = '';
+    }
+  });
+  window.addEventListener('pagehide', () => {
+    const c = activeEditor;
+    if (c && c.isConnected) syncLocalCopy(c);
+  });
+}
 
 const states = new WeakMap();
 const stateOf = container => states.get(container);
@@ -43,6 +69,7 @@ function snapshot(story) {
     bylineName: (story.bylineName || '').trim(),
     bodyMd: stripImageLabels((story.bodyMd || '').trim()),
     categoryId: story.categoryId ? String(story.categoryId) : '',
+    extraCategoryIds: cleanExtraIds(story.categoryId, story.extraCategoryIds),
     featuredImageId: story.featuredImage?.id ? String(story.featuredImage.id) : ''
   };
 }
@@ -50,7 +77,7 @@ function snapshot(story) {
 function blankStory(user, categories) {
   return {
     id: null, title: '', slug: '', standfirst: '', bylineName: '', bodyMd: '', lossy: false,
-    categoryId: categories[0] ? String(categories[0].id) : '', categoryTitle: categories[0]?.title || '',
+    categoryId: categories[0] ? String(categories[0].id) : '', categoryTitle: categories[0]?.title || '', extraCategoryIds: '',
     featuredImage: null, status: 'draft', authorId: user?.id || null, authorName: user?.name || '',
     updatedAt: null, publishedAt: null, reviewNotes: '', corrections: []
   };
@@ -101,6 +128,7 @@ export async function renderEditor(container, storyId = null) {
     categories,
     currentStory: story,
     baseline: snapshot(story),
+    extraCategoryIds: cleanExtraIds(story.categoryId, story.extraCategoryIds),
     slugTouched: Boolean(story.id),
     mediaCache: new Map(Object.entries(story.bodyMedia || {})), // body image id -> media view-model (previews only)
     inflight: null,
@@ -109,9 +137,11 @@ export async function renderEditor(container, storyId = null) {
     fromTip: false
   };
   states.set(container, st);
+  activeEditor = container;
 
   const editable = canEdit(story);
   const readonlyAttr = editable ? '' : 'readonly';
+  const slugLocked = story.publishedAt ? 'readonly' : '';
   const bodyReadonly = !editable || story.lossy ? 'readonly' : '';
 
   container.innerHTML = `
@@ -140,9 +170,19 @@ export async function renderEditor(container, storyId = null) {
     </div>
 
     <div id="editor-error" data-testid="editor-error" role="alert" class="validation-summary-alert" style="display:none; margin-bottom: 1rem;"></div>
+    <div id="editor-conflict" data-testid="editor-conflict" role="alert" class="validation-summary-alert" style="display:none; margin-bottom: 1rem;">
+      <p id="editor-conflict-text" style="margin: 0 0 0.5rem;"></p>
+      <button type="button" class="btn btn-outline btn-sm" id="btn-conflict-copy" data-testid="editor-conflict-copy">Copy my text</button>
+      <button type="button" class="btn btn-outline btn-sm" id="btn-conflict-reload" data-testid="editor-conflict-reload">Reload story</button>
+    </div>
+    <div id="editor-restore" data-testid="editor-restore" role="status" class="ethics-notice-box" style="display:none; margin-bottom: 1rem;">
+      <p id="editor-restore-text" style="margin: 0 0 0.5rem;"></p>
+      <button type="button" class="btn btn-secondary btn-sm" id="btn-restore-copy" data-testid="editor-restore-accept">Restore my text</button>
+      <button type="button" class="btn btn-outline btn-sm" id="btn-restore-discard" data-testid="editor-restore-discard">Discard it</button>
+    </div>
     <div id="schedule-panel" class="ethics-notice-box" data-testid="editor-schedule-panel" style="display:none; margin-bottom: 1rem;"></div>
     ${!editable ? `<div class="ethics-notice-box" data-testid="editor-readonly-note" style="margin-bottom:1rem;"><p style="margin:0;">You can read this story but not edit it in its current status.</p></div>` : ''}
-    ${story.lossy ? `<div class="ethics-notice-box" data-testid="editor-lossy-note" style="margin-bottom:1rem;"><p style="margin:0;">This story contains elements the newsroom editor cannot represent (for example embedded video, nested lists, underline, alignment or links that open in a new tab). The body is read-only here so nothing is lost; edit the body in the CMS admin.</p></div>` : ''}
+    ${story.lossy ? `<div class="ethics-notice-box" data-testid="editor-lossy-note" style="margin-bottom:1rem;"><p style="margin:0;">This story contains elements the newsroom editor cannot represent (for example embedded video, nested lists, underline, alignment or links that open in a new tab). The body is read-only here so nothing is lost. Most imported (archive) articles can only have their body edited in the CMS admin; headline, standfirst and other fields can still be edited here.</p></div>` : ''}
 
     <div id="review-notes-banner" class="ethics-notice-box" style="display:none; margin-bottom: 1rem;" data-testid="editor-review-notes">
       <h4 id="review-notes-title">Editorial Review Notes</h4>
@@ -170,10 +210,15 @@ export async function renderEditor(container, storyId = null) {
               ${categories.map(c => `<option value="${escapeHtml(c.id)}" ${String(c.id) === String(story.categoryId) ? 'selected' : ''}>${escapeHtml(c.title)}</option>`).join('')}
             </select>
           </div>
+          <div class="form-group" id="extra-categories-group">
+            <span class="form-label" id="extra-categories-label">Also appears in (up to ${MAX_EXTRA_CATEGORIES})</span>
+            <div id="story-extra-categories" data-testid="editor-extra-categories" class="chip-group" role="group" aria-labelledby="extra-categories-label"></div>
+          </div>
           <div class="form-group">
             <label for="story-slug-input" class="form-label">URL Slug</label>
             <input type="text" id="story-slug-input" data-testid="editor-slug" class="form-input" maxlength="160"
-              value="${escapeHtml(story.slug)}" placeholder="generated from the headline" ${readonlyAttr} />
+              value="${escapeHtml(story.slug)}" placeholder="generated from the headline" ${readonlyAttr || slugLocked} />
+            ${slugLocked ? `<div class="form-hint" data-testid="editor-slug-locked" style="font-size:0.75rem;color:var(--color-muted);margin-top:0.25rem;">Locked: this story is published, so its URL is fixed. Only the editor-in-chief or an admin can change it in the CMS admin (a redirect is created).</div>` : ''}
           </div>
         </div>
 
@@ -231,6 +276,124 @@ export async function renderEditor(container, storyId = null) {
   renderBodyImages(container);
   bindEditorListeners(container);
   loadTipOrigin(container);
+  offerRestore(container);
+}
+
+/** Does the form hold edits that the server does not have yet? */
+export function isEditorDirty(container) {
+  const st = container && stateOf(container);
+  if (!st || !container.querySelector('#story-headline-input')) return false;
+  return Object.keys(computeChanges(st, formValues(container))).length > 0;
+}
+
+/** Keep the sessionStorage copy equal to the unsaved edits: write while dirty, remove once saved. Never stores credentials. */
+function syncLocalCopy(container) {
+  const st = stateOf(container);
+  const storage = localStore();
+  if (!st || !storage || !container.querySelector('#story-headline-input')) return;
+  if (isEditorDirty(container)) {
+    saveLocalCopy(storage, st.currentStory.id, formValues(container), {
+      userId: api.getCurrentUser()?.id ?? null, baseUpdatedAt: st.currentStory.updatedAt
+    });
+  } else {
+    clearLocalCopy(storage, st.currentStory.id);
+  }
+}
+
+function offerRestore(container) {
+  const st = stateOf(container);
+  const storage = localStore();
+  const box = container.querySelector('#editor-restore');
+  if (!st || !storage || !box || !canEdit(st.currentStory)) return;
+  const copy = readLocalCopy(storage, st.currentStory.id, { userId: api.getCurrentUser()?.id ?? null });
+  if (!copy) return;
+  const values = { ...copy.values, bodyMd: stripImageLabels(copy.values.bodyMd) };
+  if (st.currentStory.lossy) values.bodyMd = st.baseline.bodyMd;
+  if (!copyDiffers(values, st.baseline)) { clearLocalCopy(storage, st.currentStory.id); return; }
+  const changedOnServer = copy.baseUpdatedAt && st.currentStory.updatedAt && copy.baseUpdatedAt !== st.currentStory.updatedAt;
+  box.querySelector('#editor-restore-text').textContent =
+    'Unsaved text from your last session on this story was found in this browser tab.' +
+    (changedOnServer ? ' The story has changed on the server since then, so restoring it may overwrite newer edits.' : '');
+  box.style.display = 'block';
+  box.querySelector('#btn-restore-copy').addEventListener('click', () => {
+    container.querySelector('#story-headline-input').value = copy.values.title;
+    container.querySelector('#story-slug-input').value = copy.values.slug;
+    st.slugTouched = true;
+    container.querySelector('#story-standfirst-input').value = copy.values.standfirst;
+    container.querySelector('#story-byline-input').value = copy.values.bylineName;
+    if (!st.currentStory.lossy) container.querySelector('#story-body-input').value = copy.values.bodyMd;
+    const sel = container.querySelector('#story-category-select');
+    if (copy.values.categoryId && [...sel.options].some(o => o.value === copy.values.categoryId)) sel.value = copy.values.categoryId;
+    st.extraCategoryIds = cleanExtraIds(sel.value, copy.values.extraCategoryIds);
+    renderExtraCategories(container);
+    box.style.display = 'none';
+    triggerAutosave(container);
+    updatePreview(container);
+    updateWordCount(container);
+    renderBodyImages(container);
+  });
+  box.querySelector('#btn-restore-discard').addEventListener('click', () => {
+    clearLocalCopy(storage, st.currentStory.id);
+    box.style.display = 'none';
+  });
+}
+
+/**
+ * Called by the router before it leaves the editor. Flushes a pending autosave, then, if edits still are not on the server
+ * (new story, in review, failed or conflicting save), asks. Resolves false when the user chooses to stay.
+ */
+export async function confirmLeaveEditor(container) {
+  const st = container && stateOf(container);
+  if (!st) return true;
+  await flushEditor(container);
+  if (st.inflight) await st.inflight.catch(() => null);
+  if (!api.getCurrentUser()) return true; // session ended: the local copy is the safety net
+  if (!isEditorDirty(container)) return true;
+  syncLocalCopy(container);
+  return askConfirm({
+    title: 'Leave without saving?',
+    message: 'This story has changes that are not saved to the CMS. A copy is kept in this browser tab, but leaving now will not save it.',
+    confirmLabel: 'Leave without saving',
+    testid: 'leave-editor'
+  });
+}
+
+/** The address-bar hash of the editor on screen (a story saved for the first time has moved from #editor to #editor?id=N). */
+export function editorHash(container) {
+  const id = stateOf(container)?.currentStory?.id;
+  return id ? `editor?id=${encodeURIComponent(id)}` : 'editor';
+}
+
+function showConflict(container) {
+  const st = stateOf(container);
+  st.conflict = true;
+  clearTimeout(st.autosaveTimer);
+  st.autosavePending = false;
+  const panel = container.querySelector('#editor-conflict');
+  if (!panel) return;
+  panel.querySelector('#editor-conflict-text').textContent = CONTENT_CONFLICT_MESSAGE;
+  panel.style.display = 'block';
+}
+
+function hideConflict(container) {
+  const st = stateOf(container);
+  st.conflict = false;
+  const panel = container.querySelector('#editor-conflict');
+  if (panel) panel.style.display = 'none';
+}
+
+async function copyMyText(container) {
+  const v = formValues(container);
+  const text = [v.title, v.standfirst, '', v.bodyMd].join('\n');
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast('Your text was copied to the clipboard.', 'success');
+  } catch {
+    const body = container.querySelector('#story-body-input');
+    body?.focus();
+    body?.select();
+    showToast('Could not use the clipboard. The story text is selected: copy it with Ctrl+C.', 'info', 8000);
+  }
 }
 
 /** Called by the router before leaving the editor: stop timers and flush a pending autosave. */
@@ -267,6 +430,7 @@ function formValues(container) {
     bylineName: container.querySelector('#story-byline-input').value.trim(),
     bodyMd: container.querySelector('#story-body-input').value.trim(),
     categoryId: container.querySelector('#story-category-select').value,
+    extraCategoryIds: cleanExtraIds(container.querySelector('#story-category-select').value, st.extraCategoryIds),
     featuredImageId: st.currentStory.featuredImage?.id ? String(st.currentStory.featuredImage.id) : ''
   };
 }
@@ -320,6 +484,7 @@ async function doSave(container, { auto }) {
     if (!st.currentStory.id) {
       if (!vals.title) throw new ApiError('Enter a headline before saving.', { status: 400 });
       const fields = { title: vals.title, standfirst: vals.standfirst, bodyMd: vals.bodyMd, categoryId: vals.categoryId };
+      if (vals.extraCategoryIds) fields.extraCategoryIds = vals.extraCategoryIds;
       if (vals.slug) fields.slug = vals.slug;
       if (vals.bylineName) fields.bylineName = vals.bylineName;
       if (vals.featuredImageId) fields.featuredImageId = vals.featuredImageId;
@@ -327,6 +492,8 @@ async function doSave(container, { auto }) {
       st.currentStory = res.data;
       // Only move the address bar when this editor is still the one on screen.
       if (container.isConnected) history.replaceState(null, '', `#editor?id=${encodeURIComponent(st.currentStory.id)}`);
+      const storage = localStore();
+      if (storage) clearLocalCopy(storage, null); // the unsaved-new-story copy now lives under the real id (if still dirty)
     } else {
       const changes = computeChanges(st, vals);
       if (!Object.keys(changes).length) return { ok: true, changed: false };
@@ -346,15 +513,23 @@ async function doSave(container, { auto }) {
           { note }
         ];
       }
-      const res = await api.updateArticle(st.currentStory.id, changes);
+      const res = await api.updateArticle(st.currentStory.id, changes, { expectedUpdatedAt: st.currentStory.updatedAt });
       st.currentStory = res.data;
     }
     st.baseline = snapshot(st.currentStory);
     for (const [id, media] of Object.entries(st.currentStory.bodyMedia || {})) st.mediaCache.set(id, media);
     setInlineError(container, '');
+    hideConflict(container);
     updateStatusDisplay(container);
+    syncLocalCopy(container);
     return { ok: true, changed: true };
   } catch (err) {
+    if (container.isConnected) syncLocalCopy(container);
+    if (isStaleConflict(err) && st.currentStory.id) {
+      showConflict(container);
+      setInlineError(container, CONTENT_CONFLICT_MESSAGE);
+      return { ok: false };
+    }
     const msg = auto ? err.message : showApiError(err);
     setInlineError(container, msg);
     return { ok: false };
@@ -384,7 +559,22 @@ function bindEditorListeners(container) {
   });
   slugInput.addEventListener('input', () => { st.slugTouched = true; triggerAutosave(container); });
   standfirstInput.addEventListener('input', () => { triggerAutosave(container); updatePreview(container); });
-  categorySelect.addEventListener('change', () => { triggerAutosave(container); updatePreview(container); });
+  categorySelect.addEventListener('change', () => {
+    // The primary section is never also an additional one.
+    st.extraCategoryIds = cleanExtraIds(categorySelect.value, st.extraCategoryIds);
+    renderExtraCategories(container);
+    triggerAutosave(container);
+    updatePreview(container);
+  });
+  renderExtraCategories(container);
+  container.querySelector('#story-extra-categories').addEventListener('change', e => {
+    const box = e.target.closest('input[type="checkbox"]');
+    if (!box || box.disabled) return;
+    st.extraCategoryIds = toggleExtra(categorySelect.value, st.extraCategoryIds, box.value);
+    renderExtraCategories(container);
+    triggerAutosave(container);
+    updatePreview(container);
+  });
   bodyInput.addEventListener('input', () => {
     triggerAutosave(container);
     updatePreview(container);
@@ -418,6 +608,13 @@ function bindEditorListeners(container) {
     }
   });
 
+  container.querySelector('#btn-conflict-copy').addEventListener('click', () => copyMyText(container));
+  container.querySelector('#btn-conflict-reload').addEventListener('click', async () => {
+    clearTimeout(st.autosaveTimer);
+    syncLocalCopy(container);
+    await renderEditor(container, st.currentStory.id);
+  });
+
   container.querySelector('#btn-save-draft').addEventListener('click', async () => {
     clearTimeout(st.autosaveTimer);
     st.autosavePending = false;
@@ -441,7 +638,8 @@ function triggerAutosave(container) {
   const dot = container.querySelector('#autosave-dot');
   const label = container.querySelector('#autosave-label');
   if (dot) dot.className = 'autosave-dot dirty';
-  const autosaveAllowed = st.currentStory.id && ['draft', 'changes_requested'].includes(st.currentStory.status) && canEdit(st.currentStory);
+  syncLocalCopy(container);
+  const autosaveAllowed = !st.conflict && st.currentStory.id && ['draft', 'changes_requested'].includes(st.currentStory.status) && canEdit(st.currentStory);
   if (label) label.textContent = autosaveAllowed ? 'Unsaved changes...' : 'Unsaved changes (use Save Draft)';
   clearTimeout(st.autosaveTimer);
   st.autosavePending = false;
@@ -550,8 +748,12 @@ function renderWorkflowButtons(story) {
   if (story.id && api.can('story.approve', ctx)) {
     html += `<button type="button" class="btn btn-success btn-sm" id="btn-approve-story" data-testid="editor-approve">Approve Story</button>`;
   }
+  const archiveBlock = publishBlockReason(story, api.getCurrentUser());
   if (api.can('story.publish', ctx)) {
-    html += `<button type="button" class="btn btn-primary btn-sm" id="btn-publish-story" data-testid="editor-publish" style="background-color: var(--color-forest-dark);">Publish Story</button>`;
+    html += `<button type="button" class="btn btn-primary btn-sm" id="btn-publish-story" data-testid="editor-publish" style="background-color: var(--color-forest-dark);"${archiveBlock ? ' disabled aria-describedby="archive-block-note"' : ''}>Publish Story</button>`;
+  }
+  if (archiveBlock) {
+    html += `<p id="archive-block-note" class="archive-block-note" data-testid="editor-archive-blocked" role="note">${escapeHtml(archiveBlock)} <a href="#archive?id=${encodeURIComponent(story.id)}">Go to Archive review</a></p>`;
   }
   if (story.id && api.can('story.archive', ctx)) {
     html += `<button type="button" class="btn btn-outline btn-sm" id="btn-archive-story" data-testid="editor-archive">Archive</button>`;
@@ -652,16 +854,18 @@ function updateSchedulePanel(container) {
   }
   // Keep what the editor typed across re-renders (a failed save or a server error must not wipe the field).
   const typed = panel.querySelector('#schedule-at-input')?.value;
+  const fourEyes = fourEyesReason(story.provenance, api.getCurrentUser());
   const scheduled = story.status === 'scheduled' && story.scheduledFor;
   const value = typed || (scheduled ? isoToLocalInput(story.scheduledFor) : defaultScheduleValue());
   panel.style.display = 'block';
   panel.innerHTML = `
     <h4 style="margin-top:0;">Schedule publication</h4>
+    ${fourEyes ? `<p class="archive-block-note" data-testid="editor-schedule-four-eyes" role="note" style="margin:0 0 0.5rem;">${escapeHtml(fourEyes)}</p>` : ''}
     ${scheduled ? `<p style="margin:0 0 0.5rem;" data-testid="editor-scheduled-for" data-iso="${escapeHtml(story.scheduledFor)}">Scheduled to publish automatically on <strong>${escapeHtml(formatScheduled(story.scheduledFor))}</strong>.</p>` : ''}
     <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
       <label for="schedule-at-input" class="form-label" style="margin:0;">Publish at (your local time)</label>
       <input type="datetime-local" step="1" id="schedule-at-input" data-testid="editor-schedule-at" class="form-input" style="width:auto;" value="${escapeHtml(value)}" />
-      <button type="button" class="btn btn-primary btn-sm" id="btn-schedule-story" data-testid="editor-schedule">${scheduled ? 'Reschedule' : 'Schedule'}</button>
+      <button type="button" class="btn btn-primary btn-sm" id="btn-schedule-story" data-testid="editor-schedule"${fourEyes ? ' disabled' : ''}>${scheduled ? 'Reschedule' : 'Schedule'}</button>
     </div>`;
   panel.querySelector('#btn-schedule-story').addEventListener('click', () => runSchedule(container));
 }
@@ -728,6 +932,26 @@ function updateStatusDisplay(container) {
 // Preview, word count, formatting
 // ---------------------------------------------------------------------------------------------------
 
+/** The "also appears in" chips: one checkbox chip per section except the primary; unchecked ones are disabled at the cap. */
+function renderExtraCategories(container) {
+  const st = stateOf(container);
+  const host = container.querySelector('#story-extra-categories');
+  if (!host) return;
+  const primary = container.querySelector('#story-category-select').value;
+  const chosen = parseIds(cleanExtraIds(primary, st.extraCategoryIds));
+  st.extraCategoryIds = chosen.join(',');
+  const editable = canEdit(st.currentStory);
+  const full = chosen.length >= MAX_EXTRA_CATEGORIES;
+  host.innerHTML = st.categories
+    .filter(c => String(c.id) !== String(primary))
+    .map(c => {
+      const on = chosen.includes(String(c.id));
+      const off = !editable || (full && !on);
+      return `<label class="chip ${on ? 'chip-on' : ''}"><input type="checkbox" value="${escapeHtml(c.id)}" data-testid="editor-extra-category" ${on ? 'checked' : ''} ${off ? 'disabled' : ''} />${escapeHtml(c.title)}</label>`;
+    })
+    .join('');
+}
+
 function updatePreview(container) {
   const st = stateOf(container);
   const headline = container.querySelector('#story-headline-input').value;
@@ -736,7 +960,9 @@ function updatePreview(container) {
   const body = container.querySelector('#story-body-input').value;
   const catTitle = st.categories.find(c => String(c.id) === String(categoryId))?.title || '';
 
-  container.querySelector('#preview-category').textContent = catTitle;
+  const extraTitles = parseIds(cleanExtraIds(categoryId, st.extraCategoryIds))
+    .map(id => st.categories.find(c => String(c.id) === id)?.title).filter(Boolean);
+  container.querySelector('#preview-category').textContent = [catTitle, ...extraTitles].filter(Boolean).join(' · ');
   container.querySelector('#preview-headline').textContent = headline || 'Untitled Headline';
   container.querySelector('#preview-standfirst').textContent = standfirst || 'Lead summary will appear here.';
   container.querySelector('#preview-byline').innerHTML =

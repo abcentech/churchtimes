@@ -859,10 +859,14 @@ describe('newsroom: media upload (multipart) and featured image', () => {
 })
 
 describe('homepage advertising (PR #5)', () => {
-  it('has no CMS dependency: no advertising collection or endpoint exists (BACKEND-GAP for a future live feed)', async () => {
-    for (const path of ['/api/public/advertising', '/api/advertising', '/api/campaigns']) {
+  it('serves the live feed only at /api/public/advertising (go-live C3); the older guessed paths stay 404', async () => {
+    for (const path of ['/api/advertising', '/api/campaigns']) {
       const res = await api('GET', path, { headers: { origin: PUBLIC_SITE } })
       expect(res.status, path).toBe(404)
     }
+    // Origin allowlist is PUBLIC_SUBMISSION_ORIGINS (http://allowed.test in tests), not CMS_CORS_ORIGINS.
+    const res = await api('GET', '/api/public/advertising', { headers: { origin: 'http://allowed.test' } })
+    expect(res.status).toBe(200)
+    expect(Array.isArray(res.json.campaigns)).toBe(true)
   })
 })

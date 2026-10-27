@@ -1,0 +1,23 @@
+name: Public routing fixtures
+on:
+  pull_request:
+    paths: ['src/**', 'tools/**', 'routing-tests/**', 'playwright.routing.config.js', 'vite.config.js', 'package*.json', '.github/workflows/public-routing.yml']
+  push:
+    branches: [feat/newsroom-mvp]
+    paths: ['src/**', 'tools/**', 'routing-tests/**', 'playwright.routing.config.js', 'vite.config.js', 'package*.json', '.github/workflows/public-routing.yml']
+permissions:
+  contents: read
+jobs:
+  routing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Production routing against synthetic CMS API stub (not end-to-end)
+        run: npx playwright test --config playwright.routing.config.js --reporter=list,github

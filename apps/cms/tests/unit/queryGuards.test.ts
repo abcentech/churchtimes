@@ -8,6 +8,8 @@ describe('checkRelationFilters', () => {
   it('accepts numeric IDs, id lists and null', () => {
     expect(check('where[category][equals]=3').ok).toBe(true)
     expect(check('where[category][in]=1,2,3').ok).toBe(true)
+    expect(check('where[categories][in]=1,2,3').ok).toBe(true)
+    expect(check('where[categories][equals]=news')).toMatchObject({ ok: false, status: 400, field: 'where[categories][equals]' })
     expect(check('where[or][0][category][equals]=7&where[status][equals]=published').ok).toBe(true)
     expect(check('where[featuredImage][equals]=null').ok).toBe(true)
     expect(check('where[image][equals]=5', '/api/live-updates').ok).toBe(true)

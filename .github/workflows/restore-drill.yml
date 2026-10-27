@@ -1,0 +1,75 @@
+name: CMS restore drill
+
+# Nightly and on demand: back up a seeded production-like stack (docker-compose.production.yml), tamper-test the backup,
+# WIPE every volume, restore into a fresh stack and assert counts, media hashes, health, search and login.
+# Also runs on pull requests that touch the backup/restore tooling, the production compose file or this workflow.
+# No repository secrets are used: every secret is generated per run by scripts/restore-drill.sh and never printed.
+# See apps/cms/docs/operations.md, "Automated restore drill".
+
+on:
+  schedule:
+    - cron: '43 2 * * *'
+  workflow_dispatch:
+  pull_request:
+    branches: [feat/newsroom-mvp]
+    paths:
+      - 'apps/cms/scripts/**'
+      - 'apps/cms/docker-compose.production.yml'
+      - 'apps/cms/Dockerfile'
+      - '.github/workflows/restore-drill.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: restore-drill-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  drill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/cms
+          file: apps/cms/Dockerfile
+          target: runtime
+          load: true
+          push: false
+          tags: churchtimes-cms:drill
+          cache-from: type=gha,scope=cms-docker
+
+      - name: Build the migrator image
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/cms
+          file: apps/cms/Dockerfile
+          target: migrator
+          load: true
+          push: false
+          tags: churchtimes-cms-migrator:drill
+          cache-from: type=gha,scope=cms-docker
+
+      - name: Run the restore drill
+        env:
+          CMS_IMAGE: churchtimes-cms:drill
+          CMS_MIGRATOR_IMAGE: churchtimes-cms-migrator:drill
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/drill-artifacts"
+          apps/cms/scripts/restore-drill.sh --work "$RUNNER_TEMP/drill" --artifacts "$RUNNER_TEMP/drill-artifacts" 2>&1 | tee "$RUNNER_TEMP/drill-artifacts/drill.log"
+
+      - name: Upload drill results and redacted logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: restore-drill
+          path: ${{ runner.temp }}/drill-artifacts/
+          if-no-files-found: warn
+          retention-days: 14
