@@ -199,3 +199,5 @@ The public live page renders the `image` object of `GET /api/live-events/{slug}/
 
 Public-site note: legacy article rendering now preserves spaced absolute links and bounds video link titles; see docs/public-legacy-rendering.md (this line also runs the required CMS checks).
 Public-site note: the owner ads.txt record parser now rejects vertical whitespace; see docs/public-wave1-seo.md (this line also runs the required CMS checks).
+
+Public-site note: the public review evidence is recorded in docs/evidence/wave2/README.md (this line also runs the required CMS checks).
