@@ -1,5 +1,7 @@
 # Frontend integration notes (newsroom UI and public site)
 
+Public-site note: the public review evidence is recorded in docs/public-go-live-contract-review.md (this line also runs the required CMS checks).
+
 For: the newsroom/editor UI lane (`apps/newsroom`, `agent/gemini-ui-support`) and the public
 site lane (`agent/chatgpt-frontend`). The backend contract is [api-contracts.md](api-contracts.md);
 this file lists what the current consumer code needs to change to work against it.
@@ -199,5 +201,4 @@ The public live page renders the `image` object of `GET /api/live-events/{slug}/
 
 Public-site note: legacy article rendering now preserves spaced absolute links and bounds video link titles; see docs/public-legacy-rendering.md (this line also runs the required CMS checks).
 Public-site note: the owner ads.txt record parser now rejects vertical whitespace; see docs/public-wave1-seo.md (this line also runs the required CMS checks).
-
-Public-site note: the public review evidence is recorded in docs/public-go-live-contract-review.md (this line also runs the required CMS checks).
+Public advertising delivery (C3): the public site origin must be listed in PUBLIC_SUBMISSION_ORIGINS before VITE_PUBLIC_ADVERTISING_URL is set; see docs/public-advertising-delivery.md.
