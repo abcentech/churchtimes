@@ -101,8 +101,12 @@ Acceptance follows the merged CMS implementation in
 `apps/cms/src/import/uploadSafety.ts`, `apps/cms/src/lib/mediaLimits.ts` and
 `apps/cms/src/lib/avMedia.ts`:
 
-- Images: jpg/jpeg, png and webp; cap 10,485,760 bytes. No image cap increase is
-  assumed. Magic bytes must match; an invalid/unreadable dimension is refused.
+- Images: jpg/jpeg, png and webp (by magic bytes, never the extension alone). Effective
+  cap follows `MEDIA_IMAGE_MAX_MB`: default 25 MiB, whole MB in the range 1-50, recorded in
+  `limits.imageMaxBytes` (the CMS `imageMaxBytes()` rule; the earlier 10 MB figure is
+  obsolete). Magic bytes must match; an invalid/unreadable dimension is refused. The CMS
+  Media collection also refuses images over 40 megapixels and re-saves every image; the
+  verifier may record that as `invalid-dimensions`.
 - Audio/video: mp4, m4v, webm, mp3, m4a, ogg and oga, with extension-compatible
   MIME determined from bytes. Effective cap follows `MEDIA_AV_MAX_MB`: default
   100 MiB, integer range 1–500 MiB, recorded in `limits.avMaxBytes`.
