@@ -1,0 +1,22 @@
+name: Public reader main-shell stubs
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'reader-main-tests/**'
+      - 'playwright.reader-main.config.js'
+      - 'package*.json'
+      - '.github/workflows/public-reader-main.yml'
+  workflow_dispatch:
+jobs:
+  reader-main-stubs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test --config playwright.reader-main.config.js --reporter=list,github
