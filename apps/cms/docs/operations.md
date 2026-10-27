@@ -95,7 +95,7 @@ systemd procedure above.
 
 `docker-compose.production.yml` is only validated in CI (`docker compose config`, and no published Postgres port), not started. On pushes to `feat/newsroom-mvp` a separate `publish` job (the only job with `packages: write`, using the built-in `GITHUB_TOKEN`, no added secret) pushes `ghcr.io/abcentech/churchtimes-cms` and `churchtimes-cms-migrator` and prints their digests in the job summary. If the job fails, read the "Container logs (on failure)" step first: a start-up validation error lists every problem.
 
-**CI path filters and required checks.** `docker-smoke` and `public-quality` run only when `apps/cms/**` (and, for public-quality, the public-site paths) change. A pull request that touches only `apps/newsroom/**` or only workflow files therefore reports just `verify`, and GitHub blocks the merge because two required checks never ran. Until the filters are widened, include a genuine change under `apps/cms/` (for example a documentation note) in such a PR.
+**CI path filters and required checks.** `docker-smoke` and `public-quality` run only when `apps/cms/**` (and, for public-quality, the public-site paths) change. A pull request that touches only `apps/newsroom/**` or only workflow files therefore reports just `verify`, and GitHub blocks the merge because two required checks never ran. Until the filters are widened, include a genuine change under `apps/cms/` (for example a documentation note) in such a PR. The `verify` job also fails if any tracked file has a line starting with a merge conflict marker (`<<<<<<< ` or `>>>>>>> `).
 
 ### 3.2 Production deployment (Docker, host Caddy)
 
