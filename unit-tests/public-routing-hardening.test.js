@@ -45,6 +45,7 @@ test('a loopback PUBLIC_CMS_URL is refused when the site is https, allowed for l
   for(const cms of ['http://127.0.0.1:3000','http://localhost:3000','http://[::1]:3000','http://cms.localhost:3000'])
     assert.throws(()=>publicHostConfig({...base,PUBLIC_CMS_URL:cms}),/not loopback/);
   assert.doesNotThrow(()=>publicHostConfig({...base,PUBLIC_CMS_URL:'https://cms.example.test'}));
+  assert.doesNotThrow(()=>publicHostConfig({...base,PUBLIC_CMS_URL:'http://127.0.0.1:3000',PUBLIC_HOST_ALLOW_LOOPBACK_CMS:'true'}));
   assert.doesNotThrow(()=>publicHostConfig({PUBLIC_SITE_URL:'http://127.0.0.1:5373',PUBLIC_CMS_URL:'http://127.0.0.1:3000'}));
 });
 
