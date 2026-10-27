@@ -1,3 +1,5 @@
+import { MAX_SECONDARY } from './mapping'
+
 /**
  * Post-import QA report. Counts and reason codes only: no title, slug, address, file name, author name, comment text
  * or email ever enters this structure (every key written to it is a fixed code or comes from a closed set, and the
@@ -30,8 +32,10 @@ export type ImportReport = {
     previouslyImportedNowNotPublished: number
   }
   /**
-   * Articles.category is ONE required relationship, so only one WordPress category per post is kept.
-   * `postsWithExtraCategories` / `extraCategoriesDropped` size what the schema cannot hold.
+   * Articles.category is the PRIMARY category; the other WordPress categories go to `Articles.categories` (up to 4 per post).
+   * `postsWithExtraCategories`: posts with more than one distinct WordPress category. `postsWithSecondaryCategories` /
+   * `secondaryCategoriesKept`: posts (and categories) stored in `categories`. `postsOverSecondaryCap` /
+   * `extraCategoriesDropped`: posts with more than 4 extras (more than 5 categories in all) and how many categories did not fit.
    */
   categories: {
     created: number
@@ -39,6 +43,9 @@ export type ImportReport = {
     fallbackUsed: number
     postsWithExtraCategories: number
     extraCategoriesDropped: number
+    postsWithSecondaryCategories: number
+    secondaryCategoriesKept: number
+    postsOverSecondaryCap: number
     /** Where each created article's category came from (the chain: WordPress, Yoast primary, tag map, generic, fallback). */
     bySource: { wordpress: number; yoastPrimary: number; tagMap: number; rules: number; generic: number; fallback: number }
     /** Rules mode: posts left in the fallback with a low-confidence suggestion (listed in the review file when one is given). */
@@ -108,6 +115,9 @@ export function newReport(mode: 'dry-run' | 'apply', update: boolean): ImportRep
       fallbackUsed: 0,
       postsWithExtraCategories: 0,
       extraCategoriesDropped: 0,
+      postsWithSecondaryCategories: 0,
+      secondaryCategoriesKept: 0,
+      postsOverSecondaryCap: 0,
       bySource: { wordpress: 0, yoastPrimary: 0, tagMap: 0, rules: 0, generic: 0, fallback: 0 },
       rulesLowConfidence: 0,
       mode: 'strict',
@@ -187,7 +197,8 @@ export function formatImportReport(rep: ImportReport): string {
     `  category source: WordPress ${rep.categories.bySource.wordpress}, Yoast primary ${rep.categories.bySource.yoastPrimary}, tag map ${rep.categories.bySource.tagMap}, rules ${rep.categories.bySource.rules}, generic ${rep.categories.bySource.generic}, fallback ${rep.categories.bySource.fallback}`,
     `  category mode: ${rep.categories.mode}${rep.categories.mode === 'rules' ? `; low-confidence suggestions left in the fallback: ${rep.categories.rulesLowConfidence}` : ''}`,
     `  Yoast primary category not in the export: ${rep.categories.yoastPrimaryUnresolved}; tag-map targets that do not exist: ${rep.categories.tagMapTargetMissing}`,
-    `  posts with more categories than the schema holds (one): ${rep.categories.postsWithExtraCategories} (${rep.categories.extraCategoriesDropped} extra categories not kept)`,
+    `  posts with more than one WordPress category: ${rep.categories.postsWithExtraCategories}; kept as additional categories: ${rep.categories.postsWithSecondaryCategories} posts, ${rep.categories.secondaryCategoriesKept} categories`,
+    `  posts with more additional categories than the cap (${MAX_SECONDARY}): ${rep.categories.postsOverSecondaryCap} (${rep.categories.extraCategoriesDropped} categories not kept)`,
     '',
     'SEO text (articles written in this run)',
     `  title from: Rank Math ${rep.seo.titleFrom.rankMath}, Yoast ${rep.seo.titleFrom.yoast}, none ${rep.seo.titleFrom.none}`,

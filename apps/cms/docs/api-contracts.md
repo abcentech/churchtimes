@@ -1,4 +1,4 @@
-# Church Times CMS — API contracts (v1.24)
+# Church Times CMS — API contracts (v1.25)
 
 Status: implemented on `agent/payload-core`. v1.1 added Turnstile, duplicate detection, staff auth/session
 contract and security hardening; v1.2 closes the verified security-review findings: media ownership, version
@@ -94,7 +94,8 @@ Rules:
   seoTitle?: string | null     // v1.8, ≤ 70 chars, plain text; null when unset (public site falls back to `title`)
   seoDescription?: string | null // v1.8, ≤ 200 chars, plain text; null when unset (falls back to `excerpt`)
   content: LexicalRichText     // structured JSON, never raw HTML
-  category: number | Category  // depends on `depth`
+  category: number | Category  // PRIMARY category (required); depends on `depth`
+  categories?: (number | Category)[]  // v1.25: ADDITIONAL categories, 0 to 5, never the primary, no duplicates; depends on `depth`
   featuredImage?: number | Media
   bylineName?: string          // display byline (legacy authors without accounts)
   status: 'draft' | 'in_review' | 'changes_requested' | 'approved' | 'scheduled' | 'published' | 'archived'
@@ -117,6 +118,16 @@ else `title`; meta and share-card description = `seoDescription` else `excerpt`;
 override: the canonical address is derived from the article path. Who may edit follows `content`: reporters only while the
 article is a draft or changes are requested, editors in scope, trusted publishers for their own. Changing **only** these two
 fields of a published article is **not** a material change (no `corrections` entry needed) but is still versioned.
+
+**Additional categories (v1.25).** An article can sit in several sections. `category` stays the **primary** category: required, it
+drives the canonical listing, breadcrumbs, sitemap, scoping of section editors and every existing contract, so nothing that reads
+`category` changes. `categories` is an optional list of extra categories, public like `category` (published articles only), stored
+in the order written. Ordering rule: the primary comes first, the complete set of an article is `[category, ...categories]`.
+Server-side validation on create and every update that sends `category` or `categories` (a partial update is checked against the stored
+side): at most 5 entries, no duplicates, the primary must not be listed, every id must be an existing category (*Additional categories must be existing categories.*); otherwise `400`
+(*An article can have at most 5 additional categories.*, *Additional categories must not repeat a category.*, *The primary category must not also be listed in the additional categories.*).
+`categories: []` clears them. Deleting a category removes it from every article's `categories` (the join rows cascade; the article stays).
+Section-editor and trusted-publisher scope still follows the primary `category` only. Existing clients that ignore `categories` keep working.
 
 Staff-only fields (never returned to anonymous readers): `author`, `reviewNotes`, `scheduledFor`, `bodyMedia`.
 `bodyMedia` (v1.4) is derived by the server from the `upload` nodes of `content` (distinct media ids), never client-writable
@@ -344,7 +355,12 @@ GET /api/categories?limit=100
 ```
 
 - `depth=0` returns relationships as IDs (`category: 3`); `depth=1` populates them (`category: { id, title, slug }`,
-  `featuredImage: { url, alt, sizes… }`). The public site uses `depth=1` to get `category.title`.
+  `featuredImage: { url, alt, sizes… }`). The public site uses `depth=1` to get `category.title`. `categories` (v1.25) is returned the
+  same way: ids at `depth=0`, `[{ id, title, slug }]` at `depth=1`, primary-first reading order `[category, ...categories]`.
+- **Listing a category's articles (v1.25)** includes the ones that have it as an additional category: `where[categories][in]=<id>` (or
+  `[equals]`) matches only articles that carry it as an additional category; for "primary OR additional" use the `or` form
+  `where[or][0][category][equals]=<id>&where[or][1][categories][equals]=<id>&where[status][equals]=published`. `categories` is a
+  relationship filter like `category`: numeric ids only, anything else is `400`.
 - Lists are paginated: `limit` (max **100**, larger values are clamped; `0`, negative or non-numeric values
   become the default of 10) and `page` (1-based). `pagination=false` is **ignored** for API callers: lists are
   always paginated, so `hasNextPage` stays truthful. This applies to every collection and to
@@ -1014,10 +1030,10 @@ search reads a projection table (`article_search`) that holds nothing else, and 
 | `q` | required; whitespace-trimmed, control characters and lone surrogates removed; at most 200 characters (`400` when empty, missing or longer) |
 | `page` | 1 to 100, default 1 (larger is clamped, invalid becomes 1) |
 | `limit` | 1 to 20, default 10 (larger is clamped to `SEARCH_MAX_LIMIT`, default 20, at most 100; invalid becomes 10) |
-| `category` | category slug, or its numeric id; an unknown category gives an empty list |
+| `category` | category slug, or its numeric id; matches an article whose primary OR additional category it is (v1.25); an unknown category gives an empty list |
 | `year` | four-digit year of `publishedAt` (UTC), 1900 to 2100; anything else is `400` |
 
-`200 { docs: [{ id, slug, title, excerpt, snippet, publishedAt, category: { id, slug, title }, rank }], totalDocs, totalCapped, limit, page, totalPages, hasNextPage,
+`200 { docs: [{ id, slug, title, excerpt, snippet, publishedAt, category: { id, slug, title }, categories: [{ id, slug, title }], rank }], totalDocs, totalCapped, limit, page, totalPages, hasNextPage,
 hasPrevPage, nextPage, prevPage }`. **`totalDocs` is capped (v1.23):** counting stops after 1000 matches (`SEARCH_COUNT_CAP`, default 1000), so `totalDocs` is never more than 1000 and `totalCapped: true` means "more than that exist" (read `totalDocs: 1000, totalCapped: true` as "1000+"). `totalPages` is `null` while `totalCapped` is true (the real number of pages is unknown; there is no misleading lower bound), a number otherwise; while capped, `hasNextPage` / `nextPage` stay true as long as the page is full (up to page 100), and a page past the real end returns an empty `docs`. `snippet` is a plain-text extract of the article body around the match (about 30 words, at most 240
 characters, no markup: `<` and `>` never appear; JSON-escaped like every field), falling back to the excerpt. The result carries no staff fields.
 Order: `rank` descending (title weight A, excerpt B, body C, `ts_rank`), then `publishedAt` descending, then id. Page numbers past the
@@ -1054,6 +1070,14 @@ proxy) and https-only `CMS_PUBLIC_URL`/CORS/CSRF settings (`docs/security.md`). 
 limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/operations.md` §4).
 
 ## 9. Changelog
+
+### v1.25: Additional categories on articles
+Additive. `articles.categories` (relationship hasMany to categories, optional, max 5, never the primary, no duplicates) next to the unchanged
+required primary `articles.category` (section 3, "Additional categories"). Public article reads, the preview projection and `GET /api/articles?where[categories][in]=`
+expose it; the C8 search `category=` filter matches primary OR additional, and each search hit gains `categories: [{ id, slug, title }]` (additional only, in
+stored order, empty when none; the primary stays in `category`). `categories` joins the numeric relationship filters (`400` on a non-numeric value).
+- **Migration** `20261027_115905_article_multi_category`: join-table column `categories_id` on `articles_rels` and `_articles_v_rels` (FK ON DELETE CASCADE, indexed) and `article_search.category_ids integer[]` (primary first, GIN indexed, backfilled from `category_id`). Run `npm run search:reindex` once after deploying to fill the additional ids of existing published articles (idempotent). Reversible, every statement `IF [NOT] EXISTS`.
+- **Importer:** the other WordPress categories of a post (up to 4 beyond the primary chosen by the existing chain, here capped at the schema's 5) are stored in `categories`; see `docs/import.md`. Rollback is unchanged: join rows go with the articles, and a category an unlisted article still uses (primary or additional) is kept.
 
 ### v1.24: Staff related articles
 Additive: new endpoint `POST /api/staff/related-articles` (section 6.4); no existing shape changes.

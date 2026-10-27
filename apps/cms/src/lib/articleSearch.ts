@@ -92,6 +92,8 @@ type ArticleLike = {
   status?: unknown
   publishedAt?: unknown
   category?: unknown
+  /** Secondary categories (ids or populated objects). */
+  categories?: unknown
 }
 
 const idOf = (v: unknown): number | null => {
@@ -107,14 +109,23 @@ async function syncWith(db: Exec, doc: ArticleLike): Promise<void> {
     await db.execute(sql`delete from "article_search" where "article_id" = ${doc.id}`)
     return
   }
+  // category_ids: the primary first, then the secondary ones (distinct, never the primary); the C8 `category=` filter matches any.
+  const categoryIds = [categoryId]
+  if (Array.isArray(doc.categories)) {
+    for (const c of doc.categories) {
+      const id = idOf(c)
+      if (id !== null && !categoryIds.includes(id)) categoryIds.push(id)
+    }
+  }
+  const idArray = sql`ARRAY[${sql.join(categoryIds.map((id) => sql`${id}`), sql`, `)}]::integer[]`
   const title = cleanSearchText(String(doc.title ?? ''), 500)
   const excerpt = cleanSearchText(String(doc.excerpt ?? ''), 1000)
   const body = lexicalToPlainText(doc.content)
   await db.execute(sql`
-    insert into "article_search" ("article_id", "category_id", "published_at", "title", "excerpt", "body", "indexed_at")
-    values (${doc.id}, ${categoryId}, ${doc.publishedAt}::timestamptz, ${title}, ${excerpt}, ${body}, now())
+    insert into "article_search" ("article_id", "category_id", "category_ids", "published_at", "title", "excerpt", "body", "indexed_at")
+    values (${doc.id}, ${categoryId}, ${idArray}, ${doc.publishedAt}::timestamptz, ${title}, ${excerpt}, ${body}, now())
     on conflict ("article_id") do update set
-      "category_id" = excluded."category_id", "published_at" = excluded."published_at", "title" = excluded."title",
+      "category_id" = excluded."category_id", "category_ids" = excluded."category_ids", "published_at" = excluded."published_at", "title" = excluded."title",
       "excerpt" = excluded."excerpt", "body" = excluded."body", "indexed_at" = now()`)
 }
 
@@ -219,7 +230,10 @@ export type SearchHit = {
   excerpt: string
   snippet: string
   publishedAt: string
+  /** Primary category. */
   category: { id: number; slug: string; title: string }
+  /** Additional categories (never the primary), in stored order; the full set is [category, ...categories]. */
+  categories: { id: number; slug: string; title: string }[]
   rank: number
 }
 /** `totalDocs` counts at most SEARCH_COUNT_CAP matches; `totalCapped` is true when there are more than that. */
@@ -244,7 +258,7 @@ export async function searchArticles(payload: Payload, p: SearchParams): Promise
   const filters = sql`
         and s."published_at" <= now()
         and (${yearFrom}::timestamptz is null or (s."published_at" >= ${yearFrom}::timestamptz and s."published_at" < ${yearTo}::timestamptz))
-        and (${catSlug}::text is null or s."category_id" in (
+        and (${catSlug}::text is null or s."category_ids" && array(
               select c."id" from "categories" c where c."slug" = ${catSlug}::text or c."id" = ${catId}::integer))`
   const countCap = searchCountCap()
   const cap = countCap + 1
@@ -262,6 +276,10 @@ export async function searchArticles(payload: Payload, p: SearchParams): Promise
     select h."article_id" as id, a."slug", s."title", s."excerpt", h."published_at", h."category_id", h.rank,
            (select count(*) from (select 1 from matching limit ${cap}) capped) as total,
            c."slug" as category_slug, c."title" as category_title,
+           coalesce((select json_agg(json_build_object('id', x."id", 'slug', x."slug", 'title', x."title") order by u.ord)
+                     from unnest(s."category_ids") with ordinality as u(cid, ord)
+                     join "categories" x on x."id" = u.cid
+                     where u.cid <> h."category_id"), '[]'::json) as extra_categories,
            ts_headline(${config}, left(s."body", ${SEARCH_HEADLINE_CHARS}), q.tsq, 'StartSel="", StopSel="", MaxWords=32, MinWords=14, ShortWord=2, MaxFragments=0') as snippet
     from hits h
     join "article_search" s on s."article_id" = h."article_id"
@@ -279,6 +297,11 @@ export async function searchArticles(payload: Payload, p: SearchParams): Promise
     snippet: cleanSnippet(r.snippet, String(r.excerpt ?? '')),
     publishedAt: new Date(r.published_at as string | Date).toISOString(),
     category: { id: Number(r.category_id), slug: String(r.category_slug), title: String(r.category_title) },
+    categories: ((Array.isArray(r.extra_categories) ? r.extra_categories : []) as Array<Record<string, unknown>>).map((x) => ({
+      id: Number(x.id),
+      slug: String(x.slug),
+      title: String(x.title),
+    })),
     rank: Math.round(Number(r.rank) * 10_000) / 10_000,
   }))
   let counted = rows.length > 0 ? Number(rows[0]!.total) : 0

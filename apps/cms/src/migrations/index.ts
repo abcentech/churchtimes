@@ -16,6 +16,7 @@ import * as migration_20261022_125053_audit_actor_snapshot from './20261022_1250
 import * as migration_20261022_141856_article_list_index from './20261022_141856_article_list_index';
 import * as migration_20261023_090000_article_search from './20261023_090000_article_search';
 import * as migration_20261023_143703_archive_candidate_provenance from './20261023_143703_archive_candidate_provenance';
+import * as migration_20261027_115905_article_multi_category from './20261027_115905_article_multi_category';
 
 export const migrations = [
   {
@@ -107,5 +108,10 @@ export const migrations = [
     up: migration_20261023_143703_archive_candidate_provenance.up,
     down: migration_20261023_143703_archive_candidate_provenance.down,
     name: '20261023_143703_archive_candidate_provenance',
+  },
+  {
+    up: migration_20261027_115905_article_multi_category.up,
+    down: migration_20261027_115905_article_multi_category.down,
+    name: '20261027_115905_article_multi_category'
   },
 ];

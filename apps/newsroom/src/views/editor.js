@@ -24,6 +24,7 @@ import { ApiError } from '../api/errors.js';
 import { STALE_MESSAGE, CONTENT_CONFLICT_MESSAGE, isStaleConflict } from '../stale-guard.js';
 import { saveLocalCopy, readLocalCopy, clearLocalCopy, copyDiffers } from '../draft-guard.js';
 import { escapeHtml, slugify, statusBadge, formatDate } from '../util.js';
+import { MAX_EXTRA_CATEGORIES, cleanExtraIds, parseIds, toggleExtra } from '../categories.js';
 import { publishBlockReason } from '../archive-review.js';
 import { parseScheduleInput, isoToLocalInput, formatScheduled, defaultScheduleValue } from '../schedule.js';
 
@@ -68,6 +69,7 @@ function snapshot(story) {
     bylineName: (story.bylineName || '').trim(),
     bodyMd: stripImageLabels((story.bodyMd || '').trim()),
     categoryId: story.categoryId ? String(story.categoryId) : '',
+    extraCategoryIds: cleanExtraIds(story.categoryId, story.extraCategoryIds),
     featuredImageId: story.featuredImage?.id ? String(story.featuredImage.id) : ''
   };
 }
@@ -75,7 +77,7 @@ function snapshot(story) {
 function blankStory(user, categories) {
   return {
     id: null, title: '', slug: '', standfirst: '', bylineName: '', bodyMd: '', lossy: false,
-    categoryId: categories[0] ? String(categories[0].id) : '', categoryTitle: categories[0]?.title || '',
+    categoryId: categories[0] ? String(categories[0].id) : '', categoryTitle: categories[0]?.title || '', extraCategoryIds: '',
     featuredImage: null, status: 'draft', authorId: user?.id || null, authorName: user?.name || '',
     updatedAt: null, publishedAt: null, reviewNotes: '', corrections: []
   };
@@ -126,6 +128,7 @@ export async function renderEditor(container, storyId = null) {
     categories,
     currentStory: story,
     baseline: snapshot(story),
+    extraCategoryIds: cleanExtraIds(story.categoryId, story.extraCategoryIds),
     slugTouched: Boolean(story.id),
     mediaCache: new Map(Object.entries(story.bodyMedia || {})), // body image id -> media view-model (previews only)
     inflight: null,
@@ -206,6 +209,10 @@ export async function renderEditor(container, storyId = null) {
             <select id="story-category-select" data-testid="editor-category" class="form-select" ${editable ? '' : 'disabled'}>
               ${categories.map(c => `<option value="${escapeHtml(c.id)}" ${String(c.id) === String(story.categoryId) ? 'selected' : ''}>${escapeHtml(c.title)}</option>`).join('')}
             </select>
+          </div>
+          <div class="form-group" id="extra-categories-group">
+            <span class="form-label" id="extra-categories-label">Also appears in (up to ${MAX_EXTRA_CATEGORIES})</span>
+            <div id="story-extra-categories" data-testid="editor-extra-categories" class="chip-group" role="group" aria-labelledby="extra-categories-label"></div>
           </div>
           <div class="form-group">
             <label for="story-slug-input" class="form-label">URL Slug</label>
@@ -317,6 +324,8 @@ function offerRestore(container) {
     if (!st.currentStory.lossy) container.querySelector('#story-body-input').value = copy.values.bodyMd;
     const sel = container.querySelector('#story-category-select');
     if (copy.values.categoryId && [...sel.options].some(o => o.value === copy.values.categoryId)) sel.value = copy.values.categoryId;
+    st.extraCategoryIds = cleanExtraIds(sel.value, copy.values.extraCategoryIds);
+    renderExtraCategories(container);
     box.style.display = 'none';
     triggerAutosave(container);
     updatePreview(container);
@@ -421,6 +430,7 @@ function formValues(container) {
     bylineName: container.querySelector('#story-byline-input').value.trim(),
     bodyMd: container.querySelector('#story-body-input').value.trim(),
     categoryId: container.querySelector('#story-category-select').value,
+    extraCategoryIds: cleanExtraIds(container.querySelector('#story-category-select').value, st.extraCategoryIds),
     featuredImageId: st.currentStory.featuredImage?.id ? String(st.currentStory.featuredImage.id) : ''
   };
 }
@@ -474,6 +484,7 @@ async function doSave(container, { auto }) {
     if (!st.currentStory.id) {
       if (!vals.title) throw new ApiError('Enter a headline before saving.', { status: 400 });
       const fields = { title: vals.title, standfirst: vals.standfirst, bodyMd: vals.bodyMd, categoryId: vals.categoryId };
+      if (vals.extraCategoryIds) fields.extraCategoryIds = vals.extraCategoryIds;
       if (vals.slug) fields.slug = vals.slug;
       if (vals.bylineName) fields.bylineName = vals.bylineName;
       if (vals.featuredImageId) fields.featuredImageId = vals.featuredImageId;
@@ -548,7 +559,22 @@ function bindEditorListeners(container) {
   });
   slugInput.addEventListener('input', () => { st.slugTouched = true; triggerAutosave(container); });
   standfirstInput.addEventListener('input', () => { triggerAutosave(container); updatePreview(container); });
-  categorySelect.addEventListener('change', () => { triggerAutosave(container); updatePreview(container); });
+  categorySelect.addEventListener('change', () => {
+    // The primary section is never also an additional one.
+    st.extraCategoryIds = cleanExtraIds(categorySelect.value, st.extraCategoryIds);
+    renderExtraCategories(container);
+    triggerAutosave(container);
+    updatePreview(container);
+  });
+  renderExtraCategories(container);
+  container.querySelector('#story-extra-categories').addEventListener('change', e => {
+    const box = e.target.closest('input[type="checkbox"]');
+    if (!box || box.disabled) return;
+    st.extraCategoryIds = toggleExtra(categorySelect.value, st.extraCategoryIds, box.value);
+    renderExtraCategories(container);
+    triggerAutosave(container);
+    updatePreview(container);
+  });
   bodyInput.addEventListener('input', () => {
     triggerAutosave(container);
     updatePreview(container);
@@ -904,6 +930,26 @@ function updateStatusDisplay(container) {
 // Preview, word count, formatting
 // ---------------------------------------------------------------------------------------------------
 
+/** The "also appears in" chips: one checkbox chip per section except the primary; unchecked ones are disabled at the cap. */
+function renderExtraCategories(container) {
+  const st = stateOf(container);
+  const host = container.querySelector('#story-extra-categories');
+  if (!host) return;
+  const primary = container.querySelector('#story-category-select').value;
+  const chosen = parseIds(cleanExtraIds(primary, st.extraCategoryIds));
+  st.extraCategoryIds = chosen.join(',');
+  const editable = canEdit(st.currentStory);
+  const full = chosen.length >= MAX_EXTRA_CATEGORIES;
+  host.innerHTML = st.categories
+    .filter(c => String(c.id) !== String(primary))
+    .map(c => {
+      const on = chosen.includes(String(c.id));
+      const off = !editable || (full && !on);
+      return `<label class="chip ${on ? 'chip-on' : ''}"><input type="checkbox" value="${escapeHtml(c.id)}" data-testid="editor-extra-category" ${on ? 'checked' : ''} ${off ? 'disabled' : ''} />${escapeHtml(c.title)}</label>`;
+    })
+    .join('');
+}
+
 function updatePreview(container) {
   const st = stateOf(container);
   const headline = container.querySelector('#story-headline-input').value;
@@ -912,7 +958,9 @@ function updatePreview(container) {
   const body = container.querySelector('#story-body-input').value;
   const catTitle = st.categories.find(c => String(c.id) === String(categoryId))?.title || '';
 
-  container.querySelector('#preview-category').textContent = catTitle;
+  const extraTitles = parseIds(cleanExtraIds(categoryId, st.extraCategoryIds))
+    .map(id => st.categories.find(c => String(c.id) === id)?.title).filter(Boolean);
+  container.querySelector('#preview-category').textContent = [catTitle, ...extraTitles].filter(Boolean).join(' · ');
   container.querySelector('#preview-headline').textContent = headline || 'Untitled Headline';
   container.querySelector('#preview-standfirst').textContent = standfirst || 'Lead summary will appear here.';
   container.querySelector('#preview-byline').innerHTML =

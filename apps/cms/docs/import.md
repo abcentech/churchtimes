@@ -257,12 +257,19 @@ the rest with none) land in the fallback category.
 
 ### Categories and authors
 
-- **One category per article.** `Articles.category` is a single REQUIRED relationship and there is no second categories field, so
-  only one WordPress category per post can be kept. The primary is the first listed category, except that WordPress's generic
-  `uncategorised` / `uncategorized` is skipped when a real category exists; a post with none follows the chain in "Uncategorised posts".
-  Posts that had more are counted (`postsWithExtraCategories`, `extraCategoriesDropped`) so the owner can decide whether a
-  schema change (a `categories` hasMany field plus a migration) is wanted before the real run. Only the kept category is created,
-  and it is recorded in the manifest, so rollback is unchanged (it removes created categories that no article still uses).
+- **Primary category plus additional categories.** `Articles.category` is the PRIMARY category (one, required: canonical listing,
+  breadcrumbs, sitemap); `Articles.categories` holds the additional ones (owner decision: articles can sit in several sections).
+  The primary is chosen by the chain above (first listed WordPress category, skipping the generic `uncategorised` / `uncategorized`
+  when a real one exists). **Every other WordPress category of the post goes into `categories`**, in the export's order: distinct,
+  never the primary, never the generic `uncategorised`, at most 4 per post (primary plus 4 = 5 WordPress categories). Each is created
+  from the export like the primary (never from a tag) and recorded in the manifest. Posts with more than 4 additional categories keep
+  the first 4 and the rest are counted, not stored. Only new articles get categories: an existing article is never recategorised.
+  The report (counts only): `postsWithExtraCategories` (posts with more than one distinct WordPress category),
+  `postsWithSecondaryCategories` / `secondaryCategoriesKept` (posts and categories stored in `categories`), `postsOverSecondaryCap` /
+  `extraCategoriesDropped` (posts that exceeded the cap and how many categories did not fit; check these on the dry run, they are the
+  posts that lose a category).
+  Rollback is unchanged: the join rows go with the articles; a category an unlisted article still uses, as primary or additional, is kept
+  (`still-used`).
 - **Authors without accounts.** `wp:creator` becomes `bylineName` TEXT only: the channel display name, else the creator login. A name that is
   or contains an email address becomes empty. No user is ever created or matched and `author` is left empty. The report
   gives counts only: distinct authors, how many got a byline, how many had no usable name (unmapped) and posts left without a byline.

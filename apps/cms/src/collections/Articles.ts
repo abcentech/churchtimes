@@ -23,6 +23,7 @@ import {
   userSectionIds,
 } from '../access/roles'
 import { articleContentEditor } from './articleEditor'
+import { MAX_SECONDARY_CATEGORIES, categoryIds, checkSecondaryCategories } from '../lib/articleCategories'
 import { removeArticleSearch, syncArticleSearch } from '../lib/articleSearch'
 import { articlePreviewTokenEndpoint } from '../endpoints/articlePreviewToken'
 import { writeAuditLog } from '../lib/audit'
@@ -287,6 +288,37 @@ const validateFeaturedImage: CollectionBeforeValidateHook = async ({ data, req }
     .catch(() => null)) as { mimeType?: string | null } | null
   if (media && !(typeof media.mimeType === 'string' && ALLOWED_IMAGE_MIME.includes(media.mimeType))) {
     throw new APIError('The featured image must be a JPEG, PNG or WebP image.', 400)
+  }
+  return data
+}
+
+/**
+ * `categories` (secondary categories) next to the primary `category`: at most 5, no duplicates, never the primary. On a
+ * partial update the missing side comes from the stored document, so changing only `category` cannot make it collide with
+ * an existing extra.
+ */
+const validateSecondaryCategories: CollectionBeforeValidateHook = async ({ data, originalDoc, req }) => {
+  if (!data || (data.categories === undefined && data.category === undefined)) return data
+  const orig = (originalDoc ?? {}) as Doc
+  const list = data.categories !== undefined ? data.categories : orig.categories
+  const primary = data.category !== undefined ? data.category : orig.category
+  const message = checkSecondaryCategories(primary, list)
+  if (message) throw new APIError(message, 400)
+  if (data.categories !== undefined) {
+    // An id that is not a category would otherwise end in a foreign-key error (500).
+    const wanted = categoryIds(data.categories)
+    if (wanted.length > 0) {
+      const found = await req.payload.find({
+        collection: 'categories',
+        where: { id: { in: wanted.map(Number) } },
+        limit: wanted.length,
+        depth: 0,
+        pagination: false,
+        overrideAccess: true,
+        req,
+      })
+      if (found.docs.length !== wanted.length) throw new APIError('Additional categories must be existing categories.', 400)
+    }
   }
   return data
 }
@@ -730,7 +762,7 @@ export const Articles: CollectionConfig = {
   },
   hooks: {
     beforeOperation: [clampLimit, markRestore, dropNullProvenance, captureExpectedUpdatedAt],
-    beforeValidate: [autoSlug, normalizeSeoFields, validateEmbeds, validateBodyImages, validateAvMedia, validateFeaturedImage],
+    beforeValidate: [autoSlug, normalizeSeoFields, validateEmbeds, validateBodyImages, validateAvMedia, validateFeaturedImage, validateSecondaryCategories],
     beforeChange: [assertExpectedUpdatedAt('articles'), guardUnreviewedImport, deriveBodyMedia, guardPublishedSlug, enforceWorkflow],
     beforeDelete: [refuseDeleteWithLegacyComments],
     afterChange: [auditChanges, redirectOnSlugChange, syncSearch],
@@ -777,6 +809,15 @@ export const Articles: CollectionConfig = {
       required: true,
       index: true,
       admin: { position: 'sidebar' },
+    },
+    {
+      // Additional (secondary) categories; `category` above stays the primary one. Public read like `category`.
+      name: 'categories',
+      type: 'relationship',
+      relationTo: 'categories',
+      hasMany: true,
+      maxRows: MAX_SECONDARY_CATEGORIES,
+      admin: { position: 'sidebar', description: 'Optional extra sections (up to 5). The primary category above is not repeated here.' },
     },
     { name: 'featuredImage', type: 'upload', relationTo: 'media' },
     {

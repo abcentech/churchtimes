@@ -18,7 +18,7 @@ test('a saved copy round-trips and keeps only story text fields', () => {
   const st = memStorage();
   assert.equal(saveLocalCopy(st, 5, vals, { userId: 7, baseUpdatedAt: 'v1', now: 1 }), true);
   const copy = readLocalCopy(st, 5, { userId: 7 });
-  assert.deepEqual(copy.values, { title: 'T', slug: 's', standfirst: 'S', bylineName: 'B', bodyMd: 'Body', categoryId: '2' });
+  assert.deepEqual(copy.values, { title: 'T', slug: 's', standfirst: 'S', bylineName: 'B', bodyMd: 'Body', categoryId: '2', extraCategoryIds: '' });
   assert.equal(copy.baseUpdatedAt, 'v1');
   assert.ok(!st.getItem(draftKey(5)).includes('password') && !st.getItem(draftKey(5)).includes('token'));
 });

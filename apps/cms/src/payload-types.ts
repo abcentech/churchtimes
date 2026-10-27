@@ -304,6 +304,10 @@ export interface Article {
     [k: string]: unknown;
   };
   category: number | Category;
+  /**
+   * Optional extra sections (up to 5). The primary category above is not repeated here.
+   */
+  categories?: (number | Category)[] | null;
   featuredImage?: (number | null) | Media;
   bodyMedia?: (number | Media)[] | null;
   author?: (number | null) | User;
@@ -861,6 +865,7 @@ export interface ArticlesSelect<T extends boolean = true> {
   seoDescription?: T;
   content?: T;
   category?: T;
+  categories?: T;
   featuredImage?: T;
   bodyMedia?: T;
   author?: T;
