@@ -5,8 +5,7 @@ branch `agent/wave2-validation`, final snapshot `5bca99f`. These results exercis
 the pre-review combination of the public PRs below, not their current revised
 heads. CI checked the individual PR heads; **CI did not reproduce this combined
 local run**. Keep the numbers as historical evidence, not a current release gate.
-No PR was merged,
-no production setting was selected, and nothing was deployed in this round.
+No production setting was selected and nothing was deployed in this round. Status update 2026-10-27: #41, #42 (through #57 and #43) and #43 have since merged into feat/newsroom-mvp after review fixes, so the legacy YouTube link rendering is now present; the numbers below are from the earlier local combination and were not re-run on the merged base.
 
 ## Review inventory and dependencies
 
