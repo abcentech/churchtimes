@@ -210,6 +210,7 @@ export class MockAdapter {
       a.categoryId = f.categoryId;
       a.categoryTitle = this.db.categories.find(c => c.id === f.categoryId)?.title || '';
     }
+    if ('extraCategoryIds' in f) a.extraCategoryIds = f.extraCategoryIds;
     if ('featuredImageId' in f) a.featuredImage = this.db.media.find(m => m.id === f.featuredImageId) || null;
     a.updatedAt = new Date().toISOString();
   }

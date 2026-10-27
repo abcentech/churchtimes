@@ -5,7 +5,7 @@
  */
 
 const PREFIX = 'ctn_draft_';
-const FIELDS = ['title', 'slug', 'standfirst', 'bylineName', 'bodyMd', 'categoryId'];
+const FIELDS = ['title', 'slug', 'standfirst', 'bylineName', 'bodyMd', 'categoryId', 'extraCategoryIds'];
 
 export const draftKey = storyId => `${PREFIX}${storyId ? String(storyId) : 'new'}`;
 

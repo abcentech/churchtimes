@@ -13,6 +13,7 @@
 /** Relationship / upload field names across all collections (all numeric IDs, none polymorphic). */
 export const RELATION_FIELDS = [
   'category',
+  'categories',
   'featuredImage',
   'image',
   'bodyMedia',

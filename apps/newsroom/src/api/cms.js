@@ -9,6 +9,7 @@
 import { CMS_URL, CMS_HOST_LABEL, cmsAssetUrl } from '../config.js';
 import { can } from '../permissions.js';
 import { lexicalToMarkdown, markdownToLexical } from '../lexical.js';
+import { categoryFieldsToCms, extraIdsFromCms } from '../categories.js';
 import { ApiError, toApiError } from './errors.js';
 import { createCountCache } from './count-cache.js';
 import { liveUpdatePayload } from '../live-photo.js';
@@ -86,6 +87,7 @@ function normalizeArticle(doc) {
     lossy,
     categoryId: relId(doc.category),
     categoryTitle: cat?.title || '',
+    extraCategoryIds: extraIdsFromCms(doc.categories),
     featuredImage: normalizeMedia(doc.featuredImage),
     status: doc.status || 'draft',
     authorId: relId(doc.author),
@@ -380,7 +382,7 @@ export class CmsAdapter {
     if ('standfirst' in fields) out.excerpt = fields.standfirst;
     if ('bodyMd' in fields) out.content = markdownToLexical(fields.bodyMd);
     if ('bylineName' in fields) out.bylineName = fields.bylineName;
-    if ('categoryId' in fields && fields.categoryId) out.category = Number(safeId(fields.categoryId));
+    Object.assign(out, categoryFieldsToCms(fields, id => Number(safeId(id))));
     if ('featuredImageId' in fields) {
       out.featuredImage = fields.featuredImageId ? Number(safeId(fields.featuredImageId)) : null;
     }

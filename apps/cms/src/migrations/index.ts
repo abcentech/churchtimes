@@ -17,6 +17,7 @@ import * as migration_20261022_141856_article_list_index from './20261022_141856
 import * as migration_20261023_090000_article_search from './20261023_090000_article_search';
 import * as migration_20261023_143703_archive_candidate_provenance from './20261023_143703_archive_candidate_provenance';
 import * as migration_20261027_124620_four_eyes_review_stamp from './20261027_124620_four_eyes_review_stamp';
+import * as migration_20261027_140000_article_multi_category from './20261027_140000_article_multi_category';
 
 export const migrations = [
   {
@@ -113,5 +114,10 @@ export const migrations = [
     up: migration_20261027_124620_four_eyes_review_stamp.up,
     down: migration_20261027_124620_four_eyes_review_stamp.down,
     name: '20261027_124620_four_eyes_review_stamp',
+  },
+  {
+    up: migration_20261027_140000_article_multi_category.up,
+    down: migration_20261027_140000_article_multi_category.down,
+    name: '20261027_140000_article_multi_category',
   },
 ];

@@ -328,6 +328,33 @@ describe('rollback still-used checks', () => {
     expect(await exists('articles', staffArticle)).toBe(true)
   })
 
+  it('keeps a category that a staff article still uses as an ADDITIONAL category, and removes it once nothing uses it', async () => {
+    const primary = await mkCategory()
+    const extra = await mkCategory()
+    const staffArticle = (await f.seedArticle({ category: primary, categories: [extra] })).id
+    handManifest('secondary-used', { categories: [extra] })
+    const rep = await rb('secondary-used', { apply: true })
+    expect(rep.categories).toMatchObject({ deleted: 0, skipped: { 'still-used': 1 } })
+    expect(await exists('categories', extra)).toBe(true)
+    await f.payload.delete({ collection: 'articles', id: staffArticle, overrideAccess: true })
+    const again = await rb('secondary-used', { apply: true })
+    expect(again.categories).toMatchObject({ deleted: 1 })
+    expect(await exists('categories', extra)).toBe(false)
+  })
+
+  it('removes an imported article together with its additional category links, and the categories only it used', async () => {
+    const primary = await mkCategory()
+    const extra = await mkCategory()
+    const article = await mkArticle(primary)
+    await f.payload.update({ collection: 'articles', id: article, data: { categories: [extra] } as never, overrideAccess: true, context: { seed: true } })
+    handManifest('secondary-own', { articles: [article], categories: [primary, extra] })
+    const rep = await rb('secondary-own', { apply: true })
+    expect(rep.articles).toMatchObject({ deleted: 1 })
+    expect(rep.categories).toMatchObject({ deleted: 2 })
+    expect(await exists('articles', article)).toBe(false)
+    expect(await exists('categories', extra)).toBe(false)
+  })
+
   it('keeps an article that still has a comment the manifest does not list', async () => {
     const cat = await mkCategory()
     const article = await mkArticle(cat)
