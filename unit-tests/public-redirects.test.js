@@ -233,3 +233,16 @@ test('bad absolute-map allowlist configuration is explicit at startup, never a s
  const remote=createPublicRedirects({endpoint:'https://cms.example.test/api/public/redirects',warn:()=>{},fetchImpl:async()=>Response.json(map([row('/old/','https://approved.example.test/new/')]))});
  await assert.rejects(remote.ready,/REDIRECT_ALLOWED_HOSTS/);remote.close();
 });
+test('a reload that joins an in-flight refresh runs again so the newest map is never left unread',async()=>{
+ let calls=0,release;
+ const handler=createPublicRedirects({endpoint:'https://cms.example.test/api/public/redirects',cacheMs:1000,autoRefresh:false,warn:()=>{},fetchImpl:async()=>{
+  calls++;if(calls===1)return Response.json(map());
+  if(calls===2)return new Promise(resolve=>{release=resolve;});
+  return Response.json(map([row('/old/','/reports/newest/')]));
+ }});
+ await handler.ready;
+ const first=handler.refresh();const joined=handler.refresh();
+ release(Response.json(map()));await first;await joined;await handler.settled();
+ assert.equal(calls,3);assert.equal((await invoke(handler)).response[3].Location,'/reports/newest/');
+ handler.close();
+});
