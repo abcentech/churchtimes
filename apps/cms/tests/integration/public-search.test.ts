@@ -55,7 +55,8 @@ describe('GET /api/public/search: visibility', () => {
     expect(r.json).toMatchObject({ page: 1, limit: 10, hasPrevPage: false })
     expect(r.json.totalDocs).toBe(1)
     // no staff fields
-    expect(Object.keys(hit).sort()).toEqual(['category', 'excerpt', 'id', 'publishedAt', 'rank', 'slug', 'snippet', 'title'])
+    expect(hit.categories).toEqual([])
+    expect(Object.keys(hit).sort()).toEqual(['categories', 'category', 'excerpt', 'id', 'publishedAt', 'rank', 'slug', 'snippet', 'title'])
   })
 
   it('never returns drafts, in-review, archived (withdrawn), scheduled or future-dated articles', async () => {
