@@ -181,6 +181,10 @@ schedule enforcement and cache headers. That is a product and security decision 
 match the contract. Not yet used but available: `featuredImage` (prefix a relative `url` with the CMS origin unless `CMS_PUBLIC_URL` is set),
 `bylineName`, `corrections`, categories and the live timeline. Add the site origin to `CMS_CORS_ORIGINS`.
 
+## Archive SEO and discovery proof
+
+`cms-integration-tests/public-seo-completion.spec.js` (`docs/public-seo-completion.md`) checks the public host's structured data, canonical, Open Graph, sitemap and RSS for a synthetic archive-style article against the real CMS, under both `PUBLIC_ARTICLE_PATH_TEMPLATE` values. It uses only landed fields (C2 SEO fields, `bylineName`, `publishedAt`, featured image dimensions).
+
 ## Newsroom editor dependencies
 
 The newsroom editor (`apps/newsroom`) sends `expectedUpdatedAt` with every article content `PATCH` (a 409 means someone else changed the story, and the editor keeps the user's text), and refreshes the staff session with `POST /api/users/refresh` about every 30 minutes while a user is active. Both must keep working as documented in `api-contracts.md`.
