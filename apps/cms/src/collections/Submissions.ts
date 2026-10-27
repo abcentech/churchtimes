@@ -2,7 +2,7 @@ import type { Access, CollectionConfig } from 'payload'
 
 import { isEditorInChief, isEditorRole, type UserLike } from '../access/roles'
 import { convertSubmissionEndpoint } from '../endpoints/convertSubmission'
-import { writeAuditLog } from '../lib/audit'
+import { auditDeleteHook, writeAuditLog } from '../lib/audit'
 import { clampLimit } from '../lib/clampLimit'
 
 const editorsOnly: Access = ({ req }) => isEditorRole(req.user as UserLike | null)
@@ -12,7 +12,9 @@ const noClientWrite = { create: () => false, update: () => false }
 /**
  * Staff-only inbox. Public creation happens only through POST /api/public/submissions
  * (overrideAccess), so `create` is closed for the REST API. MVP: every editor role (including
- * section-editors) can read and triage all submissions.
+ * section-editors) can read and triage all submissions,
+ * including e-mail and phone: the review queue shows them and verifying a tip needs them. Restricting contact details to
+ * editor-in-chief/admin is a documented product decision (api-contracts.md v1.15), not changed here.
  */
 export const Submissions: CollectionConfig = {
   slug: 'submissions',
@@ -26,6 +28,7 @@ export const Submissions: CollectionConfig = {
   },
   hooks: {
     beforeOperation: [clampLimit],
+    afterDelete: [auditDeleteHook('submissions', (d) => (d.reference ? `${d.reference}, status ${d.status}` : undefined))],
     afterChange: [
       async ({ doc, previousDoc, operation, req }) => {
         if (operation === 'update' && previousDoc?.status !== doc.status) {
@@ -69,7 +72,7 @@ export const Submissions: CollectionConfig = {
         value: s,
       })),
     },
-    { name: 'reviewerNotes', type: 'textarea' },
+    { name: 'reviewerNotes', type: 'textarea', maxLength: 5000 },
     { name: 'article', type: 'relationship', relationTo: 'articles' },
     { name: 'ipHash', type: 'text', admin: { readOnly: true }, access: noClientWrite },
     {
@@ -78,6 +81,20 @@ export const Submissions: CollectionConfig = {
       type: 'text',
       index: true,
       admin: { readOnly: true },
+      access: { read: ({ req }) => isEditorRole(req.user as UserLike | null), create: () => false, update: () => false },
+    },
+    {
+      // Server time when the submitter ticked the consent box (empty: no consent was sent). Staff read only.
+      name: 'consentAt',
+      type: 'date',
+      admin: { readOnly: true },
+      access: { read: ({ req }) => isEditorRole(req.user as UserLike | null), create: () => false, update: () => false },
+    },
+    {
+      name: 'consentTextVersion',
+      type: 'text',
+      maxLength: 80,
+      admin: { readOnly: true, description: 'Version of the consent wording shown on the public form.' },
       access: { read: ({ req }) => isEditorRole(req.user as UserLike | null), create: () => false, update: () => false },
     },
     { name: 'userAgent', type: 'text', maxLength: 300, admin: { readOnly: true }, access: noClientWrite },
