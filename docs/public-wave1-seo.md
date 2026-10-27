@@ -52,3 +52,13 @@ compiled public article page to check the inert owner configuration, robots and
 feed headers. The existing harness **stubs external Turnstile transport**; these
 SEO tests never submit a form. This is public-host integration evidence, not the
 CMS-owned staff cross-app launch gate or a production verification claim.
+
+## Publisher-record validation hardening (Wave 2 A7)
+
+Only spaces and horizontal tabs may separate fields in the single owner-supplied
+`PUBLIC_ADS_TXT_LINE`. Vertical tabs, form feeds, newlines and Unicode whitespace
+are rejected, including at the record edges; valid records retain their content.
+GET and HEAD return the same plain-text, nosniff and short-cache headers; HEAD
+returns no body. POST remains a 405 with nosniff and no-store and never returns
+the publisher record. These checks use synthetic configuration and the actual
+local public HTTP host, without contacting an advertising service or enabling scripts.

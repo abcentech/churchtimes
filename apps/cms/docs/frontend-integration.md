@@ -196,4 +196,6 @@ The combined public CMS and mobile quality evidence for Wave 3 (synthetic data o
 ## Live update photos on the public site
 
 The public live page renders the `image` object of `GET /api/live-events/{slug}/updates` (approved photo with alt text; url, width, height). An update without alt text or with an unusable image shows no picture. A revised update (same id, higher sequence) replaces the earlier entry in place. See `docs/public-live-coverage.md`.
+
+Public-site note: the owner ads.txt record parser now rejects vertical whitespace; see docs/public-wave1-seo.md (this line also runs the required CMS checks).
 Public advertising delivery (C3): the public site origin must be listed in PUBLIC_SUBMISSION_ORIGINS before VITE_PUBLIC_ADVERTISING_URL is set; see docs/public-advertising-delivery.md.
