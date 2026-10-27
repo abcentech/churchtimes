@@ -168,6 +168,7 @@ test.describe('E. scheduled publishing: reporter blocked -> editor schedules (UI
     const ctx = await freshContext(browser, info)
     const page = await ctx.newPage()
     const ev = new Evidence(cfg, info, 'S3-scheduler-publishes')
+    let readerCtx: Awaited<ReturnType<typeof freshContext>> | undefined
     try {
       // --- before the time
       const slugQ = `/api/articles?where[slug][equals]=${s.slug}&depth=0`
@@ -198,14 +199,20 @@ test.describe('E. scheduled publishing: reporter blocked -> editor schedules (UI
       expect(entry.actorRole).toBe('system')
 
       // --- the public site now shows it (list card + server-rendered article page); staff-only scheduledFor is not exposed
-      const { cardImage } = await expectPublishedOnPublicSite(page, cfg, { title: s.title, standfirst: s.standfirst, bodyText: s.body.split('\n')[0], slug: s.slug })
+      // The public Latest list is served with Cache-Control public, max-age=60 (proxy.ts), and the absence checks above already
+      // loaded it in this browser context: a reader who had the list open sees a new story within a minute. Use a fresh browser
+      // context (empty HTTP cache) so this step checks publication, not the cache lifetime.
+      readerCtx = await freshContext(browser, info)
+      const readerPage = await readerCtx.newPage()
+      const { cardImage } = await expectPublishedOnPublicSite(readerPage, cfg, { title: s.title, standfirst: s.standfirst, bodyText: s.body.split('\n')[0], slug: s.slug })
       expect(cardImage).toBe(false)
       const anon = (await api.get(null, `${slugQ}&depth=1`)).json.docs[0]
       expect(anon.title).toBe(s.title)
       expect(anon).not.toHaveProperty('scheduledFor')
-      await ev.shot(page, 'after the scheduler ran: anonymous public article page is live', { final: true })
+      await ev.shot(readerPage, 'after the scheduler ran: anonymous public article page is live', { final: true })
       logLine(cfg, `[S3][${info.project.name}] scheduled story became public ${publishedAtMs - s.scheduledForMs} ms after its scheduled time`)
     } finally {
+      await readerCtx?.close()
       await ctx.close()
     }
   })
