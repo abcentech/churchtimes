@@ -19,7 +19,7 @@ test('published legacy-ID lookup uses existing anonymous API filters and verifie
 test('public host rejects junk before any CMS/redirect-map IO; opt-in legacy-ID redirects one hop',async t=>{
  const dist=await mkdtemp(join(tmpdir(),'public-junk-'));await writeFile(join(dist,'index.html'),await readFile(new URL('../src/index.template.html',import.meta.url),'utf8'));
  let calls=0;
- const server=createPublicServer({dist,cmsUrl:'https://cms.example.test',siteUrl:'https://public.example.test',redirectPatterns:{legacyId:'/reports/{slug}/'},redirectsUrl:'https://cms.example.test/api/public/redirects',fetchImpl:async url=>{
+ const server=createPublicServer({dist,cmsUrl:'https://cms.example.test',siteUrl:'https://public.example.test',redirectPatterns:{legacyId:'/{slug}/'},redirectsUrl:'https://cms.example.test/api/public/redirects',fetchImpl:async url=>{
   calls++;const u=new URL(url);
   return Response.json(u.pathname==='/api/public/redirects'?{version:'sha256:synthetic',generatedAt:'2026-10-16T00:00:00Z',count:0,rules:[]}:{docs:[{status:'published',title:'Synthetic',slug:'synthetic-report',legacyId:123}]});
  }});
@@ -31,7 +31,7 @@ test('public host rejects junk before any CMS/redirect-map IO; opt-in legacy-ID 
   const page=await fetch(origin+path);assert.equal(page.status,200);assert.equal(page.headers.get('referrer-policy'),'no-referrer');assert.equal(page.headers.get('cache-control'),'no-store');assert.equal(page.headers.get('x-robots-tag'),'noindex,nofollow');const html=await page.text();assert.doesNotMatch(html,/synthetic-private|rel="canonical"/);assert.match(html,/Newsletter preferences/);
  }
  assert.equal(calls,initialCalls);
- const result=await fetch(origin+'/?p=123',{redirect:'manual'});assert.equal(result.status,301);assert.equal(result.headers.get('location'),'/reports/synthetic-report/');assert.equal(calls,initialCalls+1);
+ const result=await fetch(origin+'/?p=123',{redirect:'manual'});assert.equal(result.status,301);assert.equal(result.headers.get('location'),'/synthetic-report/');assert.equal(calls,initialCalls+1);
  const final=await fetch(origin+result.headers.get('location'),{redirect:'manual'});assert.equal(final.status,200);
 });
 

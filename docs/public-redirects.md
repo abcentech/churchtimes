@@ -148,3 +148,19 @@ landed that correction or exported JSON vectors. This is **provisional contract/
 CMS parity or A9 real-CMS integration. The host's separate junk guard still rejects unsafe encoded separators before lookup.
 Stray query-string percent characters are ignored for path normalization; malformed path encodings remain junk. Empty
 article path settings use `/reports/{slug}/`; reserved root slugs are skipped with counted address-free discovery warnings.
+
+## Old site hosts (`LEGACY_SITE_HOSTS`)
+
+Owner decision (see `apps/cms/docs/legacy-hosts.md`): `churchtimesnigeria.org`, `churchtimesnigeria.com` and the `www.` forms of `.org`, `.com`
+and `.net` all mean the primary host. The public host answers any request whose `Host` is one of them with a single `301` to the same path and query
+on the host named by `PUBLIC_SITE_URL` (HTTPS only), before any exact or pattern rule runs, so the path rules apply once on the primary host. The target
+host never comes from the incoming `Host` header. `LEGACY_SITE_HOSTS` is a comma list of bare host names (default
+`churchtimesnigeria.org,churchtimesnigeria.com`); the `www.` forms and the www form of the primary host are added automatically. Without a valid HTTPS
+`PUBLIC_SITE_URL` the feature is off. DNS for these names must point at the public host for it to be reachable. Tests: `unit-tests/public-redirect-contract-vectors.test.js`.
+
+## Path normalisation
+
+`tools/public-redirect-paths.mjs` is a port of `apps/cms/src/lib/redirectPaths.ts` and runs the CMS lane's shared vectors
+(`apps/cms/tests/fixtures/redirect-normalisation.json`) in `unit-tests/public-redirect-contract-vectors.test.js`: trailing slash, upper-case percent
+encoding, NFC, an apostrophe, and encoded `%2F` `%5C` `%25` `%23` are handled exactly as in the CMS. A failed or partial rules fetch keeps the last good map
+and logs a counted `public_redirect_refresh_failed` warning.
