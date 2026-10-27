@@ -94,7 +94,7 @@ export type ExportRefs = {
   featuredPaths: Array<string | null>
 }
 
-function attachmentPath(att: WxrAttachment): string | null {
+export function attachmentPath(att: WxrAttachment): string | null {
   if (att.attachedFile && isSafeRelativeUploadPath(att.attachedFile)) return att.attachedFile
   return legacyPathFromUrl(att.url) ?? legacyPathFromUrl(att.attachedFile)
 }

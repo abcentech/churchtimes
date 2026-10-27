@@ -98,6 +98,8 @@ async function timed<T>(name: string, posts: number, fn: () => Promise<T>): Prom
     clearInterval(timer)
     peak = Math.max(peak, process.memoryUsage().rss)
     phases.push({ name, seconds: Number(process.hrtime.bigint() - t0) / 1e9, queries: queries - q0, peakRssMb: mb(peak), posts })
+    const last = phases[phases.length - 1]
+    console.log(`[phase] ${last.name}: ${last.seconds.toFixed(1)} s, peak RSS ${last.peakRssMb} MB`)
   }
 }
 
@@ -108,6 +110,13 @@ type Real = {
   readManifest: typeof import('../src/import/manifest').readManifest
   manifestOf: (n: string) => string
   mediaDir: string
+}
+
+/** Ids of the given media that an ANONYMOUS reader can read (access rules applied, no user). */
+async function anonymousMediaIds(payload: unknown, ids: number[]): Promise<number[]> {
+  const p = payload as { find: (a: object) => Promise<{ docs: Array<{ id: number }> }> }
+  const res = await p.find({ collection: 'media', where: { id: { in: ids } }, limit: ids.length, depth: 0, pagination: false, overrideAccess: false })
+  return res.docs.map((d) => d.id)
 }
 
 /** The real export: counts only. Every private value stays in the file; ids go to the detail file only. */
@@ -184,6 +193,65 @@ async function realRehearsal(r: Real): Promise<number> {
     const m2 = r.readManifest(r.manifestOf('apply2'))
     check('second apply changed nothing', same(await dbCounts(), afterApply) && second.articles.created === 0 && second.media.created === 0 && second.comments.created === 0)
     check('second apply manifest lists no ids', m2.articles.created.length + m2.articles.updated.length + m2.media.length + m2.comments.length + m2.categories.length + m2.audits.length === 0)
+    // Media probes (counts only; only with --uploads): rows, files on disk, the media map, the published-only rule.
+    if (uploadsRoot) {
+      const { sql } = await import('drizzle-orm')
+      const { runMediaMapExport } = await import('../src/lib/mediaMapCli')
+      const db = (r.payload as unknown as { db: { drizzle: { execute: (q: unknown) => Promise<{ rows: Array<Record<string, unknown>> }> } } }).db.drizzle
+      const rows = async (q: unknown) => (await db.execute(q)).rows
+      // Files in the media folder (originals plus the size variants Payload writes) and their bytes.
+      let files = 0
+      let bytes = 0
+      const stack = [r.mediaDir]
+      while (stack.length > 0) {
+        const dir = stack.pop() as string
+        for (const d of fs.readdirSync(dir, { withFileTypes: true })) {
+          if (d.isDirectory()) stack.push(path.join(dir, d.name))
+          else {
+            files++
+            bytes += fs.statSync(path.join(dir, d.name)).size
+          }
+        }
+      }
+      const mimes = await rows(sql`select "mime_type" as m, count(*)::int as n from "media" group by 1 order by 1`)
+      const mediaRows = Number((await rows(sql`select count(*)::int as n from "media"`))[0].n)
+      const withLegacy = Number((await rows(sql`select count(*)::int as n from "media" where "legacy_path" is not null`))[0].n)
+      console.log(`Media probes: rows ${mediaRows} (with a legacy path ${withLegacy}); files in the media folder ${files} (${mb(bytes)} MB); rows by type ${JSON.stringify(Object.fromEntries(mimes.map((x) => [x.m, x.n])))}`)
+      check('every media row has a legacy path', withLegacy === mediaRows)
+      check('media folder holds at least one file per row', files >= mediaRows)
+      // Media map: entries, size, and the .sha256 file against the bytes.
+      const mapDir = path.join(path.dirname(r.mediaDir), 'map')
+      fs.mkdirSync(mapDir, { recursive: true })
+      const mapFile = path.join(mapDir, 'media-map.json')
+      const lines: string[] = []
+      const mapCode = await timed('export:media-map', 0, () => runMediaMapExport(r.payload as never, ['--out', mapFile], { out: (l: string) => lines.push(l), err: (l: string) => lines.push(l) }))
+      const summary = (lines.find((l) => l.includes('entries=')) ?? '').replace(/^.*?(entries=)/, '$1').replace(/file-sha256=\S+ content-sha256=\S+/, '')
+      const body = fs.readFileSync(mapFile)
+      const { createHash } = await import('node:crypto')
+      const digest = createHash('sha256').update(body).digest('hex')
+      const shaLine = fs.readFileSync(`${mapFile}.sha256`, 'utf8').trim()
+      const parsed = JSON.parse(body.toString('utf8')) as { version?: string; entries?: unknown[] }
+      console.log(`Media map: exit ${mapCode}, version ${parsed.version}, entries in file ${parsed.entries?.length}, ${body.length} bytes; ${summary.trim()}`)
+      check('media map written and its .sha256 matches the bytes', mapCode === 0 && shaLine.startsWith(`${digest}  `))
+      // Published-only rule, anonymous: media of published articles is readable; with every article draft it is refused.
+      const ids = (await rows(sql`select id from "media" order by id`)).map((x) => Number(x.id))
+      const sample = ids.filter((_, i) => i % Math.max(1, Math.floor(ids.length / 60)) === 0).slice(0, 60)
+      const anon = async () => (await anonymousMediaIds(r.payload, sample)).length
+      const visibleBefore = await anon()
+      const status = await rows(sql`select id, status::text as s from "articles"`)
+      await db.execute(sql`update "articles" set "status" = 'draft'`)
+      const visibleDraft = await anon()
+      for (const s of [...new Set(status.map((x) => String(x.s)))]) {
+        const idsOf = status.filter((x) => x.s === s).map((x) => Number(x.id))
+        for (let i = 0; i < idsOf.length; i += 500) {
+          const list = sql.join(idsOf.slice(i, i + 500).map((id) => sql`${id}`), sql`, `)
+          await db.execute(sql`update "articles" set "status" = ${s}::"enum_articles_status" where id in (${list})`)
+        }
+      }
+      const visibleAfter = await anon()
+      console.log(`Anonymous media reads of a ${sample.length}-row sample: published ${visibleBefore}, all articles draft ${visibleDraft}, restored ${visibleAfter}`)
+      check('anonymous reads of media follow the published-only rule', visibleBefore > 0 && visibleDraft === 0 && visibleAfter === visibleBefore)
+    }
     // Search projection and provenance (counts only): reindex, row count equals published count, generic public search smoke,
     // and no archive provenance on imported rows.
     {
@@ -208,9 +276,9 @@ async function realRehearsal(r: Real): Promise<number> {
       console.log(`Imported rows carrying archive provenance: ${prov}`)
       check('no archive provenance on imported rows', prov === 0)
     }
-    const rbDry = await timed('rollback dry run', total, () => r.runRollback(payload, { manifestPath: r.manifestOf('apply'), force: true }))
+    const rbDry = await timed('rollback dry run', total, () => r.runRollback(payload, { manifestPath: r.manifestOf('apply'), force: true, includePublished: true }))
     check('rollback dry run deleted nothing', same(await dbCounts(), afterApply))
-    const rb = await timed('rollback apply', total, () => r.runRollback(payload, { manifestPath: r.manifestOf('apply'), apply: true, force: true }))
+    const rb = await timed('rollback apply', total, () => r.runRollback(payload, { manifestPath: r.manifestOf('apply'), apply: true, force: true, includePublished: true }))
     check('rollback removed every created row', same(await dbCounts(), zero))
     check('rollback matched its dry run', rbDry.articles.wouldDelete === rb.articles.deleted && rbDry.comments.wouldDelete === rb.comments.deleted)
     check('rollback had no failures', rb.articles.failed + rb.comments.failed + rb.media.failed + rb.categories.failed === 0)
@@ -369,14 +437,14 @@ async function main(): Promise<number> {
     check('update rewrote articles and added no rows', updated.articles.updated > 0 && same(afterUpdate, afterApply))
 
     // 5. rollback: dry, apply (force: the update above counts as a later edit), then again
-    const rbDry = await timed('rollback dry run', total, () => runRollback(payload, { manifestPath: manifestOf('apply'), force: true }))
+    const rbDry = await timed('rollback dry run', total, () => runRollback(payload, { manifestPath: manifestOf('apply'), force: true, includePublished: true }))
     check('rollback dry run deleted nothing', same(await dbCounts(), afterApply))
-    const rbApply = await timed('rollback apply', total, () => runRollback(payload, { manifestPath: manifestOf('apply'), apply: true, force: true }))
+    const rbApply = await timed('rollback apply', total, () => runRollback(payload, { manifestPath: manifestOf('apply'), apply: true, force: true, includePublished: true }))
     const afterRollback = await dbCounts()
     check('rollback removed every created row', same(afterRollback, { articles: 0, comments: 0, media: 0, categories: 0 }))
     check('rollback matched its dry run', rbDry.articles.wouldDelete === rbApply.articles.deleted && rbDry.comments.wouldDelete === rbApply.comments.deleted)
     check('rollback had no failures', rbApply.articles.failed + rbApply.comments.failed + rbApply.media.failed + rbApply.categories.failed === 0)
-    const rbAgain = await timed('rollback again', total, () => runRollback(payload, { manifestPath: manifestOf('apply'), apply: true, force: true }))
+    const rbAgain = await timed('rollback again', total, () => runRollback(payload, { manifestPath: manifestOf('apply'), apply: true, force: true, includePublished: true }))
     check('second rollback is a no-op', rbAgain.articles.deleted + rbAgain.comments.deleted + rbAgain.media.deleted + rbAgain.categories.deleted === 0)
     const leftover = fs.existsSync(mediaDir) ? fs.readdirSync(mediaDir) : []
     check('media files removed with their documents', leftover.length === 0)
@@ -404,7 +472,13 @@ main().then(
   (code) => process.exit(code),
   (err) => {
     // Never print the message (a database error carries its query and values).
-    console.error(`REHEARSAL_FAILED ${err instanceof Error ? (/^REHEARSAL_[A-Z_]+$/.test(err.message) ? err.message : err.name) : 'Error'}`)
+    console.error(`REHEARSAL_FAILED ${err instanceof Error ? (/^(REHEARSAL|WXR)_[A-Z_]+$/.test(err.message) ? err.message : err.name) : 'Error'}`)
+    if (process.env.REHEARSAL_DEBUG && err instanceof Error) console.error(framesOnly(err.stack))
     process.exit(1)
   },
 )
+
+/** Stack frames only (never the message, which may carry data): for local debugging with REHEARSAL_DEBUG=1. */
+function framesOnly(stack: string | undefined): string {
+  return (stack ?? '').split('\n').filter((l) => /^\s+at /.test(l)).slice(0, 8).join('\n')
+}
