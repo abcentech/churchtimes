@@ -13,7 +13,7 @@ import { SEO_DESCRIPTION_MAX, SEO_TITLE_MAX } from '../lib/seoFields'
 import { safeErrorSummary } from '../lib/safeLog'
 import { classify, compileRules, EraIndex, parseCategoryRules, textForClassification, type Classification, type CompiledRules } from './categoryRules'
 import { DEFAULT_CATEGORY_RULES } from './categoryRulesDefault'
-import { bylineFor, chooseCategoryChain, cleanLegacyUrl, isCategorySlug, parseCategoryMap, resolveSeoText, validCanonical, type CategoryLookups, type SeoOutcome } from './mapping'
+import { bylineFor, chooseCategoryChain, chooseSecondaryCategories, cleanLegacyUrl, isCategorySlug, parseCategoryMap, resolveSeoText, validCanonical, type CategoryLookups, type SeoOutcome } from './mapping'
 import { cleanDisplayName, prepareComments, writeComments } from './comments'
 import { HtmlConversionError, htmlToLexical, type ConversionReport } from './htmlToLexical'
 import { LinkContextBuilder, linkClassifyHook } from './linkClassify'
@@ -383,17 +383,14 @@ async function findCategory(ctx: Ctx, slug: string): Promise<number | undefined>
  * The category for a NEW article, by the chain in mapping.ts (WordPress, Yoast primary, tag map, generic, fallback). A category
  * is created only from an exported WordPress category or the configured fallback, never from a tag's free text.
  */
-async function categoryFor(ctx: Ctx, item: WxrItem): Promise<number> {
+async function categoryFor(ctx: Ctx, item: WxrItem): Promise<{ primary: number; secondary: number[] }> {
   const rep = ctx.report.categories
   const fallback = ctx.opts.fallbackCategory ?? DEFAULT_FALLBACK_CATEGORY
   let choice = chooseCategoryChain(
     { categories: item.categories, tags: item.tags, primaryCategory: item.seo.yoastPrimaryCategory, classify: ctx.rules ? () => classifyItem(ctx, item) : undefined },
     ctx.lookups,
   )
-  if (choice.dropped > 0) {
-    rep.postsWithExtraCategories++
-    rep.extraCategoriesDropped += choice.dropped
-  }
+  if (choice.dropped > 0) rep.postsWithExtraCategories++
   if (choice.primaryUnresolved) rep.yoastPrimaryUnresolved++
   let term = choice.term
   let slug: string
@@ -432,9 +429,30 @@ async function categoryFor(ctx: Ctx, item: WxrItem): Promise<number> {
       ? { rule: { id: choice.rule.ruleId ?? '', category: choice.rule.category ?? '', score: choice.rule.score, runnerUp: choice.rule.runnerUp ?? null, runnerUpScore: choice.rule.runnerUpScore, confident: choice.rule.confident } }
       : {}),
   })
+  const primary = await ensureCategory(ctx, slug, title)
+  // The post's other WordPress categories are kept too, as `categories` (created like the primary, from the export only).
+  const extra = chooseSecondaryCategories(item.categories, slug, (t) => slugify(t.nicename, 100, fallback.slug))
+  const secondary: number[] = []
+  for (const t of extra.terms) {
+    const s = slugify(t.nicename, 100, fallback.slug)
+    secondary.push(await ensureCategory(ctx, s, plain(t.name || t.nicename, 120) || s))
+  }
+  if (secondary.length > 0) {
+    rep.postsWithSecondaryCategories++
+    rep.secondaryCategoriesKept += secondary.length
+  }
+  if (extra.overCap > 0) {
+    rep.postsOverSecondaryCap++
+    rep.extraCategoriesDropped += extra.overCap
+  }
+  return { primary, secondary }
+}
+
+/** The id of the category with this slug, created (and recorded in the manifest) when it does not exist. Dry run: counted only (id 0). */
+async function ensureCategory(ctx: Ctx, slug: string, title: string): Promise<number> {
   let id = await findCategory(ctx, slug)
   if (id === undefined) {
-    rep.created++
+    ctx.report.categories.created++
     if (ctx.opts.dryRun) {
       ctx.dryCreated.add(slug)
       id = 0
@@ -987,12 +1005,12 @@ async function importPost(
       }
       report.articles.updated++
     } else {
-      const category = await categoryFor(ctx, item)
+      const { primary: category, secondary: categories } = await categoryFor(ctx, item)
       const slug = planned as string
       if (!opts.dryRun) {
         const doc = (await payload.create({
           collection: 'articles',
-          data: { ...fields, slug, category, status: 'published', publishedAt: item.dateGmt } as never,
+          data: { ...fields, slug, category, ...(categories.length > 0 ? { categories } : {}), status: 'published', publishedAt: item.dateGmt } as never,
           overrideAccess: true,
           depth: 0,
           req,
