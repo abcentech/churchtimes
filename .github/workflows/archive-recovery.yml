@@ -1,0 +1,29 @@
+name: Archive recovery tooling
+on:
+  pull_request:
+    paths:
+      - 'tools/archive-recovery/**'
+      - 'docs/archive-coverage-report.md'
+      - '.github/workflows/archive-recovery.yml'
+  push:
+    branches:
+      - agent/codex-archive-recovery
+    paths:
+      - 'tools/archive-recovery/**'
+      - 'docs/archive-coverage-report.md'
+      - '.github/workflows/archive-recovery.yml'
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 -m unittest discover -s tools/archive-recovery/tests -v
+      - name: Dry-run must not create storage
+        run: |
+          python3 tools/archive-recovery/recover.py collect --store "$RUNNER_TEMP/archive-dry-run" --dry-run
+          test ! -e "$RUNNER_TEMP/archive-dry-run"

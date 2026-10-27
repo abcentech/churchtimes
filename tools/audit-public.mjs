@@ -1,3 +1,4 @@
+import {reportPath} from '../src/lib/public-routes.js';
 // Reproducible mobile audits of compiled frontend + anonymous real CMS fixtures.
 // Invoked by run-public-cms-tests.mjs while its disposable database is alive.
 import {mkdir,writeFile,readdir,rename,readFile} from 'node:fs/promises';
@@ -16,13 +17,13 @@ export async function auditPublic({cmsUrl,dist,output,port,sourceRoot}) {
   for(const file of await readdir(dist))if(!['site','index.html'].includes(file))await rename(join(dist,file),join(dist,'site',file));
   const html=await readFile(join(dist,'index.html'),'utf8');
   await writeFile(join(dist,'index.html'),html.replace(/(src|href)="\.\//g,'$1="./site/'));
-  const server=createPublicServer({cmsUrl,dist,siteUrl:'https://staging-public.example.test'});
+  const server=createPublicServer({cmsUrl,dist,siteUrl:'https://staging-public.example.test',articlePathTemplate:'/reports/{slug}/'});
   await new Promise(resolve=>server.listen(port,'127.0.0.1',resolve));
   const origin='http://127.0.0.1:'+server.address().port;
   const chromePath=process.env.CHROMIUM_PATH || (existsSync('/usr/bin/chromium')?'/usr/bin/chromium':chromium.executablePath());
   const chrome=await launch({chromePath,chromeFlags:['--headless','--no-sandbox','--disable-dev-shm-usage']});
   const results=[];
-  const pages=[['home','/'],['latest','/#latest'],['article','/reports/'+fixture.publishedSlug+'/'],['live','/#live']];
+  const pages=[['home','/'],['latest','/#latest'],['article',reportPath(fixture.publishedSlug,'/',process.env.PUBLIC_ARTICLE_PATH_TEMPLATE)],['live','/#live']];
   try {
     if(process.env.PUBLIC_QUALITY_GATE==='true') {
       const {checkPublicJourneys}=await import('./public-quality-journeys.mjs');

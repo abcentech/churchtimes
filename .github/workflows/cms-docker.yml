@@ -1,4 +1,5 @@
 name: CMS Docker smoke
+# (Public-site PRs that touch no apps/cms path touch this file so the required docker-smoke check still reports: PR #51.)
 
 # Builds apps/cms/Dockerfile, migrates a throwaway PostgreSQL 16 with the image, boots the CMS container
 # in NODE_ENV=production and smoke-tests it. Docker is not installed on the development machines, so this
@@ -19,13 +20,17 @@ on:
 
 permissions:
   contents: read
+# (PR #49 touches this file only so the required docker-smoke check reports on a public-only PR.)
 
 concurrency:
   group: cms-docker-${{ github.ref }}
-  cancel-in-progress: true
+  # Only superseded pull request runs are cancelled: a push to feat/newsroom-mvp must never cancel an in-flight publish.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   IMAGE: churchtimes-cms:ci
+  MIGRATOR_IMAGE: churchtimes-cms-migrator:ci
+  IMPORTER_IMAGE: churchtimes-cms-importer:ci
   NETWORK: ctcms-ci
   PG_CONTAINER: ctcms-ci-postgres
   CMS_CONTAINER: ctcms-ci-cms
@@ -84,11 +89,34 @@ jobs:
         with:
           context: apps/cms
           file: apps/cms/Dockerfile
+          target: runtime
           load: true
           push: false
           tags: ${{ env.IMAGE }}
           cache-from: type=gha,scope=cms-docker
           cache-to: type=gha,scope=cms-docker,mode=max,ignore-error=true
+
+      - name: Build migrator image
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/cms
+          file: apps/cms/Dockerfile
+          target: migrator
+          load: true
+          push: false
+          tags: ${{ env.MIGRATOR_IMAGE }}
+          cache-from: type=gha,scope=cms-docker
+
+      - name: Build importer image
+        uses: docker/build-push-action@v6
+        with:
+          context: apps/cms
+          file: apps/cms/Dockerfile
+          target: importer
+          load: true
+          push: false
+          tags: ${{ env.IMPORTER_IMAGE }}
+          cache-from: type=gha,scope=cms-docker
 
       - name: Image hygiene (non-root user, no secrets baked in)
         run: |
@@ -130,7 +158,7 @@ jobs:
           docker network create "$NETWORK"
           docker run -d --name "$PG_CONTAINER" --network "$NETWORK" \
             -e POSTGRES_USER=churchtimes -e POSTGRES_PASSWORD="$PG_PASSWORD" -e POSTGRES_DB=churchtimes_ci \
-            postgres:16
+            postgres:16-bookworm
           for i in $(seq 1 30); do
             if docker exec "$PG_CONTAINER" pg_isready -U churchtimes -d churchtimes_ci -h 127.0.0.1 >/dev/null 2>&1; then
               echo "postgres ready after ${i} attempt(s)"; exit 0
@@ -143,7 +171,8 @@ jobs:
         # The container does not migrate on start (see the Dockerfile header); releases run this step first.
         run: |
           set -euo pipefail
-          docker run --rm --network "$NETWORK" --env-file "$ENV_FILE" "$IMAGE" npm run migrate
+          # Production migrates with the migrator target (full dependency tree), read-only and without capabilities.
+          docker run --rm --network "$NETWORK" --env-file "$ENV_FILE" -e SCHEDULER_ENABLED=false             --read-only --cap-drop ALL --security-opt no-new-privileges:true             --tmpfs /tmp:size=256m,mode=1777 --tmpfs /app/.next/cache:size=256m,uid=1000,gid=1000,mode=0755             "$MIGRATOR_IMAGE"
           echo "tables after migrate:"
           docker exec "$PG_CONTAINER" psql -U churchtimes -d churchtimes_ci -Atc \
             "select count(*) from information_schema.tables where table_schema='public'"
@@ -153,8 +182,18 @@ jobs:
       - name: Start CMS container
         run: |
           set -euo pipefail
+          # Same hardening as docker-compose.production.yml: read-only root, tmpfs scratch, no capabilities, uid 1000,
+          # memory limit and V8 heap cap. A bind mount stands in for /srv/churchtimes/media (owned by uid 1000).
+          mkdir -p "$RUNNER_TEMP/media" && sudo chown 1000:1000 "$RUNNER_TEMP/media"
           docker run -d --name "$CMS_CONTAINER" --network "$NETWORK" --init \
+            --user 1000:1000 --read-only --cap-drop ALL --security-opt no-new-privileges:true \
+            --tmpfs /tmp:size=256m,mode=1777 --tmpfs /app/.next/cache:size=256m,uid=1000,gid=1000,mode=0755 \
+            --memory 1280m --memory-swap 1280m \
+            -e NODE_OPTIONS="--no-deprecation --max-old-space-size=960" \
+            -v "$RUNNER_TEMP/media:/app/media" \
             --env-file "$ENV_FILE" -p "127.0.0.1:${CMS_PORT}:3000" "$IMAGE"
+          [ "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' "$CMS_CONTAINER")" = "true" ]
+          [ "$(docker inspect -f '{{json .HostConfig.CapDrop}}' "$CMS_CONTAINER")" = '["ALL"]' ]
 
       - name: Wait for the CMS to answer
         run: |
@@ -189,6 +228,13 @@ jobs:
           [ "$code" = "200" ]
           jq -e '.user == null' "$RUNNER_TEMP/me.json" >/dev/null
 
+          # 1b. Health surface: liveness 200 {"status":"ok"}, readiness 200 with booleans only, HEAD works, no-store.
+          curl -fsS --max-time 10 -D "$RUNNER_TEMP/live.headers" "$base/api/health/live" | jq -e '. == {"status":"ok"}' >/dev/null
+          grep -qi '^cache-control: no-store' "$RUNNER_TEMP/live.headers"
+          curl -fsS --max-time 10 -I "$base/api/health/live" >/dev/null
+          curl -fsS --max-time 30 "$base/api/health/ready" | jq -e '.status == "ready" and .database and .migrations and .media' >/dev/null
+          curl -fsS --max-time 30 -I "$base/api/health/ready" >/dev/null
+
           # 2. Admin UI: 200 or a redirect (empty DB redirects to create-first-user / login); the redirect target must load.
           code="$(curl -sS --max-time 60 -o /dev/null -w '%{http_code}' "$base/admin")"
           echo "GET /admin -> $code"
@@ -221,6 +267,143 @@ jobs:
           done
           echo "smoke OK"
 
+      - name: Validate the production compose file
+        working-directory: apps/cms
+        # Syntax and interpolation only (placeholder values, nothing is started). Docker is the only place this can run.
+        run: |
+          set -euo pipefail
+          umask 077
+          echo "ci-only-not-a-secret" > "$RUNNER_TEMP/pgpass"
+          : > "$RUNNER_TEMP/dummy.env"
+          export CMS_IMAGE=example.invalid/cms@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          export CMS_MIGRATOR_IMAGE="$CMS_IMAGE" CMS_ENV_FILE="$RUNNER_TEMP/dummy.env" POSTGRES_PASSWORD_FILE_PATH="$RUNNER_TEMP/pgpass"
+          docker compose -f docker-compose.production.yml --profile ops config > "$RUNNER_TEMP/compose.rendered.yml"
+          # Postgres must never publish a port.
+          ! docker compose -f docker-compose.production.yml config --format json | jq -e '.services.postgres.ports // empty | length > 0' >/dev/null
+
+      - name: Validate the import override and smoke the importer image
+        working-directory: apps/cms
+        # Placeholder values only; nothing here is a secret. Proves docker-compose.import.yml renders with the production file,
+        # is hardened and publishes no port, and that the importer image runs the read-only uploads check on mounted folders.
+        run: |
+          set -euo pipefail
+          t="$RUNNER_TEMP/importsmoke"
+          mkdir -p "$t/uploads/2024/01" "$t/private" "$t/secrets"
+          printf '\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9' > "$t/uploads/2024/01/a.jpg"
+          cat > "$t/export.xml" <<'XML'
+          <?xml version="1.0" encoding="UTF-8" ?>
+          <rss version="2.0" xmlns:wp="http://wordpress.org/export/1.2/" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:excerpt="http://wordpress.org/export/1.2/excerpt/" xmlns:dc="http://purl.org/dc/elements/1.1/">
+          <channel><title>t</title><link>https://old.example.org</link></channel>
+          </rss>
+          XML
+          chmod -R a+rX "$t"; chmod 700 "$t/private"; sudo chown 1000:1000 "$t/private"
+          echo "ci-only-not-a-secret" > "$t/secrets/pg"; : > "$t/dummy.env"
+          export CMS_IMAGE=example.invalid/cms@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          export CMS_MIGRATOR_IMAGE="$CMS_IMAGE" CMS_IMPORTER_IMAGE="$IMPORTER_IMAGE" CMS_ENV_FILE="$t/dummy.env" POSTGRES_PASSWORD_FILE_PATH="$t/secrets/pg"
+          export IMPORT_EXPORT_FILE="$t/export.xml" IMPORT_UPLOADS_DIR="$t/uploads" IMPORT_PRIVATE_DIR="$t/private" CMS_MEDIA_DIR="$t/private"
+          C="docker compose -f docker-compose.production.yml -f docker-compose.import.yml --profile import"
+          $C config --format json > "$t/rendered.json"
+          jq -e '.services.importer | (.read_only == true) and ((.ports // []) | length == 0) and (.cap_drop == ["ALL"]) and (.networks | keys == ["db"])' "$t/rendered.json"
+          # Required variables have no defaults: an unset IMPORT_EXPORT_FILE must fail.
+          ! env -u IMPORT_EXPORT_FILE $C config >/dev/null 2>&1
+          rc=0
+          $C run --rm --no-deps importer > "$t/out.txt" 2>&1 || rc=$?
+          cat "$t/out.txt"
+          # 0 = clean, 3 = unsafe files found (still a successful check); anything else is a broken image or mount.
+          [ "$rc" -eq 0 ] || [ "$rc" -eq 3 ] || { echo "::error::importer smoke exited $rc"; exit 1; }
+          docker run --rm --entrypoint sh "$IMPORTER_IMAGE" -c 'test -f scripts/import-uploads-check.ts && test -x node_modules/.bin/tsx'
+          sudo rm -rf "$t"
+
+      - name: Run the real production compose stack
+        working-directory: apps/cms
+        # Runs docker-compose.production.yml itself with the two images built above, a throw-away env file and secret
+        # file, and a REAL production configuration (no CMS_ALLOW_INSECURE_LOCAL_STAGING): this is the only place the
+        # production branch of the startup validation, the hardened flags in the compose file, the postgres secret file
+        # and the `migrate` service are exercised. Nothing here is a real secret.
+        run: |
+          set -euo pipefail
+          # Free port 3000 and the names used by the staging-flag smoke above.
+          docker rm -f "$CMS_CONTAINER" "$PG_CONTAINER" >/dev/null 2>&1 || true
+          docker network rm "$NETWORK" >/dev/null 2>&1 || true
+
+          umask 077
+          prod="$RUNNER_TEMP/prod"
+          mkdir -p "$prod/secrets" "$prod/media"
+          sudo chown 1000:1000 "$prod/media"
+          pgpw="ci-only-$(openssl rand -hex 16)"
+          secret_a="ci-only-$(openssl rand -hex 32)"; secret_b="ci-only-$(openssl rand -hex 32)"; secret_c="ci-only-$(openssl rand -hex 32)"
+          salt="ci-only-$(openssl rand -hex 16)"
+          for v in "$pgpw" "$secret_a" "$secret_b" "$secret_c" "$salt"; do echo "::add-mask::$v"; done
+          printf '%s' "$pgpw" > "$prod/secrets/postgres_password"
+          cat > "$prod/cms.env" <<EOF
+          DATABASE_URL=postgres://churchtimes:${pgpw}@postgres:5432/churchtimes
+          PAYLOAD_SECRET=${secret_a}
+          PREVIEW_SECRET=${secret_b}
+          NEWSLETTER_TOKEN_SECRET=${secret_c}
+          IP_HASH_SALT=${salt}
+          TURNSTILE_SECRET_KEY=0x4AAAAAAAci-only-not-a-real-secret
+          TURNSTILE_ALLOWED_HOSTNAMES=www.ci.example.org
+          TURNSTILE_EXPECTED_ACTION=submit-story,contact-message,newsletter-subscribe
+          CMS_PUBLIC_URL=https://cms.ci.example.org
+          CMS_CORS_ORIGINS=https://www.ci.example.org
+          CMS_CSRF_ORIGINS=https://www.ci.example.org
+          PUBLIC_SUBMISSION_ORIGINS=https://www.ci.example.org
+          PUBLIC_SITE_URL=https://www.ci.example.org
+          SMTP_HOST=smtp.ci.example.org
+          EMAIL_FROM_ADDRESS=cms@ci.example.org
+          TRUST_PROXY=true
+          TRUST_PROXY_HOPS=1
+          PAYLOAD_DB_PUSH=false
+          EOF
+          {
+            echo "CMS_IMAGE=$IMAGE"
+            echo "CMS_MIGRATOR_IMAGE=$MIGRATOR_IMAGE"
+            echo "CMS_ENV_FILE=$prod/cms.env"
+            echo "CMS_MEDIA_DIR=$prod/media"
+            echo "POSTGRES_PASSWORD_FILE_PATH=$prod/secrets/postgres_password"
+          } >> "$GITHUB_ENV"
+          set -a; . "$GITHUB_ENV"; set +a
+          C="docker compose -f docker-compose.production.yml"
+
+          $C up -d --wait --wait-timeout 120 postgres
+          $C --profile ops run --rm migrate
+          $C up -d --wait --wait-timeout 180 cms
+          $C ps
+
+          base="http://127.0.0.1:3000"
+          curl -fsS --max-time 30 "$base/api/health/live" | jq -e '.status == "ok"' >/dev/null
+          curl -fsS --max-time 30 "$base/api/health/ready" | jq -e '.status == "ready" and .database and .migrations and .media' >/dev/null
+
+          # First-admin takeover guard: on an empty database the public first-register endpoint is refused in production.
+          code="$(curl -sS --max-time 30 -o "$RUNNER_TEMP/fr.json" -w '%{http_code}' -X POST "$base/api/users/first-register" \
+            -H 'Content-Type: application/json' \
+            -d '{"email":"mallory@ci.example.org","name":"Mallory","password":"Correct-Horse-Battery-9"}')"
+          echo "first-register on an empty production database -> $code"
+          [ "$code" = "403" ]
+          [ "$($C exec -T postgres psql -U churchtimes -d churchtimes -Atc 'select count(*) from users')" = "0" ]
+
+          # The break-glass / bootstrap script exists and works in the migrator image (needs tsx), creating the first admin.
+          $C --profile ops run --rm -e ADMIN_EMAIL=first-admin@ci.example.org -e ADMIN_NEW_PASSWORD='Ci-Only-Passphrase-123' migrate npm run admin:create
+          [ "$($C exec -T postgres psql -U churchtimes -d churchtimes -Atc "select role from users where email='first-admin@ci.example.org'")" = "admin" ]
+          # Hardening really applied by compose.
+          [ "$(docker inspect -f '{{.HostConfig.ReadonlyRootfs}}' "$($C ps -q cms)")" = "true" ]
+          [ "$(docker inspect -f '{{json .HostConfig.CapDrop}}' "$($C ps -q cms)")" = '["ALL"]' ]
+          [ -z "$(docker inspect -f '{{json .NetworkSettings.Ports}}' "$($C ps -q postgres)" | grep -o 'HostPort' || true)" ]
+
+      - name: Save the tested images for publishing
+        # The publish job ships exactly these images (no second build from cache). Push events only.
+        if: github.event_name == 'push' && github.ref == 'refs/heads/feat/newsroom-mvp'
+        run: docker save "$IMAGE" "$MIGRATOR_IMAGE" "$IMPORTER_IMAGE" | gzip -1 > "$RUNNER_TEMP/cms-images.tar.gz"
+
+      - name: Upload the tested images
+        if: github.event_name == 'push' && github.ref == 'refs/heads/feat/newsroom-mvp'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cms-images
+          path: ${{ runner.temp }}/cms-images.tar.gz
+          retention-days: 1
+          compression-level: 0
+
       - name: Container logs (on failure)
         if: failure()
         run: |
@@ -228,10 +411,49 @@ jobs:
           echo "=== CMS container state ==="; docker inspect -f '{{json .State}}' "$CMS_CONTAINER" 2>/dev/null || true
           echo "=== CMS container logs ==="; docker logs "$CMS_CONTAINER" 2>&1 | tail -n 300 || true
           echo "=== PostgreSQL container logs ==="; docker logs "$PG_CONTAINER" 2>&1 | tail -n 100 || true
+          echo "=== production compose logs ==="
+          if [ -n "${CMS_ENV_FILE:-}" ]; then docker compose -f apps/cms/docker-compose.production.yml --profile ops logs --tail 200 || true; fi
 
       - name: Clean up
         if: always()
         run: |
           docker rm -f "$CMS_CONTAINER" "$PG_CONTAINER" >/dev/null 2>&1 || true
+          if [ -n "${CMS_ENV_FILE:-}" ]; then docker compose -f apps/cms/docker-compose.production.yml --profile ops down -v --remove-orphans >/dev/null 2>&1 || true; fi
+          sudo rm -rf "$RUNNER_TEMP/media" "$RUNNER_TEMP/prod" 2>/dev/null || true
           docker network rm "$NETWORK" >/dev/null 2>&1 || true
           rm -f "$RUNNER_TEMP/cms.env" "$RUNNER_TEMP"/image-env.txt "$RUNNER_TEMP"/image-history.txt "$RUNNER_TEMP"/cms.log "$RUNNER_TEMP"/me.* "$RUNNER_TEMP"/articles.json
+
+  # Pushes the SAME three images the smoke job built and tested (handed over as an artifact, loaded, retagged, pushed: nothing is
+  # rebuilt) to GHCR, on pushes to feat/newsroom-mvp only (never on pull requests, so fork PRs cannot reach it). Uses the
+  # workflow's own GITHUB_TOKEN: no repository secret is added. `packages: write` is granted to THIS job only. The third-party
+  # action is pinned to a commit SHA. The digests are printed in the job summary: pin them in CMS_IMAGE / CMS_MIGRATOR_IMAGE.
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/feat/newsroom-mvp'
+    needs: docker-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: cms-images
+          path: ${{ runner.temp }}/images
+      - name: Load the tested images
+        run: gunzip -c "$RUNNER_TEMP/images/cms-images.tar.gz" | docker load
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tag, push and print digests
+        run: |
+          set -euo pipefail
+          for pair in "churchtimes-cms:ci ghcr.io/abcentech/churchtimes-cms" "churchtimes-cms-migrator:ci ghcr.io/abcentech/churchtimes-cms-migrator" "churchtimes-cms-importer:ci ghcr.io/abcentech/churchtimes-cms-importer"; do
+            set -- $pair
+            docker tag "$1" "$2:sha-${GITHUB_SHA}"
+            docker push "$2:sha-${GITHUB_SHA}"
+            digest="$(docker inspect --format '{{index .RepoDigests 0}}' "$2:sha-${GITHUB_SHA}")"
+            case "$2" in *migrator) echo "CMS_MIGRATOR_IMAGE=$digest" ;; *importer) echo "CMS_IMPORTER_IMAGE=$digest" ;; *) echo "CMS_IMAGE=$digest" ;; esac | tee -a "$GITHUB_STEP_SUMMARY"
+          done

@@ -11,7 +11,7 @@ import {
   type UserLike,
 } from '../access/roles'
 import { liveEventUpdatesEndpoint } from '../endpoints/liveEventUpdates'
-import { writeAuditLog } from '../lib/audit'
+import { auditDeleteHook, writeAuditLog } from '../lib/audit'
 import { clampLimit } from '../lib/clampLimit'
 import { cleanText, SLUG_RE, slugify } from '../lib/sanitize'
 
@@ -50,6 +50,7 @@ export const LiveEvents: CollectionConfig = {
   },
   hooks: {
     beforeOperation: [clampLimit],
+    afterDelete: [auditDeleteHook('live-events', (d) => (d.slug ? `slug ${d.slug}, status ${d.status}` : undefined))],
     beforeChange: [
       ({ data, originalDoc, operation, req }) => {
         const user = asUser(req.user)
