@@ -1,0 +1,13 @@
+{
+  "kind": "real anonymous Payload REST + disposable PostgreSQL; synthetic migrated-style article; no C7/import claim",
+  "device": "mobile",
+  "articleTemplate": "/{slug}/",
+  "indexable": false,
+  "originalPublicationDate": "2020-01-01T00:00:00.000Z",
+  "structuredDataType": "NewsArticle",
+  "largeImageWidth": 800,
+  "validSitemapAndRss": true,
+  "canonicalMatchesAcrossHtmlSchemaAndFeed": true,
+  "categoryAndStaticPagesCovered": true,
+  "stagingNoindex": true
+}

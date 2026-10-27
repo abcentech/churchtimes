@@ -74,7 +74,7 @@ export async function startPublicHost(repoRoot: string, dist: string, port: numb
     if (url.hostname.endsWith('.localhost')) url.hostname = '127.0.0.1'
     return fetch(url, init)
   }
-  return listenTracked(mod.createPublicServer({ dist, cmsUrl, basePath: '/', fetchImpl, ...(paths && !paths.articlePathPinned ? { articlePathTemplate: paths.publicArticlePathTemplate } : {}) }), port)
+  return listenTracked(mod.createPublicServer({ dist, cmsUrl, basePath: '/', fetchImpl, ...(paths ? { articlePathTemplate: paths.publicArticlePathTemplate } : {}) }), port)
 }
 
 function listenTracked(server: http.Server, port: number): Promise<StaticServer> {

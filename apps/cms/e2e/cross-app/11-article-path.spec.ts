@@ -66,8 +66,6 @@ test.describe('reserved root slugs (D1: /{slug}/)', () => {
 })
 
 test.describe('public article URL template', () => {
-  test.skip(cfg.articlePathPinned, `TODO(PR #44): the public host (tools/serve-public.mjs) does not yet support PUBLIC_ARTICLE_PATH_TEMPLATE, so public URLs are pinned to ${cfg.publicArticlePathTemplate} and the CMS template ${cfg.articlePathTemplate} is not exercised publicly. Remove the pin once PR #44 merges.`)
-
   test('a published article is served by the public host at the configured template', async ({ page }) => {
     const slug = `e2e-path-${Date.now().toString(36)}`
     const title = uniq('E2E template article')
