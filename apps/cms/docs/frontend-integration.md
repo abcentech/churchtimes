@@ -188,3 +188,7 @@ The newsroom editor (`apps/newsroom`) sends `expectedUpdatedAt` with every artic
 ## Public quality evidence
 
 The combined public CMS and mobile quality evidence for Wave 3 (synthetic data only, local runs) is in `docs/evidence/wave3-public/README.md`. Its before and after quality JSON files are machine-validated; the four SEO scores in the README are manually transcribed from local Lighthouse reports and are labelled as such. It is evidence of a local audit, not of production.
+
+## Live update photos on the public site
+
+The public live page renders the `image` object of `GET /api/live-events/{slug}/updates` (approved photo with alt text; url, width, height). An update without alt text or with an unusable image shows no picture. A revised update (same id, higher sequence) replaces the earlier entry in place. See `docs/public-live-coverage.md`.
