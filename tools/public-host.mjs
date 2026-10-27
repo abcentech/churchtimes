@@ -9,7 +9,7 @@ import {publicOrigin} from '../src/lib/public-url.js';
 export function publicHostConfig(env=process.env) {
   const host=env.HOST||'127.0.0.1',port=Number(env.PORT||5373);
   if(!['127.0.0.1','::1','localhost'].includes(host))throw new Error('Public host must bind to loopback behind its TLS proxy.');
-  if(!Number.isInteger(port)||port<0||port>65535||(port===0&&env.NODE_ENV!=='test'))throw new Error('Invalid public host port.');
+  if(!Number.isInteger(port)||port<0||port>65535||(port===0&&env.PUBLIC_HOST_ALLOW_EPHEMERAL_PORT!=='true'))throw new Error('Invalid public host port.');
   const siteUrl=publicOrigin(env.PUBLIC_SITE_URL);
   if(!siteUrl||new URL(env.PUBLIC_SITE_URL).pathname!=='/'||new URL(env.PUBLIC_SITE_URL).search||new URL(env.PUBLIC_SITE_URL).hash)throw new Error('PUBLIC_SITE_URL must be an explicit safe origin.');
   if(env.PUBLIC_CMS_URL&&!publicOrigin(env.PUBLIC_CMS_URL))throw new Error('PUBLIC_CMS_URL must be HTTPS or loopback HTTP without credentials.');

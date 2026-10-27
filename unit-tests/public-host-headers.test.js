@@ -23,11 +23,11 @@ test('every public host response forbids framing; the Caddy reference does the s
  assert.match(caddy,/^\s*#\s*Strict-Transport-Security /m);assert.doesNotMatch(caddy,/^\s*Strict-Transport-Security /m);
  assert.doesNotMatch(caddy,/PUBLIC_HOSTNAME:/,'hostname must fail closed: no placeholder default');
 });
-test('host kit defaults: root article path (D1), empty PORT falls back, port 0 only under test',()=>{
+test('host kit defaults: root article path (D1), empty PORT falls back, port 0 only with the explicit test flag',()=>{
  const base={PUBLIC_SITE_URL:'https://public.example.test'};
  assert.equal(publicHostConfig(base).options.articlePathTemplate,'/{slug}/');
  assert.equal(publicHostConfig({...base,PUBLIC_ARTICLE_PATH_TEMPLATE:'/reports/{slug}/'}).options.articlePathTemplate,'/reports/{slug}/');
  assert.equal(publicHostConfig({...base,PORT:''}).port,5373);
  assert.throws(()=>publicHostConfig({...base,PORT:'0'}));
- assert.equal(publicHostConfig({...base,PORT:'0',NODE_ENV:'test'}).port,0);
+ assert.equal(publicHostConfig({...base,PORT:'0',PUBLIC_HOST_ALLOW_EPHEMERAL_PORT:'true'}).port,0);
 });

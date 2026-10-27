@@ -39,7 +39,7 @@ test('documented env-file startup serves staging health, ads and headers; SIGHUP
  let cmsCalls=0;const cms=createServer((_req,res)=>{cmsCalls++;res.writeHead(503,{'Content-Type':'application/json'});res.end('{}');});
  await new Promise(done=>cms.listen(0,'127.0.0.1',done));t.after(()=>new Promise(done=>cms.close(done)));
  const envFile=join(directory,'synthetic.env');
- await writeFile(envFile,[`HOST=127.0.0.1`,`PORT=0`,`NODE_ENV=test`,`PUBLIC_DIST=${selectedBuild}`,`PUBLIC_SITE_URL=${origin}`,`PUBLIC_CMS_URL=http://127.0.0.1:${cms.address().port}`,`PUBLIC_INDEXABLE=false`,`PUBLIC_ARTICLE_PATH_TEMPLATE=/reports/{slug}/`,`PUBLIC_REDIRECTS_FILE=${privateMap}`,`PUBLIC_ADS_TXT_LINE=example.test, synthetic-publisher, DIRECT`,`PUBLIC_HOST_SHUTDOWN_MS=1000`].join('\n')+'\n',{mode:0o600});
+ await writeFile(envFile,[`HOST=127.0.0.1`,`PORT=0`,`PUBLIC_HOST_ALLOW_EPHEMERAL_PORT=true`,`PUBLIC_DIST=${selectedBuild}`,`PUBLIC_SITE_URL=${origin}`,`PUBLIC_CMS_URL=http://127.0.0.1:${cms.address().port}`,`PUBLIC_INDEXABLE=false`,`PUBLIC_ARTICLE_PATH_TEMPLATE=/reports/{slug}/`,`PUBLIC_REDIRECTS_FILE=${privateMap}`,`PUBLIC_ADS_TXT_LINE=example.test, synthetic-publisher, DIRECT`,`PUBLIC_HOST_SHUTDOWN_MS=1000`].join('\n')+'\n',{mode:0o600});
  const env={...process.env};for(const key of Object.keys(env))if(key.startsWith('PUBLIC_')||['PORT','HOST','REDIRECT_ALLOWED_HOSTS'].includes(key))delete env[key];
  // STUB failures must prevent readiness before any listener is opened.
  for(const broken of [{PUBLIC_REDIRECTS_FILE:privateMap},{PUBLIC_REDIRECTS_FILE:'',PUBLIC_REDIRECTS_URL:`http://127.0.0.1:${cms.address().port}/api/public/redirects`}]) {
