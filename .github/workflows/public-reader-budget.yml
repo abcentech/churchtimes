@@ -1,0 +1,49 @@
+name: Public reader bundle headroom
+on:
+  push:
+    branches: [feat/newsroom-mvp]
+    paths:
+      - 'src/**'
+      - 'tools/check-reader-budget.mjs'
+      - 'package*.json'
+      - 'vite.config.js'
+      - '.github/workflows/public-reader-budget.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tools/check-reader-budget.mjs'
+      - 'tools/public-quality-*'
+      - 'tools/prepare-pages.mjs'
+      - 'package*.json'
+      - 'vite.config.js'
+      - '.github/workflows/public-reader-budget.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  reader-budget:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        optional: [unset, synthetic]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Build with synthetic STUB configuration; no host or provider is contacted
+        run: npm run build
+        env:
+          VITE_PUBLIC_CMS_URL: https://cms.example.test
+          VITE_PUBLIC_ADVERTISING_URL: ${{ matrix.optional == 'synthetic' && 'https://cms.example.test/api/public/advertising' || '' }}
+          VITE_PUBLIC_NEWSLETTER_URL: ${{ matrix.optional == 'synthetic' && 'https://cms.example.test/api/public/newsletter/subscribe' || '' }}
+          VITE_PUBLIC_CONTACT_URL: ${{ matrix.optional == 'synthetic' && 'https://cms.example.test/api/public/contact' || '' }}
+          VITE_TURNSTILE_SITE_KEY: synthetic-stub-site-key
+          VITE_PUBLIC_GA4_ID: ${{ matrix.optional == 'synthetic' && 'G-STUB0000' || '' }}
+          VITE_PUBLIC_COMMENTS_URL: ${{ matrix.optional == 'synthetic' && 'https://cms.example.test/api/legacy-comments' || '' }}
+          VITE_PUBLIC_ONESIGNAL_APP_ID: ${{ matrix.optional == 'synthetic' && '11111111-1111-4111-8111-111111111111' || '' }}
+          VITE_PUBLIC_INDEXABLE: 'true'
+      - run: npm run check:reader-budget
+      - run: node --test unit-tests/reader-budget.test.js

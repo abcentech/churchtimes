@@ -346,3 +346,7 @@ Also delete the key on your PC if you will not need it again: `Remove-Item "$HOM
 - **Defender or ClamAV found something**: do not open it, do not restore it. Tell me the number only; the file names stay on your PC.
 - **Counts differ by a few files**: write down the numbers and pull that year again; do not go on.
 - **Plan B for the whole job**: the rebuilt server and the new CMS do not need the old server's uploads at all if the pictures come from the verified folder. Never copy files from the old server straight onto the new one.
+
+## Proposed verification manifest
+
+A future offline verifier is specified (contract only, not implemented, and not read by `import:uploads-check` yet) in `docs/uploads-pack.md` (`uploads-pack/1`). Its acceptance rules mirror `uploadSafety.ts` and `mediaLimits.ts`.
