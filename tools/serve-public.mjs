@@ -14,13 +14,13 @@ import {createPublicPages} from './public-pages.mjs';
 import {publicSEOSettings} from './public-seo-settings.mjs';
 import {createPublicFeeds} from './public-feeds.mjs';
 import {publicOrigin} from '../src/lib/public-url.js';
-import {normalizeBasePath,reportPath,articlePathTemplate as validateArticlePathTemplate,reportSlug,articleCanonical,articleSchema,safeJSON} from '../src/lib/public-routes.js';
+import {normalizeBasePath,reportPath,articlePathTemplate as validateArticlePathTemplate,HOST_ARTICLE_PATH_TEMPLATE,reportSlug,articleCanonical,articleSchema,safeJSON} from '../src/lib/public-routes.js';
 const escape=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json','.svg':'image/svg+xml','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp','.woff2':'font/woff2'};
 const replaceMeta=(html,attribute,name,value)=>html.replace(new RegExp(`(<meta ${attribute}="${name}" content=")[^"]*(">)`),(_all,a,b)=>a+escape(value)+b);
 export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(fileURLToPath(new URL('../dist/',import.meta.url))),cmsUrl=process.env.PUBLIC_CMS_URL,siteUrl=process.env.PUBLIC_SITE_URL,basePath=process.env.PUBLIC_BASE_PATH || '/',adsTxtLine=process.env.PUBLIC_ADS_TXT_LINE,searchVerification=process.env.PUBLIC_SEARCH_CONSOLE_VERIFICATION,indexable=process.env.PUBLIC_INDEXABLE==='true',articlePathTemplate=process.env.PUBLIC_ARTICLE_PATH_TEMPLATE,fetchImpl=fetch}={}) {
   basePath=normalizeBasePath(basePath);
-  articlePathTemplate=validateArticlePathTemplate(articlePathTemplate);
+  articlePathTemplate=validateArticlePathTemplate(articlePathTemplate,HOST_ARTICLE_PATH_TEMPLATE);
   if(cmsUrl && !publicOrigin(cmsUrl))throw new Error('PUBLIC_CMS_URL must be HTTPS or loopback HTTP without credentials');
   const settings=publicSEOSettings({adsTxtLine,searchVerification});
   const publicPages=createPublicPages({dist,cmsUrl,siteUrl,basePath,indexable,fetchImpl,extraHead:settings.head,articlePathTemplate});

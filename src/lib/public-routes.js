@@ -5,17 +5,20 @@ export function normalizeBasePath(value='/') {
   return value;
 }
 export const DEFAULT_ARTICLE_PATH_TEMPLATE='/reports/{slug}/';
-export function articlePathTemplate(value) {
+export const HOST_ARTICLE_PATH_TEMPLATE='/{slug}/';
+export function articlePathTemplate(value,fallback=DEFAULT_ARTICLE_PATH_TEMPLATE) {
   const configured=value ?? (typeof document!=='undefined' ? document.querySelector('meta[name="public-article-path-template"]')?.content : undefined);
-  const template=typeof configured==='string' && configured.trim() ? configured.trim() : DEFAULT_ARTICLE_PATH_TEMPLATE;
+  const template=typeof configured==='string' && configured.trim() ? configured.trim() : fallback;
   if(!['/{slug}/',DEFAULT_ARTICLE_PATH_TEMPLATE].includes(template))throw new Error('Article path template must be /{slug}/ or /reports/{slug}/');
   return template;
 }
-const reservedSlugs=new Set(['latest','about','contact','advertise','category','assets','site','api','reports','index']);
+// Mirrors apps/cms/src/lib/reservedSlugs.ts (case-insensitive): first path segments that real routes own under /{slug}/.
+const reservedSlugs=new Set(['admin','api','graphql','newsroom','login','logout','account','preview','static','assets','media','uploads','health','healthz','newsletter','contact','search','category','categories','tag','tags','author','authors','topic','topics','section','sections','reports','report','articles','live','events','submit','tips','advertise','advertising','about','privacy','terms','corrections','subscribe','unsubscribe','feed','feeds','rss','sitemap','sitemap.xml','robots.txt','ads.txt','favicon.ico','manifest.json','wp-content','wp-admin','wp-json','wp-includes','wp-login.php','xmlrpc.php','page','comments','attachment','trackback','embed','amp','latest','site','index','saved']);
+export const isReservedRootSlug=slug=>typeof slug==='string' && reservedSlugs.has(slug.toLowerCase());
 export const reportPath = (slug, base='/', template) => {
   if(!validReportSlug(slug)) return '';
   const pattern=articlePathTemplate(template);
-  if(pattern==='/{slug}/' && reservedSlugs.has(slug))return '';
+  if(pattern==='/{slug}/' && isReservedRootSlug(slug))return '';
   return normalizeBasePath(base)+pattern.slice(1).replace('{slug}',slug);
 };
 export function reportSlug(path,base='/',template) {
