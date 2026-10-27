@@ -9,8 +9,14 @@
 import { CMS_URL, CMS_HOST_LABEL, cmsAssetUrl } from '../config.js';
 import { can } from '../permissions.js';
 import { lexicalToMarkdown, markdownToLexical } from '../lexical.js';
+import { categoryFieldsToCms, extraIdsFromCms } from '../categories.js';
 import { ApiError, toApiError } from './errors.js';
 import { createCountCache } from './count-cache.js';
+import { liveUpdatePayload } from '../live-photo.js';
+import { loadLiveTimeline } from '../live-timeline.js';
+import { liveStatusBody, transitionBody, contentPatchBody } from '../stale-guard.js';
+import { archiveWhere, normalizeProvenance, reviewPatchBody, REVIEW_STATUSES, CONFIDENCE_LEVELS } from '../archive-review.js';
+import { withTimeout, RequestTimeoutError, timeoutFor } from '../http-guard.js';
 
 const ID_RE = /^\d+$/;
 
@@ -67,16 +73,21 @@ function normalizeMedia(m) {
 function normalizeArticle(doc) {
   const cat = doc.category && typeof doc.category === 'object' ? doc.category : null;
   const author = doc.author && typeof doc.author === 'object' ? doc.author : null;
-  const { markdown, lossy } = lexicalToMarkdown(doc.content);
+  const { markdown, lossy, images } = lexicalToMarkdown(doc.content);
+  // Media documents the CMS populated inside the body (upload nodes), by id, for the editor's previews.
+  const bodyMedia = {};
+  for (const img of images) if (img.media) bodyMedia[img.id] = normalizeMedia(img.media);
   return {
     id: String(doc.id),
     title: doc.title || '',
     slug: doc.slug || '',
     standfirst: doc.excerpt || '',
     bodyMd: markdown,
+    bodyMedia,
     lossy,
     categoryId: relId(doc.category),
     categoryTitle: cat?.title || '',
+    extraCategoryIds: extraIdsFromCms(doc.categories),
     featuredImage: normalizeMedia(doc.featuredImage),
     status: doc.status || 'draft',
     authorId: relId(doc.author),
@@ -87,7 +98,9 @@ function normalizeArticle(doc) {
     publishedAt: doc.publishedAt || null,
     scheduledFor: doc.scheduledFor || null,
     reviewNotes: doc.reviewNotes || '',
-    corrections: Array.isArray(doc.corrections) ? doc.corrections : []
+    corrections: Array.isArray(doc.corrections) ? doc.corrections : [],
+    // Staff-only archive provenance (null for ordinary stories). Never rendered on a public page.
+    provenance: normalizeProvenance(doc.provenance)
   };
 }
 
@@ -131,8 +144,11 @@ function normalizeUpdate(u) {
     status: u.status || 'pending',
     sequence: u.sequence ?? null,
     publishSequence: u.publishSequence ?? null,
+    updatedAt: u.updatedAt || null, // the version a reviewer saw: sent back as expectedUpdatedAt on approve / reject
     occurredAt: u.occurredAt || u.createdAt || null,
-    authorName: author?.name || ''
+    authorName: author?.name || '',
+    // Optional photo: the CMS sends the media id (depth 0) or the populated document (depth 1).
+    image: u.image === null || u.image === undefined ? null : normalizeMedia(u.image)
   };
 }
 
@@ -181,19 +197,45 @@ export class CmsAdapter {
     } else if (form) {
       init.body = form; // multipart: let the browser set the boundary
     }
-    let res;
     try {
-      res = await fetch(url, init);
-    } catch {
-      throw new ApiError('Cannot reach the CMS. Check your connection and try again.', { status: 0, network: true });
-    }
-    if (!res.ok) {
-      const err = await toApiError(res);
-      if (res.status === 401 && auth) this.handleUnauthorized();
+      return await withTimeout(timeoutFor({ form }), async (signal) => {
+        init.signal = signal;
+        let res;
+        try {
+          res = await fetch(url, init);
+        } catch (err) {
+          if (err?.name === 'AbortError') throw err;
+          throw new ApiError('Cannot reach the CMS. Check your connection and try again.', { status: 0, network: true });
+        }
+        this.emit('network', true);
+        if (!res.ok) {
+          const err = await toApiError(res);
+          if (res.status === 401 && auth) this.handleUnauthorized();
+          if (res.status === 403 && auth && method !== 'GET') {
+            // A revoked/expired session can look like a permission refusal: confirm before saying "not permitted".
+            if (!(await this.verifySession())) {
+              throw new ApiError('Your session has ended. Please sign in again. Your unsaved text is kept on this device.', { status: 401 });
+            }
+          }
+          throw err;
+        }
+        if (res.status === 204) return null;
+        try { return await res.json(); } catch { return null; }
+      });
+    } catch (err) {
+      if (err instanceof RequestTimeoutError) {
+        this.emit('network', false);
+        throw new ApiError('The CMS took too long to respond. Check your connection and try again.', { status: 0, network: true });
+      }
+      if (err?.network) this.emit('network', false);
       throw err;
     }
-    if (res.status === 204) return null;
-    try { return await res.json(); } catch { return null; }
+  }
+
+  /** Extend the 8 hour session. Called periodically while the user is active; failures other than 401 are ignored. */
+  async refreshSession() {
+    if (!this.currentUser) return false;
+    try { await this.request('/users/refresh', { method: 'POST' }); return true; } catch { return false; }
   }
 
   handleUnauthorized() {
@@ -340,7 +382,7 @@ export class CmsAdapter {
     if ('standfirst' in fields) out.excerpt = fields.standfirst;
     if ('bodyMd' in fields) out.content = markdownToLexical(fields.bodyMd);
     if ('bylineName' in fields) out.bylineName = fields.bylineName;
-    if ('categoryId' in fields && fields.categoryId) out.category = Number(safeId(fields.categoryId));
+    Object.assign(out, categoryFieldsToCms(fields, id => Number(safeId(id))));
     if ('featuredImageId' in fields) {
       out.featuredImage = fields.featuredImageId ? Number(safeId(fields.featuredImageId)) : null;
     }
@@ -359,9 +401,10 @@ export class CmsAdapter {
   }
 
   /** PATCH only the supplied (changed) fields. */
-  async updateArticle(id, changes) {
-    const body = CmsAdapter.toCmsFields(changes);
-    if (!Object.keys(body).length) return this.getArticle(id);
+  async updateArticle(id, changes, { expectedUpdatedAt } = {}) {
+    const fields = CmsAdapter.toCmsFields(changes);
+    if (!Object.keys(fields).length) return this.getArticle(id);
+    const body = contentPatchBody(fields, expectedUpdatedAt);
     try {
       const data = await this.request(`/articles/${encodeURIComponent(safeId(id))}`, {
         method: 'PATCH', json: body, query: { depth: '1' }
@@ -372,11 +415,13 @@ export class CmsAdapter {
     }
   }
 
-  /** Explicit workflow transition. Sends only `status` (+ editor `reviewNotes`). */
-  async transitionArticle(id, status, { reviewNotes } = {}) {
+  /**
+   * Explicit workflow transition. Sends only `status` (+ editor `reviewNotes`, + `expectedUpdatedAt`: the `updatedAt` of the
+   * version the reviewer saw; the CMS answers 409 if the story changed since).
+   */
+  async transitionArticle(id, status, { reviewNotes, expectedUpdatedAt } = {}) {
     if (!ARTICLE_STATUSES.includes(status)) throw new ApiError('Unknown status.', { status: 400 });
-    const body = { status };
-    if (reviewNotes !== undefined) body.reviewNotes = reviewNotes;
+    const body = transitionBody(status, { reviewNotes, expectedUpdatedAt });
     try {
       const data = await this.request(`/articles/${encodeURIComponent(safeId(id))}`, {
         method: 'PATCH', json: body, query: { depth: '1' }
@@ -398,6 +443,50 @@ export class CmsAdapter {
       method: 'PATCH', json: { status: 'scheduled', scheduledFor: when.toISOString() }, query: { depth: '1' }
     });
     return { data: normalizeArticle(data.doc) };
+  }
+
+  // ---- archive review (recovered archive drafts; docs/archive-candidate-schema.md) ----------------------------
+
+  /** Recovered drafts, filtered. Server-side filters only; the CMS lists them for editors and never publicly. */
+  async getArchiveCandidates(filters = {}, { limit = 25, page = 1 } = {}) {
+    const q = new URLSearchParams({ depth: '1', limit: String(limit), page: String(page), sort: '-updatedAt' });
+    for (const [k, v] of archiveWhere(filters)) q.set(k, v);
+    const data = await this.request('/articles', { query: q });
+    return {
+      data: (data?.docs || []).map(normalizeArticle),
+      totalDocs: data?.totalDocs ?? 0,
+      totalPages: data?.totalPages ?? 1,
+      page: data?.page ?? page
+    };
+  }
+
+  /** Counts per review status (ignoring the status filter) and per confidence (ignoring the confidence filter). */
+  async getArchiveCounts(filters = {}) {
+    const count = async (omit, extra) => {
+      const q = new URLSearchParams({ limit: '1', depth: '0' });
+      for (const [k, v] of archiveWhere(filters, omit)) q.set(k, v);
+      for (const [k, v] of extra) q.set(k, v);
+      return (await this.request('/articles', { query: q }))?.totalDocs ?? 0;
+    };
+    const [statusEntries, confidenceEntries] = await Promise.all([
+      Promise.all(REVIEW_STATUSES.map(async s => [s, await count('reviewStatus', [['where[provenance.reviewStatus][equals]', s]])])),
+      Promise.all(CONFIDENCE_LEVELS.map(async c => [c, await count('confidence', [['where[provenance.confidence][equals]', c]])]))
+    ]);
+    return { reviewStatus: Object.fromEntries(statusEntries), confidence: Object.fromEntries(confidenceEntries) };
+  }
+
+  /**
+   * Approve ("reviewed") or reject a recovered draft: PATCH of provenance.reviewStatus only. The CMS accepts it from editors
+   * in scope (others are refused), writes an audit entry (who, when) and keeps the story a draft; 409 when it changed meanwhile.
+   */
+  async setArchiveReview(id, reviewStatus, { expectedUpdatedAt } = {}) {
+    const body = reviewPatchBody(reviewStatus, expectedUpdatedAt);
+    try {
+      const data = await this.request(`/articles/${encodeURIComponent(safeId(id))}`, { method: 'PATCH', json: body, query: { depth: '1' } });
+      return { data: normalizeArticle(data.doc) };
+    } finally {
+      this.articleCounts.invalidate();
+    }
   }
 
   async deleteArticle(id) {
@@ -482,21 +571,22 @@ export class CmsAdapter {
   }
 
   async getLiveUpdates(eventId) {
-    const data = await this.request('/live-updates', {
-      query: {
-        'where[event][equals]': safeId(eventId),
-        sort: '-sequence',
-        limit: '100',
-        depth: '1'
-      }
-    });
-    return { data: (data?.docs || []).map(normalizeUpdate) };
+    // Approved (by -publishSequence) and pending (by -sequence) are separate queries so an old update approved late
+    // cannot fall out of the newest-100 window of the Published Timeline. See live-timeline.js.
+    const docs = await loadLiveTimeline(
+      async query => (await this.request('/live-updates', { query }))?.docs || [],
+      safeId(eventId)
+    );
+    return { data: docs.map(normalizeUpdate) };
   }
 
-  /** publishNow asks the CMS to publish immediately; it only honours it for editors in scope (otherwise: pending). */
-  async postLiveUpdate({ eventId, body, publishNow = false }) {
-    const payload = { event: Number(safeId(eventId)), body };
-    if (publishNow) payload.status = 'approved';
+  /**
+   * publishNow asks the CMS to publish immediately; it only honours it for editors in scope (otherwise: pending).
+   * imageId (optional) attaches one photo: the CMS requires an image with alt text and answers 400 with a message otherwise.
+   */
+  async postLiveUpdate({ eventId, body, publishNow = false, imageId = null }) {
+    const hasImage = imageId !== null && imageId !== undefined && imageId !== '';
+    const payload = liveUpdatePayload({ eventId: safeId(eventId), body, publishNow, imageId: hasImage ? safeId(imageId) : null });
     const data = await this.request('/live-updates', {
       method: 'POST',
       json: payload,
@@ -505,10 +595,10 @@ export class CmsAdapter {
     return { data: normalizeUpdate(data.doc) };
   }
 
-  async setLiveUpdateStatus(id, status) {
+  async setLiveUpdateStatus(id, status, { expectedUpdatedAt } = {}) {
     if (!['approved', 'rejected', 'pending'].includes(status)) throw new ApiError('Unknown update status.', { status: 400 });
     const data = await this.request(`/live-updates/${encodeURIComponent(safeId(id))}`, {
-      method: 'PATCH', json: { status }, query: { depth: '1' }
+      method: 'PATCH', json: liveStatusBody(status, { expectedUpdatedAt }), query: { depth: '1' }
     });
     return { data: normalizeUpdate(data.doc) };
   }

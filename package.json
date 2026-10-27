@@ -14,17 +14,20 @@
     "test:unit": "node --test unit-tests/*.test.js",
     "test:newsroom": "playwright test --config playwright.newsroom.config.js",
     "test:newsroom-app": "playwright test --config playwright.newsroom-app.config.js",
+    "test:newsroom-a11y": "playwright test --config playwright.newsroom-app.config.js newsroom-a11y",
     "export:pages": "npm run build && node tools/export-pages.mjs",
     "check:pages": "node tools/check-pages-export.mjs",
     "test:forms": "playwright test --config playwright.forms.config.js",
     "test:advertising": "playwright test --config playwright.advertising.config.js",
     "test:cms": "node tools/run-public-cms-tests.mjs",
     "test:newsroom-unit": "node --test apps/newsroom/test/*.test.js",
-    "serve:public": "node tools/serve-public.mjs"
+    "serve:public": "node tools/serve-public.mjs",
+    "test:quality": "node tools/run-public-quality.mjs"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
     "@playwright/test": "1.58.2",
+    "lighthouse": "12.8.2",
     "vite": "7.3.1"
   },
   "dependencies": {

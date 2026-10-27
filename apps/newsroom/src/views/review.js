@@ -17,6 +17,7 @@ import { showApiError } from '../components/notify.js';
 import { markdownToHtml } from '../lexical.js';
 import { PUBLIC_SITE_URL } from '../config.js';
 import { escapeHtml, formatTimeAgo, statusBadge, cssToken, latestGuard } from '../util.js';
+import { STALE_MESSAGE, isStaleConflict } from '../stale-guard.js';
 
 let activeTab = 'articles_review';
 let tipFilter = 'open';
@@ -40,6 +41,8 @@ export async function renderReview(container, preselectedStoryId = null) {
         </div>
       </div>
     </div>
+
+    <p class="archive-link-row" data-archive-link ${api.can('archive.view') ? '' : 'hidden'}><a href="#archive" data-testid="review-archive-link">Recovered archive drafts: open Archive review</a></p>
 
     <div id="review-error" data-testid="review-error" role="alert" class="validation-summary-alert" style="display:none; margin-bottom: 1rem;"></div>
 
@@ -176,9 +179,18 @@ async function renderCurrentTabContent(container) {
     btn.addEventListener('click', () => store.setCurrentView('editor', { storyId: btn.getAttribute('data-id') }));
   });
   area.querySelectorAll('[data-action="inspect-story"]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const article = articles.find(a => a.id === btn.getAttribute('data-id'));
-      if (article) inspectStoryModal(article, container);
+    btn.addEventListener('click', async () => {
+      const id = btn.getAttribute('data-id');
+      if (!articles.some(a => a.id === id)) return;
+      // Approve what you saw: open the CURRENT version, never the list's copy (it can be stale right after an earlier action).
+      btn.disabled = true;
+      try {
+        inspectStoryModal((await api.getArticle(id)).data, container);
+      } catch (err) {
+        showApiError(err);
+      } finally {
+        btn.disabled = false;
+      }
     });
   });
 }
@@ -214,7 +226,7 @@ async function renderSubmissionsTab(area, container, isCurrent = () => true) {
 
   area.innerHTML = `
     <div class="ethics-notice-box" style="margin-bottom: 1.5rem;">
-      <h4>Crucial Newsroom Requirement</h4>
+      <h2>Crucial Newsroom Requirement</h2>
       <p>
         Reader tips arrive through ${publicLink}. They are <strong>NEVER published automatically</strong>.
         Every tip must be corroborated by a reporter, converted to a draft story and taken through the full workflow.
@@ -361,7 +373,23 @@ async function openConvertModal(sub, container) {
 // Story inspection
 // ---------------------------------------------------------------------------------------------------
 
-function inspectStoryModal(article, container) {
+/**
+ * Approve what you saw: every action below sends the `updatedAt` of the version shown in this modal. When the CMS answers
+ * 409 (the story changed after it was opened) the story is reloaded and the modal is reopened on the new version with the
+ * message, so the reviewer reads what changed before acting again.
+ */
+async function reloadAfterConflict(articleId, container, message) {
+  try {
+    const fresh = (await api.getArticle(articleId)).data;
+    await Promise.all([updateTabCounters(container), renderCurrentTabContent(container)]);
+    inspectStoryModal(fresh, container, message);
+  } catch (err) {
+    showApiError(err);
+  }
+  showToast(message, 'info');
+}
+
+function inspectStoryModal(article, container, notice = '') {
   const ctx = { status: article.status, categoryId: article.categoryId, isAuthor: false };
   const canApprove = api.can('story.approve', ctx);
   const canRequest = api.can('story.request_changes', ctx);
@@ -387,8 +415,9 @@ function inspectStoryModal(article, container) {
               ${escapeHtml(article.featuredImage.caption || '')}${article.featuredImage.credit ? ` &middot; Credit: ${escapeHtml(article.featuredImage.credit)}` : ''}
             </div>
           </div>` : ''}
-        <div class="preview-body" data-testid="inspect-body" style="max-height: 250px; overflow-y: auto; background: var(--color-parchment-light); padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--color-rule);">
-          ${markdownToHtml(article.bodyMd)}
+        ${article.lossy ? `<div class="ethics-notice-box" data-testid="inspect-lossy-banner" role="alert"><p style="margin:0;"><strong>Body contains video/table content not shown; open in CMS admin before approving.</strong> Most imported articles can only have their body edited in the CMS admin.</p></div>` : ''}
+        <div class="preview-body" data-testid="inspect-body" tabindex="0" role="region" aria-label="Story body" style="max-height: 250px; overflow-y: auto; background: var(--color-parchment-light); padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--color-rule);">
+          ${markdownToHtml(article.bodyMd, { media: id => article.bodyMedia?.[id] })}
         </div>
 
         <div class="checklist-box">
@@ -411,15 +440,23 @@ function inspectStoryModal(article, container) {
       </div>`,
     onRender: (body, close) => {
       const errEl = body.querySelector('#inspect-error');
+      if (notice) {
+        errEl.textContent = notice;
+        errEl.style.display = 'block';
+      }
       const transition = async (status, opts, success) => {
         errEl.style.display = 'none';
         try {
-          await api.transitionArticle(article.id, status, opts);
+          await api.transitionArticle(article.id, status, { ...opts, expectedUpdatedAt: article.updatedAt });
           close();
           showToast(success, status === 'changes_requested' ? 'info' : 'success');
           await updateTabCounters(container);
           await renderCurrentTabContent(container);
         } catch (err) {
+          if (isStaleConflict(err)) {
+            await reloadAfterConflict(article.id, container, err.message || STALE_MESSAGE);
+            return;
+          }
           errEl.textContent = showApiError(err);
           errEl.style.display = 'block';
         }
@@ -441,8 +478,18 @@ function inspectStoryModal(article, container) {
         await transition('changes_requested', { reviewNotes: notes }, 'Changes requested from reporter');
       });
 
-      body.querySelector('#modal-approve-story')?.addEventListener('click', () =>
-        transition('approved', {}, 'Story approved for publication!'));
+      body.querySelector('#modal-approve-story')?.addEventListener('click', async () => {
+        if (article.lossy) {
+          const sure = await askConfirm({
+            title: 'Approve without seeing the whole body?',
+            message: 'This body contains video/table content not shown here. Open it in the CMS admin before approving. Approve anyway?',
+            confirmLabel: 'Approve anyway',
+            testid: 'approve-lossy'
+          });
+          if (!sure) return;
+        }
+        await transition('approved', {}, 'Story approved for publication!');
+      });
 
       body.querySelector('#modal-publish-story')?.addEventListener('click', async () => {
         const ok = await askConfirm({

@@ -526,6 +526,17 @@ describe('login, lockout and sessions', () => {
     }
     const blocked = await login(`${runId}-ghost-final@test.invalid`, 'whatever-password', ip)
     expect(blocked.status).toBe(429)
+    // Retry-After is readable by a cross-origin script (the newsroom app lives on another origin).
+    expect(blocked.headers.get('retry-after')).toMatch(/^[1-9]\d*$/)
+    expect(Number(blocked.headers.get('retry-after'))).toBeLessThanOrEqual(900)
+    expect(blocked.headers.get('access-control-expose-headers')?.toLowerCase()).toContain('retry-after')
+    const cors = await api('POST', '/api/users/login', {
+      body: { email: `${runId}-ghost-cors@test.invalid`, password: 'whatever-password' },
+      headers: withIp(ip, { origin: 'http://localhost:5174' }),
+    })
+    expect(cors.status).toBe(429)
+    expect(cors.headers.get('access-control-allow-origin')).toBe('http://localhost:5174')
+    expect(cors.headers.get('access-control-expose-headers')?.toLowerCase()).toContain('retry-after')
     // a different client is unaffected
     expect((await login(`${runId}-ghost-other@test.invalid`, 'whatever-password', nextIp())).status).toBe(401)
     resetAuthRateLimiters()
@@ -636,6 +647,8 @@ describe('password policy and reset flow', () => {
     }
     const blocked = await api('POST', '/api/users/forgot-password', { body: { email: `${runId}-fp-x@test.invalid` }, headers: withIp(ip) })
     expect(blocked.status).toBe(429)
+    expect(blocked.headers.get('retry-after')).toMatch(/^[1-9]\d*$/)
+    expect(blocked.headers.get('access-control-expose-headers')?.toLowerCase()).toContain('retry-after')
     resetAuthRateLimiters()
   })
 

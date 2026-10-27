@@ -8,6 +8,8 @@ on:
       - 'cms-integration-tests/**'
       - 'tools/*public-cms*'
       - 'tools/serve-public.mjs'
+      - 'tools/public-*.mjs'
+      - 'tools/audit-public.mjs'
       - 'playwright.cms.config.js'
       - 'package*.json'
       - '.github/workflows/public-cms.yml'
@@ -19,6 +21,8 @@ on:
       - 'cms-integration-tests/**'
       - 'tools/*public-cms*'
       - 'tools/serve-public.mjs'
+      - 'tools/public-*.mjs'
+      - 'tools/audit-public.mjs'
       - 'playwright.cms.config.js'
       - 'package*.json'
       - '.github/workflows/public-cms.yml'
@@ -53,3 +57,11 @@ jobs:
       - run: npm ci --prefix apps/cms
       - run: npx playwright install --with-deps chromium
       - run: npm run test:cms
+        env:
+          PUBLIC_LEGACY_SAMPLES: 'true'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: synthetic-public-cms-evidence
+          path: test-results/
+          retention-days: 7

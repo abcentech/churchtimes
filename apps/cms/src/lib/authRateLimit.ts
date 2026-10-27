@@ -57,12 +57,30 @@ export function resetAuthRateLimiters(): void {
   limiters.clear()
 }
 
+/**
+ * Payload merges `req.responseHeaders` into error responses (routeError), so these ride along with the 429 and
+ * Payload's own Access-Control-Allow-Origin. Retry-After is not CORS-safelisted: without Expose-Headers a
+ * cross-origin script (the newsroom app on its own origin) reads null.
+ */
+export function setRetryAfterHeaders(req: { responseHeaders?: Headers }, seconds: number): void {
+  const headers = req.responseHeaders ?? new Headers()
+  headers.set('Retry-After', String(Math.max(1, Math.ceil(seconds))))
+  const expose = (headers.get('Access-Control-Expose-Headers') ?? '')
+    .split(',')
+    .map((h) => h.trim())
+    .filter(Boolean)
+  if (!expose.some((h) => h.toLowerCase() === 'retry-after')) expose.push('Retry-After')
+  headers.set('Access-Control-Expose-Headers', expose.join(', '))
+  req.responseHeaders = headers
+}
+
 export function authRateLimitHook(op: AuthOperation): CollectionBeforeOperationHook {
   return ({ args, operation, req }) => {
     if (operation !== op || req?.payloadAPI !== 'REST') return args
     const ip = getClientIp(req)
     const result = getLimiter(op, ip === 'unknown').check(ip)
     if (!result.allowed) {
+      setRetryAfterHeaders(req, result.retryAfterSeconds)
       throw new APIError(
         `Too many attempts. Try again in ${Math.ceil(result.retryAfterSeconds / 60)} minute(s).`,
         429,

@@ -11,7 +11,7 @@ import {
   type UserLike,
 } from '../access/roles'
 import { liveEventUpdatesEndpoint } from '../endpoints/liveEventUpdates'
-import { writeAuditLog } from '../lib/audit'
+import { auditDeleteHook, writeAuditLog } from '../lib/audit'
 import { clampLimit } from '../lib/clampLimit'
 import { cleanText, SLUG_RE, slugify } from '../lib/sanitize'
 
@@ -50,6 +50,7 @@ export const LiveEvents: CollectionConfig = {
   },
   hooks: {
     beforeOperation: [clampLimit],
+    afterDelete: [auditDeleteHook('live-events', (d) => (d.slug ? `slug ${d.slug}, status ${d.status}` : undefined))],
     beforeChange: [
       ({ data, originalDoc, operation, req }) => {
         const user = asUser(req.user)
@@ -64,13 +65,20 @@ export const LiveEvents: CollectionConfig = {
             if (!ok) throw new APIError('This category is outside your sections.', 403)
           }
         }
-        // Server-managed timestamps for status transitions.
-        const prev = originalDoc?.status
-        if (data.status === 'live' && !data.startedAt && !originalDoc?.startedAt) {
-          data.startedAt = new Date().toISOString()
-        }
-        if (data.status === 'ended' && prev !== 'ended' && !data.endedAt) {
-          data.endedAt = new Date().toISOString()
+        // Server-managed timestamps. The public discovery list sorts by -startedAt, and Postgres sorts NULL first in
+        // a descending order, so a non-draft event must never keep an empty startedAt (an event created directly as
+        // 'ended', or moved to 'ended' without ever being 'live', would otherwise push live events off the list).
+        const status = data.status ?? originalDoc?.status
+        const startedAt = data.startedAt !== undefined ? data.startedAt : originalDoc?.startedAt
+        const endedAt = data.endedAt !== undefined ? data.endedAt : originalDoc?.endedAt
+        const now = new Date().toISOString()
+        if (status && status !== 'draft' && !startedAt) data.startedAt = now
+        // ended -> live -> ended must not keep the first endedAt, and a live (or draft) event has no endedAt.
+        const previous = operation === 'create' ? undefined : originalDoc?.status
+        if (status === 'ended') {
+          if ((previous !== 'ended' && !data.endedAt) || !endedAt) data.endedAt = now
+        } else if (status === 'live' || status === 'draft') {
+          data.endedAt = null
         }
         return data
       },

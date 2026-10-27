@@ -9,7 +9,9 @@ import {
   INITIAL_SUBMISSIONS, INITIAL_LIVE_EVENTS, INITIAL_LIVE_UPDATES
 } from './mock-data.js';
 import { can, normRole } from '../permissions.js';
+import { cleanFilters, publishBlockReason, reviewPatchBody, REVIEW_STATUSES, CONFIDENCE_LEVELS } from '../archive-review.js';
 import { ApiError } from './errors.js';
+import { STALE_MESSAGE, versionMatches } from '../stale-guard.js';
 
 const STORAGE_KEY = 'ctn_mock_store_v2';
 const ARTICLE_STATUSES = ['draft', 'in_review', 'changes_requested', 'approved', 'scheduled', 'published', 'archived'];
@@ -49,9 +51,32 @@ function seed() {
   const updates = INITIAL_LIVE_UPDATES.map((u, i) => ({
     id: u.id, eventId: u.eventId, body: u.headline ? `${u.headline}: ${u.body}` : u.body,
     status: u.status === 'pending_review' ? 'pending' : u.status, sequence: i + 1,
-    occurredAt: u.createdAt, authorName: u.reporterName
+    occurredAt: u.createdAt, updatedAt: u.createdAt, authorName: u.reporterName
   }));
-  return { users, media, articles, submissions, events, updates, categories: clone(INITIAL_CATEGORIES) };
+  return { users, media, articles, submissions, events, updates, archive: seedArchive(), categories: clone(INITIAL_CATEGORIES) };
+}
+
+/** Synthetic recovered drafts (invented text, reserved .test host). Kept apart from `articles` so the desk counts are unchanged. */
+function seedArchive() {
+  const base = {
+    lossy: false, featuredImage: null, status: 'draft', authorId: null, authorName: 'Staff Reporter', scheduledFor: null,
+    publishedAt: null, reviewNotes: '', corrections: [], categoryId: INITIAL_CATEGORIES[0].id, categoryTitle: INITIAL_CATEGORIES[0].title,
+    createdAt: '2026-10-20T09:00:00.000Z', updatedAt: '2026-10-20T09:00:00.000Z'
+  };
+  const mk = (n, title, confidence, originalDate, body, extra = {}) => ({
+    ...base, id: `arc-${n}`, title, slug: `recovered-${n}`, standfirst: '', bodyMd: body,
+    provenance: {
+      importBatch: extra.batch || 'arc-0123456789ab', sourceUrl: `https://old-site.test/story-${n}/`, sourceHost: 'old-site.test',
+      captureTimestamp: '2020-01-15T10:20:30.000Z', originalDate, sourceSha256: String(n).repeat(64).slice(0, 64),
+      confidence, reviewStatus: extra.reviewStatus || 'pending'
+    }
+  });
+  return [
+    mk(1, 'Synthetic diocese announces a harvest festival', 'partial', '2014-03-09T00:00:00.000Z', 'A synthetic paragraph about an invented festival.\n\nA second synthetic paragraph.'),
+    mk(2, 'Invented synod headline only', 'citation-only', null, 'Invented synod headline only. [Read the full report](https://spam-casino.test/win) or see [diocese.example](https://diocese.example/news) and [our own page](https://churchtimes.example/about).'),
+    mk(3, 'Recovered note without a body', 'missing', '2012-11-02T00:00:00.000Z', 'Body not recovered. Known: a synthetic report on a choir tour.', { batch: 'arc-fedcba987654' }),
+    mk(4, 'Already reviewed synthetic story', 'partial', '2015-06-21T00:00:00.000Z', 'A synthetic reviewed paragraph.', { reviewStatus: 'reviewed' })
+  ];
 }
 
 export class MockAdapter {
@@ -66,7 +91,11 @@ export class MockAdapter {
   load() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) return JSON.parse(raw);
+      if (raw) {
+        const db = JSON.parse(raw);
+        if (!Array.isArray(db.archive)) db.archive = seedArchive();
+        return db;
+      }
     } catch { /* ignore */ }
     const db = seed();
     this.persist(db);
@@ -95,6 +124,7 @@ export class MockAdapter {
     this.emit('session', this.currentUser);
     return this.currentUser;
   }
+  async refreshSession() { return Boolean(this.currentUser); }
   async logout() { this.currentUser = null; this.emit('session', null); return { ok: true }; }
   getCurrentUser() { return this.currentUser; }
   can(action, ctx) { return can(this.currentUser, action, ctx); }
@@ -126,8 +156,47 @@ export class MockAdapter {
   async getArticleCounts() {
     return Object.fromEntries(ARTICLE_STATUSES.map(s => [s, this.db.articles.filter(a => a.status === s).length]));
   }
+  async getArchiveCandidates(filters = {}) {
+    const f = cleanFilters(filters);
+    const list = this.db.archive.filter(a =>
+      (!f.batch || a.provenance.importBatch === f.batch) &&
+      (!f.confidence || a.provenance.confidence === f.confidence) &&
+      (!f.reviewStatus || a.provenance.reviewStatus === f.reviewStatus));
+    return { data: clone(list), totalDocs: list.length, totalPages: 1, page: 1 };
+  }
+  async getArchiveCounts(filters = {}) {
+    const f = cleanFilters(filters);
+    const base = this.db.archive.filter(a => !f.batch || a.provenance.importBatch === f.batch);
+    const countOf = (key, value, other, otherValue) =>
+      base.filter(a => a.provenance[key] === value && (!otherValue || a.provenance[other] === otherValue)).length;
+    return {
+      reviewStatus: Object.fromEntries(REVIEW_STATUSES.map(s => [s, countOf('reviewStatus', s, 'confidence', f.confidence)])),
+      confidence: Object.fromEntries(CONFIDENCE_LEVELS.map(c => [c, countOf('confidence', c, 'reviewStatus', f.reviewStatus)]))
+    };
+  }
+  async setArchiveReview(id, reviewStatus, { expectedUpdatedAt } = {}) {
+    reviewPatchBody(reviewStatus, expectedUpdatedAt);
+    const a = this.db.archive.find(x => x.id === id);
+    if (!a) throw new ApiError('Story not found.', { status: 404 });
+    if (!can(this.currentUser, 'archive.review', this._ctx(a))) throw forbidden();
+    if (!versionMatches(a.updatedAt, expectedUpdatedAt)) throw new ApiError(STALE_MESSAGE, { status: 409 });
+    a.provenance.reviewStatus = reviewStatus;
+    // Server-set four-eyes stamp (editor roles only, which is who reaches this method).
+    if (reviewStatus === 'reviewed') {
+      a.provenance.reviewedById = String(this.currentUser.id);
+      a.provenance.reviewedByName = this.currentUser.name || '';
+      a.provenance.reviewedAt = new Date().toISOString();
+    } else {
+      a.provenance.reviewedById = '';
+      a.provenance.reviewedByName = '';
+      a.provenance.reviewedAt = null;
+    }
+    a.updatedAt = new Date().toISOString();
+    this.persist();
+    return { data: clone(a) };
+  }
   async getArticle(id) {
-    const a = this.db.articles.find(x => x.id === id);
+    const a = this.db.articles.find(x => x.id === id) || this.db.archive.find(x => x.id === id);
     if (!a) throw new ApiError('Story not found.', { status: 404 });
     return { data: clone(a) };
   }
@@ -141,6 +210,7 @@ export class MockAdapter {
       a.categoryId = f.categoryId;
       a.categoryTitle = this.db.categories.find(c => c.id === f.categoryId)?.title || '';
     }
+    if ('extraCategoryIds' in f) a.extraCategoryIds = f.extraCategoryIds;
     if ('featuredImageId' in f) a.featuredImage = this.db.media.find(m => m.id === f.featuredImageId) || null;
     a.updatedAt = new Date().toISOString();
   }
@@ -157,22 +227,25 @@ export class MockAdapter {
     this.persist();
     return { data: clone(a) };
   }
-  async updateArticle(id, changes) {
-    const a = this.db.articles.find(x => x.id === id);
+  async updateArticle(id, changes, { expectedUpdatedAt } = {}) {
+    const a = this.db.articles.find(x => x.id === id) || this.db.archive.find(x => x.id === id);
     if (!a) throw new ApiError('Story not found.', { status: 404 });
     if (!can(this.currentUser, 'story.edit', this._ctx(a))) throw forbidden();
+    if (!versionMatches(a.updatedAt, expectedUpdatedAt)) throw new ApiError(STALE_MESSAGE, { status: 409 });
     this._apply(a, changes);
     this.persist();
     return { data: clone(a) };
   }
-  async transitionArticle(id, status, { reviewNotes } = {}) {
-    const a = this.db.articles.find(x => x.id === id);
+  async transitionArticle(id, status, { reviewNotes, expectedUpdatedAt } = {}) {
+    const a = this.db.articles.find(x => x.id === id) || this.db.archive.find(x => x.id === id);
     if (!a) throw new ApiError('Story not found.', { status: 404 });
+    if (!versionMatches(a.updatedAt, expectedUpdatedAt)) throw new ApiError(STALE_MESSAGE, { status: 409 });
     const action = {
       in_review: 'story.submit_review', approved: 'story.approve', changes_requested: 'story.request_changes',
       published: 'story.publish', archived: 'story.archive'
     }[status];
     if (!action || !can(this.currentUser, action, this._ctx(a))) throw forbidden();
+    if (status === 'published' && publishBlockReason(a, this.currentUser)) throw new ApiError(publishBlockReason(a, this.currentUser), { status: 409 });
     a.status = status;
     if (reviewNotes !== undefined) a.reviewNotes = reviewNotes;
     if (status === 'published' && !a.publishedAt) a.publishedAt = new Date().toISOString();
@@ -261,21 +334,27 @@ export class MockAdapter {
     const list = this.db.updates.filter(u => u.eventId === eventId).sort((a, b) => b.sequence - a.sequence);
     return { data: clone(list) };
   }
-  async postLiveUpdate({ eventId, body }) {
+  async postLiveUpdate({ eventId, body, imageId = null }) {
     const isEditor = normRole(this.currentUser.role) !== 'reporter';
+    const image = imageId ? this.db.media.find(m => String(m.id) === String(imageId)) || null : null;
+    if (imageId && !image) throw new ApiError('The selected image does not exist.', { status: 400 });
+    if (image && !String(image.alt || '').trim()) throw new ApiError('The image needs alt text before it can be used.', { status: 400 });
     const u = {
-      id: `upd-${Date.now()}`, eventId, body, status: isEditor ? 'approved' : 'pending',
-      sequence: this.db.updates.length + 1, occurredAt: new Date().toISOString(), authorName: this.currentUser.name
+      id: `upd-${Date.now()}`, eventId, body, image: image ? clone(image) : null, status: isEditor ? 'approved' : 'pending',
+      sequence: this.db.updates.length + 1, occurredAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      authorName: this.currentUser.name
     };
     this.db.updates.unshift(u);
     this.persist();
     return { data: clone(u) };
   }
-  async setLiveUpdateStatus(id, status) {
+  async setLiveUpdateStatus(id, status, { expectedUpdatedAt } = {}) {
     if (!can(this.currentUser, 'live.approve', { categoryId: 'faith-society' })) throw forbidden();
     const u = this.db.updates.find(x => x.id === id);
     if (!u) throw new ApiError('Not found.', { status: 404 });
+    if (!versionMatches(u.updatedAt, expectedUpdatedAt)) throw new ApiError(STALE_MESSAGE, { status: 409 });
     u.status = status;
+    u.updatedAt = new Date().toISOString();
     this.persist();
     return { data: clone(u) };
   }
@@ -292,7 +371,7 @@ export class MockAdapter {
   async uploadMedia(file, { alt, caption, credit }) {
     if (!alt?.trim()) throw new ApiError('Alt text is required.', { status: 400 });
     const m = {
-      id: `med-${Date.now()}`, url: '/site/news-media/29276.jpg', thumbUrl: '/site/news-media/29276.jpg',
+      id: `${Date.now()}`, url: '/site/news-media/29276.jpg', thumbUrl: '/site/news-media/29276.jpg',
       alt, caption: caption || '', credit: credit || '', filename: file?.name || 'upload.jpg'
     };
     this.db.media.unshift(m);

@@ -13,6 +13,7 @@ import { expect, test } from '@playwright/test'
 import { Api, Evidence, getConfig, trackCmsCalls, uniq } from './support/helpers'
 import { freshContext, loginUi, logoutUi, requireNewsroom, slugify } from './support/newsroom'
 import { PUBLIC_CORRECTION_KEYS, reporterSubmitStory, sectionEditorPublishStory } from './support/corrections'
+import { articlePath } from './support/articlePath'
 import { expectPublishedOnPublicSite } from './support/public'
 
 const cfg = getConfig()
@@ -199,9 +200,14 @@ test.describe('I. correction notes on a published story (REAL UI)', () => {
       await ev.shot(page, 'anonymous reader: corrected text and both corrections with dates', { final: true })
 
       // the server-rendered HTML (no JavaScript) also carries the corrections and the corrected text
-      const ssr = await page.request.get(`${cfg.publicOrigin}/reports/${s.slug}/`)
-      expect(ssr.status()).toBe(200)
-      const ssrHtml = await ssr.text()
+      // Fetched from the page (same origin), not page.request: *.churchtimes.localhost only resolves inside Chromium
+      // (--host-resolver-rules); Node's resolver does not map it once the machine uses another DNS (e.g. Tailscale MagicDNS).
+      const ssr = await page.evaluate(async (url) => {
+        const res = await fetch(url, { credentials: 'omit', cache: 'no-store' })
+        return { status: res.status, html: await res.text() }
+      }, `${cfg.publicOrigin}${articlePath(cfg, s.slug)}`)
+      expect(ssr.status).toBe(200)
+      const ssrHtml = ssr.html
       expect(ssrHtml).toContain('Corrections & updates')
       expect(ssrHtml).toContain(s.notes[0])
       expect(ssrHtml).toContain(s.notes[1])
