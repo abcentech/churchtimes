@@ -1,0 +1,103 @@
+{
+  "failures": [],
+  "pages": [
+    {
+      "page": "home",
+      "performance": 92,
+      "accessibility": 100,
+      "bestPractices": 100,
+      "lcpMs": 3230.2885000000006,
+      "cls": 0
+    },
+    {
+      "page": "latest",
+      "performance": 94,
+      "accessibility": 100,
+      "bestPractices": 100,
+      "lcpMs": 3004.2195,
+      "cls": 0.04003760516375523
+    },
+    {
+      "page": "article",
+      "performance": 99,
+      "accessibility": 100,
+      "bestPractices": 100,
+      "lcpMs": 2256.8374499999995,
+      "cls": 0
+    },
+    {
+      "page": "live",
+      "performance": 95,
+      "accessibility": 100,
+      "bestPractices": 100,
+      "lcpMs": 2712.0766999999996,
+      "cls": 0.04025576715798306
+    }
+  ],
+  "assets": {
+    "initialJsGzipBytes": 38053,
+    "initialCssGzipBytes": 10134,
+    "fontBytes": 159536
+  },
+  "journeys": [
+    {
+      "page": "home",
+      "device": "desktop",
+      "passed": true
+    },
+    {
+      "page": "latest",
+      "device": "desktop",
+      "passed": true
+    },
+    {
+      "page": "article",
+      "device": "desktop",
+      "passed": true
+    },
+    {
+      "page": "live",
+      "device": "desktop",
+      "passed": true
+    },
+    {
+      "page": "home",
+      "device": "mobile",
+      "passed": true
+    },
+    {
+      "page": "latest",
+      "device": "mobile",
+      "passed": true
+    },
+    {
+      "page": "article",
+      "device": "mobile",
+      "passed": true
+    },
+    {
+      "page": "live",
+      "device": "mobile",
+      "passed": true
+    }
+  ],
+  "kind": "real Payload REST + disposable PostgreSQL; synthetic article metadata; external Turnstile transport STUBBED and unused",
+  "passed": true,
+  "budgets": {
+    "pages": [
+      "home",
+      "latest",
+      "article",
+      "live"
+    ],
+    "minPerformance": 80,
+    "minAccessibility": 100,
+    "minBestPractices": 95,
+    "maxLcpMs": 6000,
+    "maxCls": 0.1,
+    "maxInitialJsGzipBytes": 40960,
+    "maxInitialCssGzipBytes": 12288,
+    "maxFontBytes": 196608
+  },
+  "completedAt": "2026-10-17T03:17:26.716Z"
+}

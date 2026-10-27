@@ -1,0 +1,53 @@
+name: Website checks
+on:
+  push:
+    branches: [main, feat/newsroom-mvp]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fail on leftover merge conflict markers
+        run: |
+          if git grep -n -I -E "^(<{7} |>{7} )" -- . ":!*package-lock.json" ":!*.lock" ":!**/node_modules/**"; then
+            echo "::error::Merge conflict markers found in tracked files (see above)."
+            exit 1
+          fi
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Select explicit public source or committed-export validation
+        id: public-build-policy
+        run: node tools/public-build-policy.mjs
+        env:
+          PUBLIC_CI_EVENT: ${{ github.event_name }}
+          PUBLIC_CI_BASE_REF: ${{ github.base_ref }}
+          PUBLIC_CI_REF_NAME: ${{ github.ref_name }}
+          PUBLIC_CI_HEAD_REF: ${{ github.head_ref }}
+          PUBLIC_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          PUBLIC_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      - run: npm run test:unit
+      - run: npm run build
+      - name: Validate actual compiled public source assets
+        run: node tools/check-public-source.mjs
+      - name: Verify committed Pages export (main or dedicated rebuild only)
+        if: steps.public-build-policy.outputs.mode == 'strict'
+        run: npm run check:pages
+      - run: npx playwright install --with-deps chromium
+      - run: npm test -- --workers=2 --reporter=list,github
+      - run: npm run test:newsroom -- --workers=2 --reporter=list,github
+      - run: npm run test:forms -- --workers=2 --reporter=list,github
+      - run: npm run test:advertising -- --workers=2 --reporter=list,github
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: public-browser-failure-evidence
+          path: test-results/
+          retention-days: 7
