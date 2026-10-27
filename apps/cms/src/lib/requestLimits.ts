@@ -10,11 +10,12 @@
  * Pure function (no Next imports) so it can be unit tested.
  */
 import { avMaxBytes } from './avMedia'
+import { imageMaxBytes } from './mediaLimits'
 
 
 /** Largest accepted body for every non-upload API route. */
 export const MAX_JSON_BODY_BYTES = 1024 * 1024
-/** Largest accepted body for /api/media (10 MB file limit + multipart framing). */
+/** Largest accepted body for /api/media (anonymous callers: fixed 11 MB; staff get more, see mediaBodyLimitBytes). */
 export const MAX_MEDIA_BODY_BYTES = 11 * 1024 * 1024
 
 /** Ceiling for the upload route (whole MB). */
@@ -22,13 +23,13 @@ export const MEDIA_UPLOAD_MAX_MB_LIMIT = 500
 
 /**
  * Body limit for /api/media, one rule for the whole app (next.config.mjs repeats it, keep them in step):
- * - ANONYMOUS (or unverified) callers: never more than 11 MB (10 MB image + framing). Next buffers a request body before
+ * - ANONYMOUS (or unverified) callers: never more than 11 MB (fixed, independent of the image cap). Next buffers a request body before
  *   Payload authenticates it, so a bigger allowance for anyone who merely sends an Authorization or Cookie header would let
  *   them make the server buffer it. "Authenticated" means `proxy.ts` verified a genuine, unexpired session token (lib/sessionToken.ts);
  * - Staff with a verified session get a larger limit ONLY when it is configured: `MEDIA_UPLOAD_MAX_MB` (11 to 500) if set, else
- *   max(10, `MEDIA_AV_MAX_MB`) when `MEDIA_AV_MAX_MB` is set explicitly, + 1 MB framing. With neither set the limit stays 11 MB
- *   (the Next body buffer in next.config.mjs is then the small 12 MB too, so nothing is silently truncated). Precedence:
- *   MEDIA_UPLOAD_MAX_MB, then MEDIA_AV_MAX_MB, then 11 MB. (`MEDIA_AV_MAX_MB` alone still sets the per-file audio/video cap, default 100.)
+ *   max(image cap `MEDIA_IMAGE_MAX_MB` (default 25), `MEDIA_AV_MAX_MB` when set explicitly) + 1 MB framing, so 26 MB by default
+ *   (the Next body buffer in next.config.mjs is that + 1 MB, so nothing is silently truncated). Precedence:
+ *   MEDIA_UPLOAD_MAX_MB, then max(image cap, explicit AV cap). (`MEDIA_AV_MAX_MB` alone still sets the per-file audio/video cap, default 100.)
  * Only this route changes: every other API route keeps its 1 MB limit. See operations.md section 4.4.
  */
 export function mediaBodyLimitBytes(env: Record<string, string | undefined> = process.env, authenticated = false): number {
@@ -37,9 +38,9 @@ export function mediaBodyLimitBytes(env: Record<string, string | undefined> = pr
   if (Number.isInteger(override) && override >= 11) return (Math.min(override, MEDIA_UPLOAD_MAX_MB_LIMIT) + 1) * 1024 * 1024
   if (env.MEDIA_AV_MAX_MB !== undefined && env.MEDIA_AV_MAX_MB.trim() !== '' && Number.isFinite(Number(env.MEDIA_AV_MAX_MB)) && Number(env.MEDIA_AV_MAX_MB) >= 1) {
     const avMb = Math.floor(avMaxBytes(env) / (1024 * 1024))
-    return Math.max(MAX_MEDIA_BODY_BYTES, (Math.max(10, avMb) + 1) * 1024 * 1024)
+    return Math.max(MAX_MEDIA_BODY_BYTES, (Math.max(Math.floor(imageMaxBytes(env) / (1024 * 1024)), avMb) + 1) * 1024 * 1024)
   }
-  return MAX_MEDIA_BODY_BYTES
+  return Math.max(MAX_MEDIA_BODY_BYTES, imageMaxBytes(env) + 1024 * 1024)
 }
 
 export type RequestLimitDecision =
