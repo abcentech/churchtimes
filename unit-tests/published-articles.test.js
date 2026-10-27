@@ -106,7 +106,8 @@ test('renders populated Lexical media safely and never resolves private/unpopula
   assert.match(html,/src="https:\/\/cms.example.test\/api\/media\/file\/photo.jpg"/);assert.match(html,/&lt;script&gt;/);assert.doesNotMatch(html,/<script>|<img onerror/);
   assert.equal(renderArticleContent(make(123),{baseUrl:'https://cms.example.test'}),'');
 });
-import { searchArticles, cmsErrorMessage } from '../src/lib/published-articles.js';
+import { cmsErrorMessage } from '../src/lib/published-articles.js';
+import { searchArticles } from '../src/lib/public-search.js';
 const hit = {id:7,slug:'faith-and-service',title:'Faith and service',excerpt:'Excerpt',snippet:'A matching snippet',publishedAt:'2026-10-13T08:00:00Z',category:{id:1,slug:'news',title:'News'},categories:[],rank:0.9};
 test('search uses the C8 endpoint, maps hits to cards and exposes totalCapped', async () => {
   let seen;
@@ -131,7 +132,7 @@ test('search with an empty query makes no request', async () => {
 });
 test('search 429 carries Retry-After into the reader message and other failures stay typed', async () => {
   const tooMany = searchArticles({baseUrl:'https://cms.example.test',query:'faith',fetchImpl:async()=>({ok:false,status:429,headers:new Headers({'Retry-After':'17'})})});
-  await assert.rejects(tooMany,error=>{assert.equal(error.status,429);assert.equal(error.retryAfter,17);assert.match(cmsErrorMessage(error),/wait 17 seconds/);return true;});
+  await assert.rejects(tooMany,error=>{assert.equal(error.status,429);assert.equal(error.retryAfter,17);assert.match(cmsErrorMessage(error),/wait 17s before/);return true;});
   await assert.rejects(searchArticles({baseUrl:'https://cms.example.test',query:'faith',fetchImpl:async()=>({ok:false,status:429,headers:new Headers()})}),error=>error.retryAfter===0&&/Please wait before/.test(cmsErrorMessage(error)));
   await assert.rejects(searchArticles({baseUrl:'https://cms.example.test',query:'faith',fetchImpl:async()=>({ok:true,json:async()=>({nope:1})})}),error=>error.type==='response');
   await assert.rejects(searchArticles({baseUrl:'not a url',query:'faith'}),error=>error.type==='configuration');

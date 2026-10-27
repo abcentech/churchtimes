@@ -76,9 +76,9 @@ test('public search uses the C8 endpoint, shows capped counts and honours Retry-
     return route.fulfill({json:{docs:[{id:1,slug:'faith-and-service',title:'Faith and service',excerpt:'x',snippet:'Matching snippet',publishedAt:'2026-10-13T08:00:00Z',category:{id:1,slug:'news',title:'News'},categories:[],rank:1}],totalDocs:1000,totalCapped:true,hasNextPage:false}});
   });
   await page.goto('/#search/faith');
-  await expect(page.locator('#cms-search')).toContainText('wait 9 seconds');
+  await expect(page.locator('#cms-search')).toContainText('wait 9s before');
   await page.locator('#cms-search').getByRole('button',{name:'Try again'}).click();
   await expect(page.locator('#cms-search')).toContainText('Faith and service');
-  await expect(page.locator('#cms-search')).toContainText('More than 1,000 reports match');
+  await expect(page.locator('#cms-search')).toContainText('Over 1,000 matches');
   expect(urls.every(u=>u.pathname==='/api/public/search'&&u.searchParams.get('q')==='faith')).toBe(true);
 });

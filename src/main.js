@@ -38,7 +38,7 @@ function mountPublicAdvertising(root) {
   void advertisingModule.then(delivery=>{if(root.isConnected&&!signal.aborted)return delivery.mount(root,{resolveAsset:asset,signal});}).catch(()=>{});
 }
 import { publicFormMarkup } from './forms/public-form-markup.js';
-import { fetchPublishedPage, fetchPublishedArticle, fetchPublicCategory, fetchPublicCategories, searchArticles, cmsErrorMessage } from './lib/published-articles.js';
+import { fetchPublishedPage, fetchPublishedArticle, fetchPublicCategory, fetchPublicCategories, cmsErrorMessage } from './lib/published-articles.js';
 import './fonts.css';
 import './style.css';
 import './public-quality.css';
@@ -312,7 +312,7 @@ async function latestPage({target: suppliedTarget,query,categorySlug} = {}) {
     const previousCount = seen.size;
     if (previousButton) { previousButton.disabled = true; previousButton.textContent = 'Loading reports…'; }
     try {
-      const { articles, nextPage, totalCapped } = query ? await searchArticles({baseUrl:cmsUrl,signal,page,limit:12,query}) : await fetchPublishedPage({baseUrl:cmsUrl,signal,page,limit:12,categoryId});
+      const { articles, nextPage, note } = query ? await (await import('./lib/public-search.js')).searchArticles({baseUrl:cmsUrl,signal,page,limit:12,query}) : await fetchPublishedPage({baseUrl:cmsUrl,signal,page,limit:12,categoryId});
       if (!target.isConnected) return;
       if (!grid && !articles.length && !nextPage) {
         feedState(target,query?'No matching published reports.':'More stories are on their way.',query?'Try another headline, phrase or contributor.':'No newsroom reports have been published in this section yet.');
@@ -327,7 +327,7 @@ async function latestPage({target: suppliedTarget,query,categorySlug} = {}) {
       bindCMSImages(grid);
       target.querySelector('#feed-announcement').textContent = `${fresh.length} ${fresh.length===1?'report':'reports'} loaded. ${seen.size} ${seen.size===1?'report':'reports'} shown.`;
       const more = target.querySelector('#newsroom-more');
-      more.innerHTML = (totalCapped?'<p class="muted small">More than 1,000 reports match. The most relevant are shown first; refine your search to narrow them.</p>':'')+(nextPage ? '<button class="outline-button" id="more-reports">More reports '+icon('down',17)+'</button>' : '<p class="muted small" role="status">You’re up to date with the newsroom.</p>');
+      more.innerHTML = (note?`<p class="muted small">${note}</p>`:'')+(nextPage ? '<button class="outline-button" id="more-reports">More reports '+icon('down',17)+'</button>' : '<p class="muted small" role="status">You’re up to date with the newsroom.</p>');
       more.querySelector('button')?.addEventListener('click',() => load(nextPage));
     } catch(error) {
       if (!target.isConnected) return;
@@ -345,12 +345,11 @@ try {serverArticle=JSON.parse(document.querySelector('#public-article')?.textCon
 document.querySelector('#public-article')?.remove();
 let interceptedNav;
 async function reportPage(slug) {
-  const intercepted=interceptedNav===location.href;interceptedNav=undefined;
-  if(cmsUrl && serverArticle?.slug===slug && document.querySelector('#app #main article')) {
-    // Keep the server-rendered article on screen while the lazy renderer downloads; swap once, when it can be drawn at once.
+  const intercepted=interceptedNav===location.href;
+  if(serverArticle?.slug===slug && document.querySelector('#app article')) {
+    // Keep the server article on screen until the lazy renderer is ready, then swap once.
     const signal=routeController.signal;
-    try { await import('./lib/article-content.js'); } catch { return; }
-    if(signal.aborted)return;
+    if(!await import('./lib/article-content.js').then(()=>1,()=>0)||signal.aborted)return;
   }
   shell(`<section class="container section-list newsroom-report" id="cms-report" aria-busy="true"><div class="breadcrumbs"><a href="#home">Home</a><span>/</span><a href="#latest">Latest reports</a></div><h1 class="sr-only">Newsroom article</h1><p role="status">Loading article…</p></section>`,'latest');
   const target = document.querySelector('#cms-report');
@@ -405,9 +404,9 @@ let pendingPage;
 function render(){
   pendingPage=undefined;pageSettled=false;renderRoute();const href=location.href;renderedLocation=href;analytics?.update(hasConsent('analytics'));
   // Async article/feed pages report once drawn, so the title is final; a superseded or redirected route reports nothing.
-  Promise.resolve(pendingPage).catch(()=>{}).then(ok=>{if(ok!==false && location.href===href){pageSettled=true;analytics?.page();}});
+  Promise.resolve(pendingPage).catch(()=>{}).then(ok=>{if(ok!==false&&location.href===href){pageSettled=true;analytics?.page();}});
 }
-function renderRoute(){if(newsletterLink && /\/newsletter\/(confirm|unsubscribe)\/?$/.test(location.pathname)){shell(`<section class="container section-list">${newsletterTokenMarkup(newsletterLink.action,newsletterLink.token)}</section>`,'newsletter');return;}let parts;try{parts=location.hash?decodeURIComponent(location.hash.slice(1)).split('/'):(reportSlug(location.pathname,publicBase)||location.pathname.startsWith(publicBase+'reports/'))?['report',reportSlug(location.pathname,publicBase)||'']:publicPageRoute(location.pathname,publicBase)||['home'];}catch{parts=['404'];}const [route='home',...rest]=parts;const param=rest.join('/');const pages={home,about,contact,advertise,submit:submissionPage,saved:savedPage};if(route==='main'){if(!document.querySelector('#main'))home();document.querySelector('#main').focus();return;}if(route==='connect'){if(!document.querySelector('#connect'))home();requestAnimationFrame(()=>document.querySelector('#connect').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'}));return;}resetArticleMetadata();if(route==='report' && reportPath(param,publicBase))history.replaceState(null,'',reportPath(param,publicBase));if(route==='section')sectionPage(param);else if(route==='story')storyPage(param);else if(route==='search')searchPage(param);else if(route==='latest')latestPage();else if(route==='live')livePage(param);else if(route==='category')pendingPage=latestPage({categorySlug:param});else if(route==='report')pendingPage=reportPage(param);else if(pages[route])pages[route]();else if(!route)home();else notFound();const heading=document.querySelector('h1')?.textContent||'The journal';if(publicPageRoute(location.pathname,publicBase) && !location.hash){document.querySelector('meta[property="og:title"]').content=heading;document.querySelector('meta[property="og:description"]').content=document.querySelector('.page-intro p')?.textContent||heading;}if(route!=='report' || !document.querySelector('#article-schema')){document.title=`${heading} — Church Times Nigeria`;document.querySelector('meta[name="description"]').content=document.querySelector('.article-deck')?.textContent||'Church Times Nigeria: news, features, interviews and perspectives on faith and public life.';}window.scrollTo({top:0,behavior:'instant'});}
+function renderRoute(){if(newsletterLink && /\/newsletter\/(confirm|unsubscribe)\/?$/.test(location.pathname)){shell(`<section class="container section-list">${newsletterTokenMarkup(newsletterLink.action,newsletterLink.token)}</section>`,'newsletter');return;}let parts;try{parts=location.hash?decodeURIComponent(location.hash.slice(1)).split('/'):(reportSlug(location.pathname,publicBase)||location.pathname.startsWith(publicBase+'reports/'))?['report',reportSlug(location.pathname,publicBase)||'']:publicPageRoute(location.pathname,publicBase)||['home'];}catch{parts=['404'];}const [route='home',...rest]=parts;const param=rest.join('/');const pages={home,about,contact,advertise,submit:submissionPage,saved:savedPage};if(route==='main'){if(!document.querySelector('#main'))home();document.querySelector('#main').focus();return;}if(route==='connect'){if(!document.querySelector('#connect'))home();requestAnimationFrame(()=>document.querySelector('#connect').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'}));return;}resetArticleMetadata();if(route==='report' && reportPath(param,publicBase))history.replaceState(null,'',reportPath(param,publicBase));if(route==='section')sectionPage(param);else if(route==='story')storyPage(param);else if(route==='search')searchPage(param);else if(route==='latest')latestPage();else if(route==='live')livePage(param);else if(route==='category')latestPage({categorySlug:param});else if(route==='report')pendingPage=reportPage(param);else if(pages[route])pages[route]();else if(!route)home();else notFound();const heading=document.querySelector('h1')?.textContent||'The journal';if(publicPageRoute(location.pathname,publicBase) && !location.hash){document.querySelector('meta[property="og:title"]').content=heading;document.querySelector('meta[property="og:description"]').content=document.querySelector('.page-intro p')?.textContent||heading;}if(route!=='report' || !document.querySelector('#article-schema')){document.title=`${heading} — Church Times Nigeria`;document.querySelector('meta[name="description"]').content=document.querySelector('.article-deck')?.textContent||'Church Times Nigeria: news, features, interviews and perspectives on faith and public life.';}window.scrollTo({top:0,behavior:'instant'});}
 function handlePublicNavigation(){
   // Chromium can notify both history and hash listeners for one navigation.
   // Replacing an already-rendered form can otherwise discard in-progress input.
