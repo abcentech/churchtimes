@@ -17,7 +17,7 @@ export async function auditPublic({cmsUrl,dist,output,port,sourceRoot}) {
   for(const file of await readdir(dist))if(!['site','index.html'].includes(file))await rename(join(dist,file),join(dist,'site',file));
   const html=await readFile(join(dist,'index.html'),'utf8');
   await writeFile(join(dist,'index.html'),html.replace(/(src|href)="\.\//g,'$1="./site/'));
-  const server=createPublicServer({cmsUrl,dist,siteUrl:'https://staging-public.example.test'});
+  const server=createPublicServer({cmsUrl,dist,siteUrl:'https://staging-public.example.test',articlePathTemplate:'/reports/{slug}/'});
   await new Promise(resolve=>server.listen(port,'127.0.0.1',resolve));
   const origin='http://127.0.0.1:'+server.address().port;
   const chromePath=process.env.CHROMIUM_PATH || (existsSync('/usr/bin/chromium')?'/usr/bin/chromium':chromium.executablePath());

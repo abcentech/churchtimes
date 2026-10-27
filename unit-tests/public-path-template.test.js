@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {reportPath,reportSlug,articleCanonical,articlePathTemplate} from '../src/lib/public-routes.js';
+import {reportPath,reportSlug,articleCanonical,articlePathTemplate,isReservedRootSlug} from '../src/lib/public-routes.js';
 import {normalizePublishedArticle} from '../src/lib/published-articles.js';
 import {socialMetadata} from '../src/lib/public-metadata.js';
 import {createPublicServer} from '../tools/serve-public.mjs';
@@ -64,4 +64,27 @@ test('synthetic root-template feed skips reserved slugs without breaking discove
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(async()=>{await new Promise(resolve=>server.close(resolve));await rm(dist,{recursive:true,force:true});});
  for(const route of ['sitemap.xml','feed.xml']){const response=await fetch('http://127.0.0.1:'+server.address().port+'/'+route);assert.equal(response.status,200);const body=await response.text();assert.match(body,/synthetic-report/);if(route==='feed.xml')assert.equal((body.match(/<item>/g)||[]).length,1);}
  assert.ok(warnings.length>=2);assert.match(warnings[0],/public_discovery_reserved_slug_skipped/);assert.doesNotMatch(JSON.stringify(warnings),/example.test|synthetic-report|\"about\"/);
+});
+
+test('the public host defaults to /{slug}/ (owner decision D1) and keeps the environment override',async t=>{
+ const dist=await mkdtemp(join(tmpdir(),'public-template-default-'));await writeFile(join(dist,'index.html'),await readFile(new URL('../src/index.template.html',import.meta.url),'utf8'));
+ t.after(()=>rm(dist,{recursive:true,force:true}));
+ const fetchImpl=async url=>Response.json({docs:new URL(url).pathname==='/api/categories'?[]:[raw],totalPages:1});
+ const previous=process.env.PUBLIC_ARTICLE_PATH_TEMPLATE;
+ t.after(()=>{if(previous===undefined)delete process.env.PUBLIC_ARTICLE_PATH_TEMPLATE;else process.env.PUBLIC_ARTICLE_PATH_TEMPLATE=previous;});
+ for(const [env,expected] of [[undefined,'/{slug}/'],['','/{slug}/'],['/{slug}/','/{slug}/'],['/reports/{slug}/','/reports/{slug}/']]) {
+  if(env===undefined)delete process.env.PUBLIC_ARTICLE_PATH_TEMPLATE;else process.env.PUBLIC_ARTICLE_PATH_TEMPLATE=env;
+  const server=createPublicServer({dist,cmsUrl:'https://cms.example.test',siteUrl:'https://public.example.test',fetchImpl});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  try {
+   const response=await fetch('http://127.0.0.1:'+server.address().port+expected.replace('{slug}',raw.slug));assert.equal(response.status,200);
+   assert.ok((await response.text()).includes('<meta name="public-article-path-template" content="'+expected+'">'));
+  } finally {await new Promise(resolve=>server.close(resolve));}
+ }
+ assert.throws(()=>createPublicServer({dist,articlePathTemplate:'/news/{slug}/'}));
+});
+test('root-template reserved slugs mirror the CMS list and never become article paths',()=>{
+ for(const slug of ['admin','api','newsletter','search','wp-admin','about','latest','page','live','feed'])assert.equal(reportPath(slug,'/','/{slug}/'),'',slug);
+ assert.equal(isReservedRootSlug('ADMIN'),true);assert.equal(reportPath('admin','/','/reports/{slug}/'),'/reports/admin/');
+ assert.equal(reportPath('a-real-story','/','/{slug}/'),'/a-real-story/');
 });

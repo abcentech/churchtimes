@@ -16,7 +16,7 @@ import {
   isTrustedPublisherForCategory,
   type UserLike,
 } from '../access/roles'
-import { writeAuditLog } from '../lib/audit'
+import { auditDeleteHook, writeAuditLog } from '../lib/audit'
 import { clampLimit } from '../lib/clampLimit'
 import { advisoryTransactionLock } from '../lib/dbTransaction'
 import { assertExpectedUpdatedAt, captureExpectedUpdatedAt } from '../lib/expectedUpdatedAt'
@@ -121,6 +121,7 @@ export const LiveUpdates: CollectionConfig = {
   ],
   hooks: {
     beforeOperation: [clampLimit, captureExpectedUpdatedAt],
+    afterDelete: [auditDeleteHook('live-updates', (d) => `status ${d.status}`)],
     beforeChange: [
       assertExpectedUpdatedAt('live_updates'),
       async ({ data, originalDoc, operation, req }) => {
