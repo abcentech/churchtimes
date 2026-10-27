@@ -29,7 +29,6 @@ function parseInlineContent(html) {
   if (!html) return [];
 
   const nodes = [];
-  // Tokenize inline tags and plain text
   const regex = /<a\s+[^>]*href=["']([^"']+)["'][^>]*>(.*?)<\/a>|<(strong|b)>(.*?)<\/\3>|<(em|i)>(.*?)<\/\5>|<(u)>(.*?)<\/\7>|<(s|del|strike)>(.*?)<\/\9>|<code>(.*?)<\/code>/gi;
 
   let lastIndex = 0;
@@ -44,7 +43,6 @@ function parseInlineContent(html) {
     }
 
     if (match[1] !== undefined) {
-      // <a> tag
       const href = match[1];
       const linkText = cleanText(match[2]);
       nodes.push({
@@ -53,23 +51,18 @@ function parseInlineContent(html) {
         children: [{ type: 'text', text: linkText || href, format: 0, detail: 0, mode: 'normal', style: '', version: 1 }],
       });
     } else if (match[3] !== undefined) {
-      // strong / b
       const text = cleanText(match[4]);
       if (text) nodes.push({ type: 'text', text, format: 1, detail: 0, mode: 'normal', style: '', version: 1 });
     } else if (match[5] !== undefined) {
-      // em / i
       const text = cleanText(match[6]);
       if (text) nodes.push({ type: 'text', text, format: 2, detail: 0, mode: 'normal', style: '', version: 1 });
     } else if (match[7] !== undefined) {
-      // u
       const text = cleanText(match[8]);
       if (text) nodes.push({ type: 'text', text, format: 8, detail: 0, mode: 'normal', style: '', version: 1 });
     } else if (match[9] !== undefined) {
-      // s / del / strike
       const text = cleanText(match[10]);
       if (text) nodes.push({ type: 'text', text, format: 4, detail: 0, mode: 'normal', style: '', version: 1 });
     } else if (match[11] !== undefined) {
-      // code
       const text = cleanText(match[11]);
       if (text) nodes.push({ type: 'text', text, format: 16, detail: 0, mode: 'normal', style: '', version: 1 });
     }
@@ -91,11 +84,9 @@ function parseInlineContent(html) {
  * Extracts YouTube or video embed URL from iframe or shortcode.
  */
 function extractEmbedUrl(html) {
-  // Check iframe src
   const iframeMatch = html.match(/<iframe\s+[^>]*src=["']([^"']+)["']/i);
   if (iframeMatch) return iframeMatch[1];
 
-  // Check YouTube shortcode e.g. [youtube https://www.youtube.com/watch?v=... ] or [youtube v=...]
   const ytMatch = html.match(/\[youtube\s+(?:https?:\/\/)?([^\s\]]+)\]/i);
   if (ytMatch) {
     const target = ytMatch[1];
@@ -105,14 +96,40 @@ function extractEmbedUrl(html) {
   return null;
 }
 
+const KNOWN_TAGS = new Set([
+  'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'ul', 'ol', 'li',
+  'table', 'tbody', 'thead', 'tfoot', 'tr', 'td', 'th', 'figure', 'figcaption',
+  'img', 'iframe', 'a', 'strong', 'b', 'em', 'i', 'u', 's', 'del', 'strike',
+  'code', 'br', 'span', 'div'
+]);
+
+/**
+ * Checks if HTML string contains unknown or unhandled tags/blocks.
+ */
+function containsUnknownTags(html) {
+  const tagMatches = html.match(/<\/?([a-z0-9-]+)\b[^>]*>/gi);
+  if (!tagMatches) return false;
+  for (const match of tagMatches) {
+    const tagName = match.replace(/^<\/?([a-z0-9-]+)[\s\S]*$/i, '$1').toLowerCase();
+    if (!KNOWN_TAGS.has(tagName) || tagName.includes('-')) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Converts WordPress HTML/Gutenberg string to Payload 3.90.2 Lexical AST.
  */
 export function htmlToLexical(rawHtml) {
   const originalHtml = rawHtml || '';
   const sha256 = calculateSha256(originalHtml);
-  let unknownBlockDetected = false;
+  let unknownBlockDetected = containsUnknownTags(originalHtml);
   const reviewFlags = [];
+
+  if (unknownBlockDetected) {
+    reviewFlags.push('UNKNOWN_BLOCK_WRAP');
+  }
 
   const children = [];
 
@@ -135,8 +152,6 @@ export function htmlToLexical(rawHtml) {
     };
   }
 
-  // Pre-process: split into block-level chunks
-  // Handles Gutenberg comment blocks, headings, paragraphs, lists, quotes, tables, figures, iframes, shortcodes
   const blockRegex = /<!--\s*wp:(?:[a-z0-9\/-]+)\s*({.*?})?\s*-->([\s\S]*?)<!--\s*\/wp:(?:[a-z0-9\/-]+)\s*-->|<h([1-6])\b[^>]*>([\s\S]*?)<\/h\3>|<blockquote\b[^>]*>([\s\S]*?)<\/blockquote>|<(ul|ol)\b[^>]*>([\s\S]*?)<\/\6>|<table\b[^>]*>([\s\S]*?)<\/table>|<figure\b[^>]*>([\s\S]*?)<\/figure>|<iframe\b[^>]*>([\s\S]*?)<\/iframe>|\[youtube\s+[^\]]+\]|<p\b[^>]*>([\s\S]*?)<\/p>/gi;
 
   let lastIndex = 0;
@@ -144,11 +159,9 @@ export function htmlToLexical(rawHtml) {
   let matchedBlocks = 0;
 
   while ((match = blockRegex.exec(originalHtml)) !== null) {
-    // Check if there was unparsed text between blocks
     if (match.index > lastIndex) {
       const leftover = originalHtml.slice(lastIndex, match.index).trim();
       if (leftover && !leftover.startsWith('<!--')) {
-        // Handle unparsed paragraph text
         const paras = leftover.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
         for (const pText of paras) {
           children.push({
@@ -166,7 +179,6 @@ export function htmlToLexical(rawHtml) {
     matchedBlocks++;
 
     if (match[0].startsWith('<!--')) {
-      // Gutenberg block
       const blockContent = match[2];
       const embedUrl = extractEmbedUrl(blockContent);
       if (embedUrl) {
@@ -190,7 +202,6 @@ export function htmlToLexical(rawHtml) {
         }
       }
     } else if (match[3] !== undefined) {
-      // Heading h1-h6
       const tag = `h${match[3]}`;
       const headingText = match[4];
       children.push({
@@ -203,7 +214,6 @@ export function htmlToLexical(rawHtml) {
         children: parseInlineContent(headingText),
       });
     } else if (match[5] !== undefined) {
-      // Blockquote
       const quoteText = match[5];
       children.push({
         type: 'quote',
@@ -214,7 +224,6 @@ export function htmlToLexical(rawHtml) {
         children: parseInlineContent(quoteText),
       });
     } else if (match[6] !== undefined) {
-      // List (ul / ol)
       const listType = match[6].toLowerCase() === 'ol' ? 'number' : 'bullet';
       const listContent = match[7];
       const itemRegex = /<li\b[^>]*>([\s\S]*?)<\/li>/gi;
@@ -244,7 +253,6 @@ export function htmlToLexical(rawHtml) {
         });
       }
     } else if (match[8] !== undefined) {
-      // Table
       const tableHtml = match[8];
       const rowRegex = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi;
       const rows = [];
@@ -276,7 +284,6 @@ export function htmlToLexical(rawHtml) {
         });
       }
     } else if (match[9] !== undefined) {
-      // Figure / Caption / Image
       const figHtml = match[9];
       const imgMatch = figHtml.match(/<img\s+[^>]*src=["']([^"']+)["'][^>]*>/i);
       const captionMatch = figHtml.match(/<figcaption\b[^>]*>([\s\S]*?)<\/figcaption>/i);
@@ -307,7 +314,6 @@ export function htmlToLexical(rawHtml) {
         }
       }
     } else if (match[10] !== undefined || match[0].startsWith('[youtube')) {
-      // Embed iframe or YouTube shortcode (e.g. Legacy Article 20)
       const embedUrl = extractEmbedUrl(match[0]);
       if (embedUrl) {
         children.push({
@@ -318,7 +324,6 @@ export function htmlToLexical(rawHtml) {
         });
       }
     } else if (match[11] !== undefined) {
-      // Paragraph <p>
       const pText = match[11];
       const embedUrl = extractEmbedUrl(pText);
       if (embedUrl && cleanText(pText).trim().length < embedUrl.length + 20) {
@@ -346,7 +351,6 @@ export function htmlToLexical(rawHtml) {
     lastIndex = blockRegex.lastIndex;
   }
 
-  // Handle trailing text or unformatted raw HTML if blockRegex didn't match anything
   if (matchedBlocks === 0 && originalHtml.trim()) {
     const embedUrl = extractEmbedUrl(originalHtml);
     if (embedUrl) {
@@ -357,29 +361,14 @@ export function htmlToLexical(rawHtml) {
         version: 1,
       });
     } else {
-      // Check if raw HTML contains unknown tags or unhandled structures
-      const plain = cleanText(originalHtml).trim();
-      if (plain) {
-        children.push({
-          type: 'paragraph',
-          format: '',
-          indent: 0,
-          version: 1,
-          direction: 'ltr',
-          children: parseInlineContent(originalHtml),
-        });
-      } else {
-        unknownBlockDetected = true;
-        reviewFlags.push('UNKNOWN_BLOCK_WRAP');
-        children.push({
-          type: 'paragraph',
-          format: '',
-          indent: 0,
-          version: 1,
-          direction: 'ltr',
-          children: [{ type: 'text', text: originalHtml, format: 0, detail: 0, mode: 'normal', style: '', version: 1 }],
-        });
-      }
+      children.push({
+        type: 'paragraph',
+        format: '',
+        indent: 0,
+        version: 1,
+        direction: 'ltr',
+        children: parseInlineContent(originalHtml),
+      });
     }
   } else if (lastIndex < originalHtml.length) {
     const leftover = originalHtml.slice(lastIndex).trim();
