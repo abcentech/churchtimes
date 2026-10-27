@@ -8,7 +8,7 @@ import {publicBuildMode,changedPublicFiles} from '../tools/public-build-policy.m
 import {checkPublicSource} from '../tools/check-public-source.mjs';
 const feature={eventName:'pull_request',baseRef:'feat/newsroom-mvp',headRef:'agent/synthetic-feature'};
 test('feature PRs cannot publish generated bundles or change the generated HTML entry',()=>{
- for(const path of ['site/assets/synthetic.js','site/.churchtimes-generated','index.html','.nojekyll','newsletter/confirm/index.html','newsletter/unsubscribe/index.html'])assert.throws(()=>publicBuildMode({...feature,changedFiles:[path]}),/Feature PRs must not change/);
+ for(const path of ['site/assets/synthetic.js','site/.churchtimes-generated','index.html','.nojekyll','OneSignalSDKWorker.js','newsletter/confirm/index.html','newsletter/unsubscribe/index.html'])assert.throws(()=>publicBuildMode({...feature,changedFiles:[path]}),/Feature PRs must not change/);
  assert.equal(publicBuildMode({...feature,changedFiles:['src/index.template.html','src/main.js','public/synthetic.svg']}),'source');
 });
 test('dedicated rebuilds require generated exports, exclude source changes and retain strict checks',()=>{
