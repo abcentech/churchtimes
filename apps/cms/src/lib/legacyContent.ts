@@ -227,7 +227,7 @@ export type LinkOptions = {
    * `to: null` with a fixed reason. When absent, only the plain `/<slug>/` rule below applies. A `to` that is not a
    * root-relative path is never used, so a rewrite can never leave the site origin.
    */
-  classify?: (url: string) => { to: string | null; reason: string }
+  classify?: (url: string) => { to: string | null; reason: string; remove?: boolean }
 }
 
 export type LinkReport = {
@@ -306,6 +306,7 @@ function decideInner(raw: string, opts: LinkOptions, report: LinkReport): Decisi
   if (url.startsWith('/') && opts.classify) {
     if (UNSAFE_URL_CHARS_RE.test(url)) return { action: 'text', reason: 'unsafe characters in link' }
     const r = opts.classify(url)
+    if (r.remove) return { action: 'text', reason: r.reason }
     return r.to !== null && isLocalPath(r.to) && r.to !== url ? { action: 'rewrite', url: r.to } : { action: 'keep' }
   }
   if (url.startsWith('/')) {
@@ -336,6 +337,7 @@ function decideInner(raw: string, opts: LinkOptions, report: LinkReport): Decisi
   const hash = safeHash(parsed.hash)
   if (opts.classify) {
     const r = opts.classify(url)
+    if (r.remove) return { action: 'text', reason: r.reason }
     if (r.to !== null && isLocalPath(r.to)) return { action: 'rewrite', url: r.to }
     return keepUnmapped(r.reason)
   }

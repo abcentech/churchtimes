@@ -6,7 +6,11 @@
 
 export type Tally = Record<string, number>
 
+import { formatLinkFixes } from './linkFixes'
+
 export type ImportReport = {
+  /** Present when `--link-fixes` was given (counts only). */
+  linkFixes?: import('./linkFixes').LinkFixSummary
   mode: 'dry-run' | 'apply'
   update: boolean
   source: {
@@ -210,6 +214,7 @@ export function formatImportReport(rep: ImportReport): string {
     `  images resolved: ${rep.content.imagesResolved}`,
     `  images unresolved (now text): ${rep.content.imagesUnresolved}`,
     `  links unmapped: ${rep.content.linksUnmapped}`,
+    ...(rep.linkFixes ? [formatLinkFixes(rep.linkFixes)] : []),
     `  featured images resolved: ${rep.content.featuredImageResolved}`,
     `  featured images rejected (unsafe or refused by the media rules): ${rep.content.featuredImageRejected}`,
     `  articles without a featured image where one was expected: ${rep.content.featuredImageMissing}`,

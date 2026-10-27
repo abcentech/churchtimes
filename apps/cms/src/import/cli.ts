@@ -9,7 +9,7 @@ import { WxrError } from './wxr'
 /**
  * `npm run import:wxr -- --file <export.xml> [--uploads <folder>] [--manifest <path>] [--apply] [--update]
  *  [--old-host a.test,b.test] [--limit N] [--category-map <tag-map.json outside the repo>]
- *  [--fallback-category <slug>] [--fallback-category-name <name>]
+ *  [--fallback-category <slug>] [--fallback-category-name <name>] [--link-fixes <csv or json outside the repo>]
  *  [--category-mode=strict|rules] [--category-rules <rules.json outside the repo>] [--category-review <csv outside the repo>]`
  *
  * DRY RUN by default (nothing is written). `--apply` writes and needs a rollback manifest path, given by `--manifest`
@@ -35,7 +35,7 @@ export function parseImportArgs(argv: readonly string[], env: Record<string, str
     if (m !== 'strict' && m !== 'rules') return null
     categoryMode = m
   }
-  for (const name of ['--category-rules', '--category-review', '--uploads', '--manifest', '--old-host', '--limit', '--category-map', '--fallback-category', '--fallback-category-name']) {
+  for (const name of ['--category-rules', '--category-review', '--uploads', '--manifest', '--old-host', '--limit', '--category-map', '--fallback-category', '--fallback-category-name', '--link-fixes']) {
     if (argv.includes(name) && !value(name)) return null
   }
   const limitRaw = value('--limit')
@@ -60,6 +60,7 @@ export function parseImportArgs(argv: readonly string[], env: Record<string, str
     dryRun: !argv.includes('--apply'),
     update: argv.includes('--update') || argv.includes('--force-update'),
     forceUpdate: argv.includes('--force-update'),
+    linkFixesFile: value('--link-fixes') ?? env.IMPORT_LINK_FIXES,
     oldHosts: (value('--old-host') ?? '').split(',').map((h) => h.trim()).filter(Boolean),
     limit,
     categoryMapFile: value('--category-map') ?? env.IMPORT_CATEGORY_MAP,

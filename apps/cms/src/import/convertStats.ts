@@ -1,6 +1,8 @@
 import { articlePath as buildArticlePath, resolveArticlePathTemplate } from '../lib/redirectPaths'
 import { extractYoutubeId, HtmlConversionError, htmlToLexical, type ConversionReport } from './htmlToLexical'
-import { KNOWN_LEGACY_HOSTS, LinkContextBuilder, linkClassifyHook } from './linkClassify'
+import { LinkContextBuilder, linkClassifyHook } from './linkClassify'
+import { createLinkFixer, type LinkFixer, type LinkFixes, type LinkFixSummary } from './linkFixes'
+import { resolveSiteHosts } from './linkSiteHosts'
 import type { WxrRecord } from './wxr'
 
 /**
@@ -134,6 +136,8 @@ function fold(stats: ConvertStats, r: ConversionReport) {
 
 export type ConvertOptions = {
   oldHosts?: readonly string[]
+  /** Parsed link fixes (`readLinkFixesFile`); the counts come back as `linkFixes` in the result. */
+  linkFixes?: LinkFixes
   /** true: every image counts as resolved, so only the other losses show. Default: all unresolved (no uploads folder). */
   assumeImages?: boolean
 }
@@ -142,12 +146,13 @@ export type ConvertOptions = {
  * Two passes over `open()`: the first builds the old-slug map (identity for published, unprotected posts), the second
  * converts every published post. `open` must return a fresh record stream each call.
  */
-export async function convertWxrStats(open: () => AsyncIterable<WxrRecord>, options: ConvertOptions = {}): Promise<{ stats: ConvertStats; detail: ConvertDetail }> {
+export async function convertWxrStats(open: () => AsyncIterable<WxrRecord>, options: ConvertOptions = {}): Promise<{ stats: ConvertStats; detail: ConvertDetail; linkFixes?: LinkFixSummary }> {
   const stats = emptyStats()
   const detail: ConvertDetail = { textShrink: [], failed: [], emptyOutput: [], inputOverCap: [], maxDepthHit: [] }
   const slugMap: Record<string, string> = {}
   const builder = new LinkContextBuilder()
-  const hosts = new Set<string>([...KNOWN_LEGACY_HOSTS, ...(options.oldHosts ?? [])].map((h) => h.toLowerCase()))
+  const hostCfg = resolveSiteHosts(process.env)
+  const hosts = new Set<string>([hostCfg.primary, ...hostCfg.legacy, ...(options.oldHosts ?? [])].map((h) => h.toLowerCase()))
   for await (const rec of open()) {
     builder.add(rec)
     if (rec.record === 'site') {
@@ -164,7 +169,9 @@ export async function convertWxrStats(open: () => AsyncIterable<WxrRecord>, opti
   }
   const template = resolveArticlePathTemplate(process.env)
   const articlePath = (slug: string) => buildArticlePath(template, slug)
-  const classify = linkClassifyHook(builder.build({ articlePath, slugMap, extraHosts: [...hosts] }))
+  const linkCtx = builder.build({ articlePath, slugMap, extraHosts: [...hosts], primaryHost: hostCfg.primary, legacyHosts: hostCfg.legacy })
+  const fixer: LinkFixer | undefined = options.linkFixes ? createLinkFixer(options.linkFixes, linkCtx) : undefined
+  const classify = linkClassifyHook(linkCtx, fixer)
   for await (const rec of open()) {
     if (rec.record !== 'item' || rec.item.kind !== 'post' || rec.item.status !== 'publish') continue
     const item = rec.item
@@ -209,7 +216,7 @@ export async function convertWxrStats(open: () => AsyncIterable<WxrRecord>, opti
     stats.slowestPostMs = Math.max(stats.slowestPostMs, Math.round(ms))
     if (ms > 1000) stats.postsOver1s++
   }
-  return { stats, detail }
+  return { stats, detail, linkFixes: fixer?.summary() }
 }
 
 export function formatConvertStats(s: ConvertStats): string {
