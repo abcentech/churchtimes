@@ -149,9 +149,25 @@ Test files are in `tests/integration/security.test.ts` (S) and `tests/unit/*` (U
 16. **Restoring versions** is audited but is a whole-document overwrite by `admin` / `editor-in-chief`; it can remove corrections entries that
     were added after the restored version (the audit log keeps the `article.restore` entry; `correction.amend` details hold prior values only
     for normal PATCH amendments).
-17. **Request-size limits rely on `Content-Length`.** `src/proxy.ts` rejects declared sizes; for chunked uploads the reverse proxy limit (12 MB) and
+17. **Request-size limits rely on `Content-Length`.** `src/proxy.ts` rejects declared sizes; for chunked uploads the reverse proxy limit (28 MB) and
     Next's body buffer limit (`experimental.proxyClientMaxBodySize: 12mb`, bodies beyond it are truncated, not rejected) are the backstops. The 411 rule
     applies to `/api/users/*` only.
+18. **Security audit follow-ups (fixed):** per-IP rate-limit keys use the IPv4 address or the /64 of an IPv6 address (IPv4-mapped IPv6 counts as
+    IPv4), and a full limiter never evicts a blocked bucket (new keys fail closed when every bucket is blocked); uploads are re-encoded through
+    sharp so stored originals carry no EXIF / GPS (orientation applied, ICC kept) and are refused above 40 megapixels; deletes of users, submissions,
+    live updates, live events, categories and contact messages are audited without personal data, user audit summaries carry ids not e-mail
+    addresses, and `audit-logs.actorIdSnapshot` keeps the actor id when the user row is later deleted (`actor` stays ON DELETE SET NULL);
+    Lexical link nodes are limited to http, https, mailto, relative paths and fragments; the preview payload no longer exposes `legacyPath` or
+    `adCampaignCreatives`; free-text fields have length caps (byline 200, media caption 1000 / credit 300, reviewer notes 5000, category
+    description 1000).
+19. **Known limitation (audit L3): `/admin` is reachable by anyone who can reach the host.** Login is rate limited and locked out, but the panel is
+    exposed. Mitigation: restrict `/admin` by IP allowlist at the reverse proxy or put it behind Cloudflare Access.
+20. **Known limitation (audit L4): every editor role, section editors included, can read all submissions** (names, e-mail, phone, tip text; see
+    the Submissions collection note). Mitigation: restrict contact fields to editor-in-chief / admin via field access, or split the triage view,
+    once the product owner accepts the workflow cost.
+21. **Known limitation (audit L6): `CLIENT_IP_HEADER` is trusted blindly.** When set (`cf-connecting-ip`, `x-real-ip`), any client that can reach
+    the app directly can choose its rate-limit bucket. Mitigation: firewall the app port so only the proxy can connect, and make the proxy
+    overwrite the header on every request.
 
 ## 5. Review fixes (contract v1.2)
 
@@ -164,7 +180,7 @@ Each integration test was written to fail first against the previous code.
 | 2 | `/api/articles/versions` leaked other users' drafts and review notes | `access.readVersions` mirrors the read rule on `version.status` / `version.author` / `version.category`; admin/EIC everything; anonymous 403 (`src/collections/Articles.ts`) | R "2. article versions follow the article read rule" (2 tests, incl. by-id and anonymous 403) |
 | 3 | Live updates approved out of order never reached pollers | `publishSequence` stamped when an update becomes approved (per-event advisory lock, unique `(event, publishSequence)`); the public feed filters/sorts/returns it as `sequence` (`LiveUpdates.ts`, `liveEventUpdates.ts`, migration back-fill) | R "3. live updates are delivered in publication order" (4 tests, incl. concurrent approvals); updated `live.test.ts` |
 | 4 | Spoofable client IP | `getClientIp`: rightmost-by-hops of `X-Forwarded-For` (`TRUST_PROXY_HOPS`), optional `CLIENT_IP_HEADER`, IP syntax validated; `TRUST_PROXY=true` and the two new variables validated at production startup (`rateLimit.ts`, `securityConfig.ts`) | U `rateLimit.test.ts` (5 getClientIp tests), U `securityConfig.test.ts` (2 tests), R "4. client IP for rate limiting" |
-| 5 | No request body limits | `src/proxy.ts` (Next 16 proxy, the renamed middleware) + `lib/requestLimits.ts`: 413 above 1 MB (11 MB for `/api/media`), 411 for length-less writes to `/api/users/*`, 400 for a bad `Content-Length`; `proxyClientMaxBodySize: 12mb`; proxy snippets in operations §4.4 | U `requestLimits.test.ts` (6 tests); manual `next start` check (see report) |
+| 5 | No request body limits | `src/proxy.ts` (Next 16 proxy, the renamed middleware) + `lib/requestLimits.ts`: 413 above 1 MB (11 MB for `/api/media` anonymous, 26 MB for verified staff), 411 for length-less writes to `/api/users/*`, 400 for a bad `Content-Length`; `proxyClientMaxBodySize: 27mb`; proxy snippets in operations §4.4 | U `requestLimits.test.ts` (6 tests); manual `next start` check (see report) |
 | 6 | `?pagination=false` bypassed the 100 clamp | shared `lib/clampLimit.ts` `beforeOperation` hook on all eight collections: pagination forced on, limit 1..100 (`find` and `findVersions` both report operation `read`; the operation re-reads `args` after the hook) | U `clampLimit.test.ts` (4 tests), R "6. pagination=false is clamped on every collection" (4 tests) |
 | 7 | Corrections could be rewritten or erased | `workflow/corrections.ts` `reconcileCorrections`: prefix match on `id`/`note`/`correctedAt`, server-set `correctedAt`, 400 otherwise; admin/EIC may amend (`correction.amend` audit); needs content-edit rights | U `corrections.test.ts` (5 tests), R "7. corrections are append-only" (5 tests) |
 | 8 | Unchanged content flagged as a material edit | `lib/deepEqual.ts` (key-sorted canonical JSON) for title/excerpt/content/featuredImage/schedule comparisons | U `deepEqual.test.ts` (6 tests), R "8. canonical comparison of content" (2 tests) |
@@ -181,3 +197,58 @@ strips client input before `beforeChange`, which can still assign the value; `re
 `resetLoginAttempts` are exported; `initTransaction`/`commitTransaction`/`killTransaction` are exported and `payload.create/update(..., { req })` joins
 `req.transactionID`; the drizzle transaction handle is `payload.db.sessions[transactionID].db`; Next 16 renamed `middleware.ts` to `proxy.ts` (Node runtime) and
 buffers/truncates request bodies at `experimental.proxyClientMaxBodySize` (default 10 MB) when a proxy file exists.
+
+## 6. Automated security regression suite (`tests/security`)
+
+`npm run test:security` (vitest project `security`, CI job `security` in `.github/workflows/cms.yml`, part of the `verify` aggregate).
+It boots Payload against PostgreSQL exactly like the integration project (embedded Postgres locally, `TEST_DATABASE_URL` in CI) and
+sends every request through the two layers the running app has: `src/proxy.ts` (size, shape and filter guards, `Vary: Origin`) and the
+real Payload REST route handlers (`tests/security/harness.ts` `send`). Nothing is stubbed except the Turnstile/mail transports when a
+test installs them. Response headers that come from `next.config.mjs` are checked by loading that config (dev and production mode).
+
+| File | What it encodes |
+| --- | --- |
+| `routeMatrix.ts` | The anonymous access matrix: every collection (find, get, count, create, update, delete, versions), every custom/built-in endpoint and every Next route file, with the statuses an anonymous caller may get. |
+| `routes.test.ts` | Route enumeration (a route without a matrix entry FAILS, as does a stale entry), the matrix itself, error hygiene (no stack, SQL, paths, `Server`/`X-Powered-By`), verb tampering / method override, GraphQL and playground disabled. |
+| `content.test.ts` | Published-only invariants (list, detail, count, versions, filters, search, live updates, legacy comments), forbidden keys and secret values in every anonymous response, filter oracles on unreadable fields, preview-token misuse, media privacy and Range, upload polyglots (SVG / HTML / PHP), open redirect through the public redirect list. |
+| `transport.test.ts` | Security headers (HSTS in production mode, nosniff, frame-ancestors, Referrer-Policy), CORS/Origin/Vary, CSRF with a foreign Origin and cookie, 429 + `Retry-After` on login, forgot/reset-password, submissions, contact, newsletter and search, account enumeration and login timing, password policy, cookie flags and session fixation, JWT tampering, first-register, body-size and chunked-body limits, slug abuse (unicode, NUL, reserved), mass assignment / role escalation. |
+
+### Adding a route (what to do when the suite fails with "missing from routeMatrix.ts")
+
+1. New **collection**: add a row to `collectionMatrix` (`staffOnly` unless anonymous reads are intended; then use `publicRead` and add the
+   collection's public responses to the walk in `content.test.ts` "provenance, legacy, e-mail and staff-only fields ...").
+2. New **custom endpoint** (global or on a collection): add `'METHOD /api/<path>'` to `endpointMatrix` with the statuses an anonymous
+   request gets for a bodiless or `{}` request. Mark `public: true` if it answers anonymous callers by design and add its URL to the
+   anonymous walk in `content.test.ts`; if it takes user input add it to the CORS, rate-limit and malformed-body loops in `transport.test.ts`.
+3. New **Next route file** under `src/app/(payload)/api`: add it to `routeFileMatrix`.
+4. A new anonymous response field that must stay private goes into `FORBIDDEN_KEYS` in `harness.ts`. `legacyId`/`legacyUrl` are public by
+   contract (`LEGACY_PUBLIC_BY_CONTRACT`); every other key containing "legacy" is forbidden.
+
+Never loosen an entry to make a test pass: a 200 where the matrix says 401/403 is a leak until proven otherwise.
+
+### Findings from the first run (fixed in the same change)
+
+- **Login timing oracle (medium)**: a wrong password for an existing account took ~1.4 s (PBKDF2, 600k iterations) but an unknown e-mail answered in ~10 ms, so response time revealed which staff addresses exist. `src/lib/loginTiming.ts` now runs the same PBKDF2 against a throw-away hash for unknown e-mails.
+- `NUL` byte (`%00`) in any API URL, a non-numeric id on a numeric-id collection (`/api/articles/not-a-number`) and
+  `POST /api/users/verify/:token` (verification is not enabled) all ended in a generic 500 from PostgreSQL or Payload. They are now
+  answered 400/404 by `checkRequestShape` in `src/lib/queryGuards.ts`, applied by `src/proxy.ts`.
+
+### Also fixed after the first run
+
+- **F-1**: an out-of-range enum filter (`?where[status][equals]=bogus`) was an anonymous 500. `checkStatusFilters` (`queryGuards.ts`, applied by `proxy.ts`) now answers 400; a security test checks its value list against every `status` select in payload.config so staff filters are never refused by mistake.
+- **F-2**: a NUL byte in an uploaded file name (busboy "Malformed part header") was a 500. `proxy.ts` now inspects the multipart part headers and answers 400.
+- The preview endpoint stripping `provenance` and legacy fields comes from PR #104; the probe is a normal test now. The chunked-body 411 and the verified-session-only large media allowance from #104 are probed in `transport.test.ts`.
+
+### Open findings
+
+None open, apart from the informational item below.
+- **Info**: `legacyId` and `legacyUrl` on published articles are returned to anonymous callers (documented contract in
+  `docs/api-contracts.md`; the old URL is public anyway). Pinned by a test so removing or exposing more is a deliberate decision.
+
+## 7. Newsroom CSP and archive link review
+
+The staff newsroom (`apps/newsroom`) is a static single-page app. Two controls limit what hostile content recovered from the compromised old site can do there.
+
+**Content-Security-Policy.** `index.html` carries a CSP meta tag, filled in at build time (`apps/newsroom/csp.js`, injected by `vite.config.js`): `default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'`, `connect-src 'self'` plus the origin of `VITE_CMS_URL` (nothing extra when the CMS is proxied under `/api`), `img-src 'self' data: https:`, and `style-src 'self' 'unsafe-inline'` (the views set inline style attributes; scripts stay locked to the app's own files, with no inline script and no eval). The dev server additionally allows its HMR websocket and the dev CMS origin; production builds do not. `frame-ancestors` is ignored in a meta tag, so the web server that serves the newsroom must send it as a header (`Content-Security-Policy: frame-ancestors 'none'`, plus `X-Frame-Options: DENY`). Tests: `apps/newsroom/test/archive-review.test.js` (policy builder, no inline script in `index.html`) and Playwright cases in `tests/newsroom.spec.js` and `tests/newsroom-security.spec.js` (the app loads under the policy with no violations).
+
+**Archive link review.** A recovered article body can contain hidden outbound links. In Archive review, the screen lists every link in the body under a collapsible "Links in this article (N)": the real address as plain, non-clickable text with its host highlighted, a flag on hosts that are not known (`VITE_KNOWN_LINK_HOSTS`, comma separated, subdomains included; the public site host is always known), and a count of links whose visible text names a different address than the target. When N is above zero the reviewer must tick "I checked the links" before Approve is enabled. This is a reviewer aid in the browser; the CMS still enforces who may approve, and approval does not publish.

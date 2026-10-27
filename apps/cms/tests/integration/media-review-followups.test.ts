@@ -69,6 +69,9 @@ describe('R1 preview token: media of the previewed article only', () => {
     // Without a token the draft's images are private.
     for (const name of [...featured.files, ...body.files]) expect([403, 404]).toContain((await getFile(`/api/media/file/${name}`)).status)
 
+    // L2: staff-only media fields must not leak through the preview (it reads with overrideAccess).
+    await f.payload.update({ collection: 'media', id: featured.id, data: { legacyPath: `2023/10/${runId}-secret.png` }, overrideAccess: true })
+
     const minted = (await api('POST', `/api/articles/${art.id}/preview-token`, { token: f.tokens.reporter })).json
     const token = minted.token as string
     const enc = encodeURIComponent(token)
@@ -76,9 +79,10 @@ describe('R1 preview token: media of the previewed article only', () => {
     expect(preview.status).toBe(200)
 
     // No staff-only data in the preview payload.
-    for (const key of ['bodyMedia', 'publishedAsFeatured', 'publishedInBody', 'liveUpdateImages', 'uploadedBy', 'reviewNotes']) {
+    for (const key of ['bodyMedia', 'publishedAsFeatured', 'publishedInBody', 'liveUpdateImages', 'uploadedBy', 'reviewNotes', 'legacyPath', 'adCampaignCreatives']) {
       expect(preview.text, key).not.toContain(`"${key}"`)
     }
+    expect(preview.text).not.toContain('secret.png')
 
     // Every media url (featured image, its size variants, the body image) carries the token and loads.
     const doc = preview.json.doc
