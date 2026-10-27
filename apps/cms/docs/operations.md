@@ -232,7 +232,7 @@ cms.example.org {
 	encode zstd gzip
 
 	request_body {
-		max_size 12MB
+		max_size 28MB
 	}
 
 	header -Server
@@ -428,9 +428,9 @@ Plan rotations for a quiet period.
 ### 4.4 Reverse proxy: TLS, body limits, client address, compression
 
 Payload's core routes read request bodies without a size limit, and the rate limiters trust whatever client address
-the proxy reports. So the proxy must (1) cap request bodies at **12 MB** (the largest legitimate request is an 11 MB
-media upload; everything else is under 1 MB and the app itself rejects `Content-Length` above 1 MB with `413`, above 11 MB
-on `/api/media`, see `src/proxy.ts`), (2) **overwrite** the client-address headers instead of passing client values
+the proxy reports. So the proxy must (1) cap request bodies at **28 MB** (the largest legitimate request is a staff image upload of up to the 25 MB
+image cap + 1 MB framing = 26 MB, plus 2 MB headroom; everything else is under 1 MB and the app itself rejects `Content-Length` above 1 MB with `413`, above 11 MB
+on `/api/media` for anonymous callers and above the staff limit (26 MB by default) for signed-in staff, see `src/proxy.ts`), (2) **overwrite** the client-address headers instead of passing client values
 through, (3) terminate TLS, and (4) compress text.
 
 **Layer the limits per location.** Next.js reads a request body (up to `proxyClientMaxBodySize`) BEFORE the app can look at it, so the app's checks (`src/proxy.ts`) are a second layer, not the first. Configure the reverse proxy like this: `client_max_body_size 1m;` globally (Caddy: `request_body { max_size 1MB }`), and the large value ONLY on the `/api/media` location, together with a request-rate limit there (nginx `limit_req`, Caddy rate-limit module) and a short `client_body_timeout`:
@@ -438,15 +438,17 @@ through, (3) terminate TLS, and (4) compress text.
 ```nginx
 client_max_body_size 1m;
 location /api/media {
-    client_max_body_size 12m;      # raise to the configured staff limit + 2 MB only if you enable larger uploads (below)
+    client_max_body_size 28m;      # default staff limit (25 MB image cap + 1 MB) + 2 MB; raise it further only if you enable larger uploads (below)
     limit_req zone=media burst=5 nodelay;
     proxy_pass http://127.0.0.1:3000;
 }
 ```
 
-The app refuses (with `411`) every write to `/api/*` that uses a chunked body, and refuses `Content-Length` above 1 MB (above 11 MB on `/api/media`). Defaults: 11 MB for uploads, and Next's body buffer is 12 MB.
+The app refuses (with `411`) every write to `/api/*` that uses a chunked body, and refuses `Content-Length` above 1 MB (above 11 MB on `/api/media`). Defaults: 11 MB for anonymous uploads, 26 MB for signed-in staff with a verified session (the 25 MB image cap + 1 MB), and Next's body buffer is 27 MB.
 
-**Larger staff uploads (audio/video, opt-in).** Set `MEDIA_AV_MAX_MB=N` (per-file audio/video cap, default 100 when unset, maximum 500; setting it explicitly also raises the upload request limit): a caller with a VERIFIED session (a genuine, unexpired session token; a forged `Authorization` or cookie header does not count) may then send max(10, N) + 1 MB to `POST /api/media`, everyone else stays at 11 MB. Optional explicit override: `MEDIA_UPLOAD_MAX_MB` (11 to 500) replaces that value (precedence: `MEDIA_UPLOAD_MAX_MB`, then `MEDIA_AV_MAX_MB`, then the 11 MB default). `src/lib/requestLimits.ts` and `next.config.mjs` (Next's buffer = limit + 1 MB, applies to every `/api` route, hence small by default) both follow it: rebuild and restart after changing it. Raise the `/api/media` location in the reverse proxy to the same limit + 2 MB; leave every other location at 1 MB. Without the proxy change the proxy's own 413 wins.
+**Image size cap.** `MEDIA_IMAGE_MAX_MB` (whole MB, default 25, 1 to 50) is the per-image cap of the Media collection, the legacy importer and `import:uploads-check` (`too-large`); the 40 megapixel decode limit and the sharp re-save are unchanged. It also sets the staff request limit for `/api/media` (below) and Next's body buffer (limit + 1 MB framing + 1 MB). Measured: re-saving a 40 MP, ~23 MB JPEG peaks at about 680 MB RSS (see `tests/unit/imageCap.test.ts`); allow ~1 GB of free memory per concurrent large upload on a small VPS. Rebuild and restart after changing it, and keep the reverse-proxy `/api/media` limit at staff limit + 2 MB (`MEDIA_IMAGE_MAX_MB` + 3 MB when it is the largest cap).
+
+**Larger staff uploads (audio/video, opt-in).** Set `MEDIA_AV_MAX_MB=N` (per-file audio/video cap, default 100 when unset, maximum 500; setting it explicitly also raises the upload request limit): a caller with a VERIFIED session (a genuine, unexpired session token; a forged `Authorization` or cookie header does not count) may then send max(image cap, N) + 1 MB to `POST /api/media`, everyone else stays at 11 MB. Optional explicit override: `MEDIA_UPLOAD_MAX_MB` (11 to 500) replaces that value (precedence: `MEDIA_UPLOAD_MAX_MB`, then `MEDIA_AV_MAX_MB`, then max(image cap, explicit AV cap)). `src/lib/requestLimits.ts` and `next.config.mjs` (Next's buffer = limit + 1 MB, applies to every `/api` route, 27 MB by default) both follow it: rebuild and restart after changing it. Raise the `/api/media` location in the reverse proxy to the same limit + 2 MB; leave every other location at 1 MB. Without the proxy change the proxy's own 413 wins.
 
 Pick the block that matches your setup and set `TRUST_PROXY=true` (required) plus the matching variables:
 
@@ -464,7 +466,7 @@ cms.example.org {
 
 	# Reject oversized bodies before they reach the app (413).
 	request_body {
-		max_size 12MB
+		max_size 28MB
 	}
 
 	# HSTS is sent by the application itself in production (next.config.mjs); do not add a second one here.
@@ -507,7 +509,7 @@ server {
 
     # Largest accepted request body (413 above it). Keep request buffering on (the default): nginx then
     # always forwards a Content-Length, which the app requires on /api/users writes (411 otherwise).
-    client_max_body_size 12m;
+    client_max_body_size 28m;
     client_body_timeout 30s;
     proxy_request_buffering on;
 
@@ -541,8 +543,8 @@ server {
 Verify after deploying (from outside the server):
 
 ```sh
-# 12 MB limit at the proxy (413 from Caddy/nginx), 1 MB limit at the app for JSON
-head -c 13000000 /dev/zero | curl -s -o /dev/null -w '%{http_code}\n' -X POST https://cms.example.org/api/media --data-binary @-
+# 28 MB limit at the proxy (413 from Caddy/nginx), 1 MB limit at the app for JSON
+head -c 30000000 /dev/zero | curl -s -o /dev/null -w '%{http_code}\n' -X POST https://cms.example.org/api/media --data-binary @-
 head -c 1100000  /dev/zero | curl -s -o /dev/null -w '%{http_code}\n' -X POST https://cms.example.org/api/articles -H 'Content-Type: application/json' --data-binary @-
 # Forged X-Forwarded-For must not change the rate-limit bucket: after the limit, a fresh forged value is still 429
 for i in $(seq 1 12); do curl -s -o /dev/null -w '%{http_code} ' -X POST https://cms.example.org/api/users/login \
@@ -562,7 +564,7 @@ Remember that the in-memory counters are per process and reset on restart (§8).
 
 ## 5. Media storage
 
-- Uploads go to `/app/media` in the container, bind-mounted from `/srv/churchtimes/media` on the host in the production compose (`apps/cms/media` in the systemd setup; `jpeg`, `png`, `webp`, max 10 MB, see `api-contracts.md` §3).
+- Uploads go to `/app/media` in the container, bind-mounted from `/srv/churchtimes/media` on the host in the production compose (`apps/cms/media` in the systemd setup; `jpeg`, `png`, `webp`, max 25 MB (`MEDIA_IMAGE_MAX_MB`), see `api-contracts.md` §3).
 - The directory must be writable by the app user (uid/gid 1000 for the container) and excluded from git.
 - Back it up with the procedure in §6 (`backup.sh` includes it; run it as root, since the directory is `750` owned by uid 1000). Media is not in the database dump.
 
@@ -866,7 +868,7 @@ Confirm each item before go-live and again after any change to the server:
 - [ ] `TRUST_PROXY=true` (the app refuses to start in production without it), the app is reachable exclusively through the reverse proxy,
       and the proxy **overwrites** `X-Forwarded-For` / `X-Real-IP` (§4.4). `TRUST_PROXY_HOPS` matches the number of proxies; `CLIENT_IP_HEADER`
       is set only when the proxy (or Cloudflare, with the origin firewalled to its ranges) always supplies it.
-- [ ] The proxy caps request bodies at 12 MB (`request_body max_size 12MB` / `client_max_body_size 12m`); the §4.4 verification commands return
+- [ ] The proxy caps request bodies at 28 MB (`request_body max_size 28MB` / `client_max_body_size 28m`; image cap 25 MB + 3 MB); the §4.4 verification commands return
       `413` / `429` as described.
 - [ ] `npm run migrate` has applied `review_fixes` (adds `media.uploaded_by_id`, `live_updates.publish_sequence`, back-fills it for approved updates).
 - [ ] `NODE_ENV=production` and the service starts (startup validation passes: https `CMS_PUBLIC_URL`, no `*`/http origins).

@@ -19,15 +19,20 @@ describe('mediaBodyLimitBytes (anonymous vs verified session, configured sizes o
     expect(mediaBodyLimitBytes({ MEDIA_UPLOAD_MAX_MB: '400', MEDIA_AV_MAX_MB: '400' })).toBe(MAX_MEDIA_BODY_BYTES)
   })
 
-  it('a verified session stays at 11 MB unless a larger size is configured', () => {
-    expect(mediaBodyLimitBytes({}, true)).toBe(MAX_MEDIA_BODY_BYTES)
-    expect(mediaBodyLimitBytes({ MEDIA_AV_MAX_MB: '' }, true)).toBe(MAX_MEDIA_BODY_BYTES)
-    expect(mediaBodyLimitBytes({ MEDIA_AV_MAX_MB: 'abc' }, true)).toBe(MAX_MEDIA_BODY_BYTES)
+  it('a verified session follows the image cap (default 25 MB, so 26 MB) when no larger size is configured', () => {
+    expect(mediaBodyLimitBytes({}, true)).toBe(26 * MB)
+    expect(mediaBodyLimitBytes({ MEDIA_AV_MAX_MB: '' }, true)).toBe(26 * MB)
+    expect(mediaBodyLimitBytes({ MEDIA_AV_MAX_MB: 'abc' }, true)).toBe(26 * MB)
+    expect(mediaBodyLimitBytes({ MEDIA_IMAGE_MAX_MB: '40' }, true)).toBe(41 * MB)
+    expect(mediaBodyLimitBytes({ MEDIA_IMAGE_MAX_MB: '999' }, true)).toBe(51 * MB)
+    expect(mediaBodyLimitBytes({ MEDIA_IMAGE_MAX_MB: '5' }, true)).toBe(MAX_MEDIA_BODY_BYTES)
+    // anonymous stays at 11 MB whatever the image cap is
+    expect(mediaBodyLimitBytes({ MEDIA_IMAGE_MAX_MB: '50' }, false)).toBe(MAX_MEDIA_BODY_BYTES)
   })
 
-  it('a verified session: MEDIA_AV_MAX_MB (explicit) sets max(10, it) + 1 MB; MEDIA_UPLOAD_MAX_MB (11-500) overrides it', () => {
+  it('a verified session: MEDIA_AV_MAX_MB (explicit) sets max(image cap, it) + 1 MB; MEDIA_UPLOAD_MAX_MB (11-500) overrides it', () => {
     expect(mediaBodyLimitBytes({ MEDIA_AV_MAX_MB: '40' }, true)).toBe(41 * MB)
-    expect(mediaBodyLimitBytes({ MEDIA_AV_MAX_MB: '5' }, true)).toBe(11 * MB)
+    expect(mediaBodyLimitBytes({ MEDIA_AV_MAX_MB: '5' }, true)).toBe(26 * MB)
     expect(mediaBodyLimitBytes({ MEDIA_AV_MAX_MB: '9999' }, true)).toBe(501 * MB)
     expect(mediaBodyLimitBytes({ MEDIA_UPLOAD_MAX_MB: '200', MEDIA_AV_MAX_MB: '40' }, true)).toBe(201 * MB)
     expect(mediaBodyLimitBytes({ MEDIA_UPLOAD_MAX_MB: '9999' }, true)).toBe(501 * MB)
