@@ -13,6 +13,7 @@ function ensureContainer() {
       toastContainer.className = 'toast-container';
       toastContainer.setAttribute('role', 'region');
       toastContainer.setAttribute('aria-label', 'System notifications');
+      toastContainer.setAttribute('aria-live', 'polite');
       document.body.appendChild(toastContainer);
     }
   }
@@ -23,8 +24,6 @@ export function showToast(message, type = 'info', duration = 3500) {
   const container = ensureContainer();
   const toast = document.createElement('div');
   toast.className = `toast toast-${type}`;
-  toast.setAttribute('role', 'status');
-  toast.setAttribute('aria-live', 'polite');
   toast.textContent = message;
 
   container.appendChild(toast);
