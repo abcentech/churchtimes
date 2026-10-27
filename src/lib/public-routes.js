@@ -8,7 +8,7 @@ export const DEFAULT_ARTICLE_PATH_TEMPLATE='/reports/{slug}/';
 export const HOST_ARTICLE_PATH_TEMPLATE='/{slug}/';
 export function articlePathTemplate(value,fallback=DEFAULT_ARTICLE_PATH_TEMPLATE) {
   const configured=value ?? (typeof document!=='undefined' ? document.querySelector('meta[name="public-article-path-template"]')?.content : undefined);
-  const template=typeof configured==='string' && configured.trim() ? configured.trim() : fallback;
+  const template=configured==null || (typeof configured==='string'&&!configured.trim()) ? fallback : typeof configured==='string'?configured.trim():configured;
   if(!['/{slug}/',DEFAULT_ARTICLE_PATH_TEMPLATE].includes(template))throw new Error('Article path template must be /{slug}/ or /reports/{slug}/');
   return template;
 }
