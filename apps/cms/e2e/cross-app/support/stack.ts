@@ -19,6 +19,7 @@ import EmbeddedPostgres from 'embedded-postgres'
 
 import { startRecorder, type Recorder } from '../../browser/support/recorder'
 import { webkitHttpCookieCompat } from './cookie-compat'
+import { resolveArticlePathConfig, type ArticlePathConfig } from './articlePath'
 import { startPublicHost, startStaticServer, type StaticServer } from './static-server'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -53,7 +54,7 @@ export const TURNSTILE_TEST_SITE_KEY = '1x00000000000000000000AA'
 const TURNSTILE_TEST_SECRET = '1x0000000000000000000000000000000AA'
 export const TURNSTILE_ACTION = 'submit-story'
 
-export type XappConfig = {
+export type XappConfig = ArticlePathConfig & {
   cmsUrl: string
   newsroomOrigin: string
   publicOrigin: string
@@ -166,6 +167,7 @@ export async function startStack(): Promise<XappConfig> {
   await pg.start()
   await pg.createDatabase('ct_xapp')
 
+  const articlePaths = resolveArticlePathConfig(repoRoot)
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     NODE_ENV: 'production',
@@ -181,6 +183,7 @@ export async function startStack(): Promise<XappConfig> {
     TURNSTILE_EXPECTED_ACTION: '',
     TURNSTILE_ALLOWED_HOSTNAMES: '',
     CMS_PUBLIC_URL: HOSTS.cms,
+    PUBLIC_ARTICLE_PATH_TEMPLATE: articlePaths.articlePathTemplate,
     CMS_CORS_ORIGINS: `${HOSTS.newsroom},${HOSTS.public}`,
     CMS_CSRF_ORIGINS: `${HOSTS.newsroom},${HOSTS.public}`,
     PUBLIC_SUBMISSION_ORIGINS: `${HOSTS.newsroom},${HOSTS.public}`,
@@ -293,10 +296,10 @@ export async function startStack(): Promise<XappConfig> {
     log('NEWSROOM BUILD FAILED (newsroom specs will fail):', newsroomBuildError.split('\n').slice(0, 6).join(' | '))
   }
 
-  // The public site runs on its real host (tools/serve-public.mjs). Its server-side CMS reads use the loopback name, because
-  // Node does not resolve *.localhost subdomains the way Chromium's --host-resolver-rules does here.
+  // The public site runs on its real host (tools/serve-public.mjs). Its server-side CMS reads are configured with the CMS's public origin
+  // (so media URLs match it, like production) and transported over loopback (see startPublicHost).
   statics = [
-    await startPublicHost(repoRoot, publicDir, PORTS.public, `http://localhost:${PORTS.cms}`),
+    await startPublicHost(repoRoot, publicDir, PORTS.public, HOSTS.cms, articlePaths),
     await startStaticServer(publicGapDir, PORTS.publicGap),
   ]
   if (!newsroomBuildError) statics.push(await startStaticServer(newsroomDir, PORTS.newsroom))
@@ -309,6 +312,7 @@ export async function startStack(): Promise<XappConfig> {
     cmsUrl: HOSTS.cms,
     newsroomOrigin: HOSTS.newsroom,
     publicOrigin: HOSTS.public,
+    ...articlePaths,
     publicGapOrigin: HOSTS.publicGap,
     credentials: seeded.credentials,
     categoryId: seeded.categoryId,

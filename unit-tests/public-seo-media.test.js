@@ -48,7 +48,7 @@ async function fixture(t,{indexable=false,totalPages=1,fail=false,basePath='/',a
  const dist=await mkdtemp(join(tmpdir(),'public-seo-test-'));
  await writeFile(join(dist,'index.html'),await readFile(new URL('../src/index.template.html',import.meta.url),'utf8'));
  const calls=[];
- const server=createPublicServer({dist,basePath,cmsUrl:origin,siteUrl:'https://public.example.test',indexable,fetchImpl:async(url,options)=>{
+ const server=createPublicServer({articlePathTemplate:'/reports/{slug}/',dist,basePath,cmsUrl:origin,siteUrl:'https://public.example.test',indexable,fetchImpl:async(url,options)=>{
   const u=new URL(url);calls.push(u);assert.equal(options.credentials,'omit');assert.equal(options.headers.Authorization,undefined);assert.equal(options.headers.Cookie,undefined);
   if(fail)return new Response('private failure',{status:500});
   if(u.pathname==='/api/categories')return Response.json({docs:[{id:2,slug:'faith',title:'Faith & Life'}],totalPages:1});

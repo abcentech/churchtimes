@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server'
 
-import { checkRelationFilters } from './lib/queryGuards'
-import { checkRequestLimits } from './lib/requestLimits'
+import { checkRelationFilters, checkRequestShape, scanMultipartPrefix } from './lib/queryGuards'
+import { checkRequestLimits, wantsLargeMediaBody } from './lib/requestLimits'
+import { hasValidSession } from './lib/sessionToken'
 import { csv, normaliseOrigin } from './lib/securityConfig'
 
 /**
@@ -15,7 +16,7 @@ import { csv, normaliseOrigin } from './lib/securityConfig'
  * the origin only when it is in CMS_CORS_ORIGINS (never `*`), exactly like Payload does.
  *
  * Note: while a proxy file exists Next buffers each request body (up to
- * `experimental.proxyClientMaxBodySize`, set to 12 MB in next.config.mjs so uploads are never truncated).
+ * `experimental.proxyClientMaxBodySize`, sized in next.config.mjs from MEDIA_AV_MAX_MB so uploads are never truncated).
  */
 const corsHeaders = (origin: string | null): Record<string, string> => {
   if (!origin) return {}
@@ -30,20 +31,61 @@ const corsHeaders = (origin: string | null): Record<string, string> => {
     : {}
 }
 
-export function proxy(request: NextRequest) {
+/**
+ * Shared-cache policy for the anonymous public reads of Payload's own REST routes (they carry no Cache-Control of their
+ * own). Only a GET/HEAD with NO credentials is given one: any Cookie or Authorization header (staff, preview, anything
+ * personal) leaves the response untouched, and so does a `draft` or `preview` query. An anonymous caller can only ever
+ * read published rows (collection access), so the body is the same for everyone. Short on purpose: an unpublished or
+ * corrected article leaves a cache within one minute. See docs/performance.md.
+ */
+export const PUBLIC_READ_CACHE: ReadonlyArray<{ path: RegExp; cacheControl: string }> = [
+  { path: /^\/api\/articles\/?$/, cacheControl: 'public, max-age=60' },
+  { path: /^\/api\/categories\/?$/, cacheControl: 'public, max-age=300' },
+]
+
+export function publicReadCacheControl(
+  method: string,
+  pathname: string,
+  searchParams: URLSearchParams,
+  headers: Headers,
+): string | null {
+  if (method !== 'GET' && method !== 'HEAD') return null
+  if (headers.get('cookie') || headers.get('authorization')) return null
+  if (searchParams.has('draft') || searchParams.has('preview')) return null
+  return PUBLIC_READ_CACHE.find((r) => r.path.test(pathname))?.cacheControl ?? null
+}
+
+export async function proxy(request: NextRequest) {
   const { pathname, searchParams } = request.nextUrl
-  const limits = checkRequestLimits({ method: request.method, pathname, headers: request.headers })
-  const decision = limits.ok
-    ? (() => {
-        const q = checkRelationFilters(pathname, searchParams)
-        return q.ok ? q : { ...q, errors: [{ field: q.field, message: q.message }] }
-      })()
-    : { ...limits, errors: [{ message: limits.message }] }
+  // The larger /api/media allowance is for verified staff sessions only (a forged header or cookie does not count).
+  const authenticated = wantsLargeMediaBody(pathname, request.headers) && hasValidSession(request.headers)
+  const limits = checkRequestLimits({ method: request.method, pathname, headers: request.headers, authenticated })
+  const shape = checkRequestShape(pathname, request.nextUrl.search)
+  const decision = !shape.ok
+    ? { ...shape, errors: [{ message: shape.message }] }
+    : limits.ok
+      ? (() => {
+          const q = checkRelationFilters(pathname, searchParams)
+          return q.ok ? q : { ...q, errors: [{ field: q.field, message: q.message }] }
+        })()
+      : { ...limits, errors: [{ message: limits.message }] }
+  if (decision.ok && (request.headers.get('content-type') ?? '').toLowerCase().startsWith('multipart/form-data') && ['POST', 'PATCH', 'PUT'].includes(request.method)) {
+    // busboy throws "Malformed part header" (a generic 500) for a NUL in a part header such as the file name.
+    // Bounded: only the first 64 KiB of a clone is read (never the whole upload), after the size refusals above.
+    if (!(await scanMultipartPrefix(request.clone().body)).clean) {
+      return NextResponse.json(
+        { ok: false, errors: [{ message: 'Invalid characters in the upload headers.' }] },
+        { status: 400, headers: { 'Cache-Control': 'no-store', ...corsHeaders(request.headers.get('origin')) } },
+      )
+    }
+  }
   if (decision.ok) {
     // Payload echoes the request Origin in Access-Control-Allow-Origin, so a shared cache (CDN, reverse
     // proxy) must key API responses on Origin or it could replay one origin's grant to another.
     const res = NextResponse.next()
     res.headers.append('Vary', 'Origin')
+    const cacheControl = publicReadCacheControl(request.method, pathname, searchParams, request.headers)
+    if (cacheControl) res.headers.set('Cache-Control', cacheControl)
     return res
   }
   return NextResponse.json(
