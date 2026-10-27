@@ -2,7 +2,6 @@ import { csvRow } from '../lib/csvSafe'
 import { normalizePath } from '../lib/redirectPaths'
 import {
   classifyHref,
-  KNOWN_LEGACY_HOSTS,
   LinkContextBuilder,
   NON_SITE_TYPES,
   type Classified,
@@ -10,6 +9,8 @@ import {
   type LinkContextOptions,
   type LinkType,
 } from './linkClassify'
+import { diagnoseLink, keyOf, PROBLEM_TYPES, SlugIndex, type ProblemRow } from './linkDiagnose'
+import { applyFixToClassified, createLinkFixer, type LinkFixes, type LinkFixSummary } from './linkFixes'
 import { decodeEntities } from './mapping'
 import type { WxrRecord } from './wxr'
 
@@ -43,7 +44,7 @@ export type LinkAudit = {
   redirects: { rules: number; dropped: Partial<Record<RuleDrop, number>>; flattened: number }
 }
 
-export type AuditRow = { postId: number; type: LinkType; host: string; resolved: boolean; reason: string; href: string; to: string | null }
+export type AuditRow = { postId: number; index: number; type: LinkType; host: string; resolved: boolean; reason: string; href: string; to: string | null }
 export type RedirectRule = { from: string; to: string; status: 301 }
 
 const A_TAG = /<a\b([^>]*)>/gi
@@ -139,15 +140,25 @@ export function finalizeRedirects(
 export const redirectsCsv = (rules: readonly RedirectRule[]): string =>
   `from,to,status\n${rules.map((r) => `${csvRow([r.from, r.to, r.status])}`).join('\n')}${rules.length ? '\n' : ''}`
 
-export type AuditOptions = LinkContextOptions & { onRow?: (row: AuditRow) => void }
+export type AuditOptions = LinkContextOptions & {
+  onRow?: (row: AuditRow) => void
+  /** Parsed link fixes: an unresolved link that a fix decides counts as resolved (the counts then show what is left to fix). */
+  linkFixes?: LinkFixes
+}
 
 export async function auditLinks(
   open: () => AsyncIterable<WxrRecord>,
   options: AuditOptions,
-): Promise<{ audit: LinkAudit; rules: RedirectRule[]; ctx: LinkContext }> {
+): Promise<{ audit: LinkAudit; rules: RedirectRule[]; ctx: LinkContext; problems: ProblemRow[]; fixes?: LinkFixSummary }> {
   const builder = new LinkContextBuilder()
-  for await (const rec of open()) builder.add(rec)
-  const ctx = builder.build({ ...options, extraHosts: [...KNOWN_LEGACY_HOSTS, ...(options.extraHosts ?? [])] })
+  const slugIndex = new SlugIndex()
+  for await (const rec of open()) {
+    builder.add(rec)
+    slugIndex.add(rec)
+  }
+  const ctx = builder.build(options)
+  const fixer = options.linkFixes ? createLinkFixer(options.linkFixes, ctx) : undefined
+  const problems: ProblemRow[] = []
 
   const audit: LinkAudit = {
     posts: 0,
@@ -171,8 +182,14 @@ export async function auditLinks(
     audit.posts++
     const hrefs = extractLinks(item.contentHtml)
     if (hrefs.length > 0) audit.postsWithLinks++
+    let linkIndex = 0
     for (const { href, imageWrapped } of hrefs) {
-      const c = classifyHref(href, ctx)
+      linkIndex++
+      const original = classifyHref(href, ctx)
+      const c = applyFixToClassified(original, href, fixer)
+      if (!c.resolved && PROBLEM_TYPES.has(c.type)) {
+        problems.push({ postId: item.wpId ?? -1, index: linkIndex, type: c.type, href, diagnosis: diagnoseLink(c, href, ctx, slugIndex), key: keyOf(href) })
+      }
       if (imageWrapped) audit.imageWrapped[c.type] = (audit.imageWrapped[c.type] ?? 0) + 1
       audit.links++
       const t = (audit.byType[c.type] ??= { total: 0, resolved: 0, unresolved: 0, resolvedBefore: 0 })
@@ -199,7 +216,7 @@ export async function auditLinks(
         }
       }
       if (c.redirect) candidates.push(c.redirect)
-      options.onRow?.({ postId: item.wpId ?? -1, type: c.type, host: c.host, resolved: c.resolved, reason: c.reason, href, to: c.to })
+      options.onRow?.({ postId: item.wpId ?? -1, index: linkIndex, type: c.type, host: c.host, resolved: c.resolved, reason: c.reason, href, to: c.to })
     }
   }
   // Every nested category on the old site (/category/parent/child/) also gets its rule, linked or not.
@@ -216,7 +233,7 @@ export async function auditLinks(
   }
   const fin = finalizeRedirects(candidates, { articlePaths: ctx.articlePaths, derivedFrom: ctx.legacyPaths })
   audit.redirects = { rules: fin.rules.length, dropped: fin.dropped, flattened: fin.flattened }
-  return { audit, rules: fin.rules, ctx }
+  return { audit, rules: fin.rules, ctx, problems, fixes: fixer?.summary() }
 }
 
 export function formatLinkAudit(a: LinkAudit): string {

@@ -207,7 +207,7 @@ const handlers: Record<Handler['collection'], Handler> = {
   },
   articles: {
     collection: 'articles',
-    select: { legacyId: true, status: true, provenance: true, category: true, featuredImage: true, bodyMedia: true },
+    select: { legacyId: true, status: true, provenance: true, category: true, categories: true, featuredImage: true, bodyMedia: true },
     check: async (ctx, req, doc) => {
       // Only rows the loaders made carry a legacy id (WordPress import) or an import batch (archive candidates).
       const batch = (doc.provenance as { importBatch?: unknown } | null | undefined)?.importBatch
@@ -223,6 +223,10 @@ const handlers: Record<Handler['collection'], Handler> = {
     note: (ctx, doc) => {
       const c = asId(doc.category)
       if (c !== null) bumpMap(ctx.pending.articlesByCategory, c)
+      // Secondary categories count too (once per article and category); the join rows go with the article.
+      const extra = new Set<number>()
+      if (Array.isArray(doc.categories)) for (const x of doc.categories) if (asId(x) !== null && asId(x) !== c) extra.add(asId(x) as number)
+      for (const x of extra) bumpMap(ctx.pending.articlesByCategory, x)
       const media = new Set<number>()
       const f = asId(doc.featuredImage)
       if (f !== null) media.add(f)
@@ -257,7 +261,7 @@ const handlers: Record<Handler['collection'], Handler> = {
       const bad = provenance(ctx, doc, true)
       if (bad) return bad
       if (edited(ctx, doc)) return 'edited-since-import'
-      const articles = (await count(ctx, req, 'articles', { category: { equals: doc.id } })) - (ctx.pending.articlesByCategory.get(doc.id) ?? 0)
+      const articles = (await count(ctx, req, 'articles', { or: [{ category: { equals: doc.id } }, { categories: { equals: doc.id } }] })) - (ctx.pending.articlesByCategory.get(doc.id) ?? 0)
       if (articles > 0) return 'still-used'
       if ((await count(ctx, req, 'live-events', { category: { equals: doc.id } })) > 0) return 'still-used'
       if ((await count(ctx, req, 'users', { sections: { equals: doc.id } })) > 0) return 'still-used'

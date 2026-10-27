@@ -17,7 +17,7 @@ import { newRunId, setupFixtures, type Fixtures } from './helpers'
  */
 const runId = newRunId()
 const base = 6_000_000 + (parseInt(runId.slice(1, 5), 16) % 60_000) * 10
-const ids = { multi: base + 1, mail: base + 2, plain: base + 3, query: base + 4 }
+const ids = { multi: base + 1, mail: base + 2, plain: base + 3, query: base + 4, many: base + 5 }
 let f: Fixtures
 let dir: string
 let exportFile: string
@@ -44,6 +44,8 @@ beforeAll(async () => {
     { id: ids.mail, slug: `${runId}-mail`, categories: [cat('news')], creator: 'pat@mail.example.test', link: `/2023/05/${runId}-mail/` },
     { id: ids.plain, slug: `${runId}-plain`, categories: [], creator: 'login_without_profile', link: 'javascript:alert(1)' },
     { id: ids.query, slug: `${runId}-query`, categories: [cat('news')], creator: 'known_writer', link: 'https://old.example.test/?p=99' },
+    // 8 WordPress categories: the first is primary, 4 fit into `categories`, 3 do not (the cap)
+    { id: ids.many, slug: `${runId}-many`, categories: ['m1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7', 'm8'].map(cat), creator: 'known_writer', link: `/2023/05/${runId}-many/` },
   ]
   exportFile = path.join(dir, 'export.xml')
   fs.writeFileSync(exportFile, wxr(items, { authors: [{ id: 2, login: 'known_writer', display: 'Known Writer' }] }))
@@ -55,23 +57,47 @@ afterAll(async () => {
 })
 
 describe('importer gaps', () => {
-  it('keeps one category per post and reports what the schema cannot hold', async () => {
+  it('keeps the primary category, stores the other WordPress categories (up to 5) and reports the overflow', async () => {
     const before = await users()
     const rep = await runImport(f.payload, { file: exportFile, manifestPath: manifestFile, dryRun: false, fallbackCategory: { slug: `${runId}-cat-fallback`, title: 'Gap fallback' } })
-    expect(rep.articles.created).toBe(4)
+    expect(rep.articles.created).toBe(5)
 
     const docs = await articles()
+    const slugsOf = async (idList: unknown) =>
+      (
+        await Promise.all(
+          ((idList ?? []) as number[]).map(async (id) => ((await f.payload.findByID({ collection: 'categories', id, depth: 0, overrideAccess: true })) as unknown as { slug: string }).slug),
+        )
+      ).sort()
     const catOf = async (legacyId: number) =>
       ((await f.payload.findByID({ collection: 'categories', id: byLegacy(docs, legacyId).category, depth: 0, overrideAccess: true })) as unknown as { slug: string }).slug
     expect(await catOf(ids.multi)).toBe(`${runId}-news`) // a real category beats Uncategorised
     expect(await catOf(ids.plain)).toBe(`${runId}-cat-fallback`) // none given: the configured fallback
 
-    // News is created once and shared; sport and faith (not kept) are never created; uncategorised is not created for the multi post
-    const made = await f.payload.find({ collection: 'categories', where: { slug: { like: runId } }, limit: 20, depth: 0, overrideAccess: true })
-    expect((made.docs as unknown as Array<{ slug: string }>).map((c) => c.slug).filter((s) => !s.includes('-cat-')).sort()).toEqual([`${runId}-news`])
-    expect(rep.categories).toMatchObject({ postsWithExtraCategories: 1, extraCategoriesDropped: 3, fallbackUsed: 1 })
-    expect(rep.categories.bySource).toEqual({ wordpress: 3, yoastPrimary: 0, tagMap: 0, rules: 0, generic: 0, fallback: 1 })
-    expect(rep.seo.titleFrom.none).toBe(4)
+    // the extras are stored (sport, faith; never the primary and never Uncategorised); a single-category post has none
+    expect(await slugsOf(byLegacy(docs, ids.multi).categories)).toEqual([`${runId}-faith`, `${runId}-sport`])
+    expect(byLegacy(docs, ids.mail).categories ?? []).toEqual([])
+    // the 8-category post: primary m1, extras m2..m5, m6 to m8 do not fit
+    expect(await catOf(ids.many)).toBe(`${runId}-m1`)
+    expect(await slugsOf(byLegacy(docs, ids.many).categories)).toEqual(['m2', 'm3', 'm4', 'm5'].map((k) => `${runId}-${k}`))
+
+    // each category is created once and shared; uncategorised is never created; the ones that did not fit (m6 to m8) are not created
+    const made = await f.payload.find({ collection: 'categories', where: { slug: { like: runId } }, limit: 50, depth: 0, overrideAccess: true })
+    expect((made.docs as unknown as Array<{ slug: string }>).map((c) => c.slug).filter((s) => !s.includes('-cat-')).sort()).toEqual(
+      [`${runId}-faith`, `${runId}-m1`, `${runId}-m2`, `${runId}-m3`, `${runId}-m4`, `${runId}-m5`, `${runId}-news`, `${runId}-sport`].sort(),
+    )
+    expect(rep.categories).toMatchObject({
+      postsWithExtraCategories: 2,
+      postsWithSecondaryCategories: 2,
+      secondaryCategoriesKept: 6,
+      postsOverSecondaryCap: 1,
+      extraCategoriesDropped: 3,
+      fallbackUsed: 1,
+    })
+    expect(formatImportReport(rep)).toMatch(/kept as additional categories: 2 posts, 6 categories/)
+    expect(formatImportReport(rep)).toMatch(/more additional categories than the cap \(4\): 1 \(3 categories not kept\)/)
+    expect(rep.categories.bySource).toEqual({ wordpress: 4, yoastPrimary: 0, tagMap: 0, rules: 0, generic: 0, fallback: 1 })
+    expect(rep.seo.titleFrom.none).toBe(5)
 
     // the manifest records the created category ids exactly
     const m = readManifest(manifestFile)
@@ -124,9 +150,12 @@ describe('importer gaps', () => {
   it('rollback still removes the created category and articles, and creates no users', async () => {
     const before = await users()
     const rep = await runRollback(f.payload, { manifestPath: manifestFile, minIncompleteAgeMs: 0, apply: true })
-    expect(rep.articles.deleted).toBe(4)
-    expect(rep.categories.deleted).toBeGreaterThanOrEqual(1)
+    expect(rep.articles.deleted).toBe(5)
+    expect(rep.categories.deleted).toBeGreaterThanOrEqual(8) // primary and secondary categories created by the run, none still used
     expect(await articles()).toHaveLength(0)
+    const orphanRows = (await (f.payload.db as any).drizzle.execute(`select count(*)::int as n from "articles_rels" where "categories_id" is not null and "parent_id" not in (select id from "articles")`)) as { rows: { n: number }[] }
+    expect(orphanRows.rows[0]!.n).toBe(0)
+    expect((await f.payload.count({ collection: 'categories', where: { slug: { like: `${runId}-m` } }, overrideAccess: true })).totalDocs).toBe(0)
     const left = await f.payload.count({ collection: 'categories', where: { slug: { equals: `${runId}-news` } }, overrideAccess: true })
     expect(left.totalDocs).toBe(0)
     expect(await users()).toBe(before)

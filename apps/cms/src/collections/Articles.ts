@@ -23,6 +23,7 @@ import {
   userSectionIds,
 } from '../access/roles'
 import { articleContentEditor } from './articleEditor'
+import { MAX_SECONDARY_CATEGORIES, categoryIds, checkSecondaryCategories } from '../lib/articleCategories'
 import { removeArticleSearch, syncArticleSearch } from '../lib/articleSearch'
 import { articlePreviewTokenEndpoint } from '../endpoints/articlePreviewToken'
 import { writeAuditLog } from '../lib/audit'
@@ -40,7 +41,16 @@ import {
   canTransition,
   isArticleStatus,
 } from '../workflow/articleWorkflow'
-import { PROVENANCE_CONFIDENCE, PROVENANCE_REVIEW_STATUSES, publishBlockedByProvenance, reviewAndPublishInOneWrite } from '../lib/provenance'
+import {
+  FOUR_EYES_MESSAGE,
+  PROVENANCE_CONFIDENCE,
+  PROVENANCE_REVIEW_STATUSES,
+  fourEyesBlocked,
+  publishBlockedByProvenance,
+  reviewAndPublishInOneWrite,
+  reviewStamp,
+  storedReviewedBy,
+} from '../lib/provenance'
 import { reconcileCorrections } from '../workflow/corrections'
 import { articlePath, resolveArticlePathTemplate } from '../lib/redirectPaths'
 import { isReservedSlug } from '../lib/reservedSlugs'
@@ -292,6 +302,37 @@ const validateFeaturedImage: CollectionBeforeValidateHook = async ({ data, req }
 }
 
 /**
+ * `categories` (secondary categories) next to the primary `category`: at most 5, no duplicates, never the primary. On a
+ * partial update the missing side comes from the stored document, so changing only `category` cannot make it collide with
+ * an existing extra.
+ */
+const validateSecondaryCategories: CollectionBeforeValidateHook = async ({ data, originalDoc, req }) => {
+  if (!data || (data.categories === undefined && data.category === undefined)) return data
+  const orig = (originalDoc ?? {}) as Doc
+  const list = data.categories !== undefined ? data.categories : orig.categories
+  const primary = data.category !== undefined ? data.category : orig.category
+  const message = checkSecondaryCategories(primary, list)
+  if (message) throw new APIError(message, 400)
+  if (data.categories !== undefined) {
+    // An id that is not a category would otherwise end in a foreign-key error (500).
+    const wanted = categoryIds(data.categories)
+    if (wanted.length > 0) {
+      const found = await req.payload.find({
+        collection: 'categories',
+        where: { id: { in: wanted.map(Number) } },
+        limit: wanted.length,
+        depth: 0,
+        pagination: false,
+        overrideAccess: true,
+        req,
+      })
+      if (found.docs.length !== wanted.length) throw new APIError('Additional categories must be existing categories.', 400)
+    }
+  }
+  return data
+}
+
+/**
  * `bodyMedia` is derived, server-only: the distinct media ids referenced by the body's upload nodes. It exists
  * so the media freeze (collections/Media.ts) can find "media shown in a published article body" with a plain
  * query instead of scanning jsonb. Recomputed whenever `content` is written (client values are stripped by field
@@ -489,6 +530,22 @@ const guardUnreviewedImport: CollectionBeforeChangeHook = async ({ data, origina
   if (publishBlockedByProvenance(data as Record<string, unknown>, (originalDoc ?? undefined) as Record<string, unknown> | undefined)) {
     return fail(409, 'This recovered archive article must be reviewed (provenance review status "reviewed") before it can be published or scheduled.')
   }
+  // Server-owned review stamp: whoever flips reviewStatus to "reviewed" is recorded; any client-sent value is overwritten.
+  const ctx = (req.context ?? {}) as { systemNow?: string }
+  const stamp = reviewStamp(data as Record<string, unknown>, orig, actor, ctx.systemNow ? new Date(ctx.systemNow) : new Date())
+  const d = data as Record<string, unknown>
+  const prov = d.provenance as Record<string, unknown> | undefined
+  if (stamp) {
+    d.provenance = { ...(prov ?? {}), ...stamp }
+  } else if (prov && typeof prov === 'object') {
+    // Not a review change: nothing a client or a restored snapshot sent may alter the stamp (the stored values stay).
+    const { reviewedBy: _by, reviewedByName: _name, reviewedAt: _at, ...rest } = prov
+    d.provenance = rest
+  }
+  // Four-eyes: the approver of a recovered article cannot publish or schedule it (admins may do both). Covers REST, bulk,
+  // Local API with a user and version restore; the scheduler has no user and publishes what a different person scheduled.
+  const approver = stamp ? stamp.reviewedBy : storedReviewedBy(orig)
+  if (fourEyesBlocked({ data: d, orig, actor, reviewedById: approver })) return fail(409, FOUR_EYES_MESSAGE)
   return data
 }
 
@@ -730,7 +787,7 @@ export const Articles: CollectionConfig = {
   },
   hooks: {
     beforeOperation: [clampLimit, markRestore, dropNullProvenance, captureExpectedUpdatedAt],
-    beforeValidate: [autoSlug, normalizeSeoFields, validateEmbeds, validateBodyImages, validateAvMedia, validateFeaturedImage],
+    beforeValidate: [autoSlug, normalizeSeoFields, validateEmbeds, validateBodyImages, validateAvMedia, validateFeaturedImage, validateSecondaryCategories],
     beforeChange: [assertExpectedUpdatedAt('articles'), guardUnreviewedImport, deriveBodyMedia, guardPublishedSlug, enforceWorkflow],
     beforeDelete: [refuseDeleteWithLegacyComments],
     afterChange: [auditChanges, redirectOnSlugChange, syncSearch],
@@ -777,6 +834,15 @@ export const Articles: CollectionConfig = {
       required: true,
       index: true,
       admin: { position: 'sidebar' },
+    },
+    {
+      // Additional (secondary) categories; `category` above stays the primary one. Public read like `category`.
+      name: 'categories',
+      type: 'relationship',
+      relationTo: 'categories',
+      hasMany: true,
+      maxRows: MAX_SECONDARY_CATEGORIES,
+      admin: { position: 'sidebar', description: 'Optional extra sections (up to 5). The primary category above is not repeated here.' },
     },
     { name: 'featuredImage', type: 'upload', relationTo: 'media' },
     {
@@ -875,6 +941,11 @@ export const Articles: CollectionConfig = {
           options: PROVENANCE_REVIEW_STATUSES.map((v) => ({ label: v, value: v })),
           access: { read: staffRead, create: never, update: editorWrite },
         },
+        // Server-set when reviewStatus changes to "reviewed" (four-eyes rule); cleared when it changes away. Never client-writable.
+        { name: 'reviewedBy', type: 'relationship', relationTo: 'users', validate: (): true => true, access: { read: editorWrite, create: never, update: never }, admin: { readOnly: true } },
+        // Display snapshot of the approver's name (section editors cannot read other users). Same visibility as reviewedBy.
+        { name: 'reviewedByName', type: 'text', maxLength: 200, access: { read: editorWrite, create: never, update: never }, admin: { readOnly: true } },
+        { name: 'reviewedAt', type: 'date', access: { read: editorWrite, create: never, update: never }, admin: { readOnly: true } },
       ],
     },
   ],

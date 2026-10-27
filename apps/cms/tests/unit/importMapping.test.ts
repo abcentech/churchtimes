@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { bylineFor, chooseCategory, chooseCategoryChain, cleanLegacyUrl, isCategorySlug, parseCategoryMap, resolveSeoText, validCanonical } from '../../src/import/mapping'
+import { bylineFor, chooseCategory, chooseCategoryChain, chooseSecondaryCategories, cleanLegacyUrl, isCategorySlug, parseCategoryMap, resolveSeoText, validCanonical } from '../../src/import/mapping'
 
 const t = (nicename: string) => ({ nicename, name: nicename })
 
@@ -18,6 +18,29 @@ describe('chooseCategory', () => {
   it('falls back to Uncategorised when it is the only one, and to nothing when there are none', () => {
     expect(chooseCategory([t('uncategorized')])).toMatchObject({ dropped: 0, primary: { nicename: 'uncategorized' } })
     expect(chooseCategory([])).toEqual({ primary: undefined, dropped: 0 })
+  })
+})
+
+describe('chooseSecondaryCategories', () => {
+  const slugOf = (x: { nicename: string }) => x.nicename
+  it('keeps the other categories in listed order, never the primary, duplicates or Uncategorised', () => {
+    const r = chooseSecondaryCategories([t('uncategorised'), t('news'), t('sport'), t('news'), t('faith'), { nicename: '', name: 'x' }], 'news', slugOf)
+    expect(r.terms.map((x) => x.nicename)).toEqual(['sport', 'faith'])
+    expect(r.overCap).toBe(0)
+  })
+  it('caps at four (primary plus four = five WordPress categories) and counts the rest', () => {
+    const r = chooseSecondaryCategories(['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].map(t), 'a', slugOf)
+    expect(r.terms.map((x) => x.nicename)).toEqual(['b', 'c', 'd', 'e'])
+    expect(r.overCap).toBe(3)
+    expect(chooseSecondaryCategories(['a', 'b', 'c', 'd', 'e'].map(t), 'a', slugOf)).toMatchObject({ overCap: 0 })
+    expect(chooseSecondaryCategories(['a', 'b', 'c', 'd', 'e', 'f'].map(t), 'z', slugOf, 5)).toMatchObject({ overCap: 1 })
+  })
+  it('compares by stored slug', () => {
+    expect(chooseSecondaryCategories([t('Sport'), t('sport')], 'x', (x) => x.nicename.toLowerCase()).terms).toHaveLength(1)
+    expect(chooseSecondaryCategories([t('News')], 'news', (x) => x.nicename.toLowerCase()).terms).toHaveLength(0)
+  })
+  it('nothing for none', () => {
+    expect(chooseSecondaryCategories([], 'news', slugOf)).toEqual({ terms: [], overCap: 0 })
   })
 })
 

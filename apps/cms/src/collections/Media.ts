@@ -172,7 +172,7 @@ const checkUpload: CollectionBeforeOperationHook = async ({ args, operation }) =
       }
       return args
     }
-    if (file.data.length > MAX_IMAGE_BYTES) throw new APIError('Images must be at most 10 MB.', 413)
+    if (file.data.length > MAX_IMAGE_BYTES) throw new APIError(`Images must be at most ${Math.floor(MAX_IMAGE_BYTES / (1024 * 1024))} MB.`, 413)
     if (file.mimetype && file.mimetype !== sniffed) {
       throw new APIError('File content does not match its declared type.', 400)
     }

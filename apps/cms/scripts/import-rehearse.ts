@@ -1,7 +1,7 @@
 /**
  * `npm run import:rehearse -- [--posts 1000] [--images 60] [--seed N] [--keep]`
  * `npm run import:rehearse -- --file <real export.xml> [--uploads <dir>] [--uploads-detail-file <path>] [--dry-run-only] [--detail-file <path>] [--keep]
- *    [--category-mode strict|rules] [--category-review <csv outside the repo>]`
+ *    [--category-mode strict|rules] [--category-review <csv outside the repo>] [--link-fixes <csv or json outside the repo>]`
  * With `--uploads` the uploads folder is checked first (same counts as `import:uploads-check`; `--uploads-detail-file` receives per-file detail).
  *
  * With `--file` the same throwaway database and temp media folder are used, but the export is a REAL one given by
@@ -27,6 +27,9 @@ import sharp from 'sharp'
 
 import { convertWxrStats, formatConvertStats } from '../src/import/convertStats'
 import { formatInspectReport, inspectWxr } from '../src/import/inspect'
+import { formatLinkFixes, readLinkFixesFile } from '../src/import/linkFixes'
+import { resolveSiteHosts } from '../src/import/linkSiteHosts'
+import { resolveArticlePathTemplate } from '../src/lib/redirectPaths'
 import { formatImportReport, reconcile } from '../src/import/qa'
 import { openPrivateOut, writePrivateOut } from '../src/import/privateOut'
 import { isInsideRepo } from '../src/import/safePaths'
@@ -55,6 +58,7 @@ const strArg = (name: string): string | undefined => {
 const FILE = strArg('--file')
 const UPLOADS = strArg('--uploads')
 const DETAIL = strArg('--detail-file')
+const LINK_FIXES = strArg('--link-fixes')
 const UPLOADS_DETAIL = strArg('--uploads-detail-file')
 const DRY_ONLY = argv.includes('--dry-run-only')
 const CATEGORY_MODE = strArg('--category-mode')
@@ -149,8 +153,13 @@ async function realRehearsal(r: Real): Promise<number> {
     }
     console.log('')
   }
-  const conv = await timed('conversion stats', 0, () => convertWxrStats(() => readWxrFile(file), { assumeImages: false }))
+  const siteHosts = resolveSiteHosts(process.env)
+  const linkFixes = LINK_FIXES
+    ? readLinkFixesFile(LINK_FIXES, { articleTemplate: resolveArticlePathTemplate(process.env), siteHosts: new Set([siteHosts.primary, ...siteHosts.legacy]) })
+    : undefined
+  const conv = await timed('conversion stats', 0, () => convertWxrStats(() => readWxrFile(file), { assumeImages: false, linkFixes }))
   console.log(formatConvertStats(conv.stats))
+  if (conv.linkFixes) console.log(formatLinkFixes(conv.linkFixes))
   if (DETAIL) {
     writePrivateOut(DETAIL, `${JSON.stringify(conv.detail, null, 1)}\n`, { inputs: [file], notInside: uploadsRoot ? [uploadsRoot] : [] })
     console.log('Legacy ids of posts needing attention written to the detail file.')
@@ -165,7 +174,7 @@ async function realRehearsal(r: Real): Promise<number> {
     failTally[m[1]] = (failTally[m[1]] ?? 0) + 1
     if (m[2] !== 'null') failedIds.push(Number(m[2]))
   }
-  const base = { file, uploadsRoot, progress, categoryMode: CATEGORY_MODE as 'strict' | 'rules' | undefined }
+  const base = { file, uploadsRoot, progress, linkFixesFile: LINK_FIXES, categoryMode: CATEGORY_MODE as 'strict' | 'rules' | undefined }
   const dry = await timed('dry-run', 0, () => r.runImport(payload, { ...base, dryRun: true, categoryReviewFile: CATEGORY_REVIEW }))
   phases[phases.length - 1].posts = dry.articles.created
   console.log(formatImportReport(dry))
@@ -348,7 +357,8 @@ async function main(): Promise<number> {
   }
   // Stopping PostgreSQL under an idle pool connection emits one late socket error: harmless once cleanup has started.
   process.on('uncaughtException', (err) => {
-    if (cleaned && /Connection terminated|ECONNRESET/.test(err.message)) return
+    // pg answers 57P01 (terminating connection due to administrator command) when embedded PostgreSQL stops under an idle pooled connection.
+    if (cleaned && (/Connection terminated|ECONNRESET|terminating connection/i.test(err.message) || (err as { code?: string }).code === '57P01')) return
     console.error(`REHEARSAL_FAILED ${err.name}`)
     process.exit(1)
   })

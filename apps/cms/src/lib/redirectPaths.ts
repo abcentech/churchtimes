@@ -170,7 +170,15 @@ export function parseAllowedHosts(env: EnvLike = process.env): string[] {
   return [...new Set(hosts)]
 }
 
-export const DEFAULT_LEGACY_HOSTS = ['churchtimesnigeria.net', 'www.churchtimesnigeria.net'] as const
+/** The primary host plus the old `.org` and `.com` hosts (and `www.` variants): all of them mean the same site as the primary host. */
+export const DEFAULT_LEGACY_HOSTS = [
+  'churchtimesnigeria.net',
+  'www.churchtimesnigeria.net',
+  'churchtimesnigeria.org',
+  'www.churchtimesnigeria.org',
+  'churchtimesnigeria.com',
+  'www.churchtimesnigeria.com',
+] as const
 
 /**
  * `LEGACY_SITE_HOSTS`: comma list of the host names the old WordPress addresses (`legacyUrl`) may carry. A `legacyUrl`

@@ -31,6 +31,7 @@ jobs:
         working-directory: apps/cms
       - name: Rehearse
         working-directory: apps/cms
+        shell: bash
         run: npm run import:rehearse -- --posts "${{ inputs.posts }}" --images "${{ inputs.images }}" | tee "$RUNNER_TEMP/rehearsal.txt"
       - name: Summary
         if: always()

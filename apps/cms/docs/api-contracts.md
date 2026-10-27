@@ -1,4 +1,4 @@
-# Church Times CMS — API contracts (v1.24)
+# Church Times CMS — API contracts (v1.27)
 
 Status: implemented on `agent/payload-core`. v1.1 added Turnstile, duplicate detection, staff auth/session
 contract and security hardening; v1.2 closes the verified security-review findings: media ownership, version
@@ -94,7 +94,8 @@ Rules:
   seoTitle?: string | null     // v1.8, ≤ 70 chars, plain text; null when unset (public site falls back to `title`)
   seoDescription?: string | null // v1.8, ≤ 200 chars, plain text; null when unset (falls back to `excerpt`)
   content: LexicalRichText     // structured JSON, never raw HTML
-  category: number | Category  // depends on `depth`
+  category: number | Category  // PRIMARY category (required); depends on `depth`
+  categories?: (number | Category)[]  // v1.27: ADDITIONAL categories, 0 to 5, never the primary, no duplicates; depends on `depth`
   featuredImage?: number | Media
   bylineName?: string          // display byline (legacy authors without accounts)
   status: 'draft' | 'in_review' | 'changes_requested' | 'approved' | 'scheduled' | 'published' | 'archived'
@@ -118,6 +119,16 @@ override: the canonical address is derived from the article path. Who may edit f
 article is a draft or changes are requested, editors in scope, trusted publishers for their own. Changing **only** these two
 fields of a published article is **not** a material change (no `corrections` entry needed) but is still versioned.
 
+**Additional categories (v1.27).** An article can sit in several sections. `category` stays the **primary** category: required, it
+drives the canonical listing, breadcrumbs, sitemap, scoping of section editors and every existing contract, so nothing that reads
+`category` changes. `categories` is an optional list of extra categories, public like `category` (published articles only), stored
+in the order written. Ordering rule: the primary comes first, the complete set of an article is `[category, ...categories]`.
+Server-side validation on create and every update that sends `category` or `categories` (a partial update is checked against the stored
+side): at most 5 entries, no duplicates, the primary must not be listed, every id must be an existing category (*Additional categories must be existing categories.*); otherwise `400`
+(*An article can have at most 5 additional categories.*, *Additional categories must not repeat a category.*, *The primary category must not also be listed in the additional categories.*).
+`categories: []` clears them. Deleting a category removes it from every article's `categories` (the join rows cascade; the article stays).
+Section-editor and trusted-publisher scope still follows the primary `category` only. Existing clients that ignore `categories` keep working.
+
 Staff-only fields (never returned to anonymous readers): `author`, `reviewNotes`, `scheduledFor`, `bodyMedia`.
 `bodyMedia` (v1.4) is derived by the server from the `upload` nodes of `content` (distinct media ids), never client-writable
 (ignored on input), and exists so the media freeze (§6.3) can tell which media is shown in a body.
@@ -130,7 +141,7 @@ update that sends `content`.
 Seeded: News, Features, Opinion, Columnists, Interviews, Business, Education, Health, Publisher's Note.
 
 ### Media (`/api/media`) — `{ id, alt, caption?, credit?, url, filename, mimeType, width, height, sizes }`
-Accepted uploads: `image/jpeg`, `image/png`, `image/webp` (max 10 MB) and, since v1.19, audio/video for the `audioVideo` article block: `video/mp4`, `video/webm`, `audio/mpeg`, `audio/mp4`, `audio/ogg` (max `MEDIA_AV_MAX_MB`, default 100, see v1.19). SVG, HTML, scripts and every other type are rejected.
+Accepted uploads: `image/jpeg`, `image/png`, `image/webp` (max 25 MB by default, `MEDIA_IMAGE_MAX_MB`, since v1.25) and, since v1.19, audio/video for the `audioVideo` article block: `video/mp4`, `video/webm`, `audio/mpeg`, `audio/mp4`, `audio/ogg` (max `MEDIA_AV_MAX_MB`, default 100, see v1.19). SVG, HTML, scripts and every other type are rejected.
 Upload is staff-only, as `multipart/form-data` (§6.3). Staff-only, server-set field: `uploadedBy` (user id of the
 uploader; `null` for media uploaded before v1.2). Not client-writable and never returned to anonymous readers.
 Editing is restricted, see §6.3.
@@ -222,8 +233,8 @@ Serialized shape (the `version` of the wrapper is whatever Payload's block featu
   (unchanged: draft, scheduled, in review, archived and withdrawn articles keep them private, `403` on the file route). Never build a player URL from anything but `media.url` / `sourceUrl`.
 - **Upload rules** (Media): content is verified by magic bytes (MP4 `ftyp`, WebM EBML with the `webm` doctype, MP3 ID3 or frame sync, Ogg `OggS`) and must match the
   declared type (`audio/x-m4a` is stored as `audio/mp4`, `video/x-m4v` as `video/mp4`); the file is stored unchanged (no re-encode, no size variants, `width`/`height` empty).
-  Size cap: `MEDIA_AV_MAX_MB` (default 100, maximum 500), `413` above it; images stay at 10 MB. Through `POST /api/media` a request is still bounded by the
-  proxy and request-size limit (11 MB, `lib/requestLimits.ts`, `next.config.mjs`), so larger files are loaded server side (the importer, the Local API) until operations raise
+  Size cap: `MEDIA_AV_MAX_MB` (default 100, maximum 500), `413` above it; images use the image cap (25 MB by default since v1.25). Through `POST /api/media` a request is still bounded by the
+  proxy and request-size limit (11 MB anonymous, 26 MB for verified staff since v1.25, `lib/requestLimits.ts`, `next.config.mjs`), so larger files are loaded server side (the importer, the Local API) until operations raise
   those limits together with the reverse proxy.
 - **Importer.** `<video>`, `<audio>`, `<source>` and the shortcodes `[fvplayer]`, `[video]`, `[audio]` become `audioVideo` blocks (a figure around one element lends its figcaption as caption;
   `poster`/`splash` go through the image resolver). A file found by the media resolver gets `media`; otherwise the block keeps `sourceUrl` and the run report counts
@@ -344,7 +355,12 @@ GET /api/categories?limit=100
 ```
 
 - `depth=0` returns relationships as IDs (`category: 3`); `depth=1` populates them (`category: { id, title, slug }`,
-  `featuredImage: { url, alt, sizes… }`). The public site uses `depth=1` to get `category.title`.
+  `featuredImage: { url, alt, sizes… }`). The public site uses `depth=1` to get `category.title`. `categories` (v1.27) is returned the
+  same way: ids at `depth=0`, `[{ id, title, slug }]` at `depth=1`, primary-first reading order `[category, ...categories]`.
+- **Listing a category's articles (v1.27)** includes the ones that have it as an additional category: `where[categories][in]=<id>` (or
+  `[equals]`) matches only articles that carry it as an additional category; for "primary OR additional" use the `or` form
+  `where[or][0][category][equals]=<id>&where[or][1][categories][equals]=<id>&where[status][equals]=published`. `categories` is a
+  relationship filter like `category`: numeric ids only, anything else is `400`.
 - Lists are paginated: `limit` (max **100**, larger values are clamped; `0`, negative or non-numeric values
   become the default of 10) and `page` (1-based). `pagination=false` is **ignored** for API callers: lists are
   always paginated, so `hasNextPage` stays truthful. This applies to every collection and to
@@ -383,7 +399,7 @@ Polling endpoint for live coverage (recommended interval: 15–30 s).
   `CMS_PUBLIC_URL`, see §6.3; resolve it against the CMS origin as `src/lib/cms-media.js` does). `alt` is always non-empty; `mimeType` is `image/jpeg`, `image/png` or `image/webp`; `width`/`height` are
   positive integers (or `null` if unknown). No other media field (filename, caption, credit, sizes, uploader) is returned.
   **Size served (v1.5):** `url`, `width`, `height` and `mimeType` describe the ~800 px wide `card` variant of the upload (see
-  `imageSizes` in `Media.ts`), not the original (which can be up to 10 MB). When the media has no `card` variant (Payload does not
+  `imageSizes` in `Media.ts`), not the original (which can be up to 25 MB). When the media has no `card` variant (Payload does not
   enlarge an image that is already narrower than 800 px, and media that predates the size has none) or the variant is not a usable
   media URL / image type, the original upload is used instead. `alt` always comes from the media document.
   Only approved updates are in the feed, and (v1.6) the media collection is private for anything that is not on the public site
@@ -698,7 +714,7 @@ Send either the cookie (browser, same rules as §5) or `Authorization: JWT <toke
 
 `POST /api/media` is `multipart/form-data` with two parts: `file` (binary) and `_payload` (a JSON string with
 `{ "alt": "…", "caption"?: "…", "credit"?: "…" }`; `alt` is required, ≤ 300 chars). Staff only. Accepted:
-JPEG, PNG, WebP (content is verified against the declared type), ≤ 10 MB. Response `201 { doc, message }` where
+JPEG, PNG, WebP (content is verified against the declared type), ≤ 25 MB (`MEDIA_IMAGE_MAX_MB`; anonymous submitters are still held to the 11 MB request limit). Response `201 { doc, message }` where
 `doc` has `id`, `alt`, `filename` (sanitised), `mimeType`, `width`, `height`, `url`, and `sizes.{thumbnail,card,hero}.url`.
 `url` fields are **absolute** (`${CMS_PUBLIC_URL}/api/media/file/<name>`) whenever `CMS_PUBLIC_URL` is set (always in production);
 only in a local setup without it are they root-relative (`/api/media/file/<name>`).
@@ -802,7 +818,7 @@ Payload-native routes return Payload's `{ errors: [{ message, ... }] }`. Custom 
 a declared `Content-Length` above **1 MB** is `413` (above **11 MB** for `/api/media`), a malformed `Content-Length` is
 `400`, and a body without `Content-Length` (chunked transfer) on `POST`/`PATCH`/`PUT` to `/api/users/*` is `411`.
 These responses are `{ "ok": false, "errors": [{ "message": … }] }`. Normal browser `fetch` calls send
-`Content-Length`; the reverse proxy enforces a 12 MB cap in front of this (`docs/operations.md` §4.4).
+`Content-Length`; the reverse proxy enforces a 28 MB cap in front of this (`docs/operations.md` §4.4).
 
 **429 and `Retry-After` (v1.5).** The CMS answers 429 in exactly three places, and each sends `Retry-After: <whole seconds, >= 1>` plus
 `Access-Control-Expose-Headers: Retry-After` (the header is not CORS-safelisted, so without the expose header a cross-origin
@@ -1014,10 +1030,10 @@ search reads a projection table (`article_search`) that holds nothing else, and 
 | `q` | required; whitespace-trimmed, control characters and lone surrogates removed; at most 200 characters (`400` when empty, missing or longer) |
 | `page` | 1 to 100, default 1 (larger is clamped, invalid becomes 1) |
 | `limit` | 1 to 20, default 10 (larger is clamped to `SEARCH_MAX_LIMIT`, default 20, at most 100; invalid becomes 10) |
-| `category` | category slug, or its numeric id; an unknown category gives an empty list |
+| `category` | category slug, or its numeric id; matches an article whose primary OR additional category it is (v1.27); an unknown category gives an empty list |
 | `year` | four-digit year of `publishedAt` (UTC), 1900 to 2100; anything else is `400` |
 
-`200 { docs: [{ id, slug, title, excerpt, snippet, publishedAt, category: { id, slug, title }, rank }], totalDocs, totalCapped, limit, page, totalPages, hasNextPage,
+`200 { docs: [{ id, slug, title, excerpt, snippet, publishedAt, category: { id, slug, title }, categories: [{ id, slug, title }], rank }], totalDocs, totalCapped, limit, page, totalPages, hasNextPage,
 hasPrevPage, nextPage, prevPage }`. **`totalDocs` is capped (v1.23):** counting stops after 1000 matches (`SEARCH_COUNT_CAP`, default 1000), so `totalDocs` is never more than 1000 and `totalCapped: true` means "more than that exist" (read `totalDocs: 1000, totalCapped: true` as "1000+"). `totalPages` is `null` while `totalCapped` is true (the real number of pages is unknown; there is no misleading lower bound), a number otherwise; while capped, `hasNextPage` / `nextPage` stay true as long as the page is full (up to page 100), and a page past the real end returns an empty `docs`. `snippet` is a plain-text extract of the article body around the match (about 30 words, at most 240
 characters, no markup: `<` and `>` never appear; JSON-escaped like every field), falling back to the excerpt. The result carries no staff fields.
 Order: `rank` descending (title weight A, excerpt B, body C, `ts_rank`), then `publishedAt` descending, then id. Page numbers past the
@@ -1055,6 +1071,25 @@ limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/op
 
 ## 9. Changelog
 
+### v1.27: Additional categories on articles
+Additive. `articles.categories` (relationship hasMany to categories, optional, max 5, never the primary, no duplicates) next to the unchanged
+required primary `articles.category` (section 3, "Additional categories"). Public article reads, the preview projection and `GET /api/articles?where[categories][in]=`
+expose it; the C8 search `category=` filter matches primary OR additional, and each search hit gains `categories: [{ id, slug, title }]` (additional only, in
+stored order, empty when none; the primary stays in `category`). `categories` joins the numeric relationship filters (`400` on a non-numeric value).
+- **Migration** `20261027_140000_article_multi_category`: join-table column `categories_id` on `articles_rels` and `_articles_v_rels` (FK ON DELETE CASCADE, indexed) and `article_search.category_ids integer[]` (primary first, GIN indexed, backfilled from `category_id`). Run `npm run search:reindex` once after deploying to fill the additional ids of existing published articles (idempotent). Reversible, every statement `IF [NOT] EXISTS`.
+- **Importer:** the other WordPress categories of a post (up to 4 beyond the primary chosen by the existing chain) are stored in `categories`; see `docs/import.md`. Rollback is unchanged: join rows go with the articles, and a category an unlisted article still uses (primary or additional) is kept.
+
+### v1.26: Four-eyes rule for recovered archive articles
+Tightens one rule (listed first); new fields are staff-only.
+- **Rule (409):** the person who approved a recovered archive article (`provenance.reviewStatus` became `reviewed`) cannot publish or schedule it: `409` "A different editor must publish a recovered article you approved." Applies when a write leaves an article with an `importBatch` in status `published` or `scheduled` and either moves it into that status or changes `scheduledFor` while scheduled, by a non-admin whose id equals `provenance.reviewedBy`. It holds for REST, bulk `PATCH ?where=` (per article), the Local API with a user and `restoreVersion`. **Admins may do both** (approve and publish/schedule). The scheduler has no user, so it publishes a scheduled article without the actor rule: the rule is enforced when the article is scheduled (a different person must schedule it). Other edits by the approver on a published article are not blocked.
+- **New fields** on `articles.provenance`, server-set and never client-writable (field access `never` for create and update; a client-sent value is overwritten or ignored): `reviewedBy` (relationship to `users`), `reviewedByName` (text snapshot of the approver's name, so section editors who cannot read other users still see it) and `reviewedAt` (date). They are set from the acting user when `reviewStatus` changes to `reviewed` and cleared when it changes to `pending` or `rejected`; `restoreVersion` keeps the stored values. Readable by editor roles (admin, editor-in-chief, section-editor) only: absent for reporters, trusted publishers, anonymous callers and preview-link holders (the whole `provenance` group is already denied there). Filtering on them anonymously returns nothing or is refused.
+- Audit: unchanged. The `archive.review` row already names the approver (actor); no new audit action.
+- Migration `20261027_124620_four_eyes_review_stamp`: nullable columns on `articles` and `_articles_v` (`provenance_reviewed_by_id`, `provenance_reviewed_by_name`, `provenance_reviewed_at`), no backfill (articles approved before this change have no stamp and are not blocked).
+- Newsroom: Archive review shows "Approved by <name> on <date>" to editor roles; the editor disables Publish and Schedule for the approver with the reason.
+
+### v1.25: Larger image cap
+Non-breaking relaxation; no shape changes. The image size cap rises from 10 MB to **25 MB by default** and is configurable with `MEDIA_IMAGE_MAX_MB` (whole MB, 1 to 50; unset or invalid gives 25). It applies to `POST/PATCH /api/media` (`413` above it, message states the limit), the legacy importer and `import:uploads-check` (`too-large`). The 40 megapixel decode limit and the sharp re-save are unchanged (peak memory for a ~23 MB / 40 MP JPEG measured at about 680 MB RSS). `/api/media` request limit: anonymous callers stay at 11 MB; callers with a VERIFIED session get max(image cap, explicit `MEDIA_AV_MAX_MB`) + 1 MB (26 MB by default; `MEDIA_UPLOAD_MAX_MB` still overrides). Next's body buffer follows (limit + 1 MB). The reverse proxy `/api/media` limit must be at least staff limit + 2 MB (28 MB by default, operations.md 4.4).
+
 ### v1.24: Staff related articles
 Additive: new endpoint `POST /api/staff/related-articles` (section 6.4); no existing shape changes.
 - Request bodies are read as a stream and refused with `413` as soon as they exceed 256 KiB measured in **bytes** (not characters), without buffering the remainder. The headline snippet is computed over the first 20,000 characters of an article body only.
@@ -1062,10 +1097,10 @@ Additive: new endpoint `POST /api/staff/related-articles` (section 6.4); no exis
 ### v1.23: Review follow-ups (preview, search cost, upload limits, review rules)
 Additive except where a rule is tightened (listed first); the search response only gains a field.
 - **Preview** (`GET /api/preview/articles?token=`): the response never contains `provenance`, `legacyId` or `legacyUrl` (nor, as before, `reviewNotes`, `author`, `scheduledFor`, `bodyMedia`).
-- **Approve and publish are separate requests.** A recovered archive article (`provenance.importBatch` set) cannot be approved (`provenance.reviewStatus` becoming `reviewed`) and published or scheduled in the SAME write by a non-admin: `409` (also for bulk `PATCH ?where=`). Clients cannot clear or change `importBatch` (server-owned, ignored on write), so the rule cannot be dodged that way. **Admins are exempt** from the one-write rule (their approval is still audited as `archive.review`). A four-eyes rule (the reviewer and the publisher must be different people) is NOT implemented: it is an open owner decision. `provenance.reviewStatus` is refused (`400`) on an article without an import batch, and an article created already `reviewed` or `rejected` writes an `archive.review` row at creation. `restoreVersion` never changes `provenance`: the stored provenance wins over the old snapshot, so restoring cannot turn a `rejected` article back into a publishable one (the 409 publish guard then applies).
+- **Approve and publish are separate requests.** A recovered archive article (`provenance.importBatch` set) cannot be approved (`provenance.reviewStatus` becoming `reviewed`) and published or scheduled in the SAME write by a non-admin: `409` (also for bulk `PATCH ?where=`). Clients cannot clear or change `importBatch` (server-owned, ignored on write), so the rule cannot be dodged that way. **Admins are exempt** from the one-write rule (their approval is still audited as `archive.review`). The four-eyes rule (the approver cannot publish or schedule; admins exempt) is implemented from v1.26. `provenance.reviewStatus` is refused (`400`) on an article without an import batch, and an article created already `reviewed` or `rejected` writes an `archive.review` row at creation. `restoreVersion` never changes `provenance`: the stored provenance wins over the old snapshot, so restoring cannot turn a `rejected` article back into a publishable one (the 409 publish guard then applies).
 - `PATCH` with `"provenance": null` is treated as "not sent" (it used to be a 500).
 - **Search:** new `totalCapped` field and the capped `totalDocs`, `totalPages: null` while capped (see "Go-live C8"); `SEARCH_MAX_LIMIT` default lowered from 50 to 20 (env `SEARCH_MAX_LIMIT`, 1 to 100); `SEARCH_COUNT_CAP` (default 1000); `Cache-Control` is `public` only when one public origin is configured (identical ACAO on every response), else `private`.
-- **Request size (`src/proxy.ts`):** a write (`POST`/`PATCH`/`PUT`) to ANY `/api/*` route with a `Transfer-Encoding` header (a chunked body, which cannot be size-checked) is refused with `411`; a bodyless POST (no `Content-Length`, no `Transfer-Encoding`) is fine. `/api/media`: 11 MB for everyone, except that a caller with a VERIFIED session (a genuine, unexpired Payload JWT in the `payload-token` cookie or `Authorization: JWT`; merely sending such a header does not count) gets the configured larger limit, but only when one is configured: `MEDIA_UPLOAD_MAX_MB` (11 to 500) if set, else `MEDIA_AV_MAX_MB` when set explicitly (`max(10, it) + 1` MB). With neither set the limit stays 11 MB and Next's body buffer stays 12 MB (`MEDIA_AV_MAX_MB` alone still sets the per-file audio/video cap, default 100). Next reads the body (up to `proxyClientMaxBodySize`) before the proxy runs, so the reverse proxy must enforce the real limits per location (operations.md 4.4); this is the second layer.
+- **Request size (`src/proxy.ts`):** a write (`POST`/`PATCH`/`PUT`) to ANY `/api/*` route with a `Transfer-Encoding` header (a chunked body, which cannot be size-checked) is refused with `411`; a bodyless POST (no `Content-Length`, no `Transfer-Encoding`) is fine. `/api/media`: 11 MB for everyone, except that a caller with a VERIFIED session (a genuine, unexpired Payload JWT in the `payload-token` cookie or `Authorization: JWT`; merely sending such a header does not count) gets the configured larger limit, but only when one is configured: `MEDIA_UPLOAD_MAX_MB` (11 to 500) if set, else max(image cap, `MEDIA_AV_MAX_MB` when set explicitly) + 1 MB (26 MB by default since v1.25). Next's body buffer is that + 1 MB (27 MB by default) (`MEDIA_AV_MAX_MB` alone still sets the per-file audio/video cap, default 100). Next reads the body (up to `proxyClientMaxBodySize`) before the proxy runs, so the reverse proxy must enforce the real limits per location (operations.md 4.4); this is the second layer.
 - **Audio/video legacy `sourceUrl`:** only `https:` addresses on an allowed host (`CMS_PUBLIC_URL`, `LEGACY_SITE_HOSTS`, the known old-site names) or a root-relative `/wp-content/uploads/...` path; any other root-relative path and plain `http:` are refused (400), and so are percent-encoding and backslashes in the path. Transcript links are unchanged. The importer upgrades `http://` and protocol-relative addresses on allowed hosts to `https:` and drops the rest.
 - **Import tooling:** `import:rollback --force` never deletes a published article or one with `provenance.reviewStatus = reviewed` (skip code `published-or-reviewed`) unless `--include-published` is also given. CSV files the importer, link audit and categorisation eval write prefix cells starting with `=`, `+`, `-`, `@`, tab or CR with a single quote.
 - No migration. (`articles.category_id` is NOT NULL in the database, so a published article without a category cannot exist and the search projection needs no change for it.)
@@ -1091,7 +1126,7 @@ Additive; no existing response changes.
 ### v1.19: Audio/video article block (self-hosted media)
 Additive; YouTube/Vimeo/other-site handling is unchanged.
 - New Lexical block `audioVideo` (`kind`, `media`, `sourceUrl`, `poster`, `title`, `caption`, `transcriptUrl`, `duration`) accepted in `articles.content`; validation, `bodyMedia` derivation and the public projection are described in §2 "Audio/video block".
-- Media accepts `video/mp4`, `video/webm`, `audio/mpeg`, `audio/mp4`, `audio/ogg` (magic bytes verified, size cap `MEDIA_AV_MAX_MB`, default 100 MB); images keep their rules and the 10 MB cap. No other type, and never SVG or HTML.
+- Media accepts `video/mp4`, `video/webm`, `audio/mpeg`, `audio/mp4`, `audio/ogg` (magic bytes verified, size cap `MEDIA_AV_MAX_MB`, default 100 MB); images keep their rules and the image cap (25 MB by default since v1.25). No other type, and never SVG or HTML.
 - Importer: `<video>`, `<audio>`, `<source>`, `[fvplayer]`, `[video]`, `[audio]` map to the block; unresolved files keep the legacy address and are counted as `unresolved-media` in the run report (`content.avUnresolvedMedia`). Rollback is unchanged: created Media and articles are already in the manifest.
 - `articles.featuredImage` must now be a JPEG/PNG/WebP image (`400` otherwise; audio/video Media is for the block only). The importer counts an audio/video featured attachment as a missing featured image.
 - Opt-in `MEDIA_UPLOAD_MAX_MB` (11 to 500) raises the `/api/media` request limit only (default unchanged at 11 MB); the reverse-proxy cap must be raised with it, see operations.md section 4.4.
@@ -1250,7 +1285,7 @@ Security-review fixes (details and tests in `docs/security.md` §5). Consumer-vi
 - **`pagination=false` is ignored** and `limit` is clamped to 1..100 on every collection (§4.2).
 - **Media**: new staff-only `uploadedBy`; non-editors can only edit their own, unreferenced media; updates audited (§6.3).
 - **`GET /api/articles/versions`**: new per-role filtering (§6). Anonymous remains `403`.
-- **Request size limits**: `413` / `411` / `400` from `src/proxy.ts` (§7). Proxy cap 12 MB (operations §4.4).
+- **Request size limits**: `413` / `411` / `400` from `src/proxy.ts` (§7). Proxy cap 28 MB (operations §4.4).
 - Convert-submission is atomic: concurrent calls → one `201`, the rest `409` (§6).
 - Contract clarifications (no code change): a live update for an out-of-scope or ended event is `403` (§6.2);
   editors in scope may create an article directly as `approved` (§2).

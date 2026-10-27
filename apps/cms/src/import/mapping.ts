@@ -1,5 +1,6 @@
 import { cleanText } from '../lib/sanitize'
 import { hasTemplateVariable } from '../lib/seoFields'
+import { MAX_SECONDARY_CATEGORIES } from '../lib/articleCategories'
 import type { Classification } from './categoryRules'
 import type { WxrTerm } from './wxr'
 
@@ -26,6 +27,42 @@ export function chooseCategory(terms: readonly WxrTerm[]): CategoryChoice {
   const distinct = usable.filter((c) => (seen.has(c.nicename) ? false : (seen.add(c.nicename), true)))
   const primary = distinct.find((c) => !GENERIC_CATEGORY_SLUGS.has(c.nicename.toLowerCase())) ?? distinct[0]
   return { primary, dropped: Math.max(0, distinct.length - (primary ? 1 : 0)) }
+}
+
+/**
+ * Most additional categories the importer keeps per post: the primary plus 4 more = 5 WordPress categories. Below the schema's own
+ * limit (`MAX_SECONDARY_CATEGORIES`, 5) on purpose: a post with more than 5 categories is a data-quality signal, reported, not stored.
+ */
+export const MAX_SECONDARY = Math.min(4, MAX_SECONDARY_CATEGORIES)
+
+export type SecondaryChoice = {
+  /** Terms to store in `Articles.categories`, in the export's listed order (distinct, never the primary, never the generic one). */
+  terms: WxrTerm[]
+  /** Distinct usable categories beyond the cap (not kept). */
+  overCap: number
+}
+
+/**
+ * The WordPress categories of a post other than the primary one become `Articles.categories`: distinct by slug, WordPress's
+ * generic "Uncategorised" never (it carries no meaning next to a real category), at most `cap` kept, the rest counted.
+ * `slugOf` maps a term to the slug it will be stored under, so the primary is recognised whatever its source.
+ */
+export function chooseSecondaryCategories(
+  terms: readonly WxrTerm[],
+  primarySlug: string,
+  slugOf: (t: WxrTerm) => string,
+  cap: number = MAX_SECONDARY,
+): SecondaryChoice {
+  const seen = new Set<string>([primarySlug])
+  const candidates: WxrTerm[] = []
+  for (const t of terms) {
+    if (!t.nicename || GENERIC_CATEGORY_SLUGS.has(t.nicename.toLowerCase())) continue
+    const slug = slugOf(t)
+    if (seen.has(slug)) continue
+    seen.add(slug)
+    candidates.push(t)
+  }
+  return { terms: candidates.slice(0, cap), overCap: Math.max(0, candidates.length - cap) }
 }
 
 export type AuthorByline = { byline: string; /** Stable key for counting distinct authors (never printed). */ key: string }

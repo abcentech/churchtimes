@@ -54,7 +54,9 @@ describe('article preview tokens', () => {
         sourceHost: 'old-site.test',
         sourceSha256: 'a'.repeat(64),
         confidence: 'partial',
-        reviewStatus: 'pending',
+        reviewStatus: 'reviewed',
+        reviewedBy: f.users.admin.id,
+        reviewedAt: new Date().toISOString(),
       },
     })
     const { token } = (await mint(f.tokens.eic, art.id)).json
@@ -63,7 +65,7 @@ describe('article preview tokens', () => {
     for (const key of ['provenance', 'legacyId', 'legacyUrl', 'reviewNotes', 'author', 'scheduledFor', 'bodyMedia']) {
       expect(got.json.doc, key).not.toHaveProperty(key)
     }
-    for (const needle of ['secret-origin', 'secret-legacy-address', 'old-site.test', 'importBatch', 'reviewStatus', 'private review note']) {
+    for (const needle of ['secret-origin', 'secret-legacy-address', 'old-site.test', 'importBatch', 'reviewStatus', 'reviewedBy', 'reviewedAt', 'private review note']) {
       expect(got.text, needle).not.toContain(needle)
     }
     expect(got.json.doc.id).toBe(art.id)

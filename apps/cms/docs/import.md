@@ -112,7 +112,7 @@ deterministic `id`). Attributes (class, style, event handlers, ...) are never ca
 - Audio and video files (API contract v1.19): `<video>`, `<audio>` (with `src` or `<source>` children, preferring the first mp4/webm/mp3/m4a/ogg address) and the
   shortcodes `[fvplayer src=.. splash=.. caption=..]`, `[video mp4=.. poster=..]`, `[audio src=..]` become one `audioVideo` block each (`kind`, `media`, optional `poster`,
   `title`, `caption`). The title is the element title, else the caption, else the article title, else "Video"/"Audio". The file is found like an image: `media.legacyPath`, then the
-  copied uploads folder (the Media rules check the bytes; the audio/video size cap is `MEDIA_AV_MAX_MB`, default 100 MB, not the 10 MB image cap). When the file cannot be found or
+  copied uploads folder (the Media rules check the bytes; the audio/video size cap is `MEDIA_AV_MAX_MB`, default 100 MB, not the image cap, `MEDIA_IMAGE_MAX_MB`, default 25 MB). When the file cannot be found or
   is refused, the block is kept with the legacy address (`sourceUrl`) and the report counts it as `unresolved-media` (`content.avUnresolvedMedia`; the reason by code is in the media
   `unresolved` table). Counts only: no address or file name is printed. Types the CMS does not host (`.mov`, `.wav`, streams, other players) stay a link paragraph or are dropped
   (`content.avUnsupported`); a YouTube address in these tags still becomes a YouTube block. The new Media rows are in the rollback manifest like image media, so rollback needs no change.
@@ -208,7 +208,7 @@ code (`IMPORT_USAGE`, `IMPORT_FILE_INSIDE_REPO`, `IMPORT_FILE_UNREADABLE`, `IMPO
   report is printed (exit code 1).
 - Files are read only from inside the real `--uploads` folder: UNC and device paths, drive letters, `..`, backslashes,
   alternate-stream colons, NUL and control characters are refused, and the real path (symlinks and junctions resolved)
-  must stay inside the real uploads folder. Image files over 10 MB (the Media collection's image cap, `MAX_IMAGE_BYTES`) and audio/video files over `MEDIA_AV_MAX_MB` are refused.
+  must stay inside the real uploads folder. Image files over the image cap (`MEDIA_IMAGE_MAX_MB`, default 25 MB, 1 to 50; `MAX_IMAGE_BYTES`, the Media collection's cap) and audio/video files over `MEDIA_AV_MAX_MB` are refused.
 - 50 consecutive failed writes, or (after 20 posts) more than half failing, stop the run (`IMPORT_TOO_MANY_FAILURES`). Report keys for post statuses come from a fixed set (anything else is `other`).
 
 ### SEO text
@@ -257,12 +257,19 @@ the rest with none) land in the fallback category.
 
 ### Categories and authors
 
-- **One category per article.** `Articles.category` is a single REQUIRED relationship and there is no second categories field, so
-  only one WordPress category per post can be kept. The primary is the first listed category, except that WordPress's generic
-  `uncategorised` / `uncategorized` is skipped when a real category exists; a post with none follows the chain in "Uncategorised posts".
-  Posts that had more are counted (`postsWithExtraCategories`, `extraCategoriesDropped`) so the owner can decide whether a
-  schema change (a `categories` hasMany field plus a migration) is wanted before the real run. Only the kept category is created,
-  and it is recorded in the manifest, so rollback is unchanged (it removes created categories that no article still uses).
+- **Primary category plus additional categories.** `Articles.category` is the PRIMARY category (one, required: canonical listing,
+  breadcrumbs, sitemap); `Articles.categories` holds the additional ones (owner decision: articles can sit in several sections).
+  The primary is chosen by the chain above (first listed WordPress category, skipping the generic `uncategorised` / `uncategorized`
+  when a real one exists). **Every other WordPress category of the post goes into `categories`**, in the export's order: distinct,
+  never the primary, never the generic `uncategorised`, at most 4 per post (primary plus 4 = 5 WordPress categories). Each is created
+  from the export like the primary (never from a tag) and recorded in the manifest. Posts with more than 4 additional categories keep
+  the first 4 and the rest are counted, not stored. Only new articles get categories: an existing article is never recategorised.
+  The report (counts only): `postsWithExtraCategories` (posts with more than one distinct WordPress category),
+  `postsWithSecondaryCategories` / `secondaryCategoriesKept` (posts and categories stored in `categories`), `postsOverSecondaryCap` /
+  `extraCategoriesDropped` (posts that exceeded the cap and how many categories did not fit; check these on the dry run, they are the
+  posts that lose a category).
+  Rollback is unchanged: the join rows go with the articles; a category an unlisted article still uses, as primary or additional, is kept
+  (`still-used`).
 - **Authors without accounts.** `wp:creator` becomes `bylineName` TEXT only: the channel display name, else the creator login. A name that is
   or contains an email address becomes empty. No user is ever created or matched and `author` is left empty. The report
   gives counts only: distinct authors, how many got a byline, how many had no usable name (unmapped) and posts left without a byline.
@@ -342,6 +349,7 @@ Imports pages recovered from web captures (format `archive-candidate/1`, fully s
 - **Publishing is gated**: an article with an `importBatch` cannot be set to `published` or `scheduled` (409) until an editor sets
   `provenance.reviewStatus` to `reviewed` in the admin. The rule runs server-side in the Articles `beforeChange` hook for every caller
   (REST, admin, scheduler, seed, importer). Only `reviewStatus` is editable (editors); the other provenance fields are server-owned.
+- **Four-eyes**: the editor who approves a recovered article (`reviewStatus` becomes `reviewed`) is recorded server-side in `provenance.reviewedBy`, `reviewedByName` and `reviewedAt` (editor roles can read them; clients cannot write them) and cannot also publish or schedule it (409, "A different editor must publish a recovered article you approved."). Admins may do both. The scheduler is not blocked: the rule applies when the article is scheduled. Articles approved before this rule have no stamp and are not blocked.
 - **Never public**: the `provenance` group has staff-only read access, so it is absent from every anonymous response, including
   published articles; the drafts themselves are invisible to anonymous reads.
 - **Rollback**: the manifest is compatible with `import:rollback` (below). An imported article is recognised by its `importBatch`
@@ -529,6 +537,7 @@ The command is read-only (no database). From `apps/cms`:
 
 ```
 npm run import:link-audit -- --file <export.xml> [--out <rows.jsonl>] [--redirects-out <rules.csv>] [--article-path '/{slug}/'] [--category-path '/category/{slug}/'] [--tag-path '/tag/{slug}/'] [--old-host a.test]
+  [--review-out <review.csv>] [--suggested-fixes-out <suggested.csv>] [--link-fixes <link-fixes.csv>]
 ```
 
 It prints counts only (types, resolved, unresolved, resolved before this change, unresolved reasons, redirect rules and what was dropped). `--out` (one JSON line per link, addresses
@@ -556,12 +565,51 @@ redirect file is empty (header only) for this export. Run the audit again after 
 
 What is left, and who does it:
 
-- **Owner**: decide what the 16 links to slugs that are not in the export should do (remove the link, or point at a replacement), and the 6 other paths. Details are in the private rows file (`--out`).
+- **Owner**: decide what the 16 links to slugs that are not in the export should do (remove the link, or point at a replacement), and the 6 other paths: see "How to fix missing links" below (`--review-out`, then `--link-fixes`).
 - **Owner**: nothing to set for the default: `/{slug}/` (D1) is the built-in default of the importer and the CMS. Set `PUBLIC_ARTICLE_PATH_TEMPLATE=/reports/{slug}/` only to override it, on the CMS and the public host alike (the importer used to write `/article/{slug}`).
-- **Owner**: `churchtimesnigeria.org` and `.com` must reach the same public host (DNS or host-level redirect) and be listed in `LEGACY_SITE_HOSTS`; path rules do not carry a host.
+- **Owner / Codex**: `churchtimesnigeria.org` and `.com` default to `churchtimesnigeria.net`: DNS must reach the public host, which answers them with a 301 to the same path on `.net` (paste-ready note in `legacy-hosts.md`); `LEGACY_SITE_HOSTS` lists them (the default includes both). Path rules do not carry a host.
 - **Codex (E3, old-host redirect map)**: covered on the CMS side for exact rules by `--redirects-out`; still the public host's job: pattern rules (`/category/*`, `/tag/*`, `/page/N/`, `/feed/`), `?p=N` through `legacyId`, the `/category/{slug}/` route itself (the CMS only emits and rewrites to that form; change it with `--category-path`), and tag pages if wanted.
 - **Codex (E4, link audit)**: covered on the CMS side by this command (read-only, counts, private rows). Still open: the 3119 uploads links (they need the media map, `export:media-map`, to resolve) and pages (a pages collection, then `pagePath`).
 - **Import**: `npm run import:redirects -- --file <rules.csv>` (dry run first) after the articles are imported.
+
+### How to fix missing links (for the owner and editors)
+
+Some links in old articles point at a page that is not in the export, or at an odd address. They are listed for you in a PRIVATE spreadsheet; nothing is changed until you decide.
+
+1. Ask the developer to run the audit with `--review-out` (the file goes outside GitHub, for example `private-reports\link-fixes-review-<date>.csv`). The screen shows only counts per likely cause.
+2. Open that file in Excel or Google Sheets. There is one row per problem link: which old article (`legacy_post_id`), which link in it (`link_index`), the address as written (`raw_target`), the likely cause (`cause`) and, when the importer found a similar article, its id, slug and a similarity score from 0 to 1 (`best_candidate_*`, `suggested_new_path`).
+3. For each row, fill the last column `decision` with ONE of:
+   - the new address of the article that should be linked, for example `/some-article/` (it must be an article that is imported; with `PUBLIC_ARTICLE_PATH_TEMPLATE=/reports/{slug}/` it starts `/reports/`);
+   - `remove-link`: the link goes, the words stay as plain text;
+   - `keep-text`: the same as `remove-link` (use whichever reads more clearly to you).
+
+   Leave `decision` empty for a row you have not decided: it is skipped and counted as "not decided yet". Do not change the `from` column. The same `from` may appear on several rows; give them the same decision (two different decisions for one address are both ignored).
+4. Save the file as `link-fixes.csv` (CSV, comma separated) in the private folder, never inside the repository.
+5. Ask the developer to run the import again with `--link-fixes <path to link-fixes.csv>` (also accepted by `import:convert-wxr`, `import:rehearse` and `import:link-audit`). The screen then reports counts: links changed, entries not matched, entries whose new address does not exist (those are not applied; fix the address and rerun).
+6. Running it again changes nothing more: the fixes are read from the source text every time.
+
+A fix only applies to a link that could not be resolved; a link that already works is never changed. A file with only `from,to` columns (or no header, `from` first and `to` second) works too, and so does JSON (`{"old-slug": "/new-slug/"}`).
+
+`--suggested-fixes-out <file>` writes a SUGGESTED fixes file with only high-confidence matches (similarity 0.95 or more and the only article that close, one-segment addresses only). It is never applied by itself: check it, and pass it as `--link-fixes` (or copy the rows you accept into your file) only after you approve it. Odd paths with two or three segments are never suggested automatically; the review file names the article the path seems to contain.
+
+Likely causes in the review file (`cause`):
+
+| Cause | Meaning |
+|---|---|
+| `near-match-case-or-encoding` | the slug differs only by capitals, `_` instead of `-`, or encoding |
+| `near-match-numeric-suffix` | like an existing slug but with (or without) a `-2` style number |
+| `near-match-trailing-characters` | an existing slug with letters added or missing at the end |
+| `near-match-similar` | spelled almost like an existing slug (similarity 0.8 or more) |
+| `draft-or-private`, `trashed`, `password-protected` | the post exists in the export but is not published (so it is not imported) |
+| `non-post-page`, `non-post-attachment`, `non-post-other-type` | the slug belongs to a page, a media item or another post type (for example a product) |
+| `not-in-export` | no post, page or media item has that slug (perhaps excluded from the export) |
+| `odd-path-contains-known-slug`, `odd-path`, `external-style-path` | a path with several parts; the first says one of the parts is an imported article's slug |
+
+The file is checked: a new address must be a path on this site under the article path template (no other host, no `javascript:`), and it must lead to an article, category or the home page that will exist; every refusal is only counted on the screen.
+
+### Old site hosts (`churchtimesnigeria.org`, `.com`, `www.`)
+
+The primary host is `churchtimesnigeria.net` (the host of `PUBLIC_SITE_URL` when set). `churchtimesnigeria.org`, `churchtimesnigeria.com` and the `www.` form of any of the three mean the same site; the list is configurable with `LEGACY_SITE_HOSTS` (comma list; default `churchtimesnigeria.org,churchtimesnigeria.com`; for `import:redirects` the default list of accepted `legacyUrl` hosts now holds all three hosts and their `www.` forms). A link to one of them is rewritten to the SAME path on this site (a root-relative path): when the article exists it becomes the article path, and when nothing resolves it still becomes the same path, so the link stays on `.net`. The public host must answer a request on `.org` or `.com` with a 301 to the same path on `.net`: see `legacy-hosts.md` (a short note for the public host owner).
 
 ## Categories: the rules mode (`--category-mode=rules`)
 
@@ -625,7 +673,7 @@ npm run import:uploads-check -- --uploads D:\churchtimes-private\uploads-raw --w
 folders and `--out` must be outside every git work tree (the command refuses otherwise) and `--out` must not be inside the uploads folder. The same exclusive-create rule applies to `--detail-file` of `import:convert-wxr`, `import:convert` and `import:rehearse`, and to `--uploads-detail-file` (one shared helper, `privateOut.ts`). Nothing is written except `--out`; nothing is executed, no database, no network.
 Only counts are printed. Exit code: 0 done, 1 failed, 2 bad usage or location, 3 done but unsafe files were found (the loader still refuses them, so that is a finding, not a blocker).
 
-- **Importable** means a `.jpg`, `.jpeg`, `.png` or `.webp` picture, or an audio/video file of the `audioVideo` block (`.mp4`, `.m4v`, `.webm`, `.mp3`, `.m4a`, `.ogg`, `.oga`) (allow-list, after lower-casing and stripping trailing dots and spaces) whose first bytes are that image type, not empty and at most 10 MB (`MAX_IMAGE_BYTES` in `src/lib/mediaLimits.ts`, shared by the uploads check, the loader and the Media collection; audio/video use the `MEDIA_AV_MAX_MB` cap). Reasons below are rejections. The real protection is the Media collection: it takes JPEG/PNG/WebP by magic bytes, refuses more than 40 megapixels and re-saves every picture with sharp, so a script hidden after the image data is not stored.
+- **Importable** means a `.jpg`, `.jpeg`, `.png` or `.webp` picture, or an audio/video file of the `audioVideo` block (`.mp4`, `.m4v`, `.webm`, `.mp3`, `.m4a`, `.ogg`, `.oga`) (allow-list, after lower-casing and stripping trailing dots and spaces) whose first bytes are that image type, not empty and at most 25 MB by default (`MEDIA_IMAGE_MAX_MB`, 1 to 50; `MAX_IMAGE_BYTES` in `src/lib/mediaLimits.ts`, shared by the uploads check, the loader and the Media collection; audio/video use the `MEDIA_AV_MAX_MB` cap). Reasons below are rejections. The real protection is the Media collection: it takes JPEG/PNG/WebP by magic bytes, refuses more than 40 megapixels and re-saves every picture with sharp, so a script hidden after the image data is not stored.
 - **Rejected, by reason**: `dangerous-extension` (php, phtml, phar, sh, exe, js, html, svg, zip and other archives, a dangerous extension inside a name such as `x.php.jpg`, `x.html.jpg`, `x.svg.png`), `hidden-file` (a name that starts with a dot, such as `.htaccess`),
   `bad-name` (control characters, backslash, colon, a Windows device name such as `con.png`, a trailing dot or space), `symlink` (a link or junction; never followed), `hard-link` (a file with more than one name), `zero-byte`, `magic-mismatch` (an image extension whose first bytes are not that image type), `not-media` (any other extension or none), `unsupported-type` (gif, bmp, ico, avif, pdf: real files that the CMS does not take; counted apart as `not importable`, never as safe or present), `too-large` (over the cap of its type; never read), `not-a-file`, `unreadable`.
   A script marker (`<?php` or `<script`) inside an otherwise valid JPEG/PNG/WebP is NOT a rejection: it is counted as an advisory `warning` among the safe files (random image data contains such bytes by chance, and the re-save removes any payload). `<?=` is no longer searched for. Audio and video are stored as uploaded (no re-save), so a script marker inside one stays a rejection (`polyglot`).

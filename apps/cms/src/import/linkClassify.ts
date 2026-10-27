@@ -1,5 +1,6 @@
 import { resolveSlugCollisions } from '../lib/legacyContent'
 import { normalizePath } from '../lib/redirectPaths'
+import { DEFAULT_LEGACY_SITE_HOSTS, DEFAULT_PRIMARY_HOST, hostKey } from './linkSiteHosts'
 import { chooseCategory } from './mapping'
 import type { WxrRecord } from './wxr'
 
@@ -11,7 +12,6 @@ import type { WxrRecord } from './wxr'
 
 /** Old site hosts the owner told us about besides the export's own base URL (`.net` is the primary host). */
 export const KNOWN_LEGACY_HOSTS: readonly string[] = ['churchtimesnigeria.net', 'churchtimesnigeria.org', 'churchtimesnigeria.com']
-const ALT_HOSTS: ReadonlySet<string> = new Set(['churchtimesnigeria.org', 'churchtimesnigeria.com'])
 
 export type LinkType =
   | 'mailto'
@@ -89,6 +89,8 @@ export const REASON = {
 export type LinkContext = {
   /** Lower-case host names (no `www.`) of the old site. */
   hosts: ReadonlySet<string>
+  /** The subset of `hosts` that are old names of the site (not the primary host): a link on one of them is the same link on the primary host. */
+  legacyHosts: ReadonlySet<string>
   /** Old slug -> final slug of every article that will exist. */
   published: ReadonlyMap<string, string>
   /** Slugs of posts in the export that will not exist (draft, private, pending, trash, password-protected, not imported). */
@@ -121,6 +123,10 @@ export type LinkContext = {
 
 export type LinkContextOptions = {
   extraHosts?: readonly string[]
+  /** The primary host (default `churchtimesnigeria.net`; see `resolveSiteHosts`). */
+  primaryHost?: string
+  /** Old names of the site (default `churchtimesnigeria.org` and `.com`; see `LEGACY_SITE_HOSTS`). */
+  legacyHosts?: readonly string[]
   articlePath: (slug: string) => string
   categoryPath?: (slug: string) => string
   tagPath?: ((slug: string) => string) | null
@@ -130,7 +136,7 @@ export type LinkContextOptions = {
   slugMap?: Readonly<Record<string, string>>
 }
 
-export const hostKey = (h: string): string => h.toLowerCase().replace(/\.+$/, '').replace(/^www\./, '')
+export { hostKey }
 
 const hostsOf = (...urls: string[]): string[] => {
   const out: string[] = []
@@ -227,9 +233,13 @@ export class LinkContextBuilder {
         // an invalid slug has no path
       }
     }
-    const hosts = new Set<string>([...this.siteHosts, ...(opts.extraHosts ?? []).map(hostKey)])
+    const primary = hostKey(opts.primaryHost ?? DEFAULT_PRIMARY_HOST)
+    const legacyHosts = new Set((opts.legacyHosts ?? DEFAULT_LEGACY_SITE_HOSTS).map(hostKey))
+    legacyHosts.delete(primary)
+    const hosts = new Set<string>([...this.siteHosts, ...(opts.extraHosts ?? []).map(hostKey), ...legacyHosts, primary])
     return {
       hosts,
+      legacyHosts,
       published,
       unpublishedSlugs,
       publishedIds,
@@ -310,7 +320,7 @@ export function classifyHref(raw: string, ctx: LinkContext): Classified {
     if (parsed.username || parsed.password) return none('other-scheme')
     const key = hostKey(parsed.hostname)
     if (!ctx.hosts.has(key)) return none('external')
-    host = ALT_HOSTS.has(key) ? 'legacy' : 'primary'
+    host = ctx.legacyHosts.has(key) ? 'legacy' : 'primary'
   }
   return classifySite(parsed, host, ctx)
 }
@@ -465,10 +475,37 @@ function classifySite(parsed: URL, host: HostKind, ctx: LinkContext): Classified
   return result('other-path', { reason: REASON.other })
 }
 
-/** The `LinkOptions.classify` hook of `sanitizeLegacyLinks`: the new path for a link, or why it stays. */
-export function linkClassifyHook(ctx: LinkContext): (url: string) => { to: string | null; reason: string } {
+/**
+ * The `LinkOptions.classify` hook of `sanitizeLegacyLinks`: the new path for a link, or why it stays. A link-fix (when
+ * given) decides an unresolved site link; a link still unresolved on an OLD host name (.org / .com) becomes the same path
+ * on this site (root-relative), because those hosts mean the primary host.
+ */
+export function linkClassifyHook(
+  ctx: LinkContext,
+  fixer?: { find: (url: string) => { to: string | null; remove: boolean; reason: string } | null },
+): (url: string) => { to: string | null; reason: string; remove?: boolean } {
   return (url) => {
     const c = classifyHref(url, ctx)
-    return { to: c.resolved ? c.to : null, reason: c.reason || REASON.other }
+    if (c.resolved) return { to: c.to, reason: c.reason || REASON.other }
+    if (!NON_SITE_TYPES.has(c.type)) {
+      const f = fixer?.find(url)
+      if (f) return f.remove ? { to: null, reason: f.reason, remove: true } : { to: f.to, reason: f.reason }
+      if (c.host === 'legacy') {
+        const same = sameSitePath(url)
+        if (same) return { to: same, reason: c.reason || REASON.other }
+      }
+    }
+    return { to: null, reason: c.reason || REASON.other }
+  }
+}
+
+/** Path, query and fragment of an address, as a root-relative path (null when it cannot be one safely). */
+function sameSitePath(url: string): string | null {
+  try {
+    const u = new URL(url.trim())
+    const p = `${u.pathname}${u.search}${u.hash}`
+    return pathOk(p) ? p : null
+  } catch {
+    return null
   }
 }
