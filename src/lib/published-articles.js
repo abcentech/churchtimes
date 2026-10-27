@@ -91,6 +91,7 @@ export function normalizePublishedArticle(record, {baseUrl} = {}) {
     bylineName: plainText(record.bylineName,200),
     featuredImage: normalizePublicMedia(record.featuredImage,baseUrl),
     legacyUrl:legacyUrl(record.legacyUrl),
+    legacyId:Number.isSafeInteger(record.legacyId) && record.legacyId>0 ? record.legacyId : null,
     corrections: Array.isArray(record.corrections) ? record.corrections.slice(0,100).filter(c=>c && typeof c.note==='string' && c.note.trim()).map(c=>({note:plainText(c.note,2000),correctedAt:publicationDate(c.correctedAt)})) : [],
     // Do not interpret arbitrary rich-text or HTML as safe markup.
     content: record.content ?? null,
@@ -109,6 +110,7 @@ async function requestPublishedArticles({
   query,
   collection = 'articles',
   categorySlug,
+  legacyId,
 } = {}) {
   if (!baseUrl) throw new CMSReadError('configuration','CMS base URL is required');
   let origin;
@@ -124,6 +126,10 @@ async function requestPublishedArticles({
   url.searchParams.set('sort', collection==='articles' ? '-publishedAt' : 'title');
   url.searchParams.set('page', String(Math.max(1, Math.floor(Number(page)) || 1)));
   if (slug || categorySlug) url.searchParams.set('where[slug][equals]', slug || categorySlug);
+  if(legacyId !== undefined) {
+    if(!/^[1-9]\d{0,14}$/.test(String(legacyId)))throw new CMSReadError('configuration','Legacy IDs must be positive integers');
+    url.searchParams.set('where[legacyId][equals]',String(legacyId));
+  }
   if (categoryId !== undefined) {
     if (!/^\d{1,15}$/.test(String(categoryId))) throw new CMSReadError('configuration','Category filters require numeric IDs');
     url.searchParams.set('where[category][equals]',String(categoryId));
@@ -175,6 +181,14 @@ export async function fetchPublishedArticle({ slug, ...options } = {}) {
   if (!validSlug(slug)) return null;
   const { articles } = await requestPublishedArticles({ ...options, slug, limit: 1 });
   return articles.find(article => article.slug === slug) || null;
+}
+
+// Existing published-only articles API, never the staff-only redirects collection.
+export async function fetchPublishedLegacyArticle({legacyId,...options}={}) {
+  if(!/^[1-9]\d{0,14}$/.test(String(legacyId)))return null;
+  const {articles}=await requestPublishedArticles({...options,legacyId,limit:1});
+  const article=articles.find(item=>String(item.legacyId)===String(legacyId));
+  return article ? {...article,status:'published'} : null;
 }
 
 function normalizeCategory(record) {
