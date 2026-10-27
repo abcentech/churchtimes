@@ -1,4 +1,5 @@
 name: CMS Docker smoke
+# (Public-site PRs that touch no apps/cms path touch this file so the required docker-smoke check still reports: PR #51.)
 
 # Builds apps/cms/Dockerfile, migrates a throwaway PostgreSQL 16 with the image, boots the CMS container
 # in NODE_ENV=production and smoke-tests it. Docker is not installed on the development machines, so this
