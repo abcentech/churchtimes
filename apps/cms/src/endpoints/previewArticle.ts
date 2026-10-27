@@ -9,7 +9,29 @@ const fail = (status: number, message: string) =>
 
 const MEDIA_PATH = '/api/media/file/'
 /** Fields that exist on a media document for staff / access decisions and must never reach a preview holder. */
-const MEDIA_PRIVATE_KEYS = ['uploadedBy', 'publishedAsFeatured', 'publishedInBody', 'liveUpdateImages']
+const MEDIA_PRIVATE_KEYS = [
+  'uploadedBy',
+  'publishedAsFeatured',
+  'publishedInBody',
+  'liveUpdateImages',
+  'legacyPath',
+  'adCampaignCreatives',
+]
+
+/**
+ * Fields of an article that exist for staff, the importer or access decisions and must never reach a preview-link holder:
+ * review notes, the author (a user), the schedule, the derived body-media join, the archive provenance group (source address,
+ * hashes, review state) and the legacy WordPress id and address (which would reveal old-site structure).
+ */
+const STAFF_ONLY_ARTICLE_KEYS = [
+  'reviewNotes',
+  'author',
+  'scheduledFor',
+  'bodyMedia',
+  'provenance',
+  'legacyId',
+  'legacyUrl',
+] as const
 
 const isMediaUrl = (value: string): boolean => {
   try {
@@ -65,17 +87,8 @@ export const previewArticleEndpoint: Endpoint = {
       })) as Record<string, unknown> | null
       if (!doc) return fail(404, 'Article not found.')
 
-      const {
-        reviewNotes: _reviewNotes,
-        author: _author,
-        scheduledFor: _scheduledFor,
-        bodyMedia: _bodyMedia,
-        ...safe
-      } = doc
-      void _reviewNotes
-      void _author
-      void _scheduledFor
-      void _bodyMedia
+      const safe: Record<string, unknown> = { ...doc }
+      for (const key of STAFF_ONLY_ARTICLE_KEYS) delete safe[key]
       preparePreview(safe, token)
       return Response.json({ doc: safe }, { headers })
     } catch {

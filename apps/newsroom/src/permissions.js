@@ -85,6 +85,12 @@ export function can(user, action, ctx = {}) {
       return isEditorRole(user) || role === 'trusted-publisher';
     case 'live.approve':
       return editor || (role === 'trusted-publisher' && inSections(user, categoryId));
+    case 'archive.view':
+      // Recovered archive drafts are staff-only and the CMS only lists them for editors (reporters see their own work only).
+      return isEditorRole(user);
+    case 'archive.review':
+      // Setting provenance.reviewStatus: admin, editor-in-chief, or a section-editor for the story's section.
+      return editor;
     case 'audit.read':
       return role === 'admin' || role === 'editor-in-chief';
     default:
