@@ -18,7 +18,7 @@ export function mountListen(root, { window: win = window } = {}) {
     refreshVoices();if(!voices.length)return;
     try {
       const readable=content.cloneNode(true);
-      readable.querySelectorAll('.advertising-slot,[data-ad-placement],.original-callout,.article-tags,.newsroom-article-end,button,script,style').forEach(node=>node.remove());
+      readable.querySelectorAll('.advertising-slot,[data-ad-placement],.original-callout,.article-tags,.newsroom-article-end,audio,video,.cms-av-links,button,script,style').forEach(node=>node.remove());
       const speech=new win.SpeechSynthesisUtterance(readable.textContent.slice(0,50000));speech.voice=voices.find(v=>v.lang.startsWith('en'))||voices[0];
       speech.onend=reset;speech.onerror=reset;win.speechSynthesis.speak(speech);playing=true;button.textContent='Stop listening';
     } catch { button.hidden=true;button.style.display='none'; }
