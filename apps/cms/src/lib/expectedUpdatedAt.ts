@@ -52,7 +52,7 @@ export const captureExpectedUpdatedAt: CollectionBeforeOperationHook = ({ args, 
  * the whole operation back (nothing is written, no audit entry, no counter is stamped).
  */
 export const assertExpectedUpdatedAt =
-  (table: 'articles' | 'live_updates'): CollectionBeforeChangeHook =>
+  (table: 'articles' | 'live_updates' | 'ad_campaigns'): CollectionBeforeChangeHook =>
   async ({ data, originalDoc, operation, req }) => {
     if (operation !== 'update') return data
     const ctx = (req.context ?? {}) as Ctx

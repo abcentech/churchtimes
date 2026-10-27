@@ -31,7 +31,7 @@ export const FEED_IMAGE_SIZE = 'card'
  * `url` is Payload's own media URL (root-relative `/api/media/file/<name>`, or absolute when CMS_PUBLIC_URL is set).
  *
  * Readers get the ~800 px `card` variant (url, width, height and mimeType of that variant) so a phone does not
- * download an original of up to 10 MB. When the variant does not exist (Payload does not enlarge images that are
+ * download an original of up to 25 MB. When the variant does not exist (Payload does not enlarge images that are
  * already smaller than the size, and rows that predate the size) or is not a usable media URL / image type, the
  * original upload is used. `alt` always comes from the media document itself.
  */

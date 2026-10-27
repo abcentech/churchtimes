@@ -45,10 +45,11 @@ if (liveCms) {
 
 export default defineConfig({
   testDir: './tests',
-  testMatch: ['newsroom.spec.js', 'newsroom-security.spec.js'],
+  testMatch: ['newsroom.spec.js', 'newsroom-security.spec.js', 'newsroom-a11y.spec.js'],
   fullyParallel: false,
   workers: 1,
-  reporter: [['list']],
+  retries: process.env.CI ? 1 : 0,
+  reporter: process.env.CI ? [['list'], ['github']] : [['list']],
   use: {
     baseURL: `http://127.0.0.1:${mockPort}/`,
     launchOptions: {
