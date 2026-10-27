@@ -165,6 +165,8 @@ test.describe('Newsroom UI (dev mock mode)', () => {
     await page.getByTestId('archive-approve').click();
     await page.getByTestId('archive-approve-confirm-ok').click();
     await expect(page.getByTestId('archive-publish-clear')).toBeVisible();
+    await expect(page.getByTestId('archive-approved-by')).toContainText('Approved by');
+    await expect(page.getByTestId('archive-four-eyes')).toContainText('different editor must publish');
     await expect(page.getByTestId('archive-approve')).toHaveCount(0);
 
     await page.getByTestId('archive-reject').click();

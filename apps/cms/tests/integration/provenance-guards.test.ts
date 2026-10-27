@@ -63,8 +63,9 @@ describe('approve and publish are separate requests', () => {
 
   it('two requests work, and the approval is audited before the publish', async () => {
     const a = await candidate()
-    expect((await patch(f.tokens.eic, a.id, { provenance: { reviewStatus: 'reviewed' } })).status).toBe(200)
+    expect((await patch(f.tokens.sectionEditor, a.id, { provenance: { reviewStatus: 'reviewed' } })).status).toBe(200)
     expect(await reviewRows(a.id)).toHaveLength(1)
+    // four-eyes: a different editor publishes (see four-eyes.test.ts)
     expect((await patch(f.tokens.eic, a.id, { status: 'published' })).status).toBe(200)
     expect((await stored(a.id)).status).toBe('published')
   })
@@ -161,7 +162,7 @@ describe('provenance: null', () => {
 describe('server-side paths stay bound by the review', () => {
   it('the scheduler does not publish a scheduled recovered article whose approval was withdrawn', async () => {
     const a = await candidate()
-    await patch(f.tokens.eic, a.id, { provenance: { reviewStatus: 'reviewed' } })
+    await patch(f.tokens.sectionEditor, a.id, { provenance: { reviewStatus: 'reviewed' } })
     const when = new Date(Date.now() + 3_600_000)
     expect((await patch(f.tokens.eic, a.id, { status: 'scheduled', scheduledFor: when.toISOString() })).status).toBe(200)
     // The approval cannot be withdrawn through the API while the article is scheduled (the guard refuses the inconsistent state)...
@@ -179,7 +180,7 @@ describe('server-side paths stay bound by the review', () => {
 
   it('restoring a version that would republish a rejected recovered article is refused', async () => {
     const a = await candidate()
-    await patch(f.tokens.eic, a.id, { provenance: { reviewStatus: 'reviewed' } })
+    await patch(f.tokens.sectionEditor, a.id, { provenance: { reviewStatus: 'reviewed' } })
     expect((await patch(f.tokens.eic, a.id, { status: 'published' })).status).toBe(200)
     // Find the version that is published and reviewed, then reject the article and take it down.
     const versions = await f.payload.findVersions({ collection: 'articles', where: { parent: { equals: a.id } }, sort: '-createdAt', limit: 10, overrideAccess: true })

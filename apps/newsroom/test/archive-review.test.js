@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  archiveWhere, cleanFilters, groupSha, normalizeProvenance, originalDateLabel, publishBlockReason, reviewActions,
+  approvalNote, fourEyesReason, archiveWhere, cleanFilters, groupSha, normalizeProvenance, originalDateLabel, publishBlockReason, reviewActions,
   reviewPatchBody, safeSourceUrl, extractLinks, summarizeLinks, linksNeedAcknowledgement, isKnownLinkHost, parseKnownHosts, hostInText
 } from '../src/archive-review.js';
 import { markdownToHtml } from '../src/lexical.js';
@@ -131,7 +131,11 @@ test('mock: approving needs an editor; the story stays a draft; publish is refus
   const approved = (await eic.setArchiveReview('arc-1', 'reviewed')).data;
   assert.equal(approved.provenance.reviewStatus, 'reviewed');
   assert.equal(approved.status, 'draft');
+  // four-eyes: the approver cannot publish; a different editor can
+  await assert.rejects(eic.transitionArticle('arc-1', 'published'), { status: 409 });
+  eic.currentUser = { id: 'u2', name: 'Other', role: 'editor-in-chief', sections: 'all' };
   assert.equal((await eic.transitionArticle('arc-1', 'published')).data.status, 'published');
+  eic.currentUser = { id: 'u1', name: 'Test', role: 'editor-in-chief', sections: 'all' };
 
   const rejected = (await eic.setArchiveReview('arc-2', 'rejected')).data;
   assert.equal(rejected.provenance.reviewStatus, 'rejected');
@@ -223,4 +227,44 @@ test('index.html carries exactly one CSP meta with the build placeholder and no 
   assert.ok(html.includes('content="__NEWSROOM_CSP__"'));
   assert.equal(/<script(?![^>]*\bsrc=)[^>]*>/i.test(html), false, 'no inline script');
   assert.equal(/\son[a-z]+\s*=/i.test(html), false, 'no inline event handlers');
+});
+
+test('four-eyes: the approver is told a different editor must publish; admins and other editors are not blocked', () => {
+  const reviewed = prov({ reviewStatus: 'reviewed', reviewedById: '7', reviewedByName: 'Ada Obi', reviewedAt: '2026-10-25T10:00:00.000Z' });
+  const story = { provenance: reviewed };
+  assert.match(publishBlockReason(story, { id: '7', role: 'editor-in-chief' }), /different editor must publish or schedule/);
+  assert.equal(publishBlockReason(story, { id: 7, role: 'section-editor' }) !== '', true, 'ids compare as strings');
+  assert.equal(publishBlockReason(story, { id: '7', role: 'admin' }), '');
+  assert.equal(publishBlockReason(story, { id: '8', role: 'editor-in-chief' }), '');
+  assert.equal(publishBlockReason(story), '');
+  // the reason never names the approver
+  assert.doesNotMatch(publishBlockReason(story, { id: '7', role: 'editor-in-chief' }), /Ada/);
+  // ordinary stories and unreviewed ones keep their own rule
+  assert.equal(fourEyesReason(null, { id: '7' }), '');
+  assert.match(publishBlockReason({ provenance: prov() }, { id: '7', role: 'admin' }), /not been reviewed/);
+});
+
+test('"Approved by <name> on <date>" is shown to editor roles only', () => {
+  const p = normalizeProvenance(prov({ reviewStatus: 'reviewed', reviewedBy: { id: 7, name: 'Ada Obi' }, reviewedByName: 'Ada Obi', reviewedAt: '2026-03-12T10:00:00.000Z' }));
+  assert.equal(p.reviewedById, '7');
+  assert.equal(approvalNote(p, true), 'Approved by Ada Obi on 12 Mar 2026');
+  assert.equal(approvalNote(p, false), '');
+  assert.equal(approvalNote({ ...p, reviewStatus: 'pending' }, true), '');
+  assert.equal(approvalNote({ ...p, reviewedByName: '' }, true), 'Approved on 12 Mar 2026');
+  assert.equal(approvalNote(normalizeProvenance(prov()), true), '');
+  assert.equal(normalizeProvenance(prov({ reviewedBy: 9 })).reviewedById, '9');
+});
+
+test('mock backend: approving records the approver and time; an admin may approve and publish', async () => {
+  const api = mockAs('editor-in-chief');
+  const done = (await api.setArchiveReview('arc-1', 'reviewed')).data;
+  assert.equal(done.provenance.reviewedById, 'u1');
+  assert.equal(done.provenance.reviewedByName, 'Test');
+  assert.match(approvalNote(done.provenance, true), /^Approved by Test on /);
+  assert.equal(approvalNote(done.provenance, false), '');
+  const undone = (await api.setArchiveReview('arc-1', 'rejected')).data;
+  assert.equal(undone.provenance.reviewedById, '');
+  const admin = mockAs('admin');
+  await admin.setArchiveReview('arc-1', 'reviewed');
+  assert.equal((await admin.transitionArticle('arc-1', 'published')).data.status, 'published');
 });

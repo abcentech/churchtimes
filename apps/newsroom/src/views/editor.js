@@ -24,7 +24,7 @@ import { ApiError } from '../api/errors.js';
 import { STALE_MESSAGE, CONTENT_CONFLICT_MESSAGE, isStaleConflict } from '../stale-guard.js';
 import { saveLocalCopy, readLocalCopy, clearLocalCopy, copyDiffers } from '../draft-guard.js';
 import { escapeHtml, slugify, statusBadge, formatDate } from '../util.js';
-import { publishBlockReason } from '../archive-review.js';
+import { publishBlockReason, fourEyesReason } from '../archive-review.js';
 import { parseScheduleInput, isoToLocalInput, formatScheduled, defaultScheduleValue } from '../schedule.js';
 
 // Pointer to the editor currently on screen, used only by the page-unload guard below (story state stays in `states`).
@@ -722,7 +722,7 @@ function renderWorkflowButtons(story) {
   if (story.id && api.can('story.approve', ctx)) {
     html += `<button type="button" class="btn btn-success btn-sm" id="btn-approve-story" data-testid="editor-approve">Approve Story</button>`;
   }
-  const archiveBlock = publishBlockReason(story);
+  const archiveBlock = publishBlockReason(story, api.getCurrentUser());
   if (api.can('story.publish', ctx)) {
     html += `<button type="button" class="btn btn-primary btn-sm" id="btn-publish-story" data-testid="editor-publish" style="background-color: var(--color-forest-dark);"${archiveBlock ? ' disabled aria-describedby="archive-block-note"' : ''}>Publish Story</button>`;
   }
@@ -828,16 +828,18 @@ function updateSchedulePanel(container) {
   }
   // Keep what the editor typed across re-renders (a failed save or a server error must not wipe the field).
   const typed = panel.querySelector('#schedule-at-input')?.value;
+  const fourEyes = fourEyesReason(story.provenance, api.getCurrentUser());
   const scheduled = story.status === 'scheduled' && story.scheduledFor;
   const value = typed || (scheduled ? isoToLocalInput(story.scheduledFor) : defaultScheduleValue());
   panel.style.display = 'block';
   panel.innerHTML = `
     <h4 style="margin-top:0;">Schedule publication</h4>
+    ${fourEyes ? `<p class="archive-block-note" data-testid="editor-schedule-four-eyes" role="note" style="margin:0 0 0.5rem;">${escapeHtml(fourEyes)}</p>` : ''}
     ${scheduled ? `<p style="margin:0 0 0.5rem;" data-testid="editor-scheduled-for" data-iso="${escapeHtml(story.scheduledFor)}">Scheduled to publish automatically on <strong>${escapeHtml(formatScheduled(story.scheduledFor))}</strong>.</p>` : ''}
     <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
       <label for="schedule-at-input" class="form-label" style="margin:0;">Publish at (your local time)</label>
       <input type="datetime-local" step="1" id="schedule-at-input" data-testid="editor-schedule-at" class="form-input" style="width:auto;" value="${escapeHtml(value)}" />
-      <button type="button" class="btn btn-primary btn-sm" id="btn-schedule-story" data-testid="editor-schedule">${scheduled ? 'Reschedule' : 'Schedule'}</button>
+      <button type="button" class="btn btn-primary btn-sm" id="btn-schedule-story" data-testid="editor-schedule"${fourEyes ? ' disabled' : ''}>${scheduled ? 'Reschedule' : 'Schedule'}</button>
     </div>`;
   panel.querySelector('#btn-schedule-story').addEventListener('click', () => runSchedule(container));
 }

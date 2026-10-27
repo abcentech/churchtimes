@@ -213,7 +213,7 @@ describe('apply: drafts only, never public, review gate, dedup, rollback', () =>
     const flip = await api('PATCH', `/api/articles/${articleId}`, { token: f.tokens.eic, body: { provenance: { reviewStatus: 'reviewed' } } })
     expect(flip.status).toBe(200)
     expect((await bySha(hash))[0].provenance.reviewStatus).toBe('reviewed')
-    const pub = await api('PATCH', `/api/articles/${articleId}`, { token: f.tokens.eic, body: { status: 'published' } })
+    const pub = await api('PATCH', `/api/articles/${articleId}`, { token: f.tokens.admin, body: { status: 'published' } })
     expect(pub.status).toBe(200)
     const open = await api('GET', `/api/articles/${articleId}`)
     expect(open.status).toBe(200)
