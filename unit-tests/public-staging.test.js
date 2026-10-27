@@ -28,7 +28,7 @@ test('canonical paths reject unsafe slugs and serialize structured data as inert
 test('public SSR serves real article HTML/metadata, anonymous requests and genuine HTTP failure statuses',async()=>{
  const dist=await mkdtemp(join(tmpdir(),'public-ssr-test-'));
  await writeFile(join(dist,'index.html'),'<html><head><title>Public site</title><meta name="description" content="Default"><meta property="og:title" content="Default"><meta property="og:description" content="Default"><meta property="og:type" content="website"></head><body><div id="app"></div></body></html>');
- const server=createPublicServer({dist,basePath:'/journal/',cmsUrl:'https://cms.example.test',siteUrl:'https://public.example.test',indexable:true,fetchImpl:async(url,options)=>{
+ const server=createPublicServer({articlePathTemplate:'/reports/{slug}/',dist,basePath:'/journal/',cmsUrl:'https://cms.example.test',siteUrl:'https://public.example.test',indexable:true,fetchImpl:async(url,options)=>{
    assert.equal(options.credentials,'omit');assert.equal(options.headers.Cookie,undefined);
    const slug=new URL(url).searchParams.get('where[slug][equals]');if(slug==='failed')return new Response('',{status:403});return Response.json({docs:slug===article.slug?[article]:[]});
  }});
