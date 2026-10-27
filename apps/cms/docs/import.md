@@ -691,3 +691,40 @@ The loader repeats the safety checks itself (`media.ts`, via `uploadSafety.ts`):
 ## Running the rehearsal on a clean CI runner
 
 `.github/workflows/import-rehearsal.yml` (manual: Actions, "Import rehearsal", Run workflow) runs `npm run import:rehearse` on a GitHub runner with a throwaway embedded PostgreSQL and a large synthetic export. Defaults are the real archive size (4,346 posts, 200 images). The counts-only result, timings and PASS/FAIL checks appear in the job summary. It uses no repository secrets and reads no real data.
+
+## Rehearsed at real scale (synthetic uploads)
+
+`npm run uploads:synth -- --wxr <export.xml> --out <dir outside every git work tree> [--seed N] [--variant-percent 15] [--manifest <file>]` writes a SYNTHETIC `wp-content/uploads`
+tree for the real export (a small valid JPEG/PNG/WebP at every attachment path, MP4/M4A placeholders with valid headers, WordPress `-300x200` variants for a share of the images, a known set
+of bad files, a few unreferenced extras). Deterministic (seeded); refuses an `--out` inside a git work tree or a non-empty one; the per-path manifest goes next to `--out`, never inside it.
+The bad files hold only a harmless `<?php` / `<script` marker (a real web shell is flagged by antivirus on a developer laptop and breaks the run). Use it to rehearse before the real uploads arrive.
+
+Run on the real export (4,343 published, 6,142 attachments, Windows laptop, throwaway PostgreSQL, `--category-mode=rules`). Counts and seconds only:
+
+| Item | Result |
+| --- | --- |
+| Synthetic tree | 7,878 files, 311 MB (6,139 distinct attachment paths, 1,730 size variants, 10 extras); generated in about 6 min |
+| `import:uploads-check` | present 6,095; missing 0; rejected-unsafe 14 (planted 8 + 1 AV polyglot + 5 non-media types such as doc/docx/aac); not importable 27 (26 gif/pdf/avif + 1 over-size); case differs 3 (2 planted + 1 pair in the export that differs only by case); duplicates 0 |
+| Loader, apply | media created 5,329, reused 150; unresolved: external-host 59, missing-file 81, rejected-unsafe 8, too-large 1, unsupported-type 5 |
+| Images | body images resolved 3,030 (161 unresolved, now text); featured images resolved 3,648, rejected 1, expected but missing 8 |
+| Audio/video blocks | 10 with a file, 1 unresolved (legacy address kept), 0 unsupported |
+| Media on disk | 5,329 rows (jpeg 5,140, png 152, webp 28, mp4 8, m4a 1); 13,038 files, 412 MB (originals plus Payload size variants) |
+| Media map (`export:media-map`) | `media-map/1`, 5,320 entries (9 excluded: unsupported mime), 856,167 bytes, `.sha256` matches the bytes, 5 s |
+| Published-only rule | 60-row anonymous sample: 60 readable while published, 0 with every article draft, 60 after restore |
+| Second apply | changes nothing (0 articles, 0 media, 0 comments created) |
+| Rollback | deletes 4,343 articles, 1,348 comments, 5,329 media rows, 16 categories; media folder empty afterwards |
+| Timings (laptop under memory pressure) | dry run 2.0 to 3.3 min; apply 17.5 to 24 min (4,343 posts, 5,329 images, about 123,000 queries); apply again 1.8 min; reindex 1 to 2 min; rollback 2 to 12 min |
+| Memory | process peak RSS 594 MB |
+
+Expect the real media import to take about 20 to 25 minutes on a similar machine, roughly 5 posts and 5 images per second, one database transaction per post. It runs sequentially by design (the
+media of a post are created inside that post's transaction), memory stays under 0.6 GB, and a re-run (`--update` not needed) is idempotent, so a failed or interrupted apply can simply be run again.
+No concurrency setting was added: the cost is database round trips and the image re-save inside the transaction, not file reads, and parallel writes would break the one-transaction-per-post rollback guarantee.
+
+Findings from this rehearsal:
+
+- Fixed: the dry run counted an address that maps onto a media row it would already have created as "would be created", so the dry run reported 5,479 against 5,329 created and 150 reused in the real run (the "apply matches the dry run" check failed).
+  The dry run now remembers the paths it would create.
+- Fixed: the rehearsal's rollback check could not pass (published articles need `includePublished`), and a `WXR_*` failure code is now printed (the codes are a closed list, never data).
+- Open: a body image that points at a size variant that exists on disk (`name-300x200.jpg`) imports the variant file when the original has not been imported yet, and reuses the original when it has. The same address can therefore give a thumbnail or the original depending on post order.
+- Open: two attachments whose paths differ only by letter case collide on a case-insensitive file system (Windows); on Linux the loader looks files up exactly, so a case mismatch is "missing". Rename on the copy.
+- Open: under memory pressure (about 700 MB free) a valid image can fail the Media re-save and is counted `rejected-by-media-rules`, or a post write fails (PostgreSQL 53200 out of memory). Nothing is wrong with the files; run the apply again.
