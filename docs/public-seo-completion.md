@@ -23,9 +23,10 @@ The added checks cover:
   One English edition needs no invented hreflang variants.
 
 This proves public rendering/discovery against the existing anonymous article API and the landed C2 fields from #53. It
-does **not** prove the archive importer, private WordPress export, real migration/editorial QA, the unmerged #54 content
-shapes, or #55's C7 endpoint. In particular #55's NFC/shared-vector correction remains a prerequisite for real A9 parity;
-the provisional normalization vectors in #50 stay labelled synthetic contract fixtures.
+does **not** prove the archive importer, private WordPress export or real migration/editorial QA. The CMS content shapes (#54) and the
+C7 redirect endpoint with its normalisation vectors (#55) are now merged, so A9 (real redirects integration against the CMS endpoint and the shared vectors in
+`apps/cms/tests/fixtures/redirect-normalisation.json`) is unblocked and is the next step; the host already runs those vectors in
+`unit-tests/public-redirect-contract-vectors.test.js`. The default article path is `/{slug}/` (owner decision D1).
 
 ## Reproduce locally
 
