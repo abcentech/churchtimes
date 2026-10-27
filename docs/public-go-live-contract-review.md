@@ -9,8 +9,8 @@ The proposal remains unimplemented until its respective CMS changes land.
 
 - **O6 / C1.1:** the proposed registered Lexical block shape is suitable for a
   future adapter: `type: block`, `fields.blockType: youtubeEmbed`, validated
-  11-character `fields.videoId`, optional plain-text `fields.title`. The current
-  renderer does **not** accept it yet. Do not interpret agreement with the shape
+  11-character `fields.videoId`, optional plain-text `fields.title`. The legacy
+  renderer now accepts it as a safe link fallback (merged in #43, 2026-10-27; title capped at 200 characters). Do not interpret agreement with the shape
   as a shipped feature. It will need escaped, labelled link fallback in SSR and
   the browser, no iframe/network request before explicit reader consent, bounded
   title handling, and tests for malformed IDs, navigation and CSP. Raw iframe
