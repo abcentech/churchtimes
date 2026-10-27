@@ -95,7 +95,7 @@ export function defaultPrivateRoot(home: string = os.homedir()): string {
 export type DemoPaths = { dataDir: string; loginsFile: string }
 
 /** Defaults follow the owner's layout; DEMO_DATA_DIR and DEMO_LOGINS_FILE override them (still checked by assertOutsideRepo). */
-export function resolveDemoPaths(env: NodeJS.ProcessEnv = process.env, home: string = os.homedir()): DemoPaths {
+export function resolveDemoPaths(env: Record<string, string | undefined> = process.env, home: string = os.homedir()): DemoPaths {
   const root = defaultPrivateRoot(home)
   const dataDir = path.resolve(env.DEMO_DATA_DIR || path.join(root, 'demo-data'))
   // The default login file sits in the sibling folder the owner already uses for private reports.

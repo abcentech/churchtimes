@@ -153,7 +153,7 @@ async function main() {
   const manifests = path.join(workDir as string, 'archive-manifest')
   fs.mkdirSync(manifests, { recursive: true })
   const report = await runArchiveImport(payload, { file: candidates, apply: true, manifestDir: manifests, category: 'news', batch: 'demo-recovered' })
-  say(`archive drafts imported: ${JSON.stringify(report.counts ?? report)}`.slice(0, 200))
+  say(`archive drafts imported: ${JSON.stringify(report)}`.slice(0, 200))
 
   // ---- 5. Advertising and redirects ---------------------------------------------------------------------------------------
   const adv = (await payload.create({ collection: 'advertisers', data: { name: 'Demo Advertiser' } as never, overrideAccess: true })) as unknown as Row
