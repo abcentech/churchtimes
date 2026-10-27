@@ -1,14 +1,17 @@
 # Public article paths and optional CMS SEO
 
-`PUBLIC_ARTICLE_PATH_TEMPLATE` accepts exactly `/reports/{slug}/` (the unchanged default) or `/{slug}/`.
-No owner URL decision is implied. Do not set the root template on a deployed host until D1, D2 and the full redirect map
-are approved. Root article slugs must not collide with public pages or infrastructure (`latest`, `about`, `contact`,
-`advertise`, `category`, `assets`, `site`, `api`, `reports`, `index`); resolve collisions in the import/CMS lane first.
+`PUBLIC_ARTICLE_PATH_TEMPLATE` accepts exactly `/{slug}/` or `/reports/{slug}/`. Owner decision D1 is settled: the public host
+defaults to `/{slug}/` when the variable is unset or empty, and the value must equal the CMS's own
+`PUBLIC_ARTICLE_PATH_TEMPLATE` (also default `/{slug}/`). Set `/reports/{slug}/` only for a rollback. Anything else stops startup.
+Under `/{slug}/` the host refuses to treat a first path segment owned by a real route as an article. The list mirrors the CMS
+`apps/cms/src/lib/reservedSlugs.ts` (`admin`, `api`, `newsletter`, `search`, `wp-admin`, `about`, `latest` and so on); the CMS renames an
+imported slug that collides, and any new top-level public route must be added to both lists.
 
 The Node public host uses one template for clean article routing, canonical tags, JSON-LD URL, social-card URL, sitemap,
 RSS and server-rendered latest/category links. It emits an escaped `public-article-path-template` meta value on HTML
-responses so browser-generated article links and navigation use the same value. With no runtime value (including a
-standalone static export) the browser uses the unchanged `/reports/` default. A static host cannot supply server redirects.
+responses so browser-generated article links and navigation use the same value. With no runtime value (a
+standalone static export, which cannot serve root slugs) the browser library falls back to `/reports/{slug}/`; every server-rendered
+page carries the meta value. A static host cannot supply server redirects.
 Changing only the template does not create legacy redirects; use the separate C7 redirect engine when that PR lands.
 
 C2 fields are optional: the title tag and social title use `seoTitle` then `title`; meta/social/structured description use

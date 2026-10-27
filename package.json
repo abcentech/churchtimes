@@ -14,6 +14,7 @@
     "test:unit": "node --test unit-tests/*.test.js",
     "test:newsroom": "playwright test --config playwright.newsroom.config.js",
     "test:newsroom-app": "playwright test --config playwright.newsroom-app.config.js",
+    "test:newsroom-a11y": "playwright test --config playwright.newsroom-app.config.js newsroom-a11y",
     "export:pages": "npm run build && node tools/export-pages.mjs",
     "check:pages": "node tools/check-pages-export.mjs",
     "test:forms": "playwright test --config playwright.forms.config.js",

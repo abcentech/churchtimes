@@ -55,3 +55,10 @@ test('comment dates reject calendar rollover and ambiguous formats while retaini
   for(const date of ['2023-02-30T11:00:00Z','2023-04-31T11:00:00Z','2023-05-10T24:00:00Z','2023-05-10','not a date'])assert.equal(normalizePublicComment({...comment,commentedAt:date}),null);
   assert.equal(normalizePublicComment({...comment,commentedAt:'2024-02-29T00:30:00+01:00'}).commentedAt,'2024-02-28T23:30:00.000Z');
 });
+test('email-shaped strings inside comment text and author names are redacted on display',()=>{
+  const base={id:'7',authorName:'Ada',content:'Write to me',commentedAt:'2020-01-02T03:04:05Z',status:'approved'};
+  const out=normalizePublicComment({...base,content:'Contact reader.name+tag@example.test or (other@mail.example.org), thanks'});
+  assert.equal(out.content,'Contact [email removed] or ([email removed]), thanks');
+  assert.equal(normalizePublicComment({...base,authorName:'ada@example.test'}).authorName,'[email removed]');
+  assert.doesNotMatch(JSON.stringify(out),/@/);
+});

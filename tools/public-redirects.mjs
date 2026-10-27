@@ -246,3 +246,27 @@ export function createPublicRedirects({
  return handler;
 }
 class RedirectStartupError extends Error {}
+
+export const DEFAULT_LEGACY_SITE_HOSTS='churchtimesnigeria.org,churchtimesnigeria.com';
+const LEGACY_HOST=/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/;
+/**
+ * Old site hosts (apps/cms/docs/legacy-hosts.md): .org, .com and the www. forms of .org, .com and .net mean the primary host.
+ * Returns (hostHeader, rawUrl) => absolute https URL on the primary host with the SAME path and query, or '' for no redirect.
+ * The target host always comes from PUBLIC_SITE_URL, never from the incoming Host header. Runs before any rule.
+ */
+export function legacyHostRedirector({siteUrl,legacySiteHosts}={}) {
+ let primary='',origin='';
+ try{const url=new URL(siteUrl);if(url.protocol==='https:'&&!url.username&&!url.password){primary=url.hostname.toLowerCase();origin='https://'+url.host;}}catch{}
+ if(!primary)return()=>'';
+ const names=String(legacySiteHosts||DEFAULT_LEGACY_SITE_HOSTS).split(',').map(v=>v.trim().toLowerCase()).filter(Boolean);
+ for(const name of names)if(!LEGACY_HOST.test(name))throw new Error('LEGACY_SITE_HOSTS must be a comma list of bare host names');
+ const bare=primary.replace(/^www\./,'');
+ const hosts=new Set();
+ for(const name of [...names,bare]){hosts.add(name);hosts.add('www.'+name.replace(/^www\./,''));}
+ hosts.delete(primary);
+ return (hostHeader,rawUrl)=>{
+  if(typeof hostHeader!=='string'||typeof rawUrl!=='string'||!rawUrl.startsWith('/')||rawUrl.startsWith('//'))return '';
+  const host=hostHeader.toLowerCase().replace(/:\d+$/,'').replace(/\.$/,'');
+  return hosts.has(host)?origin+rawUrl:'';
+ };
+}

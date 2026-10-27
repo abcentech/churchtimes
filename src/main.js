@@ -7,12 +7,13 @@ function bindArticleListen(root){
 }
 import { captureNewsletterLink } from './lib/reader-newsletter-link.js';
 const newsletterLink=captureNewsletterLink(location,history,new URL(document.baseURI).pathname);
-let readerForms;
+let readerForms,readerFormsSettled=false;
+const readerPending=(kind,source='',text='')=>`<div class="container" data-reader-pending="${kind}" data-source="${source}">${text}</div>`;
 const readerFormsReady=(((import.meta.env.VITE_PUBLIC_NEWSLETTER_URL || import.meta.env.VITE_PUBLIC_CONTACT_URL) && import.meta.env.VITE_TURNSTILE_SITE_KEY) || newsletterLink)
-  ? import('./forms/reader-forms.js').then(module=>{readerForms=module;}).catch(()=>{}) : Promise.resolve();
-const newsletterMarkup=(...args)=>readerForms?.newsletterMarkup(...args)||'';
-const contactMarkup=(...args)=>readerForms?.contactMarkup(...args)||'<section class="container"><h2>Online contact is unavailable</h2><p>Please reload or email the newsroom using the contact details above.</p></section>';
-const newsletterTokenMarkup=(...args)=>readerForms?.newsletterTokenMarkup(...args)||'<h1>Newsletter preferences</h1><p>Online preferences are unavailable. Please try again later.</p>';
+  ? import('./forms/reader-forms.js').then(module=>{readerForms=module;}).catch(()=>{}).then(()=>{readerFormsSettled=true;}) : Promise.resolve().then(()=>{readerFormsSettled=true;});
+const newsletterMarkup=(...args)=>readerForms?readerForms.newsletterMarkup(...args):readerFormsSettled?'':readerPending('newsletter',args[0]||'footer');
+const contactMarkup=(...args)=>readerForms?readerForms.contactMarkup(...args):!readerFormsSettled?readerPending('contact','','<p>Loading the contact form…</p>'):'<section class="container"><h2>Online contact is unavailable</h2><p>Please reload or email the newsroom using the contact details above.</p></section>';
+const newsletterTokenMarkup=(...args)=>readerForms?readerForms.newsletterTokenMarkup(...args):!readerFormsSettled?readerPending('token','','<h1>Newsletter preferences</h1><p>Loading…</p>'):'<h1>Newsletter preferences</h1><p>Online preferences are unavailable. Please try again later.</p>';
 const readerFormConfig=()=>readerForms?.readerFormConfig()||{contact:import.meta.env.VITE_PUBLIC_CONTACT_URL,siteKey:import.meta.env.VITE_TURNSTILE_SITE_KEY};
 const bindReaderForms=(...args)=>readerForms?.bindReaderForms(...args)||(()=>{});
 import { hasConsent, subscribeConsent, requestConsent, consentMarkup, bindConsentControls } from './lib/reader-consent.js';
@@ -400,7 +401,7 @@ function handlePublicNavigation(){
   render();
   if(!['#main','#connect'].includes(location.hash))document.querySelector('#main')?.focus({preventScroll:true});
 }
-readerFormsReady.then(()=>{
+// First paint never waits on the optional reader-forms chunk: render now, then fill the form slots when it resolves.
 window.addEventListener('hashchange',handlePublicNavigation);
 window.addEventListener('popstate',handlePublicNavigation);
 document.addEventListener('click',event=>{
@@ -411,4 +412,14 @@ document.addEventListener('click',event=>{
   event.preventDefault();history.pushState(null,'',url.pathname);render();document.querySelector('#main')?.focus({preventScroll:true});
 });
 render();
+readerFormsReady.then(()=>{
+  // Fill the pending slots in place (no re-render, so routes are not mounted or fetched twice).
+  const slots=[...document.querySelectorAll('[data-reader-pending]')];
+  if(!slots.length)return;
+  for(const el of slots){
+    const kind=el.dataset.readerPending;
+    el.outerHTML=kind==='contact'?contactMarkup():kind==='token'?newsletterTokenMarkup(newsletterLink.action,newsletterLink.token):newsletterMarkup(el.dataset.source||'footer');
+  }
+  disposeArticleForms?.();disposeArticleForms=null;
+  bindReaderFeatures();
 });

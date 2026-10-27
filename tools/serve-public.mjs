@@ -12,16 +12,17 @@ import {createPublicResponder} from './public-response.mjs';
 import {homeImageMetadata} from './public-home.mjs';
 import {createPublicPages} from './public-pages.mjs';
 import {publicSEOSettings} from './public-seo-settings.mjs';
-import {createPublicRedirects,isJunkPath} from './public-redirects.mjs';
+import {createPublicRedirects,isJunkPath,legacyHostRedirector} from './public-redirects.mjs';
 import {createPublicFeeds} from './public-feeds.mjs';
 import {publicOrigin} from '../src/lib/public-url.js';
-import {normalizeBasePath,reportPath,articlePathTemplate as validateArticlePathTemplate,reportSlug,articleCanonical,articleSchema,safeJSON} from '../src/lib/public-routes.js';
+import {normalizeBasePath,reportPath,articlePathTemplate as validateArticlePathTemplate,HOST_ARTICLE_PATH_TEMPLATE,reportSlug,articleCanonical,articleSchema,safeJSON} from '../src/lib/public-routes.js';
 const escape=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json','.svg':'image/svg+xml','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp','.woff2':'font/woff2'};
 const replaceMeta=(html,attribute,name,value)=>html.replace(new RegExp(`(<meta ${attribute}="${name}" content=")[^"]*(">)`),(_all,a,b)=>a+escape(value)+b);
-export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(fileURLToPath(new URL('../dist/',import.meta.url))),cmsUrl=process.env.PUBLIC_CMS_URL,siteUrl=process.env.PUBLIC_SITE_URL,basePath=process.env.PUBLIC_BASE_PATH || '/',adsTxtLine=process.env.PUBLIC_ADS_TXT_LINE,searchVerification=process.env.PUBLIC_SEARCH_CONSOLE_VERIFICATION,indexable=process.env.PUBLIC_INDEXABLE==='true',articlePathTemplate=process.env.PUBLIC_ARTICLE_PATH_TEMPLATE,redirectsFile=process.env.PUBLIC_REDIRECTS_FILE,redirectsUrl=process.env.PUBLIC_REDIRECTS_URL,redirectPatterns=process.env.PUBLIC_REDIRECT_PATTERNS,redirectAllowedHosts=process.env.PUBLIC_REDIRECT_ALLOWED_HOSTS,fetchImpl=fetch}={}) {
+export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(fileURLToPath(new URL('../dist/',import.meta.url))),cmsUrl=process.env.PUBLIC_CMS_URL,siteUrl=process.env.PUBLIC_SITE_URL,basePath=process.env.PUBLIC_BASE_PATH || '/',adsTxtLine=process.env.PUBLIC_ADS_TXT_LINE,searchVerification=process.env.PUBLIC_SEARCH_CONSOLE_VERIFICATION,indexable=process.env.PUBLIC_INDEXABLE==='true',articlePathTemplate=process.env.PUBLIC_ARTICLE_PATH_TEMPLATE,redirectsFile=process.env.PUBLIC_REDIRECTS_FILE,redirectsUrl=process.env.PUBLIC_REDIRECTS_URL,redirectPatterns=process.env.PUBLIC_REDIRECT_PATTERNS,redirectAllowedHosts=process.env.PUBLIC_REDIRECT_ALLOWED_HOSTS,legacySiteHosts=process.env.LEGACY_SITE_HOSTS,fetchImpl=fetch}={}) {
+  const legacyHostRedirect=legacyHostRedirector({siteUrl,legacySiteHosts});
   basePath=normalizeBasePath(basePath);
-  articlePathTemplate=validateArticlePathTemplate(articlePathTemplate);
+  articlePathTemplate=validateArticlePathTemplate(articlePathTemplate,HOST_ARTICLE_PATH_TEMPLATE);
   if(cmsUrl && !publicOrigin(cmsUrl))throw new Error('PUBLIC_CMS_URL must be HTTPS or loopback HTTP without credentials');
   const settings=publicSEOSettings({adsTxtLine,searchVerification});
   const publicPages=createPublicPages({dist,cmsUrl,siteUrl,basePath,indexable,fetchImpl,extraHead:settings.head,articlePathTemplate});
@@ -50,6 +51,8 @@ export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(file
     const respond=createPublicResponder(req,res);
     if(!['GET','HEAD'].includes(req.method))return respond(405,'text/plain','Method not allowed',{Allow:'GET, HEAD'});
     if(isJunkPath(req.url))return respond(404,'text/plain','Not found');
+    const legacyTarget=legacyHostRedirect(req.headers.host,req.url);
+    if(legacyTarget)return respond(301,'text/plain','Moved',{Location:legacyTarget,'Cache-Control':'public, max-age=300'});
     try {
       const url=new URL(req.url,'http://public.invalid');
       // Email action links only display a neutral shell; the reader must explicitly POST.
@@ -74,13 +77,22 @@ export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(file
       const relative=decodeURIComponent(url.pathname.slice(basePath.length));
       if(relative==='' || relative==='index.html') {const page=await htmlPage(null);return respond(200,mime['.html'],page.html,{'X-Robots-Tag':page.robots});}
       if(relative.includes('\\') || relative.includes('\0'))return respond(400,'text/plain','Invalid path');
-      const file=resolve(dist,relative);
-      if(!file.startsWith(resolve(dist)+sep))return respond(404,'text/plain','Not found');
+      // The prepared Pages build keeps assets in dist/site; an unprepared
+      // dist keeps them at its root. Preserve the /site/ URL in either layout.
+      const assetPath=relative.startsWith('site/')?relative.slice(5):relative;
+      const siteRoot=resolve(dist,'site');
+      const prepared=(await stat(siteRoot).catch(()=>null))?.isDirectory();
+      const file=resolve(relative.startsWith('site/')&&prepared?siteRoot:dist,assetPath);
+      const staticRoot=relative.startsWith('site/')&&prepared?siteRoot:resolve(dist);
+      if(!file.startsWith(staticRoot+sep))return respond(404,'text/plain','Not found');
       if(!(await stat(file)).isFile())return respond(404,'text/plain','Not found');
-      return respond(200,mime[extname(file)] || 'application/octet-stream',await readFile(file),{'Cache-Control':/\/assets\//.test(file)?'public, max-age=31536000, immutable':'no-cache'});
+      return respond(200,mime[extname(file)] || 'application/octet-stream',await readFile(file),{'Cache-Control':/\/assets\//.test(file.replaceAll('\\','/'))?'public, max-age=31536000, immutable':'no-cache'});
     } catch {return respond(404,'text/plain','Not found');}
   });
   server.publicReady=redirects.ready;
+  // Local process lifecycle hook only; no HTTP reload/admin endpoint.
+  server.publicReloadRedirects=redirects.refresh;
+  server.publicRedirectDiagnostics=redirects.diagnostics;
   server.on('close',()=>redirects.close());
   return server;
 }

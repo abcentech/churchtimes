@@ -16,7 +16,9 @@ export function publicCommentsEndpoint(value) {
     return publicOrigin(value) && !url.search && !url.hash && url.pathname.endsWith('/api/legacy-comments') ? url.href : '';
   } catch { return ''; }
 }
-const text = (value, limit) => typeof value === 'string' ? value.trim().slice(0, limit) : '';
+// Contract C6: no email address may reach the DOM. The CMS importer strips them; this is the second layer.
+const EMAIL = /[^\s@<>()"',;:]+@[^\s@<>()"',;:]+\.[^\s@<>()"',;:]+/g;
+const text = (value, limit) => typeof value === 'string' ? value.trim().slice(0, limit).replace(EMAIL, '[email removed]') : '';
 function commentDate(value) {
   const parts=typeof value === 'string' && value.match(/^(\d{4})-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3})?(?:Z|[+-](?:0\d|1[0-4]):[0-5]\d)$/);
   if (!parts) return '';

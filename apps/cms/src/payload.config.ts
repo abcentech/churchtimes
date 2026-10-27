@@ -9,22 +9,46 @@ import sharp from 'sharp'
 
 import { Articles } from './collections/Articles'
 import { AuditLogs } from './collections/AuditLogs'
+import { AdCampaigns } from './collections/AdCampaigns'
+import { Advertisers } from './collections/Advertisers'
 import { Categories } from './collections/Categories'
+import { ContactMessages } from './collections/ContactMessages'
 import { LiveEvents } from './collections/LiveEvents'
 import { LiveUpdates } from './collections/LiveUpdates'
 import { Media } from './collections/Media'
+import { LegacyComments } from './collections/LegacyComments'
+import { Redirects } from './collections/Redirects'
 import { Submissions } from './collections/Submissions'
+import { Subscribers } from './collections/Subscribers'
 import { Users } from './collections/Users'
 import { previewArticleEndpoint } from './endpoints/previewArticle'
+import { publicSearchEndpoints } from './endpoints/publicSearch'
+import { staffRelatedArticlesEndpoints } from './endpoints/staffRelatedArticles'
+import { startupSelfCheck } from './lib/health'
+import { publicContactEndpoint, publicContactPreflightEndpoint } from './endpoints/publicContact'
+import { newsletterEndpoints } from './endpoints/publicNewsletter'
+import {
+  publicAdvertisingEndpoint,
+  publicAdvertisingHeadEndpoint,
+  publicAdvertisingPreflightEndpoint,
+} from './endpoints/publicAdvertising'
+import {
+  publicRedirectsEndpoint,
+  publicRedirectsHeadEndpoint,
+  publicRedirectsPreflightEndpoint,
+} from './endpoints/publicRedirects'
 import {
   publicSubmissionsEndpoint,
   publicSubmissionsPreflightEndpoint,
 } from './endpoints/publicSubmissions'
+import { avMaxBytes } from './lib/avMedia'
+import { parseAllowedHosts, parseLegacyHosts, resolveArticlePathTemplate } from './lib/redirectPaths'
 import { startScheduler } from './lib/scheduler'
 import {
   checkOriginList,
   csv,
   normaliseOrigin,
+  turnstileActionWarnings,
   validateProductionEnv,
 } from './lib/securityConfig'
 
@@ -41,6 +65,12 @@ const secret = process.env.PAYLOAD_SECRET
 if (!isTest && (!secret || secret.length < 32)) {
   throw new Error('PAYLOAD_SECRET must be set and at least 32 characters long.')
 }
+
+// Redirect settings (go-live C7) fail loudly at startup: a typo in PUBLIC_ARTICLE_PATH_TEMPLATE would otherwise turn
+// into wrong redirects. Unset values are fine (default template, no absolute redirect hosts).
+resolveArticlePathTemplate(process.env)
+parseAllowedHosts(process.env)
+parseLegacyHosts(process.env)
 
 const corsOrigins = csv(process.env.CMS_CORS_ORIGINS).map(normaliseOrigin)
 const csrfOrigins = csv(process.env.CMS_CSRF_ORIGINS).map(normaliseOrigin)
@@ -66,6 +96,13 @@ if (isProd && !isBuildPhase) {
   }
 }
 
+if (!isTest && !isBuildPhase) {
+  // Counts only: never names or values of settings.
+  const selfCheck = startupSelfCheck(process.env)
+  console.log(`[startup] self-check: ${selfCheck.passed}/${selfCheck.total} critical settings present`)
+  for (const warning of turnstileActionWarnings(process.env)) console.warn(`[security] ${warning}`)
+}
+
 // CMS_PUBLIC_URL is the origin the admin UI is served from. Payload adds serverURL to the CSRF
 // allowlist itself; we also normalise it (no trailing slash) so the Origin comparison matches.
 const serverURL = process.env.CMS_PUBLIC_URL ? normaliseOrigin(process.env.CMS_PUBLIC_URL) : undefined
@@ -82,6 +119,10 @@ const email = smtpHost
         port: Number.parseInt(process.env.SMTP_PORT ?? '', 10) || 587,
         secure: process.env.SMTP_SECURE === 'true',
         requireTLS: process.env.SMTP_SECURE !== 'true' && isProd,
+        // nodemailer defaults are 2 min (connect) and 10 min (socket): a hanging SMTP server must not pin requests or jobs.
+        connectionTimeout: 10_000,
+        greetingTimeout: 10_000,
+        socketTimeout: 20_000,
         ...(process.env.SMTP_USER
           ? { auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS ?? '' } }
           : {}),
@@ -104,11 +145,42 @@ export default buildConfig({
     user: 'users',
     importMap: { baseDir: path.resolve(dirname) },
   },
-  collections: [Users, Categories, Media, Articles, Submissions, LiveEvents, LiveUpdates, AuditLogs],
-  endpoints: [publicSubmissionsEndpoint, publicSubmissionsPreflightEndpoint, previewArticleEndpoint],
+  collections: [
+    Users,
+    Categories,
+    Media,
+    Articles,
+    Submissions,
+    ContactMessages,
+    Subscribers,
+    LiveEvents,
+    LiveUpdates,
+    Redirects,
+    Advertisers,
+    AdCampaigns,
+    LegacyComments,
+    AuditLogs,
+  ],
+  endpoints: [
+    publicSubmissionsEndpoint,
+    publicSubmissionsPreflightEndpoint,
+    publicRedirectsEndpoint,
+    publicRedirectsHeadEndpoint,
+    publicRedirectsPreflightEndpoint,
+    publicContactEndpoint,
+    publicContactPreflightEndpoint,
+    ...newsletterEndpoints,
+    publicAdvertisingEndpoint,
+    publicAdvertisingHeadEndpoint,
+    publicAdvertisingPreflightEndpoint,
+    previewArticleEndpoint,
+    ...publicSearchEndpoints,
+    ...staffRelatedArticlesEndpoints,
+  ],
   editor: lexicalEditor(),
   db: postgresAdapter({
-    pool: { connectionString: process.env.DATABASE_URL },
+    // PG_POOL_MAX: size of the PostgreSQL pool of this process (pg default 10). Size it with docs/performance.md.
+    pool: { connectionString: process.env.DATABASE_URL, max: Number.parseInt(process.env.PG_POOL_MAX ?? '', 10) > 0 ? Number.parseInt(process.env.PG_POOL_MAX ?? '', 10) : 10 },
     migrationDir: path.resolve(dirname, 'migrations'),
     push: process.env.NODE_ENV !== 'production' && process.env.PAYLOAD_DB_PUSH === 'true',
   }),
@@ -116,7 +188,8 @@ export default buildConfig({
     startScheduler(payload)
   },
   sharp,
-  upload: { limits: { fileSize: 10 * 1024 * 1024 } },
+  // The parser limit is the largest allowed file (audio/video, MEDIA_AV_MAX_MB, default 100 MB); images are capped at MEDIA_IMAGE_MAX_MB (default 25 MB) in Media.checkUpload.
+  upload: { limits: { fileSize: avMaxBytes() } },
   graphQL: { disable: true },
   typescript: { outputFile: path.resolve(dirname, 'payload-types.ts') },
 })
