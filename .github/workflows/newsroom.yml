@@ -1,0 +1,85 @@
+name: Newsroom checks
+on:
+  push:
+    branches: [feat/newsroom-mvp]
+    paths:
+      - 'apps/newsroom/**'
+      - 'apps/cms/src/**'
+      - 'tests/newsroom*.spec.js'
+      - 'playwright.newsroom-app.config.js'
+      - 'package*.json'
+      - '.github/workflows/newsroom.yml'
+  pull_request:
+    branches: [feat/newsroom-mvp]
+    paths:
+      - 'apps/newsroom/**'
+      - 'apps/cms/src/**'
+      - 'tests/newsroom*.spec.js'
+      - 'playwright.newsroom-app.config.js'
+      - 'package*.json'
+      - '.github/workflows/newsroom.yml'
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * *'
+permissions:
+  contents: read
+jobs:
+  # Unit (Lexical round trips) + app suites (mock-mode UI and network-stubbed production build, including the
+  # no-demo-password-in-bundle audit). No CMS needed: live-CMS tests stay skipped without NEWSROOM_LIVE_CMS_URL.
+  newsroom:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run test:newsroom-unit
+      - run: npx playwright install --with-deps chromium
+      # Includes tests/newsroom-a11y.spec.js (axe on every screen, keyboard, reflow, reduced motion): serious/critical fail
+      # the job, minor/moderate findings surface as ::warning annotations. Allowlist and rules: apps/newsroom/README.md.
+      - run: npm run test:newsroom-app
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: newsroom-failure-evidence
+          path: test-results/
+          retention-days: 7
+
+  # Nightly and manual: the REAL cross-app journey (newsroom SPA + public site + Payload CMS + embedded PostgreSQL).
+  # `staging:up` is the same stack (embedded PostgreSQL, migrations, synthetic seed, production build, next start); the
+  # cross-app global-setup boots its own copy on ports 3400/3401/55435, so no separate staging:up step is needed in CI.
+  # Locally: cd apps/cms && npm run build && npm run staging:up (see apps/cms/docs/staging.md), then npm run test:e2e:cross-app.
+  cross-app:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm ci
+        working-directory: apps/cms
+      - name: Generate per-run secrets (exist only on this runner; the build imports the Payload config)
+        run: |
+          echo "PAYLOAD_SECRET=ci-only-$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "PREVIEW_SECRET=ci-only-$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "IP_HASH_SALT=ci-only-$(openssl rand -hex 16)" >> "$GITHUB_ENV"
+      - run: npm run build
+        working-directory: apps/cms
+      - run: npx playwright install --with-deps chromium
+        working-directory: apps/cms
+      - run: npm run test:e2e:cross-app
+        working-directory: apps/cms
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: cross-app-failure-evidence
+          path: apps/cms/test-results/
+          retention-days: 7

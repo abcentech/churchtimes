@@ -26,7 +26,6 @@
   font-weight: 600;
   font-size: 0.8125rem;
   cursor: pointer;
-  outline: none;
 }
 .role-select option {
   background-color: var(--color-forest);
