@@ -1,3 +1,5 @@
+import { MAX_SECONDARY } from './mapping'
+
 /**
  * Post-import QA report. Counts and reason codes only: no title, slug, address, file name, author name, comment text
  * or email ever enters this structure (every key written to it is a fixed code or comes from a closed set, and the
@@ -6,7 +8,11 @@
 
 export type Tally = Record<string, number>
 
+import { formatLinkFixes } from './linkFixes'
+
 export type ImportReport = {
+  /** Present when `--link-fixes` was given (counts only). */
+  linkFixes?: import('./linkFixes').LinkFixSummary
   mode: 'dry-run' | 'apply'
   update: boolean
   source: {
@@ -24,10 +30,55 @@ export type ImportReport = {
     /** Everything not imported, by reason: password-protected, status-<x>, bad-id, no-date, conversion-<code>, write-failed, ... */
     skipped: Tally
     passwordProtected: number
+    /** Posts whose WordPress slug is a reserved route name (admin, search, ...) and got a numbered slug instead (root article paths). */
+    slugRenamedReserved: number
     /** Imported before, but the post is now draft, private, trashed ...: left as it is in the CMS. */
     previouslyImportedNowNotPublished: number
   }
-  categories: { created: number; fallbackUsed: number }
+  /**
+   * Articles.category is the PRIMARY category; the other WordPress categories go to `Articles.categories` (up to 4 per post).
+   * `postsWithExtraCategories`: posts with more than one distinct WordPress category. `postsWithSecondaryCategories` /
+   * `secondaryCategoriesKept`: posts (and categories) stored in `categories`. `postsOverSecondaryCap` /
+   * `extraCategoriesDropped`: posts with more than 4 extras (more than 5 categories in all) and how many categories did not fit.
+   */
+  categories: {
+    created: number
+    /** Articles that ended in the configured fallback category or kept the generic WordPress "Uncategorised". */
+    fallbackUsed: number
+    postsWithExtraCategories: number
+    extraCategoriesDropped: number
+    postsWithSecondaryCategories: number
+    secondaryCategoriesKept: number
+    postsOverSecondaryCap: number
+    /** Where each created article's category came from (the chain: WordPress, Yoast primary, tag map, generic, fallback). */
+    bySource: { wordpress: number; yoastPrimary: number; tagMap: number; rules: number; generic: number; fallback: number }
+    /** Rules mode: posts left in the fallback with a low-confidence suggestion (listed in the review file when one is given). */
+    rulesLowConfidence: number
+    /** The category mode of this run. */
+    mode: 'strict' | 'rules'
+    /** Posts naming a Yoast primary category that is not a category of the export. */
+    yoastPrimaryUnresolved: number
+    /** Tag-map entries whose target category does not exist (nothing is created from a tag): the next step applied. */
+    tagMapTargetMissing: number
+  }
+  /** SEO text (Articles.seoTitle / seoDescription) for articles written in this run, by source. Counts only. */
+  seo: {
+    titleFrom: { rankMath: number; yoast: number; none: number }
+    descriptionFrom: { rankMath: number; yoast: number; none: number }
+    /** Values whose variables (%title%, %%sitename%% ...) were substituted or removed. */
+    variablesResolved: number
+    /** Values dropped because a variable text was still present after resolution. */
+    droppedUnresolved: number
+    /** Values cut to the schema limit. */
+    truncated: number
+    /** Yoast values the schema has no field for: counted, not stored. */
+    yoastCanonicalValid: number
+    yoastCanonicalInvalid: number
+    yoastNoindex: number
+    yoastSocial: number
+  }
+  /** Bylines are text only (Articles.bylineName); no user account is ever created. Counts of distinct `dc:creator` values. */
+  authors: { distinct: number; withByline: number; unmapped: number; postsWithoutByline: number }
   media: { reused: number; created: number; unresolved: Tally }
   content: {
     imagesResolved: number
@@ -35,7 +86,16 @@ export type ImportReport = {
     imagesUnresolved: number
     linksUnmapped: number
     featuredImageMissing: number
+    /** Featured images resolved to a media document, and those refused by the safety or media rules (also in `media.unresolved`). */
+    featuredImageResolved: number
+    featuredImageRejected: number
     youtube: number
+    /** Audio/video blocks written with a media file. */
+    avResolved: number
+    /** Audio/video blocks kept with the legacy address because the file was not found (reason code `unresolved-media`). */
+    avUnresolvedMedia: number
+    /** Audio/video of a type the CMS does not host (linked or dropped). */
+    avUnsupported: number
     tablesFlattened: number
     embedsDropped: number
   }
@@ -53,10 +113,35 @@ export function newReport(mode: 'dry-run' | 'apply', update: boolean): ImportRep
     mode,
     update,
     source: { items: t(), postsByStatus: t(), publishedPosts: 0, approvedCommentsOnPublishedPosts: 0, attachments: 0 },
-    articles: { created: 0, updated: 0, unchanged: 0, skipped: t(), passwordProtected: 0, previouslyImportedNowNotPublished: 0 },
-    categories: { created: 0, fallbackUsed: 0 },
+    articles: { created: 0, updated: 0, unchanged: 0, skipped: t(), passwordProtected: 0, previouslyImportedNowNotPublished: 0, slugRenamedReserved: 0 },
+    categories: {
+      created: 0,
+      fallbackUsed: 0,
+      postsWithExtraCategories: 0,
+      extraCategoriesDropped: 0,
+      postsWithSecondaryCategories: 0,
+      secondaryCategoriesKept: 0,
+      postsOverSecondaryCap: 0,
+      bySource: { wordpress: 0, yoastPrimary: 0, tagMap: 0, rules: 0, generic: 0, fallback: 0 },
+      rulesLowConfidence: 0,
+      mode: 'strict',
+      yoastPrimaryUnresolved: 0,
+      tagMapTargetMissing: 0,
+    },
+    seo: {
+      titleFrom: { rankMath: 0, yoast: 0, none: 0 },
+      descriptionFrom: { rankMath: 0, yoast: 0, none: 0 },
+      variablesResolved: 0,
+      droppedUnresolved: 0,
+      truncated: 0,
+      yoastCanonicalValid: 0,
+      yoastCanonicalInvalid: 0,
+      yoastNoindex: 0,
+      yoastSocial: 0,
+    },
+    authors: { distinct: 0, withByline: 0, unmapped: 0, postsWithoutByline: 0 },
     media: { reused: 0, created: 0, unresolved: t() },
-    content: { imagesResolved: 0, imagesUnresolved: 0, linksUnmapped: 0, featuredImageMissing: 0, youtube: 0, tablesFlattened: 0, embedsDropped: 0 },
+    content: { imagesResolved: 0, imagesUnresolved: 0, linksUnmapped: 0, featuredImageMissing: 0, featuredImageResolved: 0, featuredImageRejected: 0, youtube: 0, avResolved: 0, avUnresolvedMedia: 0, avUnsupported: 0, tablesFlattened: 0, embedsDropped: 0 },
     comments: { created: 0, existing: 0, skipped: t(), orphanedParents: 0, truncated: 0 },
     notes: [],
   }
@@ -108,10 +193,28 @@ export function formatImportReport(rep: ImportReport): string {
     ...lines('  skipped by reason', rep.articles.skipped),
     `  published posts accounted for: ${rec.accountedFor} of ${rec.sourcePublished} (difference ${rec.difference})`,
     `  previously imported, now not published in the export (left alone): ${rep.articles.previouslyImportedNowNotPublished}`,
+    `  slug is a reserved route name, renamed with the post id: ${rep.articles.slugRenamedReserved}`,
     '',
     'Categories',
     `  created: ${rep.categories.created}`,
-    `  articles placed in the fallback category: ${rep.categories.fallbackUsed}`,
+    `  articles placed in the fallback category (or kept as WordPress "Uncategorised"): ${rep.categories.fallbackUsed}`,
+    `  category source: WordPress ${rep.categories.bySource.wordpress}, Yoast primary ${rep.categories.bySource.yoastPrimary}, tag map ${rep.categories.bySource.tagMap}, rules ${rep.categories.bySource.rules}, generic ${rep.categories.bySource.generic}, fallback ${rep.categories.bySource.fallback}`,
+    `  category mode: ${rep.categories.mode}${rep.categories.mode === 'rules' ? `; low-confidence suggestions left in the fallback: ${rep.categories.rulesLowConfidence}` : ''}`,
+    `  Yoast primary category not in the export: ${rep.categories.yoastPrimaryUnresolved}; tag-map targets that do not exist: ${rep.categories.tagMapTargetMissing}`,
+    `  posts with more than one WordPress category: ${rep.categories.postsWithExtraCategories}; kept as additional categories: ${rep.categories.postsWithSecondaryCategories} posts, ${rep.categories.secondaryCategoriesKept} categories`,
+    `  posts with more additional categories than the cap (${MAX_SECONDARY}): ${rep.categories.postsOverSecondaryCap} (${rep.categories.extraCategoriesDropped} categories not kept)`,
+    '',
+    'SEO text (articles written in this run)',
+    `  title from: Rank Math ${rep.seo.titleFrom.rankMath}, Yoast ${rep.seo.titleFrom.yoast}, none ${rep.seo.titleFrom.none}`,
+    `  description from: Rank Math ${rep.seo.descriptionFrom.rankMath}, Yoast ${rep.seo.descriptionFrom.yoast}, none ${rep.seo.descriptionFrom.none}`,
+    `  values with variables resolved: ${rep.seo.variablesResolved}; dropped (variable left over): ${rep.seo.droppedUnresolved}; cut to the limit: ${rep.seo.truncated}`,
+    `  Yoast values with no field in the schema (not stored): canonical valid ${rep.seo.yoastCanonicalValid}, canonical invalid ${rep.seo.yoastCanonicalInvalid}, noindex ${rep.seo.yoastNoindex}, social text ${rep.seo.yoastSocial}`,
+    '',
+    'Authors (byline text only, no accounts created)',
+    `  distinct authors: ${rep.authors.distinct}`,
+    `  with a byline: ${rep.authors.withByline}`,
+    `  unmapped (no usable name): ${rep.authors.unmapped}`,
+    `  posts left without a byline: ${rep.authors.postsWithoutByline}`,
     '',
     'Media',
     `  reused: ${rep.media.reused}`,
@@ -122,8 +225,12 @@ export function formatImportReport(rep: ImportReport): string {
     `  images resolved: ${rep.content.imagesResolved}`,
     `  images unresolved (now text): ${rep.content.imagesUnresolved}`,
     `  links unmapped: ${rep.content.linksUnmapped}`,
+    ...(rep.linkFixes ? [formatLinkFixes(rep.linkFixes)] : []),
+    `  featured images resolved: ${rep.content.featuredImageResolved}`,
+    `  featured images rejected (unsafe or refused by the media rules): ${rep.content.featuredImageRejected}`,
     `  articles without a featured image where one was expected: ${rep.content.featuredImageMissing}`,
     `  YouTube embeds: ${rep.content.youtube}`,
+    `  audio/video blocks: ${rep.content.avResolved} with a file, ${rep.content.avUnresolvedMedia} unresolved-media (legacy address kept), ${rep.content.avUnsupported} unsupported type`,
     `  tables flattened: ${rep.content.tablesFlattened}`,
     `  embeds dropped: ${rep.content.embedsDropped}`,
     '',

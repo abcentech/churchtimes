@@ -23,14 +23,16 @@ import {
   userSectionIds,
 } from '../access/roles'
 import { articleContentEditor } from './articleEditor'
+import { MAX_SECONDARY_CATEGORIES, categoryIds, checkSecondaryCategories } from '../lib/articleCategories'
+import { removeArticleSearch, syncArticleSearch } from '../lib/articleSearch'
 import { articlePreviewTokenEndpoint } from '../endpoints/articlePreviewToken'
 import { writeAuditLog } from '../lib/audit'
 import { clampLimit } from '../lib/clampLimit'
 import { deepEqual } from '../lib/deepEqual'
-import { findEmbedProblem } from '../lib/lexicalEmbeds'
+import { collectAvBlocks, collectAvMedia, findEmbedProblem } from '../lib/lexicalEmbeds'
 import { assertExpectedUpdatedAt, captureExpectedUpdatedAt } from '../lib/expectedUpdatedAt'
 import { collectUploadNodes, uploadValueId } from '../lib/lexicalMedia'
-import { assertAttachableImage, isMediaId } from '../lib/mediaChecks'
+import { ALLOWED_IMAGE_MIME, assertAttachableAv, assertAttachableImage, isMediaId } from '../lib/mediaChecks'
 import { SEO_DESCRIPTION_MAX, SEO_FIELD_KEYS, SEO_TITLE_MAX, cleanSeoValue, seoFieldValidator } from '../lib/seoFields'
 import {
   ARTICLE_STATUSES,
@@ -39,11 +41,32 @@ import {
   canTransition,
   isArticleStatus,
 } from '../workflow/articleWorkflow'
+import {
+  FOUR_EYES_MESSAGE,
+  PROVENANCE_CONFIDENCE,
+  PROVENANCE_REVIEW_STATUSES,
+  fourEyesBlocked,
+  publishBlockedByProvenance,
+  reviewAndPublishInOneWrite,
+  reviewStamp,
+  storedReviewedBy,
+} from '../lib/provenance'
 import { reconcileCorrections } from '../workflow/corrections'
+import { articlePath, resolveArticlePathTemplate } from '../lib/redirectPaths'
+import { isReservedSlug } from '../lib/reservedSlugs'
 
 export { ARTICLE_STATUSES }
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+
+/** Under `/{slug}/` an article sits at the site root, so the reserved route names are refused (lib/reservedSlugs.ts). */
+const rootSlugsApply = (): boolean => {
+  try {
+    return resolveArticlePathTemplate() === '/{slug}/'
+  } catch {
+    return true
+  }
+}
 
 type Doc = Record<string, unknown>
 const asUser = (u: unknown): UserLike | null => (u ? (u as UserLike) : null)
@@ -135,6 +158,17 @@ const markRestore: CollectionBeforeOperationHook = ({ args, operation }) => {
   return args
 }
 
+/**
+ * `provenance: null` in a write would reach Payload's group handling as a null object (500), before any collection
+ * beforeValidate hook runs, so it is dropped here (treated as "not sent") in beforeOperation.
+ */
+const dropNullProvenance: CollectionBeforeOperationHook = ({ args, operation }) => {
+  if (operation !== 'create' && operation !== 'update') return args
+  const data = (args as { data?: Record<string, unknown> }).data
+  if (data && typeof data === 'object' && data.provenance === null) delete data.provenance
+  return args
+}
+
 const autoSlug: CollectionBeforeValidateHook = async ({ data, operation, originalDoc, req }) => {
   if (!data) return data
   const provided = typeof data.slug === 'string' ? data.slug.trim() : ''
@@ -146,7 +180,13 @@ const autoSlug: CollectionBeforeValidateHook = async ({ data, operation, origina
   const title = typeof data.title === 'string' ? data.title : String((originalDoc as Doc)?.title ?? '')
   const base = slugify(title)
   let candidate = base
+  const blockRoot = rootSlugsApply()
   for (let i = 2; i < 50; i++) {
+    if (blockRoot && isReservedSlug(candidate)) {
+      const suffix = `-${i}`
+      candidate = base.slice(0, 160 - suffix.length).replace(/-+$/, '') + suffix
+      continue
+    }
     const hit = await req.payload.find({
       collection: 'articles',
       where: {
@@ -229,6 +269,70 @@ const validateBodyImages: CollectionBeforeValidateHook = async ({ data, req }) =
 }
 
 /**
+ * Every `audioVideo` block that names a media file must point at a real audio/video file whose type is allowed for the
+ * block kind (video: mp4/webm; audio: mp3/m4a/ogg) with a description, and a poster must be a JPEG/PNG/WebP image.
+ * A block with only a legacy `sourceUrl` has nothing to check here (its shape is checked by validateEmbeds). Runs
+ * after validateEmbeds, on every write that carries `content`; skipped for trusted seed/system calls.
+ */
+const validateAvMedia: CollectionBeforeValidateHook = async ({ data, req }) => {
+  const ctx = (req.context ?? {}) as { seed?: boolean }
+  if (ctx.seed === true || !data || data.content === undefined) return data
+  for (const entry of collectAvBlocks(data.content)) {
+    if (entry.media !== undefined) await assertAttachableAv(req, entry.media, entry.kind, `The audio/video file (media ${entry.media})`)
+    if (entry.poster !== undefined) await assertAttachableImage(req, entry.poster, `The audio/video poster (media ${entry.poster})`)
+  }
+  return data
+}
+
+/**
+ * The featured image must be an image (JPEG/PNG/WebP): audio and video files in the Media library are for the
+ * `audioVideo` block only. Checked whenever a featured image is set (create or update); skipped for trusted seed calls.
+ */
+const validateFeaturedImage: CollectionBeforeValidateHook = async ({ data, req }) => {
+  const ctx = (req.context ?? {}) as { seed?: boolean }
+  if (ctx.seed === true || !data || data.featuredImage === undefined || data.featuredImage === null) return data
+  const id = idOf(data.featuredImage)
+  const media = (await req.payload
+    .findByID({ collection: 'media', id: id as number, depth: 0, overrideAccess: true, req })
+    .catch(() => null)) as { mimeType?: string | null } | null
+  if (media && !(typeof media.mimeType === 'string' && ALLOWED_IMAGE_MIME.includes(media.mimeType))) {
+    throw new APIError('The featured image must be a JPEG, PNG or WebP image.', 400)
+  }
+  return data
+}
+
+/**
+ * `categories` (secondary categories) next to the primary `category`: at most 5, no duplicates, never the primary. On a
+ * partial update the missing side comes from the stored document, so changing only `category` cannot make it collide with
+ * an existing extra.
+ */
+const validateSecondaryCategories: CollectionBeforeValidateHook = async ({ data, originalDoc, req }) => {
+  if (!data || (data.categories === undefined && data.category === undefined)) return data
+  const orig = (originalDoc ?? {}) as Doc
+  const list = data.categories !== undefined ? data.categories : orig.categories
+  const primary = data.category !== undefined ? data.category : orig.category
+  const message = checkSecondaryCategories(primary, list)
+  if (message) throw new APIError(message, 400)
+  if (data.categories !== undefined) {
+    // An id that is not a category would otherwise end in a foreign-key error (500).
+    const wanted = categoryIds(data.categories)
+    if (wanted.length > 0) {
+      const found = await req.payload.find({
+        collection: 'categories',
+        where: { id: { in: wanted.map(Number) } },
+        limit: wanted.length,
+        depth: 0,
+        pagination: false,
+        overrideAccess: true,
+        req,
+      })
+      if (found.docs.length !== wanted.length) throw new APIError('Additional categories must be existing categories.', 400)
+    }
+  }
+  return data
+}
+
+/**
  * `bodyMedia` is derived, server-only: the distinct media ids referenced by the body's upload nodes. It exists
  * so the media freeze (collections/Media.ts) can find "media shown in a published article body" with a plain
  * query instead of scanning jsonb. Recomputed whenever `content` is written (client values are stripped by field
@@ -241,6 +345,8 @@ const deriveBodyMedia: CollectionBeforeChangeHook = ({ data }) => {
     const id = uploadValueId(node.value)
     if (node.relationTo === 'media' && isMediaId(id) && !ids.includes(id)) ids.push(id)
   }
+  const av = collectAvMedia(data.content)
+  for (const id of [...av.media, ...av.poster]) if (!ids.includes(id)) ids.push(id)
   data.bodyMedia = ids
   return data
 }
@@ -396,6 +502,127 @@ const enforceWorkflow: CollectionBeforeChangeHook = async ({ data, originalDoc, 
   return data
 }
 
+/**
+ * Archive-candidate articles (provenance.importBatch set) cannot be published or scheduled until an editor sets
+ * provenance.reviewStatus to "reviewed". Applies to every caller, including the scheduler, seed and importer.
+ */
+const guardUnreviewedImport: CollectionBeforeChangeHook = async ({ data, originalDoc, req }) => {
+  const orig = (originalDoc ?? undefined) as Record<string, unknown> | undefined
+  // restoreVersion replaces the whole document with an old snapshot. Provenance and its review decision are not content: an
+  // old "reviewed" must never overrule a later "rejected" (or "pending"), so the stored provenance always wins on a restore.
+  if ((req.context as { restoreVersion?: boolean } | undefined)?.restoreVersion === true && orig && orig.provenance !== undefined) {
+    ;(data as Record<string, unknown>).provenance = orig.provenance
+  }
+  // A review decision only means something on a recovered archive article (one with an import batch, which only the importer sets).
+  {
+    const incoming = (data as Record<string, unknown>).provenance as { reviewStatus?: unknown; importBatch?: unknown } | undefined
+    if (incoming && typeof incoming === 'object' && incoming.reviewStatus !== undefined && incoming.reviewStatus !== null) {
+      const storedBatch = (orig?.provenance as { importBatch?: unknown } | undefined)?.importBatch
+      const batch = 'importBatch' in incoming ? incoming.importBatch : storedBatch
+      if (typeof batch !== 'string' || batch === '') return fail(400, 'A review status can only be set on a recovered archive article.')
+    }
+  }
+  // Approving and publishing a recovered article are separate decisions: not in one request, unless the actor is an admin.
+  const actor = asUser(req.user)
+  if (actor && actor.role !== 'admin' && reviewAndPublishInOneWrite(data as Record<string, unknown>, orig)) {
+    return fail(409, 'Mark a recovered archive article as reviewed first, then publish or schedule it in a separate request.')
+  }
+  if (publishBlockedByProvenance(data as Record<string, unknown>, (originalDoc ?? undefined) as Record<string, unknown> | undefined)) {
+    return fail(409, 'This recovered archive article must be reviewed (provenance review status "reviewed") before it can be published or scheduled.')
+  }
+  // Server-owned review stamp: whoever flips reviewStatus to "reviewed" is recorded; any client-sent value is overwritten.
+  const ctx = (req.context ?? {}) as { systemNow?: string }
+  const stamp = reviewStamp(data as Record<string, unknown>, orig, actor, ctx.systemNow ? new Date(ctx.systemNow) : new Date())
+  const d = data as Record<string, unknown>
+  const prov = d.provenance as Record<string, unknown> | undefined
+  if (stamp) {
+    d.provenance = { ...(prov ?? {}), ...stamp }
+  } else if (prov && typeof prov === 'object') {
+    // Not a review change: nothing a client or a restored snapshot sent may alter the stamp (the stored values stay).
+    const { reviewedBy: _by, reviewedByName: _name, reviewedAt: _at, ...rest } = prov
+    d.provenance = rest
+  }
+  // Four-eyes: the approver of a recovered article cannot publish or schedule it (admins may do both). Covers REST, bulk,
+  // Local API with a user and version restore; the scheduler has no user and publishes what a different person scheduled.
+  const approver = stamp ? stamp.reviewedBy : storedReviewedBy(orig)
+  if (fourEyesBlocked({ data: d, orig, actor, reviewedById: approver })) return fail(409, FOUR_EYES_MESSAGE)
+  return data
+}
+
+/**
+ * A published article's slug is its public address. Changing it breaks every link, bookmark and search result for the
+ * old URL, so after `publishedAt` is set only an editor-in-chief or admin may change it (403 otherwise). Server-side
+ * callers (seed, archive importer, scheduler) are exempt: the importer owns its own slugs and redirects.
+ */
+const slugGuardExempt = (req: { context?: unknown }): boolean => {
+  const ctx = (req.context ?? {}) as { seed?: boolean; import?: boolean; systemTransition?: boolean }
+  return ctx.seed === true || ctx.import === true || ctx.systemTransition === true
+}
+
+const guardPublishedSlug: CollectionBeforeChangeHook = async ({ data, originalDoc, operation, req }) => {
+  if (operation === 'create' || slugGuardExempt(req)) return data
+  const orig = (originalDoc ?? {}) as Doc
+  if (!orig.publishedAt || typeof data.slug !== 'string' || data.slug === orig.slug) return data
+  if (!isEditorInChief(asUser(req.user))) {
+    return fail(403, 'The URL slug of a published story can only be changed by the editor-in-chief or an admin.')
+  }
+  return data
+}
+
+/**
+ * Audit a slug change on a published article and keep the old URL alive: a 301 rule old -> new in `redirects` (C7).
+ * Rules already pointing at the old address are re-pointed at the new one (no chains), and a stale rule sending the new
+ * address back to the old one is removed. Runs in the request transaction: if the redirect cannot be written (for example
+ * a conflicting rule) the whole slug change is rolled back with an error.
+ */
+const redirectOnSlugChange: CollectionAfterChangeHook = async ({ doc, previousDoc, operation, req }) => {
+  if (operation !== 'update' || slugGuardExempt(req)) return doc
+  const prev = (previousDoc ?? {}) as Doc
+  const next = doc as Doc
+  if (!prev.publishedAt || typeof prev.slug !== 'string' || typeof next.slug !== 'string' || prev.slug === next.slug) return doc
+
+  const template = resolveArticlePathTemplate()
+  const oldPath = articlePath(template, prev.slug)
+  const newPath = articlePath(template, next.slug)
+  const opts = { overrideAccess: true, req, depth: 0, limit: 100 } as const
+
+  const back = await req.payload.find({ collection: 'redirects', where: { and: [{ from: { equals: newPath } }, { to: { equals: oldPath } }] }, ...opts })
+  for (const r of back.docs) await req.payload.delete({ collection: 'redirects', id: r.id, overrideAccess: true, req })
+
+  const pointing = await req.payload.find({ collection: 'redirects', where: { to: { equals: oldPath } }, ...opts })
+  for (const r of pointing.docs) {
+    await req.payload.update({ collection: 'redirects', id: r.id, data: { to: newPath }, overrideAccess: true, req })
+  }
+
+  const existing = await req.payload.find({ collection: 'redirects', where: { from: { equals: oldPath } }, ...opts })
+  const note = `Slug of article ${String(doc.id)} changed from "${prev.slug}" to "${next.slug}"`
+  if (existing.docs[0]) {
+    await req.payload.update({
+      collection: 'redirects',
+      id: existing.docs[0].id,
+      data: { to: newPath, status: 301, note },
+      overrideAccess: true,
+      req,
+    })
+  } else {
+    await req.payload.create({
+      collection: 'redirects',
+      data: { from: oldPath, to: newPath, status: 301, source: 'manual', note },
+      overrideAccess: true,
+      req,
+    })
+  }
+  await writeAuditLog(req, {
+    action: 'article.slug-change',
+    collection: 'articles',
+    docId: doc.id,
+    toStatus: next.status as string,
+    summary: `Slug changed: ${prev.slug} -> ${next.slug}`,
+    details: { before: prev.slug, after: next.slug, redirect: `${oldPath} -> ${newPath}` },
+  })
+  return doc
+}
+
 const auditChanges: CollectionAfterChangeHook = async ({ doc, previousDoc, operation, req }) => {
   const ctx = (req.context ?? {}) as {
     seed?: boolean
@@ -416,6 +643,19 @@ const auditChanges: CollectionAfterChangeHook = async ({ doc, previousDoc, opera
       summary: title,
       actorRole,
     })
+    // An article created already approved or rejected is a review decision too.
+    const createdReview = (doc.provenance as { reviewStatus?: unknown } | null | undefined)?.reviewStatus
+    if (typeof createdReview === 'string' && createdReview !== 'pending') {
+      await writeAuditLog(req, {
+        action: 'archive.review',
+        collection: 'articles',
+        docId: doc.id,
+        toStatus: doc.status,
+        summary: `Archive review status none -> ${createdReview} (at creation): ${title}`.slice(0, 1000),
+        details: { from: null, to: createdReview },
+        actorRole,
+      })
+    }
     return doc
   }
   const prev = (previousDoc ?? {}) as Doc
@@ -427,6 +667,20 @@ const auditChanges: CollectionAfterChangeHook = async ({ doc, previousDoc, opera
       fromStatus: prev.status as string,
       toStatus: doc.status,
       summary: title,
+      actorRole,
+    })
+  }
+  const prevReview = (prev.provenance as { reviewStatus?: unknown } | null | undefined)?.reviewStatus ?? null
+  const nextReview = (doc.provenance as { reviewStatus?: unknown } | null | undefined)?.reviewStatus ?? null
+  if (prevReview !== nextReview && typeof nextReview === 'string') {
+    // Archive-candidate review decision (docs/archive-candidate-schema.md): who and when come from the audit row's actor and createdAt.
+    await writeAuditLog(req, {
+      action: 'archive.review',
+      collection: 'articles',
+      docId: doc.id,
+      toStatus: doc.status,
+      summary: `Archive review status ${String(prevReview ?? 'none')} -> ${nextReview}: ${title}`.slice(0, 1000),
+      details: { from: prevReview, to: nextReview },
       actorRole,
     })
   }
@@ -487,6 +741,17 @@ const refuseDeleteWithLegacyComments: CollectionBeforeDeleteHook = async ({ id, 
   }
 }
 
+/** Keep the public search projection in step (published: upsert; any other status: remove). Also runs for the importer and seeds. */
+const syncSearch: CollectionAfterChangeHook = async ({ doc, req }) => {
+  await syncArticleSearch(req, doc)
+  return doc
+}
+
+const dropSearch: CollectionAfterDeleteHook = async ({ doc, req }) => {
+  await removeArticleSearch(req, doc.id)
+  return doc
+}
+
 const auditDelete: CollectionAfterDeleteHook =async ({ doc, req }) => {
   if ((req.context as { seed?: boolean } | undefined)?.seed === true) return doc
   await writeAuditLog(req, {
@@ -508,6 +773,9 @@ export const Articles: CollectionConfig = {
     defaultColumns: ['title', 'status', 'category', 'updatedAt'],
     listSearchableFields: ['title', 'slug'],
   },
+  // Public list (status = published, newest first): a composite index lets Postgres read
+  // the page from the index (scanned backwards) instead of sorting every article row. See docs/performance.md.
+  indexes: [{ fields: ['status', 'publishedAt', 'createdAt'] }],
   versions: { maxPerDoc: 50 },
   endpoints: [articlePreviewTokenEndpoint],
   access: {
@@ -518,12 +786,12 @@ export const Articles: CollectionConfig = {
     readVersions: readVersionsAccess,
   },
   hooks: {
-    beforeOperation: [clampLimit, markRestore, captureExpectedUpdatedAt],
-    beforeValidate: [autoSlug, normalizeSeoFields, validateEmbeds, validateBodyImages],
-    beforeChange: [assertExpectedUpdatedAt('articles'), deriveBodyMedia, enforceWorkflow],
+    beforeOperation: [clampLimit, markRestore, dropNullProvenance, captureExpectedUpdatedAt],
+    beforeValidate: [autoSlug, normalizeSeoFields, validateEmbeds, validateBodyImages, validateAvMedia, validateFeaturedImage, validateSecondaryCategories],
+    beforeChange: [assertExpectedUpdatedAt('articles'), guardUnreviewedImport, deriveBodyMedia, guardPublishedSlug, enforceWorkflow],
     beforeDelete: [refuseDeleteWithLegacyComments],
-    afterChange: [auditChanges],
-    afterDelete: [auditDelete],
+    afterChange: [auditChanges, redirectOnSlugChange, syncSearch],
+    afterDelete: [auditDelete, dropSearch],
   },
   fields: [
     { name: 'title', type: 'text', required: true, maxLength: 240 },
@@ -539,6 +807,7 @@ export const Articles: CollectionConfig = {
         if (typeof value !== 'string' || value.length === 0) return 'Slug is required.'
         if (value.length > 160) return 'Slug must be at most 160 characters.'
         if (!SLUG_RE.test(value)) return 'Use lowercase letters, numbers and single hyphens only.'
+        if (rootSlugsApply() && isReservedSlug(value)) return `"${value}" is reserved for a site page; choose another slug.`
         return true
       },
     },
@@ -566,6 +835,15 @@ export const Articles: CollectionConfig = {
       index: true,
       admin: { position: 'sidebar' },
     },
+    {
+      // Additional (secondary) categories; `category` above stays the primary one. Public read like `category`.
+      name: 'categories',
+      type: 'relationship',
+      relationTo: 'categories',
+      hasMany: true,
+      maxRows: MAX_SECONDARY_CATEGORIES,
+      admin: { position: 'sidebar', description: 'Optional extra sections (up to 5). The primary category above is not repeated here.' },
+    },
     { name: 'featuredImage', type: 'upload', relationTo: 'media' },
     {
       // Derived from `content` by deriveBodyMedia; never client-writable, staff-readable only.
@@ -584,7 +862,7 @@ export const Articles: CollectionConfig = {
       access: { read: staffRead, create: editorWrite, update: editorWrite },
       admin: { position: 'sidebar' },
     },
-    { name: 'bylineName', type: 'text' },
+    { name: 'bylineName', type: 'text', maxLength: 200 },
     {
       name: 'status',
       type: 'select',
@@ -636,5 +914,39 @@ export const Articles: CollectionConfig = {
     // set or change them, or one article could claim another's WordPress id and hijack its redirects.
     { name: 'legacyUrl', type: 'text', access: { create: never, update: never } },
     { name: 'legacyId', type: 'number', index: true, unique: true, access: { create: never, update: never } },
+    {
+      // Archive-candidate provenance (docs/archive-candidate-schema.md). Staff-only: never on a public projection.
+      // Everything is server-owned (importer, Local API) except reviewStatus, which editors flip in the admin.
+      name: 'provenance',
+      type: 'group',
+      access: { read: staffRead, create: never, update: editorWrite },
+      admin: { description: 'Where a recovered archive article came from. Review it, then set the review status to "reviewed" before publishing.' },
+      fields: [
+        { name: 'sourceUrl', type: 'text', index: true, maxLength: 2000, access: { read: staffRead, create: never, update: never }, admin: { readOnly: true } },
+        { name: 'sourceHost', type: 'text', maxLength: 253, access: { read: staffRead, create: never, update: never }, admin: { readOnly: true } },
+        { name: 'captureTimestamp', type: 'date', access: { read: staffRead, create: never, update: never }, admin: { readOnly: true } },
+        { name: 'originalDate', type: 'date', access: { read: staffRead, create: never, update: never }, admin: { readOnly: true, description: 'Publication date claimed by the recovered page (not verified).' } },
+        { name: 'sourceSha256', type: 'text', index: true, maxLength: 64, access: { read: staffRead, create: never, update: never }, admin: { readOnly: true } },
+        {
+          name: 'confidence',
+          type: 'select',
+          options: PROVENANCE_CONFIDENCE.map((v) => ({ label: v, value: v })),
+          access: { read: staffRead, create: never, update: never },
+          admin: { readOnly: true },
+        },
+        { name: 'importBatch', type: 'text', index: true, maxLength: 80, access: { read: staffRead, create: never, update: never }, admin: { readOnly: true } },
+        {
+          name: 'reviewStatus',
+          type: 'select',
+          options: PROVENANCE_REVIEW_STATUSES.map((v) => ({ label: v, value: v })),
+          access: { read: staffRead, create: never, update: editorWrite },
+        },
+        // Server-set when reviewStatus changes to "reviewed" (four-eyes rule); cleared when it changes away. Never client-writable.
+        { name: 'reviewedBy', type: 'relationship', relationTo: 'users', validate: (): true => true, access: { read: editorWrite, create: never, update: never }, admin: { readOnly: true } },
+        // Display snapshot of the approver's name (section editors cannot read other users). Same visibility as reviewedBy.
+        { name: 'reviewedByName', type: 'text', maxLength: 200, access: { read: editorWrite, create: never, update: never }, admin: { readOnly: true } },
+        { name: 'reviewedAt', type: 'date', access: { read: editorWrite, create: never, update: never }, admin: { readOnly: true } },
+      ],
+    },
   ],
 }

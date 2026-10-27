@@ -19,8 +19,10 @@ describe('rollback arguments', () => {
     expect(parseRollbackArgs(['--manifest', 'm.jsonl', '--nonsense'], {})).toBeNull()
     // An apply never takes its manifest from the environment.
     expect(parseRollbackArgs(['--apply'], { IMPORT_MANIFEST_PATH: 'env.jsonl' })).toBeNull()
-    expect(parseRollbackArgs(['--manifest', 'm.jsonl'], {})).toEqual({ manifestPath: 'm.jsonl', apply: false, force: false, allowIncomplete: false })
-    expect(parseRollbackArgs(['--manifest', 'm.jsonl', '--apply', '--force', '--allow-incomplete'], {})).toMatchObject({ apply: true, force: true, allowIncomplete: true })
+    expect(parseRollbackArgs(['--manifest', 'm.jsonl'], {})).toEqual({ manifestPath: 'm.jsonl', apply: false, force: false, includePublished: false, allowIncomplete: false })
+    expect(parseRollbackArgs(['--manifest', 'm.jsonl', '--apply', '--force', '--allow-incomplete'], {})).toMatchObject({ apply: true, force: true, allowIncomplete: true, includePublished: false })
+    expect(parseRollbackArgs(['--manifest', 'm.jsonl', '--force', '--include-published'], {})).toMatchObject({ force: true, includePublished: true })
+    expect(parseRollbackArgs(['--manifest', 'm.jsonl', '--include-published'], {})).toBeNull()
     expect(parseRollbackArgs([], { IMPORT_MANIFEST_PATH: 'env.jsonl' })?.manifestPath).toBe('env.jsonl')
   })
 })
@@ -56,7 +58,7 @@ describe('rollback report', () => {
     const c = { listed: 3, deleted: 1, wouldDelete: 0, alreadyGone: 1, skipped: { 'edited-since-import': 1 }, failed: 0 }
     const r: RollbackReport = {
       mode: 'apply',
-      force: false,
+      force: false, includePublished: false,
       manifest: { startedAt: '2026-10-21T10:00:00.000Z', complete: true, endStatus: 'complete', openIntents: 0, abortedPosts: 0 },
       comments: c,
       articles: c,

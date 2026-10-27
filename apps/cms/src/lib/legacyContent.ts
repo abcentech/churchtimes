@@ -1,3 +1,4 @@
+import { RESERVED_ROOT_SLUGS } from './reservedSlugs'
 import { hasTemplateVariable } from './seoFields'
 
 /**
@@ -47,7 +48,8 @@ export function resolveSlugCollisions<T extends SlugItem>(
   items: readonly T[],
   existingSlugs: Iterable<string> = [],
 ): { items: T[]; renamed: SlugRename[] } {
-  const taken = new Set<string>(existingSlugs)
+  // a root-level /{slug}/ must never take a real route's address (RESERVED_ROOT_SLUGS): those slugs count as taken
+  const taken = new Set<string>([...RESERVED_ROOT_SLUGS, ...existingSlugs])
   const originals = items.map((item) => (typeof item.slug === 'string' ? item.slug : ''))
   const assigned: (string | undefined)[] = items.map(() => undefined)
   const baseOf = (i: number): string =>
@@ -218,8 +220,14 @@ export type LinkOptions = {
   oldHosts: readonly string[]
   /** Old WordPress slug -> new slug. */
   slugMap: ReadonlyMap<string, string> | Readonly<Record<string, string>>
-  /** The new root-relative path of an article, e.g. `(slug) => '/article/' + slug`. Must return a path starting `/`. */
+  /** The new root-relative path of an article, e.g. `(slug) => '/' + slug + '/'`. Must return a path starting `/`. */
   articlePath: (slug: string) => string
+  /**
+   * Optional resolver for old-host and root-relative links (`import/linkClassify.ts`): returns the new root-relative path, or
+   * `to: null` with a fixed reason. When absent, only the plain `/<slug>/` rule below applies. A `to` that is not a
+   * root-relative path is never used, so a rewrite can never leave the site origin.
+   */
+  classify?: (url: string) => { to: string | null; reason: string; remove?: boolean }
 }
 
 export type LinkReport = {
@@ -273,12 +281,34 @@ function lookupSlug(map: LinkOptions['slugMap'], key: string): string | undefine
 // eslint-disable-next-line no-control-regex
 const UNSAFE_URL_CHARS_RE = /[\u0000- \u007F-\u009F\\]/
 
+const isLocalPath = (p: string): boolean => p.startsWith('/') && !p.startsWith('//') && !UNSAFE_URL_CHARS_RE.test(p)
+
 const safeHash = (hash: string): string => (hash && !UNSAFE_URL_CHARS_RE.test(hash) ? hash : '')
 
+/**
+ * A web address that WordPress let through with a space inside (a pasted title, a typo) is kept, but written the way a
+ * browser sends it (`%20`): the editor's link validation rejects an address with a space, which would stop the whole
+ * article from being saved. Tabs and line breaks inside an address are dropped, as the URL parser does.
+ */
 function decide(raw: string, opts: LinkOptions, report: LinkReport): Decision {
+  const d = decideInner(raw, opts, report)
+  if (d.action !== 'keep') return d
+  const url = raw.trim()
+  if (!/^(https?:\/\/|\/)/i.test(url) || !/[ \t\n\r]/.test(url)) return d
+  const fixed = url.replace(/[ \t\n\r]/g, (c) => (c === ' ' ? '%20' : ''))
+  return UNSAFE_URL_CHARS_RE.test(fixed) ? { action: 'text', reason: 'unsafe characters in link' } : { action: 'rewrite', url: fixed }
+}
+
+function decideInner(raw: string, opts: LinkOptions, report: LinkReport): Decision {
   const url = raw.trim()
   if (url === '') return { action: 'text', reason: 'empty link' }
   if (url.startsWith('//')) return { action: 'text', reason: 'protocol-relative link' }
+  if (url.startsWith('/') && opts.classify) {
+    if (UNSAFE_URL_CHARS_RE.test(url)) return { action: 'text', reason: 'unsafe characters in link' }
+    const r = opts.classify(url)
+    if (r.remove) return { action: 'text', reason: r.reason }
+    return r.to !== null && isLocalPath(r.to) && r.to !== url ? { action: 'rewrite', url: r.to } : { action: 'keep' }
+  }
   if (url.startsWith('/')) {
     return UNSAFE_URL_CHARS_RE.test(url) ? { action: 'text', reason: 'unsafe characters in link' } : { action: 'keep' }
   }
@@ -305,6 +335,12 @@ function decide(raw: string, opts: LinkOptions, report: LinkReport): Decision {
     return { action: 'keep' }
   }
   const hash = safeHash(parsed.hash)
+  if (opts.classify) {
+    const r = opts.classify(url)
+    if (r.remove) return { action: 'text', reason: r.reason }
+    if (r.to !== null && isLocalPath(r.to)) return { action: 'rewrite', url: r.to }
+    return keepUnmapped(r.reason)
+  }
   if (parsed.search) {
     return keepUnmapped('has a query string (for example ?p=ID, which the public host resolves through legacyId)')
   }
@@ -322,7 +358,12 @@ function decide(raw: string, opts: LinkOptions, report: LinkReport): Decision {
   }
   const mapped = lookupSlug(opts.slugMap, segment) ?? lookupSlug(opts.slugMap, segment.toLowerCase())
   if (mapped === undefined) return keepUnmapped('slug is not in the slug map')
-  const path = opts.articlePath(mapped)
+  let path: string
+  try {
+    path = opts.articlePath(mapped)
+  } catch {
+    return keepUnmapped('the article path mapper rejected the slug')
+  }
   if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//') || UNSAFE_URL_CHARS_RE.test(path)) {
     return keepUnmapped('the article path mapper returned an unsafe path')
   }
@@ -416,8 +457,8 @@ export function sanitizeLegacyLinks<T>(root: T, opts: LinkOptions): { root: T; r
       let rewrote = false
       for (const d of decisions) {
         if (d.decision.action === 'rewrite') {
+          if (d.slot.holder[d.slot.key] !== d.decision.url) rewrote = true
           d.slot.holder[d.slot.key] = d.decision.url
-          rewrote = true
         }
       }
       if (rewrote) report.rewritten++

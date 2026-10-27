@@ -15,6 +15,10 @@ export type SubscriberStatus = (typeof SUBSCRIBER_STATUSES)[number]
 /** Version of the consent wording the public site shows next to the sign-up form. Bump when the wording changes. */
 export const NEWSLETTER_CONSENT_VERSION = 'newsletter-consent-v1'
 export const MAILCHIMP_CONSENT_VERSION = 'mailchimp-import-v1'
+/** Wording of the one-off re-permission e-mail sent to imported rows that carry no proof of opt-in (lib/subscriberReconfirm.ts). */
+export const RECONFIRM_CONSENT_VERSION = 'mailchimp-reconfirm-v1'
+/** `importedFrom` of an imported row with no OPTIN_TIME: stored `pending`, never mailed or exported as confirmed until the person confirms. */
+export const IMPORT_NO_OPTIN_MARKER = 'mailchimp-import-no-optin-time'
 
 export const SUBSCRIBE_TURNSTILE_ACTION = 'newsletter-subscribe'
 export const SUBSCRIBE_MAX_BODY_BYTES = 8 * 1024

@@ -22,6 +22,9 @@ import { Submissions } from './collections/Submissions'
 import { Subscribers } from './collections/Subscribers'
 import { Users } from './collections/Users'
 import { previewArticleEndpoint } from './endpoints/previewArticle'
+import { publicSearchEndpoints } from './endpoints/publicSearch'
+import { staffRelatedArticlesEndpoints } from './endpoints/staffRelatedArticles'
+import { startupSelfCheck } from './lib/health'
 import { publicContactEndpoint, publicContactPreflightEndpoint } from './endpoints/publicContact'
 import { newsletterEndpoints } from './endpoints/publicNewsletter'
 import {
@@ -38,6 +41,7 @@ import {
   publicSubmissionsEndpoint,
   publicSubmissionsPreflightEndpoint,
 } from './endpoints/publicSubmissions'
+import { avMaxBytes } from './lib/avMedia'
 import { parseAllowedHosts, parseLegacyHosts, resolveArticlePathTemplate } from './lib/redirectPaths'
 import { startScheduler } from './lib/scheduler'
 import {
@@ -93,6 +97,9 @@ if (isProd && !isBuildPhase) {
 }
 
 if (!isTest && !isBuildPhase) {
+  // Counts only: never names or values of settings.
+  const selfCheck = startupSelfCheck(process.env)
+  console.log(`[startup] self-check: ${selfCheck.passed}/${selfCheck.total} critical settings present`)
   for (const warning of turnstileActionWarnings(process.env)) console.warn(`[security] ${warning}`)
 }
 
@@ -167,10 +174,13 @@ export default buildConfig({
     publicAdvertisingHeadEndpoint,
     publicAdvertisingPreflightEndpoint,
     previewArticleEndpoint,
+    ...publicSearchEndpoints,
+    ...staffRelatedArticlesEndpoints,
   ],
   editor: lexicalEditor(),
   db: postgresAdapter({
-    pool: { connectionString: process.env.DATABASE_URL },
+    // PG_POOL_MAX: size of the PostgreSQL pool of this process (pg default 10). Size it with docs/performance.md.
+    pool: { connectionString: process.env.DATABASE_URL, max: Number.parseInt(process.env.PG_POOL_MAX ?? '', 10) > 0 ? Number.parseInt(process.env.PG_POOL_MAX ?? '', 10) : 10 },
     migrationDir: path.resolve(dirname, 'migrations'),
     push: process.env.NODE_ENV !== 'production' && process.env.PAYLOAD_DB_PUSH === 'true',
   }),
@@ -178,7 +188,8 @@ export default buildConfig({
     startScheduler(payload)
   },
   sharp,
-  upload: { limits: { fileSize: 10 * 1024 * 1024 } },
+  // The parser limit is the largest allowed file (audio/video, MEDIA_AV_MAX_MB, default 100 MB); images are capped at MEDIA_IMAGE_MAX_MB (default 25 MB) in Media.checkUpload.
+  upload: { limits: { fileSize: avMaxBytes() } },
   graphQL: { disable: true },
   typescript: { outputFile: path.resolve(dirname, 'payload-types.ts') },
 })

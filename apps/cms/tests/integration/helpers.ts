@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 
 import config from '@payload-config'
-import { REST_DELETE, REST_GET, REST_OPTIONS, REST_PATCH, REST_POST } from '@payloadcms/next/routes'
+import { REST_DELETE, REST_GET, REST_OPTIONS, REST_PATCH, REST_POST, REST_PUT } from '@payloadcms/next/routes'
 import { getPayload, type Payload } from 'payload'
 
 import { textToLexical } from '../../src/endpoints/convertSubmission'
@@ -19,6 +19,7 @@ const handlers = {
   HEAD: REST_GET(config),
   POST: REST_POST(config),
   PATCH: REST_PATCH(config),
+  PUT: REST_PUT(config),
   DELETE: REST_DELETE(config),
   OPTIONS: REST_OPTIONS(config),
 }

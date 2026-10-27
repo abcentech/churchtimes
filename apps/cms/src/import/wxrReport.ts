@@ -221,7 +221,7 @@ export function formatWxrReport(rep: WxrReport): string {
     ...pairs(rep.comments.byApprovedAndType),
     `attachments: ${rep.attachments.total} (url ${rep.attachments.withUrl}, alt text ${rep.attachments.withAltText}, attached file ${rep.attachments.withAttachedFile})`,
     `Rank Math title present: ${rep.seo.rankMathTitle} (with %variables%: ${rep.seo.rankMathTitleWithVariables}); description present: ${rep.seo.rankMathDescription} (with %variables%: ${rep.seo.rankMathDescriptionWithVariables})`,
-    `Yoast title present: ${rep.seo.yoastTitle}; description present: ${rep.seo.yoastDescription} (not read by the importer)`,
+    `Yoast title present: ${rep.seo.yoastTitle}; description present: ${rep.seo.yoastDescription} (read by the importer; variables are resolved)`,
   ].join('\n')
 }
 
@@ -242,14 +242,14 @@ export async function runWxrReportCli(argv: readonly string[], io: CliIo, cwd: s
     return 2
   }
   const abs = path.resolve(cwd, file)
-  if (isInsideRepo(abs, cwd)) {
+  if (isInsideRepo(file, cwd) || isInsideRepo(abs, cwd)) {
     io.err('REPORT_FILE_INSIDE_REPO')
     return 2
   }
   let detailAbs: string | undefined
   if (detail) {
     detailAbs = path.resolve(cwd, detail)
-    if (isInsideRepo(detailAbs, cwd)) {
+    if (isInsideRepo(detail, cwd) || isInsideRepo(detailAbs, cwd)) {
       io.err('REPORT_DETAIL_INSIDE_REPO')
       return 2
     }

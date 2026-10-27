@@ -4,6 +4,7 @@ import {
   checkOriginList,
   normaliseOrigin,
   parseOrigin,
+  firstRegisterAllowed,
   validateProductionEnv,
 } from '../../src/lib/securityConfig'
 
@@ -19,6 +20,10 @@ const good = {
   CMS_CSRF_ORIGINS: 'https://cms.example.org',
   PUBLIC_SUBMISSION_ORIGINS: 'https://www.example.org',
   TRUST_PROXY: 'true',
+  TURNSTILE_ALLOWED_HOSTNAMES: 'www.example.org',
+  TURNSTILE_EXPECTED_ACTION: 'submit-story,contact-message,newsletter-subscribe',
+  SMTP_HOST: 'smtp.example.org',
+  EMAIL_FROM_ADDRESS: 'cms@example.org',
 } as NodeJS.ProcessEnv
 
 describe('origin helpers', () => {
@@ -99,12 +104,31 @@ describe('validateProductionEnv', () => {
   })
 
   it('requires a from address when SMTP is configured', () => {
-    expect(validateProductionEnv({ ...good, SMTP_HOST: 'smtp.example.org' }).problems.join()).toMatch(
-      /EMAIL_FROM_ADDRESS/,
-    )
     expect(
-      validateProductionEnv({ ...good, SMTP_HOST: 'smtp.example.org', EMAIL_FROM_ADDRESS: 'cms@example.org' }).problems,
-    ).toEqual([])
+      validateProductionEnv({ ...good, EMAIL_FROM_ADDRESS: undefined } as NodeJS.ProcessEnv).problems.join(),
+    ).toMatch(/EMAIL_FROM_ADDRESS/)
+    expect(validateProductionEnv(good).problems).toEqual([])
+  })
+
+  it('requires SMTP_HOST unless CMS_ALLOW_NO_SMTP=true (then it only warns)', () => {
+    const noSmtp = { ...good, SMTP_HOST: undefined } as NodeJS.ProcessEnv
+    expect(validateProductionEnv(noSmtp).problems.join()).toMatch(/SMTP_HOST is required/)
+    for (const v of ['TRUE', '1', 'false', '']) {
+      expect(validateProductionEnv({ ...noSmtp, CMS_ALLOW_NO_SMTP: v }).problems.join(), v).toMatch(/SMTP_HOST is required/)
+    }
+    const optOut = validateProductionEnv({ ...noSmtp, CMS_ALLOW_NO_SMTP: 'true' })
+    expect(optOut.problems).toEqual([])
+    expect(optOut.warnings.join()).toMatch(/SMTP_HOST is not set/)
+  })
+
+  it('requires non-empty CORS, CSRF and submission origin lists', () => {
+    for (const key of ['CMS_CORS_ORIGINS', 'CMS_CSRF_ORIGINS', 'PUBLIC_SUBMISSION_ORIGINS']) {
+      for (const v of [undefined, '', ' , ']) {
+        expect(validateProductionEnv({ ...good, [key]: v }).problems.join(), `${key}=${v}`).toMatch(
+          new RegExp(`${key} is required`),
+        )
+      }
+    }
   })
 })
 
@@ -174,43 +198,28 @@ describe('CMS_ALLOW_INSECURE_LOCAL_STAGING (disposable local staging only)', () 
   })
 })
 
-describe('Turnstile pinning warnings (production: logged, never a startup failure)', () => {
-  it('warns about unset TURNSTILE_ALLOWED_HOSTNAMES and TURNSTILE_EXPECTED_ACTION without failing startup', () => {
-    const result = validateProductionEnv(good)
-    expect(result.problems).toEqual([])
-    expect(result.warnings).toHaveLength(2)
-    expect(result.warnings.join()).toMatch(/TURNSTILE_ALLOWED_HOSTNAMES is not set/)
-    expect(result.warnings.join()).toMatch(/TURNSTILE_EXPECTED_ACTION is not set/)
+describe('Turnstile pinning (required in production, skipped for disposable local staging)', () => {
+  it('fails startup when TURNSTILE_ALLOWED_HOSTNAMES or TURNSTILE_EXPECTED_ACTION is unset, blank or only commas', () => {
+    for (const key of ['TURNSTILE_ALLOWED_HOSTNAMES', 'TURNSTILE_EXPECTED_ACTION']) {
+      for (const v of [undefined, '', '  ', ' , ']) {
+        expect(validateProductionEnv({ ...good, [key]: v }).problems.join(), `${key}=${v}`).toMatch(
+          new RegExp(`${key} is required`),
+        )
+      }
+    }
   })
 
-  it('no warnings when both are set to real values', () => {
-    const env = { ...good, TURNSTILE_ALLOWED_HOSTNAMES: 'www.example.org', TURNSTILE_EXPECTED_ACTION: 'submit-story' }
-    expect(validateProductionEnv(env)).toEqual({ problems: [], warnings: [] })
+  it('a complete configuration has no problems and no warnings', () => {
+    expect(validateProductionEnv(good)).toEqual({ problems: [], warnings: [] })
   })
 
-  it('treats blank values as unset', () => {
-    const env = { ...good, TURNSTILE_ALLOWED_HOSTNAMES: '  ', TURNSTILE_EXPECTED_ACTION: '' }
-    expect(validateProductionEnv(env).warnings).toHaveLength(2)
-  })
-
-  it('warns only for the setting that is missing', () => {
-    const onlyAction = validateProductionEnv({ ...good, TURNSTILE_EXPECTED_ACTION: 'submit-story' }).warnings
-    expect(onlyAction).toHaveLength(1)
-    expect(onlyAction[0]).toMatch(/TURNSTILE_ALLOWED_HOSTNAMES/)
-    const onlyHost = validateProductionEnv({ ...good, TURNSTILE_ALLOWED_HOSTNAMES: 'www.example.org' }).warnings
-    expect(onlyHost).toHaveLength(1)
-    expect(onlyHost[0]).toMatch(/TURNSTILE_EXPECTED_ACTION/)
-  })
-
-  it('keeps hard failures and warnings separate', () => {
-    const result = validateProductionEnv({ ...good, TRUST_PROXY: 'false' })
-    expect(result.problems.join()).toMatch(/TRUST_PROXY/)
-    expect(result.warnings).toHaveLength(2)
-  })
-
-  it('does not warn for disposable local staging (Cloudflare dummy keys report fixed hostnames)', () => {
+  it('does not require pinning or SMTP for disposable local staging (Cloudflare dummy keys report fixed hostnames)', () => {
     const staging = {
       ...good,
+      TURNSTILE_ALLOWED_HOSTNAMES: undefined,
+      TURNSTILE_EXPECTED_ACTION: undefined,
+      SMTP_HOST: undefined,
+      EMAIL_FROM_ADDRESS: undefined,
       CMS_ALLOW_INSECURE_LOCAL_STAGING: 'true',
       TURNSTILE_SECRET_KEY: '1x0000000000000000000000000000000AA',
       CMS_PUBLIC_URL: 'http://cms.churchtimes.localhost:3100',
@@ -250,5 +259,35 @@ describe('CONTACT_NOTIFY_TO (C5)', () => {
     const bad = validateProductionEnv({ ...good, CONTACT_NOTIFY_TO: 'a@example.test, not-an-address' }).problems
     expect(bad.join()).toMatch(/CONTACT_NOTIFY_TO/)
     expect(bad.join()).not.toMatch(/not-an-address/)
+  })
+})
+
+describe('firstRegisterAllowed (first-admin takeover guard)', () => {
+  it('is allowed outside production (development bootstrap)', () => {
+    expect(firstRegisterAllowed({ NODE_ENV: 'development' } as NodeJS.ProcessEnv)).toBe(true)
+    expect(firstRegisterAllowed({ NODE_ENV: 'test' } as NodeJS.ProcessEnv)).toBe(true)
+    expect(firstRegisterAllowed({} as NodeJS.ProcessEnv)).toBe(true)
+  })
+
+  it('is refused in production unless ALLOW_FIRST_REGISTER is exactly "true"', () => {
+    expect(firstRegisterAllowed(good)).toBe(false)
+    for (const v of ['', 'TRUE', '1', 'yes', 'false']) {
+      expect(firstRegisterAllowed({ ...good, ALLOW_FIRST_REGISTER: v }), v).toBe(false)
+    }
+    expect(firstRegisterAllowed({ ...good, ALLOW_FIRST_REGISTER: 'true' })).toBe(true)
+  })
+
+  it('is allowed for disposable loopback staging (which the e2e stacks use)', () => {
+    const staging = {
+      ...good,
+      CMS_ALLOW_INSECURE_LOCAL_STAGING: 'true',
+      CMS_PUBLIC_URL: 'http://cms.churchtimes.localhost:3100',
+      CMS_CORS_ORIGINS: 'http://www.churchtimes.localhost:5173',
+      CMS_CSRF_ORIGINS: 'http://newsroom.churchtimes.localhost:5174',
+      PUBLIC_SUBMISSION_ORIGINS: 'http://www.churchtimes.localhost:5173',
+    } as NodeJS.ProcessEnv
+    expect(firstRegisterAllowed(staging)).toBe(true)
+    // the flag next to a public https origin is not staging: still refused (and startup fails separately)
+    expect(firstRegisterAllowed({ ...good, CMS_ALLOW_INSECURE_LOCAL_STAGING: 'true' })).toBe(false)
   })
 })

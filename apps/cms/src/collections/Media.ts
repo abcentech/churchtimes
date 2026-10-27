@@ -1,4 +1,5 @@
 import { APIError } from 'payload'
+import sharp from 'sharp'
 import type {
   Access,
   CollectionAfterChangeHook,
@@ -13,15 +14,16 @@ import type {
 
 import { editorInChiefOnly, idOf, isEditorInChief, isEditorRole, isStaff, staffOnly, type UserLike } from '../access/roles'
 import { writeAuditLog } from '../lib/audit'
+import { AV_MIME, AV_PAYLOAD_MIME_ALIASES, avMaxBytes, normaliseAvMime, sniffAvMimes } from '../lib/avMedia'
 import { clampLimit } from '../lib/clampLimit'
 import { liveCampaignClauses, requirePayment } from '../lib/advertising'
+import { ALLOWED_MIME, MAX_IMAGE_BYTES } from '../lib/mediaLimits'
 import { LEGACY_PATH_MAX, isValidLegacyPath } from '../lib/legacyMediaPath'
 import { verifyPreviewToken } from '../lib/previewToken'
 import { nextCounter } from './LiveUpdates'
 
 const asUser = (u: unknown): UserLike | null => (u ? (u as UserLike) : null)
 
-const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp'] as const
 
 /** Returns the mimetype implied by magic bytes, or null when not a supported image. */
 export function sniffImageMime(buf: Uint8Array): (typeof ALLOWED_MIME)[number] | null {
@@ -118,7 +120,24 @@ const guardAdCreativeFile: CollectionBeforeOperationHook = async ({ args, operat
   return args
 }
 
-const checkUpload: CollectionBeforeOperationHook =({ args, operation }) => {
+/** Upload decode cap (pixels). Refuses decompression bombs before any resize or re-encode. */
+export const MAX_INPUT_PIXELS = 40_000_000
+
+/**
+ * Re-encode a JPEG / PNG / WebP so the stored original carries no EXIF / XMP / IPTC metadata (GPS position, camera
+ * serial, editing history). The EXIF orientation is applied to the pixels (rotate()) before the tag is dropped, so the
+ * picture looks the same; the ICC profile is kept so colours do not shift; dimensions are unchanged.
+ */
+export async function stripImageMetadata(data: Uint8Array, mime: (typeof ALLOWED_MIME)[number]): Promise<Buffer> {
+  const img = sharp(data, { limitInputPixels: MAX_INPUT_PIXELS, animated: mime === 'image/webp' })
+    .rotate()
+    .keepIccProfile()
+  if (mime === 'image/jpeg') return img.jpeg({ quality: 92, mozjpeg: false }).toBuffer()
+  if (mime === 'image/png') return img.png().toBuffer()
+  return img.webp({ quality: 90 }).toBuffer()
+}
+
+const checkUpload: CollectionBeforeOperationHook = async ({ args, operation }) => {
   if (operation !== 'create' && operation !== 'update') return args
   const file = (args.req as { file?: { name: string; data?: Uint8Array; mimetype?: string } }).file
   if (!file) return args
@@ -136,9 +155,35 @@ const checkUpload: CollectionBeforeOperationHook =({ args, operation }) => {
   file.name = sanitizeFilename(file.name)
   if (file.data && file.data.length > 0) {
     const sniffed = sniffImageMime(file.data)
-    if (!sniffed) throw new APIError('Unsupported or corrupt image. Use JPEG, PNG or WebP.', 400)
+    if (!sniffed) {
+      // Not an image: self-hosted audio/video (MP4, WebM, MP3, M4A, OGG), verified by magic bytes and size-capped. The
+      // bytes are stored as uploaded (no re-encode); nothing else is accepted.
+      const avTypes = sniffAvMimes(file.data)
+      if (avTypes.length === 0) {
+        throw new APIError('Unsupported or corrupt file. Use JPEG, PNG or WebP images, or MP4, WebM, MP3, M4A or OGG audio/video.', 400)
+      }
+      const declared = normaliseAvMime(file.mimetype)
+      if (!declared || !avTypes.includes(declared)) {
+        throw new APIError('File content does not match its declared type.', 400)
+      }
+      file.mimetype = declared // stored as the canonical type (audio/x-m4a -> audio/mp4)
+      if (file.data.length > avMaxBytes()) {
+        throw new APIError(`Audio and video files must be at most ${Math.floor(avMaxBytes() / (1024 * 1024))} MB.`, 413)
+      }
+      return args
+    }
+    if (file.data.length > MAX_IMAGE_BYTES) throw new APIError(`Images must be at most ${Math.floor(MAX_IMAGE_BYTES / (1024 * 1024))} MB.`, 413)
     if (file.mimetype && file.mimetype !== sniffed) {
       throw new APIError('File content does not match its declared type.', 400)
+    }
+    // Strip metadata from the original, then everything downstream (size variants, dimension and weight checks,
+    // ad creative checks) sees the processed bytes.
+    try {
+      const clean = await stripImageMetadata(file.data, sniffed)
+      file.data = clean
+      ;(file as { size?: number }).size = clean.length
+    } catch {
+      throw new APIError('Unsupported or corrupt image, or larger than 40 megapixels. Use JPEG, PNG or WebP.', 400)
     }
   }
   return args
@@ -433,7 +478,8 @@ export const Media: CollectionConfig = {
   },
   upload: {
     staticDir: 'media',
-    mimeTypes: [...ALLOWED_MIME],
+    // Payload also checks the type its own sniffer reports; it reports M4A as audio/x-m4a and M4V as video/x-m4v (normalised in checkUpload).
+    mimeTypes: [...ALLOWED_MIME, ...AV_MIME, ...AV_PAYLOAD_MIME_ALIASES],
     focalPoint: true,
     imageSizes: [
       { name: 'thumbnail', width: 400 },
@@ -443,8 +489,8 @@ export const Media: CollectionConfig = {
   },
   fields: [
     { name: 'alt', type: 'text', required: true, maxLength: 300 },
-    { name: 'caption', type: 'text' },
-    { name: 'credit', type: 'text' },
+    { name: 'caption', type: 'text', maxLength: 1000 },
+    { name: 'credit', type: 'text', maxLength: 300 },
     {
       // Server-set on create; see guardMediaChange / updateAccess. Null for rows that predate the field.
       name: 'uploadedBy',

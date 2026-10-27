@@ -170,7 +170,15 @@ export function parseAllowedHosts(env: EnvLike = process.env): string[] {
   return [...new Set(hosts)]
 }
 
-export const DEFAULT_LEGACY_HOSTS = ['churchtimesnigeria.net', 'www.churchtimesnigeria.net'] as const
+/** The primary host plus the old `.org` and `.com` hosts (and `www.` variants): all of them mean the same site as the primary host. */
+export const DEFAULT_LEGACY_HOSTS = [
+  'churchtimesnigeria.net',
+  'www.churchtimesnigeria.net',
+  'churchtimesnigeria.org',
+  'www.churchtimesnigeria.org',
+  'churchtimesnigeria.com',
+  'www.churchtimesnigeria.com',
+] as const
 
 /**
  * `LEGACY_SITE_HOSTS`: comma list of the host names the old WordPress addresses (`legacyUrl`) may carry. A `legacyUrl`
@@ -238,12 +246,12 @@ export const isInternalTarget = (to: string | null | undefined): to is string =>
 // Public article path template (shared with the public host through the same environment value)
 // ---------------------------------------------------------------------------------------------------------------
 
-export const ARTICLE_PATH_TEMPLATES = ['/reports/{slug}/', '/{slug}/'] as const
+export const ARTICLE_PATH_TEMPLATES = ['/{slug}/', '/reports/{slug}/'] as const
 export type ArticlePathTemplate = (typeof ARTICLE_PATH_TEMPLATES)[number]
-export const DEFAULT_ARTICLE_PATH_TEMPLATE: ArticlePathTemplate = '/reports/{slug}/'
+export const DEFAULT_ARTICLE_PATH_TEMPLATE: ArticlePathTemplate = '/{slug}/'
 
 /**
- * `PUBLIC_ARTICLE_PATH_TEMPLATE`: unset or empty is the default `/reports/{slug}/` (owner decision D1 is pending).
+ * `PUBLIC_ARTICLE_PATH_TEMPLATE`: unset or empty is the default `/{slug}/` (owner decision D1: articles live at the site root, as on WordPress).
  * Only the two accepted values exist; anything else throws so that a typo is never turned into wrong redirects.
  */
 export function resolveArticlePathTemplate(env: EnvLike = process.env): ArticlePathTemplate {

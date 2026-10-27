@@ -1,4 +1,4 @@
-# Church Times CMS — API contracts (v1.14)
+# Church Times CMS — API contracts (v1.27)
 
 Status: implemented on `agent/payload-core`. v1.1 added Turnstile, duplicate detection, staff auth/session
 contract and security hardening; v1.2 closes the verified security-review findings: media ownership, version
@@ -94,7 +94,8 @@ Rules:
   seoTitle?: string | null     // v1.8, ≤ 70 chars, plain text; null when unset (public site falls back to `title`)
   seoDescription?: string | null // v1.8, ≤ 200 chars, plain text; null when unset (falls back to `excerpt`)
   content: LexicalRichText     // structured JSON, never raw HTML
-  category: number | Category  // depends on `depth`
+  category: number | Category  // PRIMARY category (required); depends on `depth`
+  categories?: (number | Category)[]  // v1.27: ADDITIONAL categories, 0 to 5, never the primary, no duplicates; depends on `depth`
   featuredImage?: number | Media
   bylineName?: string          // display byline (legacy authors without accounts)
   status: 'draft' | 'in_review' | 'changes_requested' | 'approved' | 'scheduled' | 'published' | 'archived'
@@ -118,6 +119,16 @@ override: the canonical address is derived from the article path. Who may edit f
 article is a draft or changes are requested, editors in scope, trusted publishers for their own. Changing **only** these two
 fields of a published article is **not** a material change (no `corrections` entry needed) but is still versioned.
 
+**Additional categories (v1.27).** An article can sit in several sections. `category` stays the **primary** category: required, it
+drives the canonical listing, breadcrumbs, sitemap, scoping of section editors and every existing contract, so nothing that reads
+`category` changes. `categories` is an optional list of extra categories, public like `category` (published articles only), stored
+in the order written. Ordering rule: the primary comes first, the complete set of an article is `[category, ...categories]`.
+Server-side validation on create and every update that sends `category` or `categories` (a partial update is checked against the stored
+side): at most 5 entries, no duplicates, the primary must not be listed, every id must be an existing category (*Additional categories must be existing categories.*); otherwise `400`
+(*An article can have at most 5 additional categories.*, *Additional categories must not repeat a category.*, *The primary category must not also be listed in the additional categories.*).
+`categories: []` clears them. Deleting a category removes it from every article's `categories` (the join rows cascade; the article stays).
+Section-editor and trusted-publisher scope still follows the primary `category` only. Existing clients that ignore `categories` keep working.
+
 Staff-only fields (never returned to anonymous readers): `author`, `reviewNotes`, `scheduledFor`, `bodyMedia`.
 `bodyMedia` (v1.4) is derived by the server from the `upload` nodes of `content` (distinct media ids), never client-writable
 (ignored on input), and exists so the media freeze (§6.3) can tell which media is shown in a body.
@@ -130,7 +141,7 @@ update that sends `content`.
 Seeded: News, Features, Opinion, Columnists, Interviews, Business, Education, Health, Publisher's Note.
 
 ### Media (`/api/media`) — `{ id, alt, caption?, credit?, url, filename, mimeType, width, height, sizes }`
-Accepted uploads: `image/jpeg`, `image/png`, `image/webp`. Max 10 MB. SVG and HTML are rejected.
+Accepted uploads: `image/jpeg`, `image/png`, `image/webp` (max 25 MB by default, `MEDIA_IMAGE_MAX_MB`, since v1.25) and, since v1.19, audio/video for the `audioVideo` article block: `video/mp4`, `video/webm`, `audio/mpeg`, `audio/mp4`, `audio/ogg` (max `MEDIA_AV_MAX_MB`, default 100, see v1.19). SVG, HTML, scripts and every other type are rejected.
 Upload is staff-only, as `multipart/form-data` (§6.3). Staff-only, server-set field: `uploadedBy` (user id of the
 uploader; `null` for media uploaded before v1.2). Not client-writable and never returned to anonymous readers.
 Editing is restricted, see §6.3.
@@ -192,8 +203,43 @@ Serialized shape (the `version` of the wrapper is whatever Payload's block featu
   A body nested deeper than 64 object/array levels (about 15 nested list levels) is **refused with `400`**
   (*The article body is nested too deeply ...*): the check never silently skips what it cannot inspect.
   Anonymous readers get the block as stored, on published articles only (like all of `content`).
+- (v1.19) A second block, `audioVideo`, is accepted for self-hosted audio and video; see "Audio/video block" below. Everything else stays refused.
 - The importer must write `youtubeEmbed` blocks for YouTube, and for anything else a paragraph with the original link text (when it
   is a safe `https:` link) or nothing, plus a QA report line. It must not write `embed` nodes.
+
+**Audio/video block (v1.19).** The editor also registers `audioVideo`. Serialized shape (same wrapper as `youtubeEmbed`):
+
+```json
+{ "type": "block", "version": 2, "format": "",
+  "fields": { "id": "<block id>", "blockName": "", "blockType": "audioVideo", "kind": "video",
+              "media": 123, "poster": 124, "title": "Choir rehearsal", "caption": "Optional caption",
+              "transcriptUrl": "https://example.org/transcript", "duration": 95 } }
+```
+
+- `kind`: `"video"` or `"audio"` (required). `media`: id of a Media document (an upload relation; a populated object is accepted on write), the self-hosted
+  file. `sourceUrl`: legacy address, used only when no file exists (the importer could not find it); an http(s) address without credentials or a
+  root-relative path, at most 2000 characters. At least one of `media` / `sourceUrl` is required. `poster`: optional image (JPEG/PNG/WebP) in Media.
+  `title` (required, at most 120 characters) is the accessible name; `caption` at most 500; both plain text (no `<`, `>` or control characters).
+  `transcriptUrl`: optional, same address rules as `sourceUrl`. `duration`: optional seconds, 0 to 86400. A leaf: no children, no other fields (`400`).
+- **Server validation** (every write that carries `content`, skipped only for trusted seed calls): shape errors are `400` from the embed check; a `media` file
+  must exist, be readable by the caller, have a non-empty `alt` (its description) and a type allowed for the kind (video: `video/mp4`, `video/webm`;
+  audio: `audio/mpeg`, `audio/mp4`, `audio/ogg`); a `poster` must pass the body-image rules. `bodyMedia` also lists the `media` and `poster` ids, so the
+  media freeze (§6.3) and the public read rule (§3 Media) apply to them exactly as to body images.
+- **Public projection.** There is no separate endpoint: an anonymous reader of a published article gets the block as stored, and with `depth >= 1` `media` and
+  `poster` are populated Media documents. The public site needs: `fields.kind`, `fields.title`, `fields.caption`, `fields.duration`, `fields.transcriptUrl`,
+  `fields.media.url` (the file; absolute `${CMS_PUBLIC_URL}/api/media/file/<name>` whenever `CMS_PUBLIC_URL` is set, like every other media url),
+  `fields.media.mimeType` (one of the five types), `fields.poster.url`, and `fields.sourceUrl` when there is no `media` (legacy address, may be dead: render the title as
+  a plain link or nothing). If `media` comes back as a bare id the file is not public: render nothing. Files are public exactly while the article is `published`
+  (unchanged: draft, scheduled, in review, archived and withdrawn articles keep them private, `403` on the file route). Never build a player URL from anything but `media.url` / `sourceUrl`.
+- **Upload rules** (Media): content is verified by magic bytes (MP4 `ftyp`, WebM EBML with the `webm` doctype, MP3 ID3 or frame sync, Ogg `OggS`) and must match the
+  declared type (`audio/x-m4a` is stored as `audio/mp4`, `video/x-m4v` as `video/mp4`); the file is stored unchanged (no re-encode, no size variants, `width`/`height` empty).
+  Size cap: `MEDIA_AV_MAX_MB` (default 100, maximum 500), `413` above it; images use the image cap (25 MB by default since v1.25). Through `POST /api/media` a request is still bounded by the
+  proxy and request-size limit (11 MB anonymous, 26 MB for verified staff since v1.25, `lib/requestLimits.ts`, `next.config.mjs`), so larger files are loaded server side (the importer, the Local API) until operations raise
+  those limits together with the reverse proxy.
+- **Importer.** `<video>`, `<audio>`, `<source>` and the shortcodes `[fvplayer]`, `[video]`, `[audio]` become `audioVideo` blocks (a figure around one element lends its figcaption as caption;
+  `poster`/`splash` go through the image resolver). A file found by the media resolver gets `media`; otherwise the block keeps `sourceUrl` and the run report counts
+  `unresolved-media` (counts only). YouTube addresses inside these tags still become `youtubeEmbed`; any other type or player page (`.mov`, `.wav`, Vimeo, ...) stays a link
+  paragraph or is dropped, counted as unsupported.
 
 **Tables (C1.4).** The editor registers Lexical's table feature (`EXPERIMENTAL_TableFeature`) on `articles.content`. Stored shape is the
 standard `table` > `tablerow` > `tablecell` (`headerState` 0/1/2, `colSpan`, `rowSpan`), unchanged from what the public renderer
@@ -214,7 +260,7 @@ first because a real file can be called `banner-1920x1080.jpg`; `altFallback`/`r
 `<title> photo`, at most 300 characters).
 
 **Import helpers (C1.3, C1.5).** Pure, database-free functions in `src/lib/legacyContent.ts` for the later importer task:
-`resolveSlugCollisions` (every valid original slug is reserved first, only true duplicates and normalised forms that collide get `-2`, `-3`,
+`resolveSlugCollisions` (reserved route names such as `admin` or `search` count as taken, so a colliding post gets `-2`; every valid original slug is reserved first, only true duplicates and normalised forms that collide get `-2`, `-3`,
 so a duplicate never takes a slug another post owns, in any order; returns `{old,new}` pairs; slug rule and 160 characters),
 `sanitizeLegacyLinks` (keep `http`, `https`, `mailto` and root-relative links; convert everything else, including a URL in any of
 `fields.url`, `url`, `href`, to plain text; an old-host link is rewritten through the slug map **only** when it is a plain `/<slug>/`
@@ -253,6 +299,8 @@ the widget's `action` must be one of the entries, otherwise 403.
   "body": "What happened…",           // required, 30–20 000, plain text
   "categorySuggestion": "News",       // optional, ≤ 100
   "location": "Ibadan",               // optional, ≤ 120
+  "consent": true,                    // optional boolean (v1.16); required when SUBMISSIONS_REQUIRE_CONSENT=true (400, field "consent")
+  "consentTextVersion": "2026-10",    // optional, ≤ 80; stored only together with consent: true
   "website": "",                      // honeypot — must be empty or absent
   "turnstileToken": "0.xxxx"          // REQUIRED: Cloudflare Turnstile token from the widget (≤ 2048 chars)
 }
@@ -307,7 +355,12 @@ GET /api/categories?limit=100
 ```
 
 - `depth=0` returns relationships as IDs (`category: 3`); `depth=1` populates them (`category: { id, title, slug }`,
-  `featuredImage: { url, alt, sizes… }`). The public site uses `depth=1` to get `category.title`.
+  `featuredImage: { url, alt, sizes… }`). The public site uses `depth=1` to get `category.title`. `categories` (v1.27) is returned the
+  same way: ids at `depth=0`, `[{ id, title, slug }]` at `depth=1`, primary-first reading order `[category, ...categories]`.
+- **Listing a category's articles (v1.27)** includes the ones that have it as an additional category: `where[categories][in]=<id>` (or
+  `[equals]`) matches only articles that carry it as an additional category; for "primary OR additional" use the `or` form
+  `where[or][0][category][equals]=<id>&where[or][1][categories][equals]=<id>&where[status][equals]=published`. `categories` is a
+  relationship filter like `category`: numeric ids only, anything else is `400`.
 - Lists are paginated: `limit` (max **100**, larger values are clamped; `0`, negative or non-numeric values
   become the default of 10) and `page` (1-based). `pagination=false` is **ignored** for API callers: lists are
   always paginated, so `hasNextPage` stays truthful. This applies to every collection and to
@@ -346,7 +399,7 @@ Polling endpoint for live coverage (recommended interval: 15–30 s).
   `CMS_PUBLIC_URL`, see §6.3; resolve it against the CMS origin as `src/lib/cms-media.js` does). `alt` is always non-empty; `mimeType` is `image/jpeg`, `image/png` or `image/webp`; `width`/`height` are
   positive integers (or `null` if unknown). No other media field (filename, caption, credit, sizes, uploader) is returned.
   **Size served (v1.5):** `url`, `width`, `height` and `mimeType` describe the ~800 px wide `card` variant of the upload (see
-  `imageSizes` in `Media.ts`), not the original (which can be up to 10 MB). When the media has no `card` variant (Payload does not
+  `imageSizes` in `Media.ts`), not the original (which can be up to 25 MB). When the media has no `card` variant (Payload does not
   enlarge an image that is already narrower than 800 px, and media that predates the size has none) or the variant is not a usable
   media URL / image type, the original upload is used instead. `alt` always comes from the media document.
   Only approved updates are in the feed, and (v1.6) the media collection is private for anything that is not on the public site
@@ -445,7 +498,8 @@ The CMS stores consent and subscribers; it does **not** send newsletters. Three 
   The mail is queued after the answer is built, so response time does not reveal whether the address existed.
 - **Neutral answer.** A new, an already-pending and an already-confirmed address all get the byte-identical
   `202 { "ok": true, "message": "If this address can be subscribed, we sent a confirmation email." }`. Pending: a fresh link replaces the old one.
-  Confirmed: nothing is sent or changed. **Unsubscribed or bounced: not re-added**; the row keeps its status, the same answer is returned, and a
+  Confirmed: nothing is sent or changed. An **imported row with no proven opt-in** (stored `pending`, `importedFrom = mailchimp-import-no-optin-time`) is
+  treated like any pending row (a fresh link; confirming records fresh consent now, under the wording version the person was shown). **Unsubscribed or bounced: not re-added**; the row keeps its status, the same answer is returned, and a
   fresh confirmation link is mailed. Opening it is the only way back (it also records fresh consent). A mail failure is logged and still answers `202`.
 - **Mail-bombing guards.** Beyond the 3 per hour per address: a resend cooldown `NEWSLETTER_RESEND_COOLDOWN_SECONDS` (600; inside it nothing is sent and the
   earlier link stays valid), a daily cap `NEWSLETTER_MAX_CONFIRM_MAILS_PER_DAY` (5 per rolling 24 h), and `bounced` addresses are never mailed automatically.
@@ -466,11 +520,13 @@ scanners that pre-fetch links change nothing.
   future newsletter can carry a working link). Sets `unsubscribed` and `unsubscribedAt`. Idempotent; an erased subscriber stays erased.
 - Both answer `200 { "ok": true }`. Any invalid, expired, used, forged or unknown token is the same `400 { "ok": false, "errors": [{ "message": "This link is no longer valid." }] }`.
 
-**Staff data.** `subscribers` (`/api/subscribers`, `admin` and `editor-in-chief` read; never anonymous, never in a public response): `email` (unique,
+**Staff data.** `subscribers` (`/api/subscribers`, **`admin` only** for read and update (the editor-in-chief cannot read subscriber data); never anonymous, never in a public response): `email` (unique,
 lower-cased), `name?`, `status` (`pending`, `confirmed`, `unsubscribed`, `bounced`, `erased`), `source`, `consentTextVersion`, `consentAt`, `confirmedAt?`,
-`unsubscribedAt?`, `ipHash`, `importedFrom?` (`web`, `mailchimp-import`); `confirmTokenHash` and `confirmTokenExpiresAt` exist but are invisible over REST
-and in the admin UI. Nothing can be created or deleted over REST; over REST staff may only move a status to `unsubscribed` or `bounced` (`confirmed` can
-only come from the double opt-in link or the import).
+`unsubscribedAt?`, `ipHash`, `importedFrom?` (`web`, `mailchimp-import`, `mailchimp-import-no-optin-time`); `confirmTokenHash` and `confirmTokenExpiresAt` exist but are invisible over REST
+and in the admin UI. Nothing can be created or deleted over REST; over REST an admin may only move a status to `unsubscribed` or `bounced` (`confirmed` can
+only come from the double opt-in link or the import). Such a change is audited (`subscriber.status-change`), stamps `unsubscribedAt` and clears any pending confirmation token.
+- **`GET /api/subscribers/:id/subject-data`** (`admin` only, audited as `subscriber.subject-export` without the address, `no-store`): everything held about one person for a
+  data-subject access request (no token hashes or mail counters); an erased row is `404`.
 - **`GET /api/subscribers/export?status=confirmed`**: CSV for `admin` only (401 anonymous, 403 others), `status` one of `pending`, `confirmed`
   (default), `unsubscribed`, `bounced` (else 400), `Cache-Control: no-store`, audited (`subscriber.export`, count only). Columns: `email,name,status,source,consentAt,confirmedAt,unsubscribedAt,importedFrom`.
   A cell starting with `=`, `+`, `-`, `@`, tab or CR is prefixed with `'`.
@@ -478,13 +534,23 @@ only come from the double opt-in link or the import).
   are cleared, `status` is `erased`. The row is a suppression record that the importer honours. Erasure does **not** touch `contact-messages` from the same
   address (an admin deletes those manually), and rotating `IP_HASH_SALT` breaks the suppression match.
 - **Import CLI** `npm run import:subscribers -- --file <csv> [--apply] [--assume-subscribed]` (server-side only, no endpoint). Dry run by default; output is
-  counts only, never an address. The file must be outside the repository. Only rows Mailchimp marks `subscribed` are imported, as `confirmed`,
-  `importedFrom = mailchimp-import`, `consentAt` = `OPTIN_TIME` (else `CONFIRM_TIME`, else the import time). Header names are matched loosely (`Email Address`,
-  `First Name`, `Last Name`, `OPTIN_TIME`, `CONFIRM_TIME`, `Status`). No Status column: refused unless `--assume-subscribed` (the "Subscribed" segment export).
-  A file with `UNSUB_TIME` or `CLEAN_TIME` columns (unsubscribed or cleaned export) is refused, even with `--assume-subscribed`. A row with no `OPTIN_TIME` is
-  imported with `consentAt` null and `importedFrom = mailchimp-import-no-optin-time`, and counted in the report (the import time is never used as consent
-  time). A path inside the repository is refused (real paths, case-insensitive on Windows). Errors print only class and code.
-  Existing rows and erased addresses are skipped, never overwritten. Commenters, form senders and every other source are never imported.
+  counts only, never an address. The file must be outside the repository. Header names are matched loosely (`Email Address`, `First Name`, `Last Name`,
+  `OPTIN_TIME`, `CONFIRM_TIME`, `Status`, `UNSUB_TIME`, `CLEAN_TIME`). Times must be exactly `YYYY-MM-DD HH:MM:SS` (UTC); any other shape, an impossible date or a
+  future time counts as no time.
+  - `subscribed` with an `OPTIN_TIME`: stored `confirmed`, `importedFrom = mailchimp-import`, `consentAt` = `OPTIN_TIME`, `confirmedAt` = `CONFIRM_TIME` **only** (null when absent; never copied from `OPTIN_TIME`).
+  - `subscribed` with **no valid `OPTIN_TIME`** (no proof of consent): stored **`pending`**, `consentAt` and `confirmedAt` null, `importedFrom = mailchimp-import-no-optin-time`. Such a row is
+    excluded from every send and from `GET /api/subscribers/export?status=confirmed` until the person confirms (re-permission below).
+  - `unsubscribed` or `cleaned` rows, and files with `UNSUB_TIME` / `CLEAN_TIME` columns, are imported as **blocking rows** (`unsubscribed` / `bounced`, `unsubscribedAt` set). An existing
+    confirmed or pending row that the export lists as unsubscribed or cleaned is moved to that status. Other existing rows and erased addresses are never overwritten.
+  - No Status column: refused unless `--assume-subscribed` (the "Subscribed" segment export), except UNSUB_TIME / CLEAN_TIME files which are always blocking.
+  - An `--apply` run writes one audit row `subscriber.import` (counts, file SHA-256, operator name; no personal data). A path inside the repository is refused. Errors print only class and code.
+- **Re-permission** `npm run newsletter:reconfirm -- --dry-run|--apply [--limit N] [--deadline YYYY-MM-DD] [--throttle-ms N]` (server-side, dry run by default, `--dry-run` with `--apply` is an error). For
+  the `pending` rows imported without an opt-in time and never mailed only: creates a confirmation token (valid until the end of the deadline day UTC, default 30 days), sets
+  `consentTextVersion = mailchimp-reconfirm-v1` and sends ONE plain-text mail through the configured mailer (throttled, default 1 s). Resumable (a row is stamped before sending; a failed send clears
+  the stamp so the next run retries it; 5 consecutive failures stop the run). Counts-only output and audit row (`subscriber.reconfirm-run`); no address or token is printed or logged.
+  Opening the link sets `confirmed`, `consentAt` = now and keeps the `mailchimp-reconfirm-v1` version, so consent is provable.
+- **Purge** `npm run newsletter:purge-unconfirmed -- --deadline YYYY-MM-DD --dry-run|--apply [--limit N] [--include-unsent]`: refuses until the deadline has passed. Reduces still-`pending` imported rows that were mailed
+  (with `--include-unsent` also those never mailed) to the salted-hash suppression record (as erase). Dry run by default; audited (`subscriber.purge-unconfirmed`, counts only).
 - Provider sync (Mailchimp API) is **not implemented** and off.
 
 ## 5. Staff authentication and sessions
@@ -648,7 +714,7 @@ Send either the cookie (browser, same rules as §5) or `Authorization: JWT <toke
 
 `POST /api/media` is `multipart/form-data` with two parts: `file` (binary) and `_payload` (a JSON string with
 `{ "alt": "…", "caption"?: "…", "credit"?: "…" }`; `alt` is required, ≤ 300 chars). Staff only. Accepted:
-JPEG, PNG, WebP (content is verified against the declared type), ≤ 10 MB. Response `201 { doc, message }` where
+JPEG, PNG, WebP (content is verified against the declared type), ≤ 25 MB (`MEDIA_IMAGE_MAX_MB`; anonymous submitters are still held to the 11 MB request limit). Response `201 { doc, message }` where
 `doc` has `id`, `alt`, `filename` (sanitised), `mimeType`, `width`, `height`, `url`, and `sizes.{thumbnail,card,hero}.url`.
 `url` fields are **absolute** (`${CMS_PUBLIC_URL}/api/media/file/<name>`) whenever `CMS_PUBLIC_URL` is set (always in production);
 only in a local setup without it are they root-relative (`/api/media/file/<name>`).
@@ -679,6 +745,69 @@ new `file` to replace the file):
   stops being public when its article is unpublished. A media file that was public stays reachable by anyone who has already
   downloaded it, obviously. Note the freeze above still includes `scheduled` articles (their media is frozen but private).
 
+### Go-live A12: legacy media map (offline export)
+
+Not an HTTP endpoint. The public host must serve `/wp-content/uploads/*` from an exact, privately provisioned map, with no anonymous
+media scan and no staff credential on the public host. The CMS side is an offline export run by the owner:
+`npm run export:media-map -- [--out <file>] [--aliases <json>] [--detail-file <path>]` (`apps/cms/src/lib/mediaMapExport.ts`, `mediaMapData.ts`, `mediaMapCli.ts`).
+
+- **Privacy.** A media is exported only if an ANONYMOUS reader can read it at export time under the media read rule (§3: media of a published
+  article, an approved live update of a live/ended event, a delivered ad creative). The exporter asks the CMS with `overrideAccess: false`
+  and no user, so drafts, in-review, scheduled, archived/withdrawn and unreferenced media are never listed. `legacyPath` (staff-only) is
+  read by a trusted second read of every media that has one. The file carries no ids, alt, caption, credit, uploader or any staff field, and no
+  count of private media (that count, `notAnonymous`, is printed by the CLI only).
+- **Format** (`media-map/1`, JSON, UTF-8): `{ version, generatedAt, counts: { entries, aliases }, contentSha256, entries, aliases }`.
+  `entries[]` = `{ path, file, mime, size }`: `path` is the legacy path after `/wp-content/uploads/` (NFC, percent-decoded once, no duplicate,
+  leading or trailing slash, no `.`/`..`, case-sensitive, exact match); `file` is the CMS public file URL path, matching
+  `^/api/media/file/[A-Za-z0-9][A-Za-z0-9._-]*$`; `mime` is `image/jpeg|png|webp`; `size` is bytes. Sorted by `path` in code-unit order.
+  `aliases[]` = `{ alias, path }`, sorted by `alias`.
+  **This differs from the flat proposal in PR #58** (`entries[{legacyPath, mediaPath, mimeType}]` with aliases as ordinary entries, plus `revision`):
+  #58 must be updated to this contract, or the host must adapt. The host must validate every entry at load itself (`validateMediaMapBody` is a reference).
+- **Limits** (aligned with #58): at most 50,000 entries counting map entries plus aliases, and 8 MiB serialised. The export fails with
+  `media-map-too-many-entries` / `media-map-too-large` and writes nothing.
+- **Aliases.** A size-suffix alias (`photo-300x200.jpg` -> `photo.jpg`) exists only when it is recorded in the owner's `--aliases` JSON
+  (`[{ "alias": ..., "path": ... }]`) AND the alias equals the original with exactly one `-WxH` suffix before the extension AND the original is an
+  exported entry AND no media at all (exported or not) claims the alias as its own exact path. Otherwise it is dropped and itemised in the detail file.
+  The host tries the exact entry first, then the alias; it never strips suffixes itself.
+- **Ambiguity.** Two media (any visibility: draft, private, withdrawn included) claiming one normalised path are ambiguous: neither is exported.
+- **Digests.** `file-sha256` is the sha256 of the EXACT bytes of the map file; it is the provisioning check, printed by the CLI and written next to
+  the map as `<out>.sha256` (`<hex>  <file name>`, `sha256sum -c` compatible). `contentSha256` (inside the file) is only a stable content id: it ignores
+  `generatedAt` and formatting, so the same content gives the same id on every run. The digest detects accidental damage; it is not a signature.
+- **CLI.** Without `--out` it is a dry run printing counts and both digests only. `--out` and `--detail-file` must be outside the repository
+  (refused with exit 2, also when reached through a symlink or junction). Files are written to a temp file in the target folder, then renamed over the
+  target, mode `0600` (no effect on Windows: protect the folder with its permissions there). `--detail-file` itemises ambiguities and rejected aliases
+  (it names paths and media ids). Output never prints a path or file name.
+- **Withdrawal.** The public host is designed (#58) as no-store with an anonymous CMS check on every request, so revocation is immediate: once media
+  stops being anonymously readable the CMS file URL answers 403/404 and the host serves 404, before any re-export. Re-export (and replacing the map
+  atomically) then removes the entry and the alias, so it stops being mapped at all. Notes: an ad creative stops being public when its campaign
+  ends; media still used by another published article stays public and stays mapped. Images already downloaded cannot be recalled. If a bounded
+  cache is ever introduced the staleness window is export time + host reload + cache lifetime; #58 keeps no-store.
+- Not covered: aliases are not recorded on the media document (no schema change); the owner supplies them. `HEAD`/range behaviour belongs to the host.
+
+### 6.4 Staff related articles
+
+`POST /api/staff/related-articles`: finds past **published** articles related to a draft or to free text, with citations. Read-only, **no generation**
+(it returns existing articles and their canonical addresses, nothing is written or summarised by a model). Contract and notes for consumers:
+`docs/staff-retriever.md`.
+
+- **Auth.** Staff session only (cookie or `Authorization: JWT`); any staff role (`reporter` and above; there is no lower role). Anonymous: `401`.
+  Cookie sessions are CSRF-checked by Payload (an `Origin` outside the CSRF list is treated as anonymous: `401`).
+- **Body** (JSON, at most 256 KiB, else `413`): `{ "text"?: string, "articleId"?: number | string, "limit"?: integer }`. At least one of `text` and `articleId`.
+  `limit` default 10, **maximum 20** (larger values are clamped; non-integers `400`). With `articleId` the draft (title, excerpt, body) is loaded with the
+  caller's own access rules (`404` when it does not exist or is not readable by them) and **excluded** from the results. When both are given, `text`
+  drives the query and the article is still excluded.
+- **Query derivation.** Input is capped at 20,000 characters (`truncated: true` when cut). Terms are the title (weighted x3), the first 1,000 characters
+  and the rest of the body, lowercased, letters/digits only, 3-30 characters, English stopwords and bare numbers removed, top 24 by frequency. The query is
+  `to_tsquery('english', 't1 | t2 | ...')` (OR semantics); input never reaches PostgreSQL as tsquery syntax.
+- **Response `200`**: `{ "ok": true, "results": [...], "limit": n, "truncated": bool }`, each result
+  `{ id, title, slug, canonicalPath, canonicalUrl, publishedAt, snippet, score, matchedTerms }`. `canonicalPath` follows `PUBLIC_ARTICLE_PATH_TEMPLATE`;
+  `canonicalUrl` is `PUBLIC_SITE_URL` (else the `CMS_PUBLIC_URL` origin) plus the path, `null` when neither is configured. `snippet` is plain text, at
+  most 240 characters; `score` is `ts_rank` (higher is better, 4 decimals); `matchedTerms` are the query terms (stemmed match) found in the article.
+  Only `published` articles with `publishedAt` in the past appear; drafts, in-review, scheduled and archived (withdrawn) never do.
+- **Headers.** Every response (including errors) is `Cache-Control: private, no-store`.
+- **Limits.** Per-user rate limit `STAFF_RELATED_RATE_LIMIT` (default 30) per `STAFF_RELATED_RATE_WINDOW_SECONDS` (default 60): `429` + `Retry-After`.
+  Not audited; the submitted text is never logged (errors log class name and SQLSTATE only).
+
 ## 7. Error shape
 
 Payload-native routes return Payload's `{ errors: [{ message, ... }] }`. Custom endpoints in §4 and §6 return
@@ -689,7 +818,7 @@ Payload-native routes return Payload's `{ errors: [{ message, ... }] }`. Custom 
 a declared `Content-Length` above **1 MB** is `413` (above **11 MB** for `/api/media`), a malformed `Content-Length` is
 `400`, and a body without `Content-Length` (chunked transfer) on `POST`/`PATCH`/`PUT` to `/api/users/*` is `411`.
 These responses are `{ "ok": false, "errors": [{ "message": … }] }`. Normal browser `fetch` calls send
-`Content-Length`; the reverse proxy enforces a 12 MB cap in front of this (`docs/operations.md` §4.4).
+`Content-Length`; the reverse proxy enforces a 28 MB cap in front of this (`docs/operations.md` §4.4).
 
 **429 and `Retry-After` (v1.5).** The CMS answers 429 in exactly three places, and each sends `Retry-After: <whole seconds, >= 1>` plus
 `Access-Control-Expose-Headers: Retry-After` (the header is not CORS-safelisted, so without the expose header a cross-origin
@@ -726,7 +855,7 @@ published article. A **manual row overrides** the rule an article derives for th
 `legacy-url` rows may chain (flattened, or made 410, at generation).
 
 **Derived rules**: each **published** article with a `legacyUrl` yields `from` = path of `legacyUrl`, `to` = the article path from
-`PUBLIC_ARTICLE_PATH_TEMPLATE` (`/reports/{slug}/` default, or `/{slug}/`; any other value stops startup). Nothing is emitted when `from`
+`PUBLIC_ARTICLE_PATH_TEMPLATE` (**`/{slug}/` default**, owner decision D1: the same address WordPress used; or `/reports/{slug}/`; any other value stops startup). Nothing is emitted when `from`
 equals `to`, the article is not published, the `legacyUrl` has a query string or is the root, or its host is not in `LEGACY_SITE_HOSTS`
 (default `churchtimesnigeria.net,www.churchtimesnigeria.net`; a bare path is accepted). Existing rules and the write hook compare canonical paths
 over all published articles (no substring search, no limit).
@@ -735,7 +864,7 @@ over all published articles (no substring search, no limit).
 
 ```json
 { "version": "sha256:…", "generatedAt": "2026-10-16T00:00:00Z", "count": 2, "rules": [
-  { "from": "/old-slug/", "to": "/reports/new-slug/", "status": 301, "source": "legacy-url" },
+  { "from": "/old-slug/", "to": "/new-slug/", "status": 301, "source": "legacy-url" },
   { "from": "/retired/", "to": null, "status": 410, "source": "manual" } ] }
 ```
 
@@ -890,6 +1019,47 @@ archive data and the relation is required, so silently removing them for an edit
 `(article_id, status, commented_at, legacy_id)` for the public list), reversible (down, up, down is tested). **Production needs a UTF8 database**
 (`docs/operations.md`).
 
+### Go-live C8: public search
+
+`GET /api/public/search?q=&page=&limit=&category=&year=` (anonymous, read-only; also HEAD and an OPTIONS preflight). Published articles only: the
+search reads a projection table (`article_search`) that holds nothing else, and the endpoint also requires `status = published` and
+`publishedAt <= now`, so drafts, in-review, approved, scheduled, archived (withdrawn) and future-dated articles are never returned.
+
+| Query | Meaning |
+| --- | --- |
+| `q` | required; whitespace-trimmed, control characters and lone surrogates removed; at most 200 characters (`400` when empty, missing or longer) |
+| `page` | 1 to 100, default 1 (larger is clamped, invalid becomes 1) |
+| `limit` | 1 to 20, default 10 (larger is clamped to `SEARCH_MAX_LIMIT`, default 20, at most 100; invalid becomes 10) |
+| `category` | category slug, or its numeric id; matches an article whose primary OR additional category it is (v1.27); an unknown category gives an empty list |
+| `year` | four-digit year of `publishedAt` (UTC), 1900 to 2100; anything else is `400` |
+
+`200 { docs: [{ id, slug, title, excerpt, snippet, publishedAt, category: { id, slug, title }, categories: [{ id, slug, title }], rank }], totalDocs, totalCapped, limit, page, totalPages, hasNextPage,
+hasPrevPage, nextPage, prevPage }`. **`totalDocs` is capped (v1.23):** counting stops after 1000 matches (`SEARCH_COUNT_CAP`, default 1000), so `totalDocs` is never more than 1000 and `totalCapped: true` means "more than that exist" (read `totalDocs: 1000, totalCapped: true` as "1000+"). `totalPages` is `null` while `totalCapped` is true (the real number of pages is unknown; there is no misleading lower bound), a number otherwise; while capped, `hasNextPage` / `nextPage` stay true as long as the page is full (up to page 100), and a page past the real end returns an empty `docs`. `snippet` is a plain-text extract of the article body around the match (about 30 words, at most 240
+characters, no markup: `<` and `>` never appear; JSON-escaped like every field), falling back to the excerpt. The result carries no staff fields.
+Order: `rank` descending (title weight A, excerpt B, body C, `ts_rank`), then `publishedAt` descending, then id. Page numbers past the
+end return an empty `docs` with the (capped) `totalDocs`. Snippets are cut from the first 20,000 characters of the body.
+
+**Query language.** `q` is parsed by PostgreSQL `websearch_to_tsquery` (never `to_tsquery`), passed as a bound parameter: words are AND-ed,
+`"quoted phrases"`, `or` and a leading `-` work, and every other punctuation (`& | ! : * ( )`, quotes) is harmless. A query made only of stop-words or
+punctuation returns `200` with an empty list. The raw `q` is not logged.
+
+**Language configuration: `english`**, chosen deliberately: the archive is English-language Nigerian news, stemming lets "elections" find "election",
+and stop-words (the, of, and) do not dominate. Names are stemmed identically at index and query time, so they still find themselves. `simple` would
+miss plurals. `unaccent` is not used (the extension is not guaranteed in the test cluster or every production image); accented letters therefore
+match only themselves.
+
+**Transport.** `Cache-Control: public, max-age=60` on `200` ONLY when exactly one public origin is configured in `PUBLIC_SUBMISSION_ORIGINS`: every `200` then carries that same `Access-Control-Allow-Origin` whatever Origin the request sent, so all responses for a URL are identical and a shared cache cannot replay one caller's grant to another (Cloudflare's default cache ignores `Vary: Origin`; any other Origin gets an uncached `403`, so the cache cannot be poisoned). With none or several configured origins the grant is echoed per request and the response is `private, max-age=60`. Errors: `no-store`; `Vary: Origin` always, `X-Content-Type-Options: nosniff`. `403` for an `Origin` not in
+`PUBLIC_SUBMISSION_ORIGINS` (same rule and exact-origin CORS echo as the other public endpoints; `Retry-After` is exposed). Per-client rate limit (the shared in-memory
+limiter, same client-address rules): `SEARCH_RATE_LIMIT` (default 60) per `SEARCH_RATE_WINDOW_SECONDS` (default 60), then `429` with `Retry-After`. A database failure is
+`500 { ok: false, errors: [{ message }] }`.
+
+**Projection and operations.** Migration `20261023_090000_article_search` creates `article_search` (FK to `articles` with `ON DELETE CASCADE`, a GENERATED weighted `tsv` column, GIN index
+on it, and btree indexes on `(category_id, published_at)` and `published_at`) and seeds published articles with title and excerpt only. Articles hooks keep it current on every
+create, update (including status changes: any status other than `published` removes the row) and delete, for REST, the scheduler and the importer alike (they all use the Local API
+and fire the same hooks). **After the first deploy and after every archive import run `npm run search:reindex`** (`-- --batch 200`): idempotent, keyset-batched, fills body text, and removes rows of
+articles that are no longer published. It prints counts only. Plain article text is the Lexical text nodes (embeds and images contribute nothing), capped at 200,000 characters. The table is
+hand-written SQL, not a Payload collection: do not run Payload's dev `push` mode against a database that matters (it is already off in production).
+
 ## 8. Environment variables
 
 See `apps/cms/.env.example` (annotated) and `docs/operations.md` §4. Secrets (`PAYLOAD_SECRET`, `PREVIEW_SECRET`,
@@ -900,6 +1070,95 @@ proxy) and https-only `CMS_PUBLIC_URL`/CORS/CSRF settings (`docs/security.md`). 
 limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/operations.md` §4).
 
 ## 9. Changelog
+
+### v1.27: Additional categories on articles
+Additive. `articles.categories` (relationship hasMany to categories, optional, max 5, never the primary, no duplicates) next to the unchanged
+required primary `articles.category` (section 3, "Additional categories"). Public article reads, the preview projection and `GET /api/articles?where[categories][in]=`
+expose it; the C8 search `category=` filter matches primary OR additional, and each search hit gains `categories: [{ id, slug, title }]` (additional only, in
+stored order, empty when none; the primary stays in `category`). `categories` joins the numeric relationship filters (`400` on a non-numeric value).
+- **Migration** `20261027_140000_article_multi_category`: join-table column `categories_id` on `articles_rels` and `_articles_v_rels` (FK ON DELETE CASCADE, indexed) and `article_search.category_ids integer[]` (primary first, GIN indexed, backfilled from `category_id`). Run `npm run search:reindex` once after deploying to fill the additional ids of existing published articles (idempotent). Reversible, every statement `IF [NOT] EXISTS`.
+- **Importer:** the other WordPress categories of a post (up to 4 beyond the primary chosen by the existing chain) are stored in `categories`; see `docs/import.md`. Rollback is unchanged: join rows go with the articles, and a category an unlisted article still uses (primary or additional) is kept.
+
+### v1.26: Four-eyes rule for recovered archive articles
+Tightens one rule (listed first); new fields are staff-only.
+- **Rule (409):** the person who approved a recovered archive article (`provenance.reviewStatus` became `reviewed`) cannot publish or schedule it: `409` "A different editor must publish a recovered article you approved." Applies when a write leaves an article with an `importBatch` in status `published` or `scheduled` and either moves it into that status or changes `scheduledFor` while scheduled, by a non-admin whose id equals `provenance.reviewedBy`. It holds for REST, bulk `PATCH ?where=` (per article), the Local API with a user and `restoreVersion`. **Admins may do both** (approve and publish/schedule). The scheduler has no user, so it publishes a scheduled article without the actor rule: the rule is enforced when the article is scheduled (a different person must schedule it). Other edits by the approver on a published article are not blocked.
+- **New fields** on `articles.provenance`, server-set and never client-writable (field access `never` for create and update; a client-sent value is overwritten or ignored): `reviewedBy` (relationship to `users`), `reviewedByName` (text snapshot of the approver's name, so section editors who cannot read other users still see it) and `reviewedAt` (date). They are set from the acting user when `reviewStatus` changes to `reviewed` and cleared when it changes to `pending` or `rejected`; `restoreVersion` keeps the stored values. Readable by editor roles (admin, editor-in-chief, section-editor) only: absent for reporters, trusted publishers, anonymous callers and preview-link holders (the whole `provenance` group is already denied there). Filtering on them anonymously returns nothing or is refused.
+- Audit: unchanged. The `archive.review` row already names the approver (actor); no new audit action.
+- Migration `20261027_124620_four_eyes_review_stamp`: nullable columns on `articles` and `_articles_v` (`provenance_reviewed_by_id`, `provenance_reviewed_by_name`, `provenance_reviewed_at`), no backfill (articles approved before this change have no stamp and are not blocked).
+- Newsroom: Archive review shows "Approved by <name> on <date>" to editor roles; the editor disables Publish and Schedule for the approver with the reason.
+
+### v1.25: Larger image cap
+Non-breaking relaxation; no shape changes. The image size cap rises from 10 MB to **25 MB by default** and is configurable with `MEDIA_IMAGE_MAX_MB` (whole MB, 1 to 50; unset or invalid gives 25). It applies to `POST/PATCH /api/media` (`413` above it, message states the limit), the legacy importer and `import:uploads-check` (`too-large`). The 40 megapixel decode limit and the sharp re-save are unchanged (peak memory for a ~23 MB / 40 MP JPEG measured at about 680 MB RSS). `/api/media` request limit: anonymous callers stay at 11 MB; callers with a VERIFIED session get max(image cap, explicit `MEDIA_AV_MAX_MB`) + 1 MB (26 MB by default; `MEDIA_UPLOAD_MAX_MB` still overrides). Next's body buffer follows (limit + 1 MB). The reverse proxy `/api/media` limit must be at least staff limit + 2 MB (28 MB by default, operations.md 4.4).
+
+### v1.24: Staff related articles
+Additive: new endpoint `POST /api/staff/related-articles` (section 6.4); no existing shape changes.
+- Request bodies are read as a stream and refused with `413` as soon as they exceed 256 KiB measured in **bytes** (not characters), without buffering the remainder. The headline snippet is computed over the first 20,000 characters of an article body only.
+
+### v1.23: Review follow-ups (preview, search cost, upload limits, review rules)
+Additive except where a rule is tightened (listed first); the search response only gains a field.
+- **Preview** (`GET /api/preview/articles?token=`): the response never contains `provenance`, `legacyId` or `legacyUrl` (nor, as before, `reviewNotes`, `author`, `scheduledFor`, `bodyMedia`).
+- **Approve and publish are separate requests.** A recovered archive article (`provenance.importBatch` set) cannot be approved (`provenance.reviewStatus` becoming `reviewed`) and published or scheduled in the SAME write by a non-admin: `409` (also for bulk `PATCH ?where=`). Clients cannot clear or change `importBatch` (server-owned, ignored on write), so the rule cannot be dodged that way. **Admins are exempt** from the one-write rule (their approval is still audited as `archive.review`). The four-eyes rule (the approver cannot publish or schedule; admins exempt) is implemented from v1.26. `provenance.reviewStatus` is refused (`400`) on an article without an import batch, and an article created already `reviewed` or `rejected` writes an `archive.review` row at creation. `restoreVersion` never changes `provenance`: the stored provenance wins over the old snapshot, so restoring cannot turn a `rejected` article back into a publishable one (the 409 publish guard then applies).
+- `PATCH` with `"provenance": null` is treated as "not sent" (it used to be a 500).
+- **Search:** new `totalCapped` field and the capped `totalDocs`, `totalPages: null` while capped (see "Go-live C8"); `SEARCH_MAX_LIMIT` default lowered from 50 to 20 (env `SEARCH_MAX_LIMIT`, 1 to 100); `SEARCH_COUNT_CAP` (default 1000); `Cache-Control` is `public` only when one public origin is configured (identical ACAO on every response), else `private`.
+- **Request size (`src/proxy.ts`):** a write (`POST`/`PATCH`/`PUT`) to ANY `/api/*` route with a `Transfer-Encoding` header (a chunked body, which cannot be size-checked) is refused with `411`; a bodyless POST (no `Content-Length`, no `Transfer-Encoding`) is fine. `/api/media`: 11 MB for everyone, except that a caller with a VERIFIED session (a genuine, unexpired Payload JWT in the `payload-token` cookie or `Authorization: JWT`; merely sending such a header does not count) gets the configured larger limit, but only when one is configured: `MEDIA_UPLOAD_MAX_MB` (11 to 500) if set, else max(image cap, `MEDIA_AV_MAX_MB` when set explicitly) + 1 MB (26 MB by default since v1.25). Next's body buffer is that + 1 MB (27 MB by default) (`MEDIA_AV_MAX_MB` alone still sets the per-file audio/video cap, default 100). Next reads the body (up to `proxyClientMaxBodySize`) before the proxy runs, so the reverse proxy must enforce the real limits per location (operations.md 4.4); this is the second layer.
+- **Audio/video legacy `sourceUrl`:** only `https:` addresses on an allowed host (`CMS_PUBLIC_URL`, `LEGACY_SITE_HOSTS`, the known old-site names) or a root-relative `/wp-content/uploads/...` path; any other root-relative path and plain `http:` are refused (400), and so are percent-encoding and backslashes in the path. Transcript links are unchanged. The importer upgrades `http://` and protocol-relative addresses on allowed hosts to `https:` and drops the rest.
+- **Import tooling:** `import:rollback --force` never deletes a published article or one with `provenance.reviewStatus = reviewed` (skip code `published-or-reviewed`) unless `--include-published` is also given. CSV files the importer, link audit and categorisation eval write prefix cells starting with `=`, `+`, `-`, `@`, tab or CR with a single quote.
+- No migration. (`articles.category_id` is NOT NULL in the database, so a published article without a category cannot exist and the search projection needs no change for it.)
+
+### v1.22: Archive review audit entry
+Additive; no request or response shape changes.
+- Every change of `articles.provenance.reviewStatus` (an editor approving or rejecting a recovered archive draft in the newsroom's Archive review screen, or in the admin) writes an audit row: `action: "archive.review"`, `collection: "articles"`, `docId`, `actor` / `actorIdSnapshot` / `actorRole` (who), `createdAt` (when), `toStatus` (the article status, unchanged), `details: { from, to }`. The summary holds the article title only, never the source address or hash. Rows are readable by editor-in-chief and admin (existing `audit-logs` rule). A write that leaves the review status unchanged writes no row. No migration (`audit-logs.action` is free text).
+- Access rule restated and tested: `provenance.reviewStatus` is writable by `admin`, `editor-in-chief` and `section-editor` (the latter only on articles the existing collection rules let them update, i.e. their sections). Reporters, trusted publishers and anonymous callers cannot change it (refused or ignored); the 409 publish guard of v1.21 is unchanged. Rejecting leaves the article a draft.
+- Newsroom client use: list `GET /api/articles?where[provenance.importBatch][exists]=true&where[provenance.confidence][equals]=...&where[provenance.reviewStatus][equals]=...&where[provenance.importBatch][equals]=...` (staff only; counts via `limit=1` and `totalDocs`), decide with `PATCH /api/articles/:id` `{"provenance":{"reviewStatus":"reviewed"|"rejected"},"expectedUpdatedAt":"..."}`.
+
+### v1.21: Archive-candidate provenance on articles
+Additive; no existing response shape changes (a new staff-only field) and one new write rule.
+- New `articles.provenance` group: `sourceUrl`, `sourceHost`, `captureTimestamp`, `originalDate`, `sourceSha256`, `confidence` (`partial` | `citation-only` | `missing`), `importBatch`, `reviewStatus` (`pending` | `reviewed` | `rejected`). **Staff-only**: absent from every anonymous response (list, by id, published or not) and from public projections; anonymous queries filtering on it return nothing or are refused (400). All fields are server-owned (set by the importer) except `reviewStatus`, which editor roles may change (`PATCH /api/articles/:id` with `{"provenance":{"reviewStatus":"reviewed"}}`); other callers' attempts are ignored or denied.
+- **Write rule (409):** an article whose `provenance.importBatch` is set cannot be given status `published` or `scheduled` (create or update, any caller including the scheduler, seed and importer) while `provenance.reviewStatus` is not `reviewed`.
+- New command `npm run import:archive-candidates` (dry run by default) creating draft-only articles from `archive-candidate/1` JSON Lines files; format in `docs/archive-candidate-schema.md`, behaviour in `docs/import.md` ("Archive candidates"). `import:rollback` recognises these articles by `provenance.importBatch`.
+- Migration `20261023_143703_archive_candidate_provenance` (columns, enums, three indexes on `articles` and `_articles_v`; `down` uses `IF EXISTS`).
+
+### v1.20: Go-live C8 public search
+Additive; no existing response changes.
+- New `GET /api/public/search` (see "Go-live C8: public search"), migration `20261023_090000_article_search`, Articles hooks that maintain the projection, and `npm run search:reindex`.
+- New environment variables `SEARCH_RATE_LIMIT` and `SEARCH_RATE_WINDOW_SECONDS`.
+
+### v1.19: Audio/video article block (self-hosted media)
+Additive; YouTube/Vimeo/other-site handling is unchanged.
+- New Lexical block `audioVideo` (`kind`, `media`, `sourceUrl`, `poster`, `title`, `caption`, `transcriptUrl`, `duration`) accepted in `articles.content`; validation, `bodyMedia` derivation and the public projection are described in §2 "Audio/video block".
+- Media accepts `video/mp4`, `video/webm`, `audio/mpeg`, `audio/mp4`, `audio/ogg` (magic bytes verified, size cap `MEDIA_AV_MAX_MB`, default 100 MB); images keep their rules and the image cap (25 MB by default since v1.25). No other type, and never SVG or HTML.
+- Importer: `<video>`, `<audio>`, `<source>`, `[fvplayer]`, `[video]`, `[audio]` map to the block; unresolved files keep the legacy address and are counted as `unresolved-media` in the run report (`content.avUnresolvedMedia`). Rollback is unchanged: created Media and articles are already in the manifest.
+- `articles.featuredImage` must now be a JPEG/PNG/WebP image (`400` otherwise; audio/video Media is for the block only). The importer counts an audio/video featured attachment as a missing featured image.
+- Opt-in `MEDIA_UPLOAD_MAX_MB` (11 to 500) raises the `/api/media` request limit only (default unchanged at 11 MB); the reverse-proxy cap must be raised with it, see operations.md section 4.4.
+- No database migration (blocks live inside the Lexical JSON; `media.mime_type` is free text).
+
+### v1.18: Articles live at `/{slug}/` (owner decision D1)
+**Behaviour change** for the default of `PUBLIC_ARTICLE_PATH_TEMPLATE` (C7, O1) and for slug validation; no response shape changes.
+- `PUBLIC_ARTICLE_PATH_TEMPLATE` now defaults to `/{slug}/` (was `/reports/{slug}/`); `/reports/{slug}/` stays an accepted value; anything else stops startup. The public host must read the same value.
+- C7: with `/{slug}/` the WordPress address and the new address of an imported post are identical, so `GET /api/public/redirects` emits no rule for it (`sameAddress`). Rules remain only for genuine changes: slug renames made by the slug-lock feature, old-host or dated permalinks, and `?p=N` (resolved by the public host through `legacyId`).
+- Slugs equal to a reserved route name (`admin`, `api`, `newsletter`, `contact`, `search`, `category`, `tag`, `feed`, `sitemap`, `wp-content`, `wp-admin`, `wp-json`, ... see `src/lib/reservedSlugs.ts`) are refused on write (400) while the template is `/{slug}/`; a generated slug that would collide gets `-2`; the importer gives a colliding post its `-<wp id>` slug and counts it (`articles.slugRenamedReserved`); `resolveSlugCollisions` treats reserved names as taken.
+- The importer's link rewriting now defaults to the configured article path (`/{slug}/`) instead of `/article/<slug>`.
+- Test vectors for root article paths added to `tests/fixtures/redirect-normalisation.json` (`rootArticlePath`).
+
+### v1.17: Newsletter consent hardening (NDPA)
+**Behaviour change** for the subscriber import and subscriber staff access; no public response changes (subscribe, confirm and unsubscribe answers are byte-identical to v1.14).
+- Import: rows with no valid `OPTIN_TIME` are stored `pending` (previously `confirmed`) and excluded from sends and the confirmed export; `confirmedAt` comes from `CONFIRM_TIME` only
+  (previously `CONFIRM_TIME ?? OPTIN_TIME`); times must be exactly `YYYY-MM-DD HH:MM:SS` UTC (previously other date formats were parsed); unsubscribed and cleaned exports are imported as blocking rows
+  (previously refused); an `--apply` run is audited. Confirming an imported `pending` row records fresh consent.
+- New server-side commands `npm run newsletter:reconfirm` and `npm run newsletter:purge-unconfirmed`; new consent version `mailchimp-reconfirm-v1`.
+- `/api/subscribers` read and update are now `admin` only (was admin and editor-in-chief); staff status changes are audited and set `unsubscribedAt`; new `GET /api/subscribers/:id/subject-data`.
+- No migration (existing enum values and columns are reused).
+
+### v1.16: submission consent
+Additive. `POST /api/public/submissions` accepts optional boolean `consent` (non-boolean → 400 field `consent`) and `consentTextVersion`.
+When `consent` is `true` the CMS stores `submissions.consentAt` (server time, never client-supplied) and `consentTextVersion`; both are readable by
+staff only. New env `SUBMISSIONS_REQUIRE_CONSENT` (default `false`): when `true`, a missing or false `consent` is a 400 on field `consent`.
+Migration `20261021_110000_submission_consent` (nullable columns). Submitter `email`/`phone` stay readable by every editor role (admin,
+editor-in-chief, section-editor): the newsroom review queue displays them and verifying a tip needs them. Restricting them to editor-in-chief/admin is a
+product decision recorded here, not made.
+
+### v1.15: Go-live A12 legacy media map
+Additive, no schema change. New offline command `npm run export:media-map` and the `media-map/1` file format (§ "Go-live A12: legacy media map (offline export)"). No new HTTP route; media read access is unchanged.
 
 ### v1.14: Go-live C3 advertising
 Go-live contract C3 (advertising). Additive, except that approving an ad campaign through the API requires `expectedUpdatedAt` (new collection, no existing client).
@@ -1026,7 +1285,7 @@ Security-review fixes (details and tests in `docs/security.md` §5). Consumer-vi
 - **`pagination=false` is ignored** and `limit` is clamped to 1..100 on every collection (§4.2).
 - **Media**: new staff-only `uploadedBy`; non-editors can only edit their own, unreferenced media; updates audited (§6.3).
 - **`GET /api/articles/versions`**: new per-role filtering (§6). Anonymous remains `403`.
-- **Request size limits**: `413` / `411` / `400` from `src/proxy.ts` (§7). Proxy cap 12 MB (operations §4.4).
+- **Request size limits**: `413` / `411` / `400` from `src/proxy.ts` (§7). Proxy cap 28 MB (operations §4.4).
 - Convert-submission is atomic: concurrent calls → one `201`, the rest `409` (§6).
 - Contract clarifications (no code change): a live update for an out-of-scope or ended event is `403` (§6.2);
   editors in scope may create an article directly as `approved` (§2).

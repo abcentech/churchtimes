@@ -620,7 +620,7 @@ describe('links, shortcodes, schemes', () => {
   it('links to the old site are rewritten through the slug map and reported when unmapped', () => {
     const r = conv('<p><a href="https://old.example.test/my-post/">a</a> <a href="https://www.old.example.test/unknown-post/">b</a> <a href="https://old.example.test/category/news/">c</a> <a href="https://old.example.test/?p=12">d</a></p>')
     const urls = (r.root.children[0] as N).children.filter((c: N) => c.type === 'link').map((c: N) => c.fields.url)
-    expect(urls[0]).toBe('/article/my-post-2')
+    expect(urls[0]).toBe('/my-post-2/')
     expect(r.report.links.rewritten).toBe(1)
     expect(r.report.links.unmapped.map((u) => u.reason)).toHaveLength(3)
   })

@@ -180,11 +180,11 @@ describe('rollback provenance', () => {
     const hour = 3_600_000
     // The run ended an hour before the rows were created.
     handManifest('win-after', rows, { start: Date.now() - 2 * hour, end: Date.now() - hour })
-    const after = await rb('win-after', { apply: true, force: true })
+    const after = await rb('win-after', { apply: true, force: true, includePublished: true })
     for (const k of ['articles', 'comments', 'media', 'categories'] as const) expect(after[k], k).toMatchObject({ deleted: 0, skipped: { 'outside-run-window': 1 } })
     // The run started an hour after the rows were created.
     handManifest('win-before', rows, { start: Date.now() + hour, end: Date.now() + 2 * hour })
-    const before = await rb('win-before', { apply: true, force: true })
+    const before = await rb('win-before', { apply: true, force: true, includePublished: true })
     for (const k of ['articles', 'comments', 'media', 'categories'] as const) expect(before[k], k).toMatchObject({ deleted: 0, skipped: { 'outside-run-window': 1 } })
     expect(await exists('legacy-comments', comment)).toBe(true)
     expect(await exists('media', media)).toBe(true)
@@ -198,7 +198,7 @@ describe('rollback provenance', () => {
     const comment = await mkComment(article)
     const media = await mkMedia(`2098/09/${runId}-u.png`)
     handManifest('updated-only', { mediaUpdated: [media], categoriesUpdated: [cat], commentsUpdated: [comment] })
-    const rep = await rb('updated-only', { apply: true, force: true })
+    const rep = await rb('updated-only', { apply: true, force: true, includePublished: true })
     expect([rep.media.listed, rep.categories.listed, rep.comments.listed]).toEqual([0, 0, 0])
     expect(await exists('media', media)).toBe(true)
     expect(await exists('categories', cat)).toBe(true)
@@ -223,8 +223,46 @@ describe('rollback edit detection', () => {
     expect(rep.articles).toMatchObject({ deleted: 0, skipped: { 'edited-since-import': 1 } })
     expect(rep.media).toMatchObject({ deleted: 0, skipped: { 'edited-since-import': 1 } })
     expect(rep.categories).toMatchObject({ deleted: 0, skipped: { 'edited-since-import': 1 } })
-    const forced = await rb('edited', { apply: true, force: true })
+    const forced = await rb('edited', { apply: true, force: true, includePublished: true })
     expect([forced.comments.deleted, forced.articles.deleted, forced.media.deleted, forced.categories.deleted]).toEqual([1, 1, 1, 1])
+  })
+})
+
+describe('rollback --force and live content', () => {
+  it('--force alone keeps published and reviewed articles; --include-published removes them', async () => {
+    const cat = await mkCategory()
+    const published = await mkArticle(cat)
+    const reviewed = (
+      (await f.payload.create({
+        collection: 'articles',
+        data: {
+          title: `${runId} hr ${++n}`,
+          slug: `${runId}-hr-${n}`,
+          content: lexical(),
+          category: cat,
+          status: 'draft',
+          provenance: { importBatch: `b-${runId}`, reviewStatus: 'reviewed' },
+        } as never,
+        overrideAccess: true,
+        context: { import: true },
+      })) as { id: number }
+    ).id
+    const draft = await mkArticle(cat)
+    await f.payload.update({ collection: 'articles', id: draft, data: { status: 'draft' } as never, overrideAccess: true, context: { import: true } })
+    await sleep(1200)
+    for (const id of [published, reviewed, draft]) {
+      await f.payload.update({ collection: 'articles', id, data: { excerpt: 'Edited by staff.' } as never, overrideAccess: true, context: { import: true } })
+    }
+    handManifest('force-live', { articles: [published, reviewed, draft] })
+    const forced = await rb('force-live', { apply: true, force: true })
+    expect(forced.articles).toMatchObject({ deleted: 1, skipped: { 'published-or-reviewed': 2 } })
+    expect(await exists('articles', published)).toBe(true)
+    expect(await exists('articles', reviewed)).toBe(true)
+    expect(await exists('articles', draft)).toBe(false)
+    const all = await rb('force-live', { apply: true, force: true, includePublished: true })
+    expect(all.articles.deleted).toBe(2)
+    expect(await exists('articles', published)).toBe(false)
+    expect(await exists('articles', reviewed)).toBe(false)
   })
 })
 
@@ -290,6 +328,33 @@ describe('rollback still-used checks', () => {
     expect(await exists('articles', staffArticle)).toBe(true)
   })
 
+  it('keeps a category that a staff article still uses as an ADDITIONAL category, and removes it once nothing uses it', async () => {
+    const primary = await mkCategory()
+    const extra = await mkCategory()
+    const staffArticle = (await f.seedArticle({ category: primary, categories: [extra] })).id
+    handManifest('secondary-used', { categories: [extra] })
+    const rep = await rb('secondary-used', { apply: true })
+    expect(rep.categories).toMatchObject({ deleted: 0, skipped: { 'still-used': 1 } })
+    expect(await exists('categories', extra)).toBe(true)
+    await f.payload.delete({ collection: 'articles', id: staffArticle, overrideAccess: true })
+    const again = await rb('secondary-used', { apply: true })
+    expect(again.categories).toMatchObject({ deleted: 1 })
+    expect(await exists('categories', extra)).toBe(false)
+  })
+
+  it('removes an imported article together with its additional category links, and the categories only it used', async () => {
+    const primary = await mkCategory()
+    const extra = await mkCategory()
+    const article = await mkArticle(primary)
+    await f.payload.update({ collection: 'articles', id: article, data: { categories: [extra] } as never, overrideAccess: true, context: { seed: true } })
+    handManifest('secondary-own', { articles: [article], categories: [primary, extra] })
+    const rep = await rb('secondary-own', { apply: true })
+    expect(rep.articles).toMatchObject({ deleted: 1 })
+    expect(rep.categories).toMatchObject({ deleted: 2 })
+    expect(await exists('articles', article)).toBe(false)
+    expect(await exists('categories', extra)).toBe(false)
+  })
+
   it('keeps an article that still has a comment the manifest does not list', async () => {
     const cat = await mkCategory()
     const article = await mkArticle(cat)
@@ -311,7 +376,7 @@ describe('rollback media files', () => {
     fs.writeFileSync(outside, 'x')
     await f.payload.db.updateOne({ collection: 'media', id: media, data: { filename: '../../escape.png' } as never, req: undefined as never } as never)
     handManifest('unsafe', { media: [media] })
-    const rep = await rb('unsafe', { apply: true, force: true })
+    const rep = await rb('unsafe', { apply: true, force: true, includePublished: true })
     expect(rep.media).toMatchObject({ deleted: 0, skipped: { 'unsafe-file-name': 1 } })
     expect(await exists('media', media)).toBe(true)
     expect(fs.existsSync(outside)).toBe(true)
@@ -324,7 +389,7 @@ describe('rollback media files', () => {
     fs.copyFileSync(path.join(staticDir(), current.filename), path.join(staticDir(), odd))
     await f.payload.db.updateOne({ collection: 'media', id: media, data: { filename: odd } as never, req: undefined as never } as never)
     handManifest('nice', { media: [media] })
-    const rep = await rb('nice', { apply: true, force: true })
+    const rep = await rb('nice', { apply: true, force: true, includePublished: true })
     expect(rep.media).toMatchObject({ deleted: 1, failed: 0 })
     expect(fs.existsSync(path.join(staticDir(), odd))).toBe(false)
     fs.rmSync(path.join(staticDir(), current.filename), { force: true })
@@ -384,7 +449,7 @@ describe('rollback of a real import', () => {
     expect(JSON.stringify(rows[0])).not.toMatch(/example\.test|story|Synthetic/)
 
     // --force removes the edited article; media and the category are freed with it.
-    const forced = await rb('run', { apply: true, force: true })
+    const forced = await rb('run', { apply: true, force: true, includePublished: true })
     expect(forced.articles).toMatchObject({ deleted: 1, alreadyGone: 1, failed: 0 })
     expect(forced.media).toMatchObject({ deleted: 2, failed: 0 })
     expect(forced.categories).toMatchObject({ deleted: 1 })
@@ -393,7 +458,7 @@ describe('rollback of a real import', () => {
     expect(files.some((p) => fs.existsSync(p))).toBe(false)
 
     // A second rollback finds everything gone and changes nothing.
-    const again = await rb('run', { apply: true, force: true })
+    const again = await rb('run', { apply: true, force: true, includePublished: true })
     expect(again.articles).toMatchObject({ deleted: 0, alreadyGone: 2, failed: 0 })
     expect([again.comments.alreadyGone, again.media.alreadyGone, again.categories.alreadyGone]).toEqual([3, 2, 1])
     expect([again.articles.deleted, again.comments.deleted, again.media.deleted, again.categories.deleted]).toEqual([0, 0, 0, 0])

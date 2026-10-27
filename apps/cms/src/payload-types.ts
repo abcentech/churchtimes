@@ -304,6 +304,10 @@ export interface Article {
     [k: string]: unknown;
   };
   category: number | Category;
+  /**
+   * Optional extra sections (up to 5). The primary category above is not repeated here.
+   */
+  categories?: (number | Category)[] | null;
   featuredImage?: (number | null) | Media;
   bodyMedia?: (number | Media)[] | null;
   author?: (number | null) | User;
@@ -321,6 +325,25 @@ export interface Article {
     | null;
   legacyUrl?: string | null;
   legacyId?: number | null;
+  /**
+   * Where a recovered archive article came from. Review it, then set the review status to "reviewed" before publishing.
+   */
+  provenance?: {
+    sourceUrl?: string | null;
+    sourceHost?: string | null;
+    captureTimestamp?: string | null;
+    /**
+     * Publication date claimed by the recovered page (not verified).
+     */
+    originalDate?: string | null;
+    sourceSha256?: string | null;
+    confidence?: ('partial' | 'citation-only' | 'missing') | null;
+    importBatch?: string | null;
+    reviewStatus?: ('pending' | 'reviewed' | 'rejected') | null;
+    reviewedBy?: (number | null) | User;
+    reviewedByName?: string | null;
+    reviewedAt?: string | null;
+  };
   updatedAt: string;
   createdAt: string;
 }
@@ -464,6 +487,11 @@ export interface Submission {
   article?: (number | null) | Article;
   ipHash?: string | null;
   contentHash?: string | null;
+  consentAt?: string | null;
+  /**
+   * Version of the consent wording shown on the public form.
+   */
+  consentTextVersion?: string | null;
   userAgent?: string | null;
   updatedAt: string;
   createdAt: string;
@@ -493,7 +521,7 @@ export interface ContactMessage {
   createdAt: string;
 }
 /**
- * Newsletter subscribers. Export (admin only): GET /api/subscribers/export?status=confirmed.
+ * Newsletter subscribers (admin only). Export: GET /api/subscribers/export?status=confirmed. Per-person data export: GET /api/subscribers/:id/subject-data.
  *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "subscribers".
@@ -592,6 +620,7 @@ export interface AuditLog {
   docId: string;
   actor?: (number | null) | User;
   actorRole?: string | null;
+  actorIdSnapshot?: string | null;
   fromStatus?: string | null;
   toStatus?: string | null;
   summary?: string | null;
@@ -839,6 +868,7 @@ export interface ArticlesSelect<T extends boolean = true> {
   seoDescription?: T;
   content?: T;
   category?: T;
+  categories?: T;
   featuredImage?: T;
   bodyMedia?: T;
   author?: T;
@@ -856,6 +886,21 @@ export interface ArticlesSelect<T extends boolean = true> {
       };
   legacyUrl?: T;
   legacyId?: T;
+  provenance?:
+    | T
+    | {
+        sourceUrl?: T;
+        sourceHost?: T;
+        captureTimestamp?: T;
+        originalDate?: T;
+        sourceSha256?: T;
+        confidence?: T;
+        importBatch?: T;
+        reviewStatus?: T;
+        reviewedBy?: T;
+        reviewedByName?: T;
+        reviewedAt?: T;
+      };
   updatedAt?: T;
   createdAt?: T;
 }
@@ -877,6 +922,8 @@ export interface SubmissionsSelect<T extends boolean = true> {
   article?: T;
   ipHash?: T;
   contentHash?: T;
+  consentAt?: T;
+  consentTextVersion?: T;
   userAgent?: T;
   updatedAt?: T;
   createdAt?: T;
@@ -1048,6 +1095,7 @@ export interface AuditLogsSelect<T extends boolean = true> {
   docId?: T;
   actor?: T;
   actorRole?: T;
+  actorIdSnapshot?: T;
   fromStatus?: T;
   toStatus?: T;
   summary?: T;

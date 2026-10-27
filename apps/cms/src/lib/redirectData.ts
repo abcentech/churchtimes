@@ -1,3 +1,4 @@
+import { sql } from '@payloadcms/db-postgres'
 import type { Payload, PayloadRequest } from 'payload'
 
 import {
@@ -97,6 +98,37 @@ export async function loadPublishedSlugs(payload: Payload): Promise<string[]> {
     }) as Promise<{ docs: Record<string, unknown>[]; hasNextPage: boolean }>,
   )
   return docs.map((d) => String(d.slug ?? '')).filter(Boolean)
+}
+
+type SqlRunner = { execute: (q: unknown) => Promise<{ rows?: Array<Record<string, unknown>> }> }
+const runner = (payload: Payload) => (payload.db as unknown as { drizzle: SqlRunner }).drizzle
+
+/**
+ * Same rows as `loadStoredRows`, straight from SQL (no document hydration: about 10x less CPU on the event loop for
+ * 5,000 rules). Used by the public list, which rebuilds the whole map; the hook paths keep the Payload reads.
+ */
+export async function loadStoredRowsFast(payload: Payload): Promise<StoredRow[]> {
+  const res = await runner(payload).execute(sql`select "id", "from", "to", "status", "source"::text as "source" from "redirects" order by "id"`)
+  return (res.rows ?? []).map((d) => ({
+    id: Number(d.id),
+    from: String(d.from ?? ''),
+    to: typeof d.to === 'string' ? d.to : null,
+    status: Number(d.status),
+    source: String(d.source ?? ''),
+  }))
+}
+
+/** Same rows as `loadPublishedLegacyArticles`, straight from SQL. */
+export async function loadPublishedLegacyArticlesFast(payload: Payload): Promise<ArticleInput[]> {
+  const res = await runner(payload).execute(
+    sql`select "id", "slug", "status"::text as "status", "legacy_url" from "articles" where "status"::text = 'published' and "legacy_url" is not null order by "id"`,
+  )
+  return (res.rows ?? []).map((d) => ({
+    id: Number(d.id),
+    slug: String(d.slug ?? ''),
+    status: String(d.status ?? ''),
+    legacyUrl: typeof d.legacy_url === 'string' ? d.legacy_url : null,
+  }))
 }
 
 /** Builds the redirect map from the database. Throws `RedirectMapError` / `RedirectConfigError` (never partial). */

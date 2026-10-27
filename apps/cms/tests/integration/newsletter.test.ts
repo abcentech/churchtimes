@@ -7,6 +7,7 @@ import {
 import { hashSubscriberEmail, hashToken, signUnsubscribeToken } from '../../src/lib/newsletter'
 import { cliFailureMessage } from '../../src/lib/safeLog'
 import { formatImportReport, runSubscriberImport } from '../../src/lib/subscriberImport'
+import { parseCommandArgs, runPurgeUnconfirmed, runReconfirm } from '../../src/lib/subscriberReconfirm'
 import { api, newRunId, setupFixtures, type Fixtures } from './helpers'
 import {
   captureLogs,
@@ -656,17 +657,17 @@ describe('unsubscribe', () => {
 })
 
 describe('staff access to subscribers', () => {
-  it('is admin and editor-in-chief only, never anonymous, and never shows token fields', async () => {
+  it('is admin only (not even the editor-in-chief), never anonymous, and never shows token fields', async () => {
     const s = await seed('pending', { confirmTokenHash: 'a'.repeat(64), confirmTokenExpiresAt: new Date(Date.now() + 1000).toISOString() })
     const anon = await api('GET', '/api/subscribers')
     expect([401, 403]).toContain(anon.status)
     expect(anon.text).not.toContain(s.email)
     expect([401, 403, 404]).toContain((await api('GET', `/api/subscribers/${s.id}`)).status)
-    for (const role of ['reporter', 'trusted', 'sectionEditor'] as const) {
+    for (const role of ['reporter', 'trusted', 'sectionEditor', 'eic'] as const) {
       expect((await api('GET', '/api/subscribers', { token: f.tokens[role] })).status, role).toBe(403)
       expect([403, 404]).toContain((await api('GET', `/api/subscribers/${s.id}`, { token: f.tokens[role] })).status)
     }
-    for (const role of ['eic', 'admin'] as const) {
+    for (const role of ['admin'] as const) {
       const one = await api('GET', `/api/subscribers/${s.id}`, { token: f.tokens[role] })
       expect(one.status, role).toBe(200)
       expect(one.json.email).toBe(s.email)
@@ -680,10 +681,10 @@ describe('staff access to subscribers', () => {
     const s = await seed('pending')
     expect((await api('POST', '/api/subscribers', { token: f.tokens.admin, body: { email: newEmail(), status: 'confirmed' } })).status).toBe(403)
     expect((await api('DELETE', `/api/subscribers/${s.id}`, { token: f.tokens.admin })).status).toBe(403)
-    const toConfirmed = await api('PATCH', `/api/subscribers/${s.id}`, { token: f.tokens.eic, body: { status: 'confirmed' } })
+    const toConfirmed = await api('PATCH', `/api/subscribers/${s.id}`, { token: f.tokens.admin, body: { status: 'confirmed' } })
     expect(toConfirmed.status).toBe(403)
     expect((await row(s.email))!.status).toBe('pending')
-    const rewrite = await api('PATCH', `/api/subscribers/${s.id}`, { token: f.tokens.eic, body: { email: 'other@example.test', name: 'X Y', status: 'unsubscribed' } })
+    const rewrite = await api('PATCH', `/api/subscribers/${s.id}`, { token: f.tokens.admin, body: { email: 'other@example.test', name: 'X Y', status: 'unsubscribed' } })
     expect(rewrite.status).toBe(200)
     const after = (await row(s.email))!
     expect(after.status).toBe('unsubscribed')
@@ -787,22 +788,32 @@ describe('erasure', () => {
   })
 })
 
+const MARKER = 'mailchimp-import-no-optin-time'
+const clearImported = () =>
+  f.payload.delete({ collection: 'subscribers', where: { importedFrom: { equals: MARKER } }, overrideAccess: true })
+const auditRows = async (action: string) =>
+  (await f.payload.find({ collection: 'audit-logs', where: { action: { equals: action } }, limit: 100, overrideAccess: true })).docs as any[]
+
 describe('Mailchimp import CLI logic (SYNTHETIC data)', () => {
   const header = 'Email Address,First Name,Last Name,OPTIN_TIME,CONFIRM_TIME,Status'
   const mk = (suffix: string) => `imp-${suffix}-${runId}@example.test`
 
-  it('dry run writes nothing; apply imports only subscribed rows as confirmed; reruns and suppressed addresses are skipped', async () => {
+  it('dry run writes nothing; rows with an opt-in time are confirmed, rows without are pending and never confirmed; blocking rows block', async () => {
     const existingUnsub = await seed('unsubscribed')
+    const existingConfirmed = await seed('confirmed')
     const erased = await seed('confirmed')
     await api('POST', `/api/subscribers/${erased.id}/erase`, { token: f.tokens.admin })
     const csv = [
       header,
       `${mk('a')},Ada,Obi,2024-03-01 09:30:00,2024-03-01 09:31:00,subscribed`,
-      `${mk('b')},Bola,,,2024-04-02 10:00:00,subscribed`,
+      `${mk('b')},Bola,,,2024-04-02 10:00:00,subscribed`, // CONFIRM_TIME but no OPTIN_TIME: no proof
+      `${mk('c')},Chi,,2024-05-01 08:00:00,,subscribed`, // OPTIN_TIME but no CONFIRM_TIME: confirmedAt stays null
+      `${mk('iso')},Iso,,2024-05-01T08:00:00Z,,subscribed`, // not Mailchimp's format: no opt-in time
       `${mk('unsub')},U,V,,,unsubscribed`,
       `${mk('cleaned')},C,D,,,cleaned`,
       `${mk('pending')},P,Q,,,pending`,
       `${existingUnsub.email},Old,Row,2020-01-01 00:00:00,,subscribed`,
+      `${existingConfirmed.email},Was,Confirmed,,,unsubscribed`,
       `${erased.email},Gone,Person,2020-01-01 00:00:00,,subscribed`,
       `${mk('a').toUpperCase()},Dup,Row,,,subscribed`,
       `not-an-email,I,J,,,subscribed`,
@@ -810,57 +821,89 @@ describe('Mailchimp import CLI logic (SYNTHETIC data)', () => {
 
     const dry = await runSubscriberImport(f.payload, csv, { apply: false })
     expect(dry).toMatchObject({
-      rowsRead: 9,
-      candidates: 4,
-      skippedNotSubscribed: 3,
+      rowsRead: 12,
+      candidates: 9,
+      blockingCandidates: 3,
+      skippedNotSubscribed: 1,
       skippedInvalidEmail: 1,
       skippedDuplicateInFile: 1,
-      skippedAlreadyPresent: 1,
+      skippedAlreadyPresent: 2,
       skippedErasedOrSuppressed: 1,
-      wouldCreate: 2,
-      importedWithoutOptinTime: 1,
+      blockedExisting: 1,
+      wouldCreate: 6,
+      importedWithoutOptinTime: 2,
       created: 0,
     })
     expect(await row(mk('a'))).toBeUndefined()
+    expect((await row(existingConfirmed.email))!.status).toBe('confirmed') // dry run changes nothing
     expect(formatImportReport(dry, false)).not.toContain('@')
     expect(formatImportReport(dry, false)).toContain('DRY RUN')
 
-    const applied = await runSubscriberImport(f.payload, csv, { apply: true })
-    expect(applied.created).toBe(2)
+    const applied = await runSubscriberImport(f.payload, csv, { apply: true, operator: 'tester' })
+    expect(applied.created).toBe(6)
     expect(formatImportReport(applied, true)).not.toContain('@')
     const a = (await row(mk('a')))!
     expect(a).toMatchObject({ status: 'confirmed', importedFrom: 'mailchimp-import', name: 'Ada Obi', consentTextVersion: 'mailchimp-import-v1' })
     expect(new Date(a.consentAt).toISOString()).toBe('2024-03-01T09:30:00.000Z')
     expect(new Date(a.confirmedAt).toISOString()).toBe('2024-03-01T09:31:00.000Z')
-    // no OPTIN_TIME: consent time is unknown, so it is null (the import time is NOT consent time) and the marker says why
-    const b = (await row(mk('b')))!
-    expect(b.status).toBe('confirmed')
-    expect(b.consentAt ?? null).toBeNull()
-    expect(b.importedFrom).toBe('mailchimp-import-no-optin-time')
-    expect(new Date(b.confirmedAt).toISOString()).toBe('2024-04-02T10:00:00.000Z')
-    expect(formatImportReport(applied, true)).toContain('without an opt-in time:  1')
-    expect(await row(mk('unsub'))).toBeUndefined()
-    expect(await row(mk('cleaned'))).toBeUndefined()
+    // no opt-in time: no proof of consent, so NOT confirmed (excluded from sends and the confirmed export), confirmedAt null
+    for (const k of ['b', 'iso']) {
+      const r = (await row(mk(k)))!
+      expect(r.status, k).toBe('pending')
+      expect(r.consentAt ?? null, k).toBeNull()
+      expect(r.confirmedAt ?? null, k).toBeNull()
+      expect(r.importedFrom, k).toBe(MARKER)
+    }
+    // confirmedAt comes from CONFIRM_TIME only, never from OPTIN_TIME
+    const c = (await row(mk('c')))!
+    expect(c.status).toBe('confirmed')
+    expect(c.confirmedAt ?? null).toBeNull()
+    expect(new Date(c.consentAt).toISOString()).toBe('2024-05-01T08:00:00.000Z')
+    // blocking rows
+    const unsub = (await row(mk('unsub')))!
+    expect(unsub.status).toBe('unsubscribed')
+    expect(unsub.unsubscribedAt).toBeTruthy()
+    expect((await row(mk('cleaned')))!.status).toBe('bounced')
     expect(await row(mk('pending'))).toBeUndefined()
-    expect((await row(existingUnsub.email))!.status).toBe('unsubscribed') // a stale export never re-subscribes anyone
+    expect((await row(existingUnsub.email))!.status).toBe('unsubscribed')
+    const blocked = (await row(existingConfirmed.email))!
+    expect(blocked.status).toBe('unsubscribed') // the export's unsubscribe wins over a stale confirmed row
+    expect(blocked.unsubscribedAt).toBeTruthy()
     expect(await row(erased.email)).toBeUndefined() // erased stays erased
+
+    // the confirmed export never contains the unproven rows
+    const exported = await api('GET', '/api/subscribers/export?status=confirmed', { token: f.tokens.admin })
+    expect(exported.text).toContain(mk('a'))
+    expect(exported.text).not.toContain(mk('b'))
+    expect(exported.text).not.toContain(mk('iso'))
+    expect(exported.text).not.toContain(mk('unsub'))
+
+    // audited without personal data: counts, file checksum, operator
+    const audits = await auditRows('subscriber.import')
+    expect(audits.length).toBeGreaterThanOrEqual(1)
+    const last = audits[audits.length - 1]
+    expect(last.details.fileSha256).toBe(applied.fileSha256)
+    expect(last.details.fileSha256).toMatch(/^[0-9a-f]{64}$/)
+    expect(last.details.created).toBe(6)
+    expect(JSON.stringify(audits.map((a) => [a.summary, a.details, a.docId]))).not.toContain('@')
 
     const rerun = await runSubscriberImport(f.payload, csv, { apply: true })
     expect(rerun.created).toBe(0)
-    expect(rerun.skippedAlreadyPresent).toBe(3)
+    expect(rerun.skippedAlreadyPresent).toBe(8)
   })
 
-  it('refuses Mailchimp unsubscribed and cleaned exports (UNSUB_TIME or CLEAN_TIME) even with --assume-subscribed', async () => {
-    for (const col of ['UNSUB_TIME', 'CLEAN_TIME']) {
-      const csv = `Email Address,First Name,${col}
-${mk('uc')},A,2024-01-01 00:00:00`
+  it('imports unsubscribed and cleaned exports (UNSUB_TIME or CLEAN_TIME) as blocking rows instead of refusing', async () => {
+    for (const [col, status] of [['UNSUB_TIME', 'unsubscribed'], ['CLEAN_TIME', 'bounced']] as const) {
+      const email = mk(`uc-${col}`)
+      const csv = `Email Address,First Name,${col}\n${email},A,2024-01-01 00:00:00`
       for (const assumeSubscribed of [false, true]) {
         const res = await runSubscriberImport(f.payload, csv, { apply: true, assumeSubscribed })
-        expect(res.refused).toBe('unsubscribed-or-cleaned-export')
-        expect(res.created).toBe(0)
-        expect(formatImportReport(res, true)).toContain('UNSUB_TIME or CLEAN_TIME')
+        expect(res.refused).toBeUndefined()
+        expect(res.blockingCandidates).toBe(1)
       }
-      expect(await row(mk('uc'))).toBeUndefined()
+      const r = (await row(email))!
+      expect(r.status).toBe(status)
+      expect(new Date(r.unsubscribedAt).toISOString()).toBe('2024-01-01T00:00:00.000Z')
     }
   })
 
@@ -871,5 +914,179 @@ ${mk('uc')},A,2024-01-01 00:00:00`
     expect(await row(mk('ns'))).toBeUndefined()
     const ok = await runSubscriberImport(f.payload, csv, { apply: true, assumeSubscribed: true })
     expect(ok.created).toBe(1)
+    expect((await row(mk('ns')))!.status).toBe('pending') // no OPTIN_TIME
+  })
+})
+
+describe('re-confirmation of imported rows', () => {
+  const imported = (extra: Record<string, unknown> = {}) =>
+    seed('pending', { importedFrom: MARKER, consentAt: null, consentTextVersion: 'mailchimp-import-v1', ...extra })
+
+  it('dry run sends nothing; apply mails ONLY imported unproven rows, once each, resumably, and audits counts only', async () => {
+    await clearImported()
+    const a = await imported()
+    const b = await imported()
+    const webPending = await seed('pending')
+    const confirmed = await seed('confirmed', { importedFrom: 'mailchimp-import' })
+    const before = mail.sent.length
+
+    const dry = await runReconfirm(f.payload, { apply: false, deadline: '2099-01-01' })
+    expect(dry).toMatchObject({ eligible: 2, sent: 0 })
+    expect(mail.sent.length).toBe(before)
+
+    const limited = await runReconfirm(f.payload, { apply: true, deadline: '2099-01-01', limit: 1, throttleMs: 0 })
+    expect(limited).toMatchObject({ eligible: 1, sent: 1 })
+    expect(mail.sent.length).toBe(before + 1)
+
+    const rest = await runReconfirm(f.payload, { apply: true, deadline: '2099-01-01', throttleMs: 0 })
+    expect(rest).toMatchObject({ eligible: 1, sent: 1 })
+    const again = await runReconfirm(f.payload, { apply: true, deadline: '2099-01-01', throttleMs: 0 })
+    expect(again).toMatchObject({ eligible: 0, sent: 0 }) // resumable: nothing is mailed twice
+    const sent = mail.sent.slice(before)
+    expect(sent.map((m) => String(m.to)).sort()).toEqual([a.email, b.email].sort())
+    expect(sent.map((m) => String(m.to))).not.toContain(webPending.email)
+    expect(sent.map((m) => String(m.to))).not.toContain(confirmed.email)
+    expect(sent[0]!.text).toContain('2099-01-01')
+    expect(sent[0]!.text).toContain(`${SITE}/newsletter/confirm?token=`)
+
+    const ra = (await row(a.email))!
+    expect(ra.consentTextVersion).toBe('mailchimp-reconfirm-v1')
+    expect(ra.status).toBe('pending')
+    expect(new Date(ra.confirmTokenExpiresAt).toISOString()).toBe('2099-01-01T23:59:59.999Z')
+    expect((await row(webPending.email))!.lastConfirmMailAt ?? null).toBeNull()
+
+    const audits = await auditRows('subscriber.reconfirm-run')
+    expect(audits.length).toBeGreaterThanOrEqual(2)
+    const text = JSON.stringify(audits.map((a) => [a.summary, a.details]))
+    expect(text).not.toContain('@')
+    expect(text).not.toContain(tokenFromMail(sent[0]!))
+  })
+
+  it('rejects a deadline in the past or malformed arguments', async () => {
+    await expect(runReconfirm(f.payload, { apply: false, deadline: '2020-01-01' })).rejects.toThrow(/future/)
+    expect(() => parseCommandArgs(['--apply', '--dry-run'])).toThrow()
+    expect(() => parseCommandArgs(['--limit', '0'])).toThrow()
+    expect(() => parseCommandArgs(['--deadline', '2026-02-31'])).toThrow()
+    expect(parseCommandArgs([]).apply).toBe(false) // dry run is the default
+  })
+
+  it('a failed send is not counted as sent and is retried by the next run', async () => {
+    await clearImported()
+    const a = await imported()
+    mail.failNext()
+    const failed = await runReconfirm(f.payload, { apply: true, deadline: '2099-01-01', throttleMs: 0 })
+    expect(failed).toMatchObject({ sent: 0, failed: 1 })
+    const r = (await row(a.email))!
+    expect(r.lastConfirmMailAt ?? null).toBeNull()
+    expect(r.confirmTokenHash ?? null).toBeNull()
+    const retry = await runReconfirm(f.payload, { apply: true, deadline: '2099-01-01', throttleMs: 0 })
+    expect(retry).toMatchObject({ sent: 1, failed: 0 })
+  })
+
+  it('the link in the mail confirms: fresh consent under the re-permission wording, confirmed, single use', async () => {
+    await clearImported()
+    const a = await imported()
+    await runReconfirm(f.payload, { apply: true, deadline: '2099-01-01', throttleMs: 0 })
+    const token = tokenFromMail(lastMail())
+    const res = await api('POST', '/api/public/newsletter/confirm', { body: { token }, headers: { 'x-forwarded-for': nextIp() } })
+    expect(res.status).toBe(200)
+    const doc = (await row(a.email))!
+    expect(doc.status).toBe('confirmed')
+    expect(doc.consentTextVersion).toBe('mailchimp-reconfirm-v1')
+    expect(Date.now() - new Date(doc.consentAt).getTime()).toBeLessThan(60_000) // consent time is NOW, not an old import time
+    expect(Date.now() - new Date(doc.confirmedAt).getTime()).toBeLessThan(60_000)
+    expect(doc.confirmTokenHash ?? null).toBeNull()
+    const again = await api('POST', '/api/public/newsletter/confirm', { body: { token }, headers: { 'x-forwarded-for': nextIp() } })
+    expect(again.status).toBe(400)
+  })
+
+  it('the public sign-up form re-permissions an imported row with byte-identical answers; consent is the form wording', async () => {
+    await clearImported()
+    const a = await imported()
+    const before = mail.sent.length
+    const fresh = await subscribe(body())
+    const res = await subscribe(body({ email: a.email }))
+    expect(res.status).toBe(202)
+    expect(res.text).toBe(fresh.text)
+    await waitForPendingNewsletterMail()
+    expect(mail.sent.length).toBe(before + 2)
+    expect((await row(a.email))!.consentTextVersion).toBe('newsletter-consent-v1')
+    const confirm = await api('POST', '/api/public/newsletter/confirm', {
+      body: { token: tokenFromMail(lastMail()) },
+      headers: { 'x-forwarded-for': nextIp() },
+    })
+    expect(confirm.status).toBe(200)
+    const doc = (await row(a.email))!
+    expect(doc.status).toBe('confirmed')
+    expect(doc.consentTextVersion).toBe('newsletter-consent-v1')
+    expect(Date.now() - new Date(doc.consentAt).getTime()).toBeLessThan(60_000)
+  })
+
+  it('purge: refuses before the deadline, dry run writes nothing, apply erases only mailed unconfirmed imported rows', async () => {
+    await clearImported()
+    const mailed = await imported({ lastConfirmMailAt: new Date().toISOString() })
+    const unsent = await imported()
+    const confirmed = await seed('confirmed', { importedFrom: 'mailchimp-import', lastConfirmMailAt: new Date().toISOString() })
+    const web = await seed('pending', { lastConfirmMailAt: new Date().toISOString() })
+
+    await expect(runPurgeUnconfirmed(f.payload, { apply: true, deadline: '2099-01-01' })).rejects.toThrow(/not passed/)
+    expect((await row(mailed.email))!.status).toBe('pending')
+
+    const dry = await runPurgeUnconfirmed(f.payload, { apply: false, deadline: '2026-01-01' })
+    expect(dry).toMatchObject({ eligible: 1, purged: 0 })
+    expect((await row(mailed.email))!.status).toBe('pending')
+
+    const done = await runPurgeUnconfirmed(f.payload, { apply: true, deadline: '2026-01-01' })
+    expect(done.purged).toBe(1)
+    expect(await row(mailed.email)).toBeUndefined()
+    const tomb = (await f.payload.findByID({ collection: 'subscribers', id: mailed.id, overrideAccess: true })) as Record<string, any>
+    expect(tomb.status).toBe('erased')
+    expect(tomb.email).toBe(hashSubscriberEmail(mailed.email))
+    expect((await row(unsent.email))!.status).toBe('pending') // never mailed: kept unless --include-unsent
+    expect((await row(confirmed.email))!.status).toBe('confirmed')
+    expect((await row(web.email))!.status).toBe('pending')
+
+    const all = await runPurgeUnconfirmed(f.payload, { apply: true, deadline: '2026-01-01', includeUnsent: true })
+    expect(all.purged).toBe(1)
+    expect(await row(unsent.email)).toBeUndefined()
+    const audits = await auditRows('subscriber.purge-unconfirmed')
+    expect(audits.length).toBeGreaterThanOrEqual(2)
+    expect(JSON.stringify(audits.map((a) => [a.summary, a.details, a.docId]))).not.toContain('@')
+  })
+})
+
+describe('staff handling of subscribers', () => {
+  it('a staff status change is audited, stamps unsubscribedAt and invalidates a pending token', async () => {
+    const s = await seed('pending', { confirmTokenHash: 'b'.repeat(64), confirmTokenExpiresAt: new Date(Date.now() + 3600_000).toISOString() })
+    const res = await api('PATCH', `/api/subscribers/${s.id}`, { token: f.tokens.admin, body: { status: 'unsubscribed' } })
+    expect(res.status).toBe(200)
+    const doc = (await row(s.email))!
+    expect(doc.status).toBe('unsubscribed')
+    expect(doc.unsubscribedAt).toBeTruthy()
+    expect(doc.confirmTokenHash ?? null).toBeNull()
+    expect(doc.confirmTokenExpiresAt ?? null).toBeNull()
+    const audits = (await auditRows('subscriber.status-change')).filter((a) => a.docId === String(s.id))
+    expect(audits).toHaveLength(1)
+    expect(audits[0]).toMatchObject({ fromStatus: 'pending', toStatus: 'unsubscribed' })
+    expect(JSON.stringify(audits.map((a) => [a.summary, a.details, a.docId]))).not.toContain('@')
+  })
+
+  it('per-person data export: admin only, audited without the address, no token fields, erased rows are 404', async () => {
+    const s = await seed('confirmed', { name: 'Ada Obi', ipHash: 'h'.repeat(64), confirmTokenHash: 'c'.repeat(64) })
+    const path = `/api/subscribers/${s.id}/subject-data`
+    expect((await api('GET', path)).status).toBe(401)
+    expect((await api('GET', path, { token: f.tokens.eic })).status).toBe(403)
+    const ok = await api('GET', path, { token: f.tokens.admin })
+    expect(ok.status).toBe(200)
+    expect(ok.headers.get('cache-control')).toBe('no-store')
+    expect(ok.json.subscriber).toMatchObject({ email: s.email, name: 'Ada Obi', status: 'confirmed', consentTextVersion: 'newsletter-consent-v1' })
+    expect(ok.text).not.toContain('confirmTokenHash')
+    expect(ok.text).not.toContain('c'.repeat(64))
+    const audits = (await auditRows('subscriber.subject-export')).filter((a) => a.docId === String(s.id))
+    expect(audits).toHaveLength(1)
+    expect(JSON.stringify(audits.map((a) => [a.summary, a.details, a.docId]))).not.toContain('@')
+    await api('POST', `/api/subscribers/${s.id}/erase`, { token: f.tokens.admin })
+    expect((await api('GET', path, { token: f.tokens.admin })).status).toBe(404)
+    expect((await api('GET', '/api/subscribers/abc/subject-data', { token: f.tokens.admin })).status).toBe(404)
   })
 })

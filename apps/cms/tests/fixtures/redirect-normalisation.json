@@ -78,5 +78,16 @@
     { "input": "/%C3", "path": null },
     { "input": "/", "path": "/" },
     { "input": "/?p=77", "path": "/" }
-  ]
+  ],
+  "rootArticlePath": {
+    "description": "Article paths under the default template /{slug}/ (owner decision D1). `request` is what a visitor or the WordPress export may send; `path` is the one canonical key. A request equal to the article path needs NO redirect rule.",
+    "vectors": [
+      { "request": "/my-story/", "path": "/my-story/", "slug": "my-story", "note": "canonical" },
+      { "request": "/my-story", "path": "/my-story/", "slug": "my-story", "note": "missing trailing slash" },
+      { "request": "/My-Story/", "path": "/My-Story/", "slug": null, "note": "case is preserved, so this is not the lower-case slug" },
+      { "request": "/caf%c3%a9/", "path": "/caf%C3%A9/", "slug": null, "note": "percent-encoded: not a valid ASCII slug, never an article path" },
+      { "request": "/my-story/?utm_source=x", "path": "/my-story/", "slug": "my-story", "note": "query removed" },
+      { "request": "/a/b/", "path": "/a/b/", "slug": null, "note": "two segments is not a root article" }
+    ]
+  }
 }

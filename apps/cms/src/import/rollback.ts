@@ -16,6 +16,7 @@ import type { Tally } from './qa'
  *   never touched (counted `articlesUpdatedNotReverted`). Audit rows are KEPT; one `import.rollback` audit row is added.
  * - Safe by default: a DRY RUN unless `apply`. A manifest without an `end` line (the run was killed) is refused unless
  *   `allowIncomplete`. A row must have been created inside the run window (createdAt) and carry the loader marker; a row changed since (updatedAt > createdAt) is skipped unless `force`.
+ *   `force` never deletes a published article or one whose provenance review status is "reviewed" (`published-or-reviewed`) unless `includePublished` is also set.
  *   Ids that no longer exist are counted (`alreadyGone`), so a second rollback is a no-op.
  * - A row that something else still depends on is skipped, never force-deleted: an article that still has comments
  *   the run did not create or that staff kept, media still used by an article, ad campaign or live update, a category
@@ -34,8 +35,10 @@ export type RollbackOptions = {
   manifestPath: string
   /** Without it nothing is written (dry run). */
   apply?: boolean
-  /** Also delete rows edited after the run. */
+  /** Also delete rows edited after the run. Never published or reviewed articles: those also need `includePublished`. */
   force?: boolean
+  /** With `force`, also delete articles that are published or whose provenance review status is "reviewed". */
+  includePublished?: boolean
   /** Accept a manifest with no `end` line (a killed run). */
   allowIncomplete?: boolean
   /** An incomplete manifest younger than this (default 60 s) is refused: the run may still be going. Tests set 0. */
@@ -58,6 +61,7 @@ export type ItemCounts = {
 export type RollbackReport = {
   mode: 'dry-run' | 'apply'
   force: boolean
+  includePublished: boolean
   manifest: { startedAt: string | null; complete: boolean; endStatus: string | null; openIntents: number; abortedPosts: number }
   comments: ItemCounts
   articles: ItemCounts
@@ -86,6 +90,7 @@ type Ctx = {
   base: PayloadRequest
   apply: boolean
   force: boolean
+  includePublished: boolean
   /** Provenance window: a row the run created has `createdAt` between the run's start (minus a few seconds) and its end. */
   windowStart: number
   cutoff: number
@@ -202,11 +207,15 @@ const handlers: Record<Handler['collection'], Handler> = {
   },
   articles: {
     collection: 'articles',
-    select: { legacyId: true, category: true, featuredImage: true, bodyMedia: true },
+    select: { legacyId: true, status: true, provenance: true, category: true, categories: true, featuredImage: true, bodyMedia: true },
     check: async (ctx, req, doc) => {
-      // Only rows the loader made carry a legacy id.
-      const bad = provenance(ctx, doc, typeof doc.legacyId === 'number')
+      // Only rows the loaders made carry a legacy id (WordPress import) or an import batch (archive candidates).
+      const batch = (doc.provenance as { importBatch?: unknown } | null | undefined)?.importBatch
+      const bad = provenance(ctx, doc, typeof doc.legacyId === 'number' || (typeof batch === 'string' && batch !== ''))
       if (bad) return bad
+      // --force alone never removes live content: a published article or one a human approved needs --include-published too.
+      const reviewed = (doc.provenance as { reviewStatus?: unknown } | null | undefined)?.reviewStatus === 'reviewed'
+      if (ctx.force && !ctx.includePublished && (doc.status === 'published' || reviewed)) return 'published-or-reviewed'
       if (edited(ctx, doc)) return 'edited-since-import'
       const remaining = (await count(ctx, req, 'legacy-comments', { article: { equals: doc.id } })) - (ctx.pending.commentsByArticle.get(doc.id) ?? 0)
       return remaining > 0 ? 'has-remaining-comments' : null
@@ -214,6 +223,10 @@ const handlers: Record<Handler['collection'], Handler> = {
     note: (ctx, doc) => {
       const c = asId(doc.category)
       if (c !== null) bumpMap(ctx.pending.articlesByCategory, c)
+      // Secondary categories count too (once per article and category); the join rows go with the article.
+      const extra = new Set<number>()
+      if (Array.isArray(doc.categories)) for (const x of doc.categories) if (asId(x) !== null && asId(x) !== c) extra.add(asId(x) as number)
+      for (const x of extra) bumpMap(ctx.pending.articlesByCategory, x)
       const media = new Set<number>()
       const f = asId(doc.featuredImage)
       if (f !== null) media.add(f)
@@ -248,7 +261,7 @@ const handlers: Record<Handler['collection'], Handler> = {
       const bad = provenance(ctx, doc, true)
       if (bad) return bad
       if (edited(ctx, doc)) return 'edited-since-import'
-      const articles = (await count(ctx, req, 'articles', { category: { equals: doc.id } })) - (ctx.pending.articlesByCategory.get(doc.id) ?? 0)
+      const articles = (await count(ctx, req, 'articles', { or: [{ category: { equals: doc.id } }, { categories: { equals: doc.id } }] })) - (ctx.pending.articlesByCategory.get(doc.id) ?? 0)
       if (articles > 0) return 'still-used'
       if ((await count(ctx, req, 'live-events', { category: { equals: doc.id } })) > 0) return 'still-used'
       if ((await count(ctx, req, 'users', { sections: { equals: doc.id } })) > 0) return 'still-used'
@@ -331,6 +344,7 @@ export async function runRollback(payload: Payload, opts: RollbackOptions): Prom
   const report: RollbackReport = {
     mode: apply ? 'apply' : 'dry-run',
     force: opts.force === true,
+    includePublished: opts.includePublished === true,
     manifest: { startedAt: m.startedAt, complete: m.complete, endStatus: m.endStatus, openIntents: m.openIntents.length, abortedPosts: m.aborted.length },
     comments: counts(ids.comments.length),
     articles: counts(ids.articles.length),
@@ -347,6 +361,7 @@ export async function runRollback(payload: Payload, opts: RollbackOptions): Prom
     base: await createLocalReq({ context: { import: true } }, payload),
     apply,
     force: opts.force === true,
+    includePublished: opts.includePublished === true,
     windowStart: startMs,
     cutoff: endMs,
     pending: { commentsByArticle: new Map(), articlesByCategory: new Map(), articlesByMedia: new Map() },
@@ -378,6 +393,7 @@ export async function runRollback(payload: Payload, opts: RollbackOptions): Prom
         summary: `Import rollback applied: ${report.articles.deleted} articles, ${report.comments.deleted} comments, ${report.media.deleted} media, ${report.categories.deleted} categories deleted`,
         details: {
           force: report.force,
+          includePublished: report.includePublished,
           complete: m.complete,
           deleted: { articles: report.articles.deleted, comments: report.comments.deleted, media: report.media.deleted, categories: report.categories.deleted },
           failed: f(report.articles) + f(report.comments) + f(report.media) + f(report.categories),
@@ -404,7 +420,7 @@ export function formatRollbackReport(r: RollbackReport): string {
   const line = (name: string, c: ItemCounts) =>
     `  ${name}: listed ${c.listed}, ${apply ? 'deleted' : 'would delete'} ${apply ? c.deleted : c.wouldDelete}, already gone ${c.alreadyGone}, skipped [${skippedText(c.skipped)}], failed ${c.failed}`
   return [
-    `Import rollback (${r.mode}${r.force ? ', force' : ''})`,
+    `Import rollback (${r.mode}${r.force ? ', force' : ''}${r.includePublished ? ', include-published' : ''})`,
     `Manifest (started ${r.manifest.startedAt ?? "unknown"}): ${r.manifest.complete ? `complete (${r.manifest.endStatus})` : 'INCOMPLETE'}, open intents ${r.manifest.openIntents}, aborted posts ${r.manifest.abortedPosts}`,
     line('comments', r.comments),
     line('articles', r.articles),
