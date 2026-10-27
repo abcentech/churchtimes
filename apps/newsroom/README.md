@@ -13,6 +13,7 @@ The public tip form is **not** part of this app: it lives on the public site. Ti
 | --- | --- |
 | `VITE_CMS_URL` | CMS base URL, no trailing slash, e.g. `https://cms.example.org`. Baked in at build time; there is no user-editable backend URL. Empty = same origin (CMS reverse-proxied under `/api`). |
 | `VITE_PUBLIC_SITE_URL` | Optional public site origin, used only to link to its tip form. |
+| `VITE_KNOWN_LINK_HOSTS` | Optional comma-separated hosts the Archive review treats as known outbound-link hosts (subdomains included). Other hosts are flagged. See `apps/cms/docs/security.md` section 6. |
 
 Requirements on the CMS side (see `apps/cms/docs/api-contracts.md` §5 and `docs/staging.md` §7):
 
@@ -51,6 +52,15 @@ builds the app and asserts the bundle contains no demo password, mock data, role
 - Body is edited as a markdown subset and stored as Lexical JSON in `content` (`src/lexical.js`): paragraphs, h2/h3,
   bold, italic, quotes, bullet and numbered lists, `http(s)`/`mailto` links, and images. Stories containing anything
   else (embeds, nested lists, underline, uploads carrying extra data, ...) open with a read-only body so nothing is lost.
+- **Imported (archive) articles are mostly read-only here.** Bodies imported from WordPress usually contain YouTube embeds,
+  tables, h4 headings, new-tab links or uploads with extra data. Those open with a read-only body (the notice says so) and
+  the body can only be edited in the CMS admin; a title/standfirst edit sends only those fields, so the stored body is never
+  rewritten (fixture test in `test/lexical.test.js`). The review inspect modal shows a warning banner for such stories
+  ("body contains video/table content not shown; open in CMS admin before approving") and Approve asks for confirmation.
+- **Slug of a published story is read-only.** Once a story has `publishedAt` the URL slug cannot be edited here; the CMS
+  refuses a slug change on a published article (403) unless the user is editor-in-chief or admin (audit action
+  `article.slug-change`). An authorised change in the CMS admin creates a 301 redirect old -> new in the `redirects`
+  collection and re-points rules that targeted the old address. The archive importer is exempt.
 - Images inside the body: "Insert image" (body toolbar) opens the media picker (library or upload; alt text is required)
   and puts `![alt](media:<id>)` on a line of its own at the cursor. That line is stored as a Lexical upload node
   `{ type: 'upload', relationTo: 'media', value: <numeric id>, fields: null, format: '', id, version: 3 }` and read back
@@ -90,10 +100,59 @@ npm run test:newsroom-app
 The config then builds the app with that `VITE_CMS_URL` and serves the production bundle on
 `http://newsroom.churchtimes.localhost:5274` (`NEWSROOM_LIVE_PORT`); credentials are read from the file and never printed.
 
+### Accessibility suite (`tests/newsroom-a11y.spec.js`)
+
+Runs inside `npm run test:newsroom-app` (also `npm run test:newsroom-a11y`) against the mock-mode dev server, on the
+desktop (1440px) and mobile (Pixel 7) projects, and is part of the `newsroom` CI job.
+
+- **axe-core** (`wcag2a`, `wcag2aa`, `wcag21a`, `wcag21aa`, `best-practice`) on: login (and its error state), dashboard and
+  story list (including empty), story editor (new, validation error, saved, publish confirmation and result), every review
+  queue tab plus the inspect modal, live events (list, new-event form, running event), media library and detail modal, the
+  public-tip notice (`#submit`) and the dark theme. There is no separate staff settings screen in this app
+  (CMS settings live in the CMS admin; the archive review is the `#archive` screen below; the public submit form is on the public site).
+- **Severity policy:** `serious` and `critical` findings fail the test. `minor` and `moderate` findings are attached as
+  `a11y-minor` test annotations and emitted as GitHub `::warning` annotations in CI.
+- **Keyboard and AT checks:** skip link is the first stop and moves focus to `<main>`; tab order reaches the primary actions;
+  every focus stop shows a visible ring; modals trap Tab/Shift+Tab, close on Escape, restore focus to the trigger and make the
+  page behind them `inert`; the toast container is a persistent `aria-live` region and editor errors use `role="alert"`;
+  every form control has an accessible name; `prefers-reduced-motion` removes animations/transitions; no horizontal scroll
+  at 320 CSS px (WCAG 1.4.10 reflow, equivalent to 400% zoom).
+- **Allowlist:** unavoidable exceptions go in `A11Y_ALLOWLIST` at the top of the spec as `{ rule, selector, reason }`. It is
+  currently empty; every entry needs a written reason and a link to the follow-up.
+- Fix real violations in `apps/newsroom/styles/newsroom.css` or the views instead of allowlisting them. Colour tokens for the
+  dark theme live in the `[data-theme="dark"]` block.
+
+## Archive review
+
+Recovered archive pages arrive as draft articles with a staff-only `provenance` group (`apps/cms/docs/archive-candidate-schema.md`).
+The **Archive review** screen (`#archive`, nav entry for editor roles; Alt+6; also linked from the Review Queue) is the editor's
+desk for them:
+
+- **Queue:** recovered drafts filtered by review status (pending / reviewed / rejected), recovery confidence (partial /
+  citation-only / missing) and import batch, with live counts (status counts ignore the status filter, confidence counts ignore the
+  confidence filter). Each row shows the title, the date the old page claimed, the source host and a confidence badge. Only editor
+  roles see it (the CMS lists recovered drafts for editors; a reporter would see nothing anyway).
+- **Review screen** (`#archive?id=...`): the recovered body beside the provenance (source address, host, claimed date, capture time,
+  SHA-256, confidence, batch, review status). The source address is text plus a link that opens **only on click**, in a new tab with
+  `rel="noopener noreferrer"` and no referrer; the app never loads, embeds or fetches the old page, and only `http(s)` addresses
+  become links.
+- **Actions:** *Approve* (sets `provenance.reviewStatus` to `reviewed`) and *Reject* (`rejected`; the article stays a draft) are
+  shown to admin, editor-in-chief and the section editor of the story's section; both ask for confirmation and send the version
+  seen (`expectedUpdatedAt`, a stale version answers 409 and the screen reloads). The CMS enforces the role rule, writes an
+  `archive.review` audit row (who, when) and refuses everyone else. *Open in editor* goes to the normal editor.
+- **Four-eyes.** The review screen shows "Approved by <name> on <date>" to editor roles. The editor who approved a recovered story cannot publish or schedule it (the CMS answers 409); the editor disables Publish and Schedule for that user with "You approved this recovered archive story, so a different editor must publish or schedule it." (`editor-archive-blocked`, `editor-schedule-four-eyes`, `archive-four-eyes`). Admins may do both; the reason never names the approver.
+- **Publishing is unchanged.** Approval does not publish. A recovered story goes through the usual review, approve and publish
+  steps; until it is approved here the CMS refuses to publish or schedule it (409). The review screen and the editor both say so
+  (`archive-publish-blocked`, `editor-archive-blocked`), and the editor's Publish button is disabled with the reason.
+- **No leakage:** `provenance` is read only from staff responses, is never written into the public site or the story markup, and the
+  build contains no public route for it.
+
+Dev mock mode seeds four synthetic recovered drafts (`old-site.test`) kept apart from the desk's stories.
+
 ## Stable test selectors
 
 Elements carry `data-testid` plus stable ids, for example: `login-form`, `login-email`, `login-password`, `login-submit`,
 `login-error`, `logout`, `story-list`, `story-row`, `dash-new-story`, `nav-new-story`, `editor-title`, `editor-standfirst`,
 `editor-body`, `editor-category`, `editor-slug`, `editor-byline`, `editor-featured-image`, `editor-choose-image`,
 `editor-save-draft`, `editor-submit-review`, `editor-approve`, `editor-request-changes`, `editor-publish`,
-`review-card`, `review-inspect`, `tip-list`, `tip-card`, `tip-convert`, `tip-convert-confirm`, `media-upload-input`.
+`review-card`, `review-inspect`, `archive-row`, `archive-filter-status`, `archive-filter-confidence`, `archive-filter-batch`, `archive-source-link`, `archive-approve`, `archive-reject`, `archive-open-editor`, `archive-publish-blocked`, `tip-list`, `tip-card`, `tip-convert`, `tip-convert-confirm`, `media-upload-input`.
