@@ -5,6 +5,7 @@ name: CMS Docker smoke
 # in NODE_ENV=production and smoke-tests it. Docker is not installed on the development machines, so this
 # workflow is the only place the image is ever built and run. No repository secrets are used: every secret
 # below is generated per run and exists only on this runner.
+# (PR #46 touches this file only so the required docker-smoke check reports on a public-only PR.)
 
 on:
   pull_request:
