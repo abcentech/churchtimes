@@ -1,5 +1,13 @@
 name: Public reader bundle headroom
 on:
+  push:
+    branches: [feat/newsroom-mvp]
+    paths:
+      - 'src/**'
+      - 'tools/check-reader-budget.mjs'
+      - 'package*.json'
+      - 'vite.config.js'
+      - '.github/workflows/public-reader-budget.yml'
   pull_request:
     paths:
       - 'src/**'
@@ -10,6 +18,8 @@ on:
       - 'vite.config.js'
       - '.github/workflows/public-reader-budget.yml'
   workflow_dispatch:
+permissions:
+  contents: read
 jobs:
   reader-budget:
     runs-on: ubuntu-latest
@@ -20,7 +30,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci
       - name: Build with synthetic STUB configuration; no host or provider is contacted

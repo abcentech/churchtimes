@@ -6,7 +6,7 @@ function bindArticleListen(root){
   return ()=>{cancelled=true;dispose?.();};
 }
 import { captureNewsletterLink } from './lib/reader-newsletter-link.js';
-const newsletterLink=captureNewsletterLink(location,history,new URL(document.baseURI).pathname);
+const newsletterLink=captureNewsletterLink(location,history);
 let readerForms,readerFormsSettled=false;
 const readerPending=(kind,source='',text='')=>`<div class="container" data-reader-pending="${kind}" data-source="${source}">${text}</div>`;
 const readerFormsReady=(((import.meta.env.VITE_PUBLIC_NEWSLETTER_URL || import.meta.env.VITE_PUBLIC_CONTACT_URL) && import.meta.env.VITE_TURNSTILE_SITE_KEY) || newsletterLink)
