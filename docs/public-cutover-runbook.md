@@ -108,6 +108,14 @@ instruction. Recheck both old and new DNS answers during propagation, TLS,
 robots/sitemap and the known owner-approved article/media samples. No such
 switch or indexing change has been made by this task.
 
+## Pre-DNS check against the final hostname
+
+Before any DNS record changes, run the quiet redirect checks against the final hostname through the real TLS proxy while the name still resolves to the new host
+only for the operator (for example with `curl --resolve <final-hostname>:443:<new-host-ip>` or a temporary hosts entry on the operator's machine, never public DNS):
+`node tools/check-redirects.mjs --target https://<final-hostname> --urls <private-checks.json> --rate 2 --quiet`. A redirect that leaves for another approved host needs
+`--allow-host <host>` once per host (the old `.org` and `.com` names are answered by the host itself with a 301 to the primary host, see `docs/public-redirects.md`).
+Use `systemctl reload churchtimes-public` only to reread the private map; a new release or an env change needs `systemctl restart churchtimes-public`.
+
 ## Rollback and observation
 
 Agree the rollback trigger and authority **before** the window. Triggers include

@@ -164,7 +164,7 @@ export function createPublicRedirects({
  if(endpoint && (!publicOrigin(endpoint)||new URL(endpoint).hash||new URL(endpoint).search||new URL(endpoint).pathname!=='/api/public/redirects'))throw new Error('PUBLIC_REDIRECTS_URL must name a safe /api/public/redirects endpoint');
  if(siteUrl&&!publicOrigin(siteUrl))throw new Error('Invalid redirect site origin');
  const ttl=Math.max(1000,Math.min(300000,Number(cacheMs)||300000));
- let map=emptyMap(),expires=0,etag='',pending,warningCount=0,loaded=false,timer,closed=false;
+ let map=emptyMap(),expires=0,etag='',pending,again=false,warningCount=0,loaded=false,timer,closed=false;
  const configuredPattern=url=>{const match=patternMatch(url);return match&&templates.has(match.kind)?match:null;};
  const validatePatterns=candidate=>{
   for(const rule of candidate.values()) {
@@ -184,8 +184,9 @@ export function createPublicRedirects({
   try {if(statSync(file).size<=MAX_REDIRECT_BYTES)assertAbsoluteConfiguration(JSON.parse(readFileSync(file,'utf8')));}
   catch(error){if(error instanceof RedirectStartupError)throw error;}
  }
- function refresh({initial=false}={}) {
-  if(pending)return pending;
+ function refresh({initial=false,force=false}={}) {
+  // A reload that joins an in-flight refresh (SIGHUP right after an atomic file swap) must not be lost: run once more.
+  if(pending){if(force)again=true;return pending;}
   if(!file&&!endpoint){loaded=true;return Promise.resolve(map);}
   pending=(async()=>{
    try {
@@ -208,6 +209,7 @@ export function createPublicRedirects({
     warningCount++;try{warn({code:'public_redirect_refresh_failed',count:warningCount});}catch{}
     if(initial&&error instanceof RedirectStartupError)throw error;
    } finally {expires=now()+ttl;pending=undefined;}
+   if(again){again=false;return refresh({force:true});}
    return map;
   })();
   return pending;
@@ -240,7 +242,7 @@ export function createPublicRedirects({
   }
   respond(rule.status,'text/plain; charset=utf-8',rule.status===410?'Gone':'Moved',{...(rule.to?{Location:rule.to}:{}),'Cache-Control':'public, max-age=300'});return true;
  };
- handler.ready=ready;handler.refresh=refresh;handler.settled=()=>pending||Promise.resolve(map);
+ handler.ready=ready;handler.refresh=()=>refresh({force:true});handler.settled=()=>pending||Promise.resolve(map);
  handler.diagnostics=()=>({warningCount,loaded,ruleCount:map.size,refreshing:Boolean(pending)});
  handler.close=()=>{closed=true;clearInterval(timer);};
  return handler;
