@@ -217,9 +217,9 @@ async function realRehearsal(r: Real): Promise<number> {
       console.log(`Imported rows carrying archive provenance: ${prov}`)
       check('no archive provenance on imported rows', prov === 0)
     }
-    const rbDry = await timed('rollback dry run', total, () => r.runRollback(payload, { manifestPath: r.manifestOf('apply'), force: true }))
+    const rbDry = await timed('rollback dry run', total, () => r.runRollback(payload, { manifestPath: r.manifestOf('apply'), force: true, includePublished: true }))
     check('rollback dry run deleted nothing', same(await dbCounts(), afterApply))
-    const rb = await timed('rollback apply', total, () => r.runRollback(payload, { manifestPath: r.manifestOf('apply'), apply: true, force: true }))
+    const rb = await timed('rollback apply', total, () => r.runRollback(payload, { manifestPath: r.manifestOf('apply'), apply: true, force: true, includePublished: true }))
     check('rollback removed every created row', same(await dbCounts(), zero))
     check('rollback matched its dry run', rbDry.articles.wouldDelete === rb.articles.deleted && rbDry.comments.wouldDelete === rb.comments.deleted)
     check('rollback had no failures', rb.articles.failed + rb.comments.failed + rb.media.failed + rb.categories.failed === 0)
@@ -289,7 +289,8 @@ async function main(): Promise<number> {
   }
   // Stopping PostgreSQL under an idle pool connection emits one late socket error: harmless once cleanup has started.
   process.on('uncaughtException', (err) => {
-    if (cleaned && /Connection terminated|ECONNRESET/.test(err.message)) return
+    // pg answers 57P01 (terminating connection due to administrator command) when embedded PostgreSQL stops under an idle pooled connection.
+    if (cleaned && (/Connection terminated|ECONNRESET|terminating connection/i.test(err.message) || (err as { code?: string }).code === '57P01')) return
     console.error(`REHEARSAL_FAILED ${err.name}`)
     process.exit(1)
   })
@@ -378,14 +379,14 @@ async function main(): Promise<number> {
     check('update rewrote articles and added no rows', updated.articles.updated > 0 && same(afterUpdate, afterApply))
 
     // 5. rollback: dry, apply (force: the update above counts as a later edit), then again
-    const rbDry = await timed('rollback dry run', total, () => runRollback(payload, { manifestPath: manifestOf('apply'), force: true }))
+    const rbDry = await timed('rollback dry run', total, () => runRollback(payload, { manifestPath: manifestOf('apply'), force: true, includePublished: true }))
     check('rollback dry run deleted nothing', same(await dbCounts(), afterApply))
-    const rbApply = await timed('rollback apply', total, () => runRollback(payload, { manifestPath: manifestOf('apply'), apply: true, force: true }))
+    const rbApply = await timed('rollback apply', total, () => runRollback(payload, { manifestPath: manifestOf('apply'), apply: true, force: true, includePublished: true }))
     const afterRollback = await dbCounts()
     check('rollback removed every created row', same(afterRollback, { articles: 0, comments: 0, media: 0, categories: 0 }))
     check('rollback matched its dry run', rbDry.articles.wouldDelete === rbApply.articles.deleted && rbDry.comments.wouldDelete === rbApply.comments.deleted)
     check('rollback had no failures', rbApply.articles.failed + rbApply.comments.failed + rbApply.media.failed + rbApply.categories.failed === 0)
-    const rbAgain = await timed('rollback again', total, () => runRollback(payload, { manifestPath: manifestOf('apply'), apply: true, force: true }))
+    const rbAgain = await timed('rollback again', total, () => runRollback(payload, { manifestPath: manifestOf('apply'), apply: true, force: true, includePublished: true }))
     check('second rollback is a no-op', rbAgain.articles.deleted + rbAgain.comments.deleted + rbAgain.media.deleted + rbAgain.categories.deleted === 0)
     const leftover = fs.existsSync(mediaDir) ? fs.readdirSync(mediaDir) : []
     check('media files removed with their documents', leftover.length === 0)
