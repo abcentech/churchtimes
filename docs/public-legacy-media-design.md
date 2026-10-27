@@ -1,11 +1,12 @@
 # A12 proposal: preserve legacy WordPress image paths
 
-**Design for review only. No proxy, file route, flag, exporter or deployment is implemented by this PR.**
-CMS PR [#54](https://github.com/abcentech/churchtimes/pull/54) is merged and provides the staff-only
-`media.legacyPath` field and helpers. It does **not** provide an anonymous lookup endpoint or an offline media map.
-Wave 4 permits Node behind Caddy with the public site at the domain root as the D2 planning default; the actual
-production host and its operational limits still need owner acceptance. **A12 implementation remains blocked on
-Claude's offline map-export/withdrawal contract.** The shape below is a proposal, not a shipping CMS API.
+**Design for review. No proxy, file route or flag is implemented by this PR.**
+CMS PRs [#54](https://github.com/abcentech/churchtimes/pull/54) and [#55](https://github.com/abcentech/churchtimes/pull/55) are merged, and the CMS lane has
+merged the offline exporter (`npm run export:media-map`) with its `media-map/1` format (`apps/cms/docs/api-contracts.md`, section "Go-live A12: legacy media
+map (offline export)", code in `apps/cms/src/lib/mediaMapExport.ts`). The staff-only `media.legacyPath` field stays staff-only; there is no anonymous lookup endpoint.
+This note now follows that merged format; it replaces the earlier flat proposal (`entries[{legacyPath, mediaPath, mimeType}]` with `revision`).
+Wave 4 permits Node behind Caddy with the public site at the domain root as the D2 planning default; the actual production host and its operational limits
+still need owner acceptance. The host route (A12) can be built against `media-map/1` once the owner accepts D2.
 
 The goal is to retain approved image URLs such as `/wp-content/uploads/2021/03/synthetic-photo.jpg` on the public
 origin. An exact, reviewed map points that address to an already-public CMS media file. The browser keeps its old
@@ -15,9 +16,9 @@ All examples here are synthetic. Real migration inventories and maps stay in app
 ## Decision and ownership boundary
 
 - The owner approves D2, the public origin, the CMS origin, the proposed image scope, limits and withdrawal policy.
-- Claude defines and implements any staff-side export or migration tooling. `legacyPath` stays staff-only; this design
+- The CMS lane owns the merged export tooling and the `media-map/1` contract; the host adapts to it, not the reverse. `path` stays staff-only; this design
   does not widen media access or scan anonymous media documents to discover it.
-- Codex implements a narrowly scoped public route only after design review and agreement on that export contract.
+- Codex implements a narrowly scoped public route after this design review, against the merged `media-map/1` contract.
 - Hosting must preserve the original request target for validation, route `/wp-content/uploads/` to the Node host,
   and bypass shared/CDN caches for the initial no-store proposal. Node behind Caddy at the domain root is the
   Wave 4 planning default; it is not evidence of an owner-approved production installation.
@@ -25,61 +26,51 @@ All examples here are synthetic. Real migration inventories and maps stay in app
   make no CMS request. The proposed `PUBLIC_LEGACY_MEDIA_MAP` would identify a local, operator-provisioned file;
   neither setting is implemented or approved for production here.
 
-## Proposed private export contract — new CMS-lane work
+## Merged private export contract: `media-map/1`
 
-The offline exporter, approved-file eligibility rules, map normalisation vectors, revocation/rotation behaviour and
-withdrawal window are explicit contract deliverables for Claude. Neither the importer nor the merged staff-only
-field supplies them implicitly. Codex must not start the route until that export contract lands.
+The CMS owner runs `npm run export:media-map -- --out <file> [--aliases <json>] [--detail-file <path>]` outside every checkout. A media record is exported only if an
+anonymous reader can read it at export time (the exporter reads with `overrideAccess: false` and no user), so drafts, in-review, scheduled, archived and unreferenced
+media are never listed. The file carries no ids, alt text, captions, credits, uploaders or staff fields. The public host receives neither a staff token nor Local API access.
+A CMS anonymous file read remains the final authority on whether a mapped file is public at request time.
 
-An authorised offline job on the CMS side joins staff-only `legacyPath` with reconciled media records and their
-anonymous public-file projection. It emits only explicitly approved media reachable from published content. It uses
-the existing staff/server permissions; the public host receives neither a staff token nor Local API access.
-A CMS anonymous file read must remain the final authority on whether a mapped file is public at request time.
-
-Proposed v1 shape (all identifiers, filenames and values below are synthetic):
+Format (JSON, UTF-8; all values below are synthetic):
 
 ```json
 {
-  "version": 1,
-  "revision": "synthetic-media-001",
+  "version": "media-map/1",
   "generatedAt": "2026-10-17T00:00:00Z",
+  "counts": { "entries": 2, "aliases": 1 },
+  "contentSha256": "<stable content id, ignores generatedAt and formatting>",
   "entries": [
-    {
-      "legacyPath": "2021/03/synthetic-photo.jpg",
-      "mediaPath": "/api/media/file/synthetic-photo.jpg",
-      "mimeType": "image/jpeg"
-    },
-    {
-      "legacyPath": "2021/03/synthetic-photo-300x200.jpg",
-      "mediaPath": "/api/media/file/synthetic-photo-card.jpg",
-      "mimeType": "image/jpeg"
-    },
-    {
-      "legacyPath": "2021/03/synthetic-banner-1920x1080.jpg",
-      "mediaPath": "/api/media/file/synthetic-banner-original.jpg",
-      "mimeType": "image/jpeg"
-    }
+    { "path": "2021/03/synthetic-photo.jpg", "file": "/api/media/file/synthetic-photo.jpg", "mime": "image/jpeg", "size": 123456 },
+    { "path": "2021/03/synthetic-banner-1920x1080.jpg", "file": "/api/media/file/synthetic-banner-original.jpg", "mime": "image/jpeg", "size": 234567 }
+  ],
+  "aliases": [
+    { "alias": "2021/03/synthetic-photo-300x200.jpg", "path": "2021/03/synthetic-photo.jpg" }
   ]
 }
 ```
 
-`legacyPath` is relative to `/wp-content/uploads/`; it is a normalised path, not a URL. `mediaPath` is an exact
-CMS public-file pathname, never an absolute URL, credential, filesystem path or URL template. MIME is a bounded
-expected type, not permission to trust upstream bytes. No original absolute site URLs, article relationships,
-authors, emails, staff IDs, access tokens or import diagnostics belong in this artifact. An approved legacy image
-filename is necessarily visible when served; directory listings and the complete map must never be publicly served.
-
-WordPress size suffixes are resolved **offline**. The merged PR #54 helper tries the exact path before stripping a size suffix:
-`banner-1920x1080.jpg` can be an original filename. The exporter must honour that precedence and emit each approved
-alias explicitly. It must report ambiguous matches/collisions instead of silently choosing a record. The host performs
-one exact map lookup; it never guesses a filename, strips a suffix at runtime, searches CMS collections or falls back
-to fetching the old website. Missing variants remain unavailable until explicitly reconciled.
+- `path` is relative to `/wp-content/uploads/`: NFC, percent-decoded once, no duplicate, leading or trailing slash, no `.`/`..`, case-sensitive, exact match. It is a key, not a URL.
+  `file` is a CMS public-file pathname matching `^/api/media/file/[A-Za-z0-9][A-Za-z0-9._-]*$`, never an absolute URL or a template. `mime` is `image/jpeg`, `image/png`
+  or `image/webp`; `size` is bytes. Entries are sorted by `path` in code-unit order and aliases by `alias`.
+- Size-suffix aliases (`photo-300x200.jpg` to `photo.jpg`) exist only when the owner listed them, the alias is the original with exactly one `-WxH` suffix, the original is
+  an exported entry and no media (of any visibility) claims the alias as its own exact path. The host looks up the exact entry first, then the alias, and never strips a suffix
+  itself. Two media of any visibility claiming one normalised path are ambiguous and neither is exported (reported in the private detail file).
+- Limits: at most 50,000 entries counting entries plus aliases, and 8 MiB serialised; the exporter refuses and writes nothing beyond them. The host enforces the same caps before parsing.
+- Digest: `<out>.sha256` (`<hex>  <file name>`, `sha256sum -c` compatible) is the sha256 of the exact bytes of the map file and is the provisioning check; it detects damage, it is
+  not a signature. `contentSha256` inside the file is a stable content id only. The map is copied to the host over a private channel, verified, then swapped in atomically.
+- The host must validate every entry at load itself (the exporter's `validateMediaMapBody` is a reference): schema, caps, duplicate paths and aliases, alias targets that exist,
+  `file` pattern, MIME and size bounds. Any failure rejects the whole map.
+- Withdrawal. With the no-store design below, revocation is immediate: once a media file stops being anonymously readable the CMS file URL answers 403 or 404 and the host
+  serves 404 before any re-export. A re-export and atomic map replacement then removes the entry. An ad creative stops being public when its campaign ends; media still used by
+  another published article stays public and mapped. Images already downloaded cannot be recalled.
 
 ## Path and origin validation proposal
 
-Exporter and host need agreed normalisation test vectors before implementation. The merged CMS helper in
+Exporter and host need agreed normalisation test vectors before implementation. The merged staff-side helper in
 `apps/cms/src/lib/legacyMediaPath.ts` collapses duplicate slashes, retains raw text when percent decoding fails, and
-does **not** NFC-normalise Unicode. `legacyPath` remains staff-only. The request-facing rules proposed here are
+does **not** NFC-normalise Unicode; the exporter's `path` key is the NFC, decode-once form above. `legacyPath` remains staff-only. The request-facing rules proposed here are
 deliberately stricter: an export must report malformed escapes, slash aliases, decomposed Unicode and collisions
 for reconciliation instead of copying helper output blindly. Do not silently lose media or introduce a second,
 undocumented key format; the agreed exporter/host vectors must settle those differences.
@@ -99,7 +90,7 @@ undocumented key format; the agreed exporter/host vectors must settle those diff
 4. Query strings are not map keys and are never forwarded. For the initial proposal, a bounded, ignored query is permitted
    for old cache-buster links; reject an oversized request target before lookup. Fragments never reach the server.
    A future transformation/download query requires its own contract; there are no dynamic image transforms here.
-5. Validate every `mediaPath` at map load: exact approved public-file prefix (initial proposal `/api/media/file/`), a
+5. Validate every `file` at map load: exact approved public-file prefix (initial proposal `/api/media/file/`), a
    nonempty canonical encoded filename, no query/fragment, dot segments, separator escapes or double encoding. Build a URL
    against one configured, approved CMS origin and assert that its origin and pathname remain approved after parsing.
    Never accept arbitrary absolute destinations, localhost supplied by a requester, or even a second allowlisted origin
@@ -164,7 +155,7 @@ withdrawal window **W**. An illustrative proposal is W = 60 seconds with body/br
 worst-case map propagation, any upstream reuse and downstream cache lifetime must fit within W; a single component's
 30-second TTL is not proof of a 60-second end-to-end bound. Bound every layer or keep that layer no-store.
 
-Such a design must disable stale-while-revalidate/stale-if-error, invalidate cached bytes on map revision/removal,
+Such a design must disable stale-while-revalidate/stale-if-error, invalidate cached bytes on map `contentSha256` change or removal,
 never cache denied/error responses, and fail closed once freshness expires. Shared caching needs an explicit CDN
 configuration and purge mechanism; a CMS denial or removal must stop new delivery by W in a timed withdrawal test.
 If that bound cannot be demonstrated, retain no-store. Already downloaded images remain outside any recall guarantee.
@@ -199,7 +190,7 @@ must be agreed in the host kit. A rollback must never restore access to a file t
 
 ## Acceptance plan — not executed by this design PR
 
-After design approval, the exporter contract and D2 are settled, a separate feature PR would implement the default-off
+After design approval, D2 is settled (the exporter contract is merged), a separate feature PR would implement the default-off
 route. Planned checks below are **not implemented tests or evidence of working delivery**:
 
 - Unit/property tests for shared normalisation vectors, limits, encoded separators, raw/double-encoded dot segments,
