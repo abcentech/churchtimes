@@ -61,7 +61,7 @@ project. `npm run demo -- --reset` deletes it.
 - Advertising campaigns, redirect rules and a live event.
 - One demo account per role. Sign-up of new admins is switched off.
 
-Stories have one section each (this version of the CMS has no "extra categories" field).
+About a quarter of the stories also sit in one or two extra sections (the "extra categories" field).
 
 ## What to try
 

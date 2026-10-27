@@ -90,6 +90,15 @@ async function main() {
     [slugs, slugs.length],
   )
 
+  // Extra categories (articles.categories, stored in articles_rels): every 4th imported story also sits in the next section, every 12th in two more.
+  await pool.query(
+    `INSERT INTO articles_rels ("order", parent_id, path, categories_id)
+     SELECT k, a.id, 'categories', ($1::int[])[1 + ((array_position($1::int[], a.category_id) - 1 + k) % $2::int)]
+       FROM articles a, generate_series(1, 2) k
+      WHERE a.category_id = ANY($1::int[]) AND (a.id % 4 = 0 AND k = 1 OR a.id % 12 = 0)`,
+    [slugs, slugs.length],
+  )
+
   // ---- 2. Audio/video articles with tiny valid files ------------------------------------------------------------------
   const upload = async (name: string, data: Buffer, mimetype: string, alt: string) =>
     (await payload.create({ collection: 'media', data: { alt }, file: { data, mimetype, name, size: data.length }, user: admin, overrideAccess: true })) as unknown as Row
@@ -193,6 +202,7 @@ async function main() {
     campaigns: await n('SELECT count(*)::int AS n FROM ad_campaigns'),
     redirects: await n('SELECT count(*)::int AS n FROM redirects'),
     media: await n('SELECT count(*)::int AS n FROM media'),
+    extraCategoryLinks: await n("SELECT count(*)::int AS n FROM articles_rels WHERE path = 'categories'"),
   }
   say(`SUMMARY ${JSON.stringify(summary)}`)
   await payload.destroy()
