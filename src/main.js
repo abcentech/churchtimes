@@ -1,12 +1,23 @@
-import { publicFormMarkup, bindPublicForm } from './forms/public-form.js';
-import { fetchPublishedPage, fetchPublishedArticle } from './lib/published-articles.js';
+import {bindSkipLink} from './lib/skip-link.js';
+import {publicPageRoute} from './lib/public-page-routes.js';
+import {siteCanonical,socialMetadata} from './lib/public-metadata.js';
+import {livePageMarkup,mountLivePage} from './live/public-live-page.js';
+import { reportPath, reportSlug, articleCanonical, articleSchema, safeJSON } from './lib/public-routes.js';
+import { cmsImage, cmsFigure, bindCMSImages } from './lib/cms-media.js';
+import { selectHomepage, uniqueHomeReports } from './lib/homepage.js';
+import { mountAdvertisingPlacements } from './lib/advertising.js';
+import advertising from './data/advertising.json';
+import { publicFormMarkup } from './forms/public-form-markup.js';
+import { fetchPublishedPage, fetchPublishedArticle, fetchPublicCategory, fetchPublicCategories, cmsErrorMessage } from './lib/published-articles.js';
 import { renderArticleContent } from './lib/article-content.js';
-import '@fontsource-variable/newsreader/wght.css';
-import '@fontsource-variable/newsreader/wght-italic.css';
-import '@fontsource-variable/dm-sans/wght.css';
+import './fonts.css';
 import './style.css';
+import './public-quality.css';
+import './article-content.css';
 import edition from './data/stories.json';
+import imageSizes from './data/image-sizes.json';
 
+bindSkipLink();
 const stories = edition.stories;
 const asset = path => `${import.meta.env.BASE_URL}${import.meta.env.PROD ? 'site/' : ''}${path}`;
 const escape = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -41,59 +52,95 @@ try { saved = new Set(JSON.parse(localStorage.getItem('ct-reading-list')||'[]').
 let filter = 'All';
 let limit = 6;
 let toastTimer;
+let routeController = new AbortController();
 
 function mark(s, className='') {
   return `<button class="save-button ${className} ${saved.has(s.id)?'is-saved':''}" data-save="${s.id}" aria-pressed="${saved.has(s.id)}" aria-label="${saved.has(s.id)?'Remove from':'Save to'} reading list: ${escape(s.title)}">${icon('bookmark',18)}</button>`;
 }
-function picture(s, className='', eager=false) {
-  return s.image ? `<img class="${className}" src="${asset(s.image)}" alt="${escape(s.imageAlt)}" loading="${eager?'eager':'lazy'}" ${eager?'fetchpriority="high"':''} decoding="async">` : '<div class="photo-fallback">Church Times Nigeria</div>';
+function picture(s, className='', eager=false, sizes='(max-width: 430px) calc(100vw - 38px), (max-width: 760px) 45vw, 420px') {
+  if (!s.image) return '<div class="photo-fallback">Church Times Nigeria</div>';
+  const image = imageSizes[s.id];
+  const responsive = image ? `width="${image.width}" height="${image.height}" srcset="${image.variants.map(width => `${asset(`news-media/responsive/${s.id}-${width}.webp`)} ${width}w`).join(', ')}" sizes="${sizes}"` : '';
+  return `<img class="${className}" src="${asset(s.image)}" ${responsive} alt="${escape(s.imageAlt || '')}" loading="${eager?'eager':'lazy'}" ${eager?'fetchpriority="high"':''} decoding="async">`;
 }
-function wordmark(className='') { return `<a class="wordmark ${className}" href="#home" aria-label="Church Times Nigeria home"><span>Church<span class="wordmark-times">Times</span><i>.</i></span><small>NIGERIA</small></a>`; }
+function wordmark(className='') { return `<a class="wordmark ${className}" href="#home" aria-label="Church Times Nigeria home"><span>Church <span class="wordmark-times">Times</span><i aria-hidden="true"><svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="5" fill="currentColor"/></svg></i></span> <small>NIGERIA</small></a>`; }
+function bindPublicForm(kind) {
+  const form=document.querySelector('#public-form');
+  let cancelled=false,dispose;
+  form.inert=true;
+  import('./forms/public-form.js').then(module=>{
+    if(cancelled || !form.isConnected)return;
+    dispose=module.bindPublicForm(kind);form.inert=false;
+  }).catch(()=>{
+    if(cancelled || !form.isConnected)return;
+    form.querySelector('#send-submission').disabled=true;
+    form.querySelector('#challenge-status').textContent='Online sending could not load. Please reload or email the newsroom.';
+    form.inert=false;
+  });
+  return ()=>{cancelled=true;dispose?.();};
+}
 let disposePublicForm;
 function shell(content, route='home') {
   disposePublicForm?.();
   disposePublicForm=undefined;
-  const mastheadDate = route === 'latest' ? 'Published newsroom reports' : editionDate;
+  routeController.abort();
+  routeController = new AbortController();
+  const mastheadDate = route === 'live' ? 'Live coverage' : route === 'latest' ? 'Published newsroom reports' : editionDate;
   document.querySelector('#app').innerHTML = `
     <div class="utility-bar"><div class="container utility-inner"><span>INDEPENDENT JOURNALISM. A CHRISTIAN PERSPECTIVE.</span><div><a href="#latest">Latest news</a><a href="#about">About us</a><a href="#advertise">Advertise</a><a href="#contact">Contact</a></div></div></div>
     <header class="container masthead"><div class="masthead-left"><span>${mastheadDate}</span><p>The church.<br>The people. The world.</p></div>${wordmark()}<div class="masthead-right"><a class="outline-button" href="#connect">Stay connected ${icon('arrow',16)}</a><span>Reporting with purpose since 2007</span></div></header>
-    <div class="nav-shell"><div class="container nav-inner"><a class="home-link ${route==='home'?'active':''}" href="#home" aria-label="Home" ${route==='home'?'aria-current="page"':''}>${icon('home',17)}</a><nav class="desktop-nav" aria-label="Main sections"><a href="#latest" ${route==='latest'?'aria-current="page"':''}>Latest</a>${sections.map(s=>`<a href="#section/${s.slug}" ${route===s.slug?'aria-current="page"':''}>${s.name}</a>`).join('')}</nav><div class="nav-actions"><a class="reading-link" href="#saved" aria-label="Reading list, ${saved.size} saved stories">${icon('bookmark',18)}<span id="saved-count" ${saved.size?'':'hidden'}>${saved.size}</span></a><button class="icon-button" data-search aria-label="Search stories">${icon('search',19)}</button><button class="icon-button mobile-menu-button" data-menu aria-label="Open sections menu">${icon('menu',21)}</button></div></div></div>
+    <div class="nav-shell"><div class="container nav-inner"><a class="home-link ${route==='home'?'active':''}" href="#home" aria-label="Home" ${route==='home'?'aria-current="page"':''}>${icon('home',17)}</a><nav class="desktop-nav" aria-label="Main sections"><a href="#latest" ${route==='latest'?'aria-current="page"':''}>Latest</a><a href="#live" ${route==='live'?'aria-current="page"':''}>Live coverage</a>${sections.map(s=>`<a href="#section/${s.slug}" ${route===s.slug?'aria-current="page"':''}>${s.name}</a>`).join('')}</nav><div class="nav-actions"><a class="reading-link" href="#saved" aria-label="Reading list, ${saved.size} saved stories">${icon('bookmark',18)}<span id="saved-count" ${saved.size?'':'hidden'}>${saved.size}</span></a><button class="icon-button" data-search aria-label="Search stories" aria-haspopup="dialog" aria-controls="search-dialog" aria-expanded="false">${icon('search',19)}</button><button class="icon-button mobile-menu-button" data-menu aria-label="Open sections menu" aria-haspopup="dialog" aria-controls="menu-dialog" aria-expanded="false">${icon('menu',21)}</button></div></div></div>
     <main id="main" tabindex="-1">${content}</main>
-    <section class="connect-band" id="connect"><div class="container connect-inner"><div class="connect-monogram" aria-hidden="true">CT<span>.</span></div><div><span class="eyebrow">KEEP A WIDER PERSPECTIVE</span><h2>Good stories deserve<br><em>your attention.</em></h2><p>Read the latest from Church Times Nigeria.<br>For publication updates, get in touch with the newsroom.</p></div><div class="connect-action"><a class="button button-light" href="mailto:info@churchtimesnigeria.net?subject=Church%20Times%20publication%20updates">Request updates ${icon('mail',18)}</a><small>Opens an email request to the publication.<br>You are not automatically subscribed.</small></div></div></section>
-    <footer class="site-footer"><div class="container"><div class="footer-main"><div>${wordmark('footer-wordmark')}<p>Professional reporting on the church and on<br>Christians across every sphere of life.</p></div><div><span class="eyebrow">EXPLORE</span>${sections.slice(0,4).map(s=>`<a href="#section/${s.slug}">${s.name}</a>`).join('')}</div><div><span class="eyebrow">PERSPECTIVES</span><a href="#section/health">Health & education</a><a href="#section/opinion">Opinion & columns</a><a href="#section/publishers-note">Publisher’s note</a><a href="#latest">Latest newsroom reports</a><a href="#saved">Your reading list</a></div><div><span class="eyebrow">THE PUBLICATION</span><a href="#about">Our story</a><a href="#advertise">Advertise with us</a><a href="#contact">Contact the newsroom</a><a href="#submit">Submit a story</a><a href="https://churchtimesnigeria.net/" target="_blank" rel="noopener noreferrer">Current website ${icon('diagonal',12)}</a></div></div><div class="footer-bottom"><span>© ${new Date().getFullYear()} Church Times Nigeria · Churchtimes Agency Ltd</span><span>${route==='latest'?'Published newsroom reports':'Selected coverage · updated 5 October 2026'}</span><button class="text-button" data-privacy>Privacy & reading list</button></div></div></footer>
+    <section class="connect-band" id="connect"><div class="container connect-inner"><svg class="connect-monogram" viewBox="0 0 460 350" aria-hidden="true" focusable="false"><text x="0" y="280" fill="currentColor" font-size="330">CT<tspan fill="#c39368">.</tspan></text></svg><div><span class="eyebrow">KEEP A WIDER PERSPECTIVE</span><h2>Good stories deserve<br><em>your attention.</em></h2><p>Read the latest from Church Times Nigeria.<br>For publication updates, get in touch with the newsroom.</p></div><div class="connect-action"><a class="button button-light" href="mailto:info@churchtimesnigeria.net?subject=Church%20Times%20publication%20updates">Request updates ${icon('mail',18)}</a><small>Opens an email request to the publication.<br>You are not automatically subscribed.</small></div></div></section>
+    <footer class="site-footer"><div class="container"><div class="footer-main"><div>${wordmark('footer-wordmark')}<p>Professional reporting on the church and on<br>Christians across every sphere of life.</p></div><div><span class="eyebrow">EXPLORE</span>${sections.slice(0,4).map(s=>`<a href="#section/${s.slug}">${s.name}</a>`).join('')}</div><div><span class="eyebrow">PERSPECTIVES</span><a href="#section/health">Health & education</a><a href="#section/opinion">Opinion & columns</a><a href="#section/publishers-note">Publisher’s note</a><a href="#latest">Latest newsroom reports</a><a href="#live">Live coverage</a><a href="#saved">Your reading list</a></div><div><span class="eyebrow">THE PUBLICATION</span><a href="#about">Our story</a><a href="#advertise">Advertise with us</a><a href="#contact">Contact the newsroom</a><a href="#submit">Submit a story</a><a href="https://churchtimesnigeria.net/" target="_blank" rel="noopener noreferrer">Current website ${icon('diagonal',12)}</a></div></div><div class="footer-bottom"><span>© ${new Date().getFullYear()} Church Times Nigeria · Churchtimes Agency Ltd</span><span>${route==='live'?'Public live coverage':route==='latest'?'Published newsroom reports':'Selected coverage · updated 5 October 2026'}</span><button class="text-button" data-privacy>Privacy & reading list</button></div></div></footer>
     <dialog id="search-dialog" aria-labelledby="search-title"><div class="dialog-bar"><span class="eyebrow">CHURCH TIMES NIGERIA</span><button class="icon-button" data-close aria-label="Close search">${icon('close')}</button></div><h2 id="search-title">What’s on your mind?</h2><form id="search-form"><label class="sr-only" for="search-input">Search headlines, topics or authors</label><div class="search-input-wrap">${icon('search')}<input id="search-input" type="search" name="query" placeholder="Search stories, topics or writers…" maxlength="120" required autocomplete="off"><button class="button button-dark" type="submit">Search ${icon('arrow',16)}</button></div></form><p class="muted small">Explore ${stories.length} selected stories from the current publication.</p><div class="search-suggestions"><span class="eyebrow">START WITH A TOPIC</span>${['Faith','Business','Education','Gbenga Osinaike'].map(q=>`<button data-query="${q}">${q} ${icon('diagonal',14)}</button>`).join('')}</div></dialog>
-    <dialog id="menu-dialog" aria-labelledby="menu-title"><div class="dialog-bar"><h2 id="menu-title">Explore Church Times.</h2><button class="icon-button" data-close aria-label="Close menu">${icon('close')}</button></div><div class="mobile-sections"><a href="#latest">Latest newsroom reports ${icon('arrow')}</a><a href="#saved">Your reading list ${icon('bookmark')}</a>${sections.map(s=>`<a href="#section/${s.slug}">${s.name} ${icon('arrow')}</a>`).join('')}<a href="#about">Our story ${icon('arrow')}</a><a href="#contact">Contact ${icon('arrow')}</a><a href="#submit">Submit a story ${icon('arrow')}</a></div></dialog>
-    <dialog id="privacy-dialog" aria-labelledby="privacy-title"><div class="dialog-bar"><span class="eyebrow">YOUR READING EXPERIENCE</span><button class="icon-button" data-close aria-label="Close privacy notice">${icon('close')}</button></div><h2 id="privacy-title">A considered approach<br>to your privacy.</h2><p>Your reading list is saved only in this browser. It is not connected to an account and is not sent to the publisher. Clear it from the reading-list page or your browser’s site storage.</p><p>Public forms send the details you enter to the newsroom only when you submit. They do not save drafts in browser storage. When online sending is enabled, Cloudflare Turnstile loads to help prevent spam and is subject to Cloudflare’s privacy terms. This website has no analytics trackers, payment collection or automatic newsletter signup. Email and telephone links open the services you choose to use. The original publication and external services have their own privacy terms.</p></dialog>
-    <div id="toast" role="status" aria-live="polite"></div>`;
+    <dialog id="menu-dialog" aria-labelledby="menu-title"><div class="dialog-bar"><h2 id="menu-title">Explore Church Times.</h2><button class="icon-button" data-close aria-label="Close menu">${icon('close')}</button></div><nav class="mobile-sections" aria-label="Mobile sections"><a href="#latest">Latest newsroom reports ${icon('arrow')}</a><a href="#live">Live coverage ${icon('arrow')}</a><a href="#saved">Your reading list ${icon('bookmark')}</a>${sections.map(s=>`<a href="#section/${s.slug}">${s.name} ${icon('arrow')}</a>`).join('')}<a href="#about">Our story ${icon('arrow')}</a><a href="#contact">Contact ${icon('arrow')}</a><a href="#advertise">Advertise ${icon('arrow')}</a><a href="#submit">Submit a story ${icon('arrow')}</a></nav></dialog>
+    <dialog id="privacy-dialog" aria-labelledby="privacy-title"><div class="dialog-bar"><span class="eyebrow">YOUR READING EXPERIENCE</span><button class="icon-button" data-close aria-label="Close privacy notice">${icon('close')}</button></div><h2 id="privacy-title">A considered approach<br>to your privacy.</h2><p>Your reading list is saved only in this browser. It is not connected to an account and is not sent to the publisher. Clear it from the reading-list page or your browser’s site storage.</p><p>Public forms send the details you enter to the newsroom only when you submit. They do not save drafts in browser storage. When online sending is enabled, Cloudflare Turnstile loads to help prevent spam and is subject to Cloudflare’s privacy terms. This website has no analytics trackers, payment collection or automatic newsletter signup. Email and telephone links open the services you choose to use. Paid placements are labelled as advertisements. Active campaign images may be served by the publisher or an approved advertiser; advertiser destinations have their own privacy terms. AdSense fallback is disabled pending review. The original publication and external services have their own privacy terms.</p></dialog>
+    <dialog id="share-dialog" aria-labelledby="share-title"><div class="dialog-bar"><h2 id="share-title">Share this story</h2><button class="icon-button" data-close aria-label="Close sharing">${icon('close')}</button></div><p>Copy this link to share the article.</p><label for="share-url">Article link</label><input id="share-url" type="url" readonly><button class="outline-button" id="select-share-url">Select link</button></dialog>
+    <div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>`;
   bindCommon();
+  mountAdvertisingPlacements(document.querySelector('#main'), advertising, { resolveAsset: asset });
 }
 function card(s, featured=false) {
-  return `<article class="story-card ${featured?'wide-card':''}"><a class="card-image" href="${href(s)}" tabindex="-1" aria-hidden="true">${picture(s)}<span class="image-tag">${escape(s.category)}</span></a><div class="card-copy"><div class="story-meta"><time datetime="${s.dateGMT}">${date(s)}</time>${mark(s)}</div><h3><a href="${href(s)}">${escape(s.title)}</a></h3><p>${escape(s.summary)}</p><div class="card-byline"><span>By ${escape(s.author)}</span><a href="${href(s)}" aria-label="Read briefing: ${escape(s.title)}">${icon('arrow',18)}</a></div></div></article>`;
+  return `<article data-story-slug="${escape(s.slug)}" class="story-card ${featured?'wide-card':''}"><a class="card-image" href="${href(s)}" tabindex="-1" aria-hidden="true">${picture(s)}<span class="image-tag">${escape(s.category)}</span></a><div class="card-copy"><div class="story-meta"><time datetime="${s.dateGMT}">${date(s)}</time>${mark(s)}</div><h3><a href="${href(s)}">${escape(s.title)}</a></h3><p>${escape(s.summary)}</p><div class="card-byline"><span>By ${escape(s.author)}</span><a href="${href(s)}" aria-label="Read briefing: ${escape(s.title)}">${icon('arrow',18)}</a></div></div></article>`;
 }
 function heading(eyebrow,title,link='') {
   return `<div class="section-heading"><div><span class="eyebrow">${eyebrow}</span><h2>${title}</h2></div>${link}</div>`;
 }
+let homeReports = [];
+const homeSelection = () => selectHomepage(stories, { filter, limit });
+const adMarker = placement => `<template data-ad-placement="${placement}"></template>`;
 function home() {
-  const lead=byId(29259), latest=[byId(29276),byId(29267),byId(29264)];
-  shell(`<div class="container"><div class="edition-line"><span><span class="status-dot"></span> THE LATEST EDITION</span><span>Faith, public life & everything in between</span></div><section class="lead-layout" aria-label="Featured stories"><article class="lead-story"><a class="lead-photo" href="${href(lead)}" tabindex="-1" aria-hidden="true">${picture(lead,'',true)}</a><div class="lead-content"><span class="eyebrow light-eyebrow"><span class="tiny-rule"></span> NEWS · FAITH & PUBLIC LIFE</span><h1><a href="${href(lead)}">${escape(lead.title)}</a></h1><p>${escape(lead.summary)}</p><div class="lead-bottom"><span>By ${escape(lead.author)} <span class="meta-dot">·</span> ${date(lead)}</span><a href="${href(lead)}" class="circle-link" aria-label="Read the lead story">${icon('arrow',21)}</a></div></div>${mark(lead,'lead-save')}</article><aside class="latest-rail"><div class="rail-heading"><span class="eyebrow">IN THE HEADLINES</span><span class="rail-rule"></span></div>${latest.map((s,i)=>`<article class="rail-story"><div><span class="eyebrow clay">${escape(s.category)}</span><h2><a href="${href(s)}">${escape(s.title)}</a></h2><time datetime="${s.dateGMT}">${date(s)}</time></div><a href="${href(s)}" tabindex="-1" aria-hidden="true">${picture(s)}</a></article>`).join('')}<a href="#section/news" class="text-link rail-link">More from the newsroom ${icon('arrow',18)}</a></aside></section><div class="mission-strip"><span class="eyebrow">WHY WE REPORT</span><p>Faith is part of public life.<br class="mobile-only"> It deserves a wider lens.</p><a href="#about" class="text-link">Our story ${icon('diagonal',16)}</a></div>
-    ${import.meta.env.VITE_PUBLIC_CMS_URL ? '<section class="newsroom-home" id="newsroom-home" aria-label="Published newsroom reports" hidden></section>' : ''}<section class="news-section" id="latest">${heading('FROM THE NEWSROOM','The stories that matter.','<a class="text-link" href="#section/news">Explore the newsroom '+icon('arrow',17)+'</a>')}<div class="story-filters" aria-label="Filter latest stories">${['All','News','Business','Features','Opinion','Interviews'].map(c=>`<button data-filter="${c}" aria-pressed="${filter===c}" class="${filter===c?'selected':''}">${c}</button>`).join('')}</div><div class="story-grid" id="latest-grid">${homeStories()}</div><div class="load-more-wrap" id="load-more-wrap">${loadButton()}</div></section>
-    <section class="perspective-section">${heading('PERSPECTIVE, NOT JUST HEADLINES','Room for a deeper read.','<a class="text-link" href="#section/opinion">Opinion & columns '+icon('arrow',17)+'</a>')}<div class="perspective-layout"><article class="perspective-feature"><a href="${href(byId(29276))}" class="perspective-photo" tabindex="-1" aria-hidden="true">${picture(byId(29276))}</a><div><span class="eyebrow clay">OPINION · REMEMBRANCE</span><h3><a href="${href(byId(29276))}">${escape(byId(29276).title)}</a></h3><p>${escape(byId(29276).summary)}</p><a class="text-link" href="${href(byId(29276))}">Read the perspective ${icon('arrow',18)}</a></div></article><div class="perspective-list">${[byId(29257),byId(29255),byId(29126)].map((s,i)=>`<article><span class="perspective-number">0${i+1}</span><div><span class="eyebrow clay">${escape(s.category)}</span><h3><a href="${href(s)}">${escape(s.title)}</a></h3><span class="muted small">${escape(s.author)}</span></div></article>`).join('')}</div></div></section>
-    <section class="society-section">${heading('BEYOND THE CHURCH WALLS','Faith meets everyday life.','<a class="text-link" href="#section/health">Health & education '+icon('arrow',17)+'</a>')}<div class="society-grid">${[byId(28710),byId(28875),byId(28877)].map(s=>card(s)).join('')}</div></section>
-    <section class="interview-feature"><div class="interview-image">${picture(byId(28527))}<span class="image-source">IMAGE FROM THE ORIGINAL CHURCH TIMES ARTICLE</span></div><div class="interview-copy"><span class="eyebrow light-eyebrow">IN CONVERSATION</span><h2>Lives of service.<br><em>Stories of faith.</em></h2><h3><a href="${href(byId(28527))}">${escape(byId(28527).title)}</a></h3><p>${escape(byId(28527).summary)}</p><a class="button button-light" href="${href(byId(28527))}">Explore the interview ${icon('arrow',18)}</a></div></section>
-    <section class="publication-strip"><span class="eyebrow">CHURCH TIMES NIGERIA</span><h2>Reporting the church.<br><em>Understanding the world.</em></h2><p>News, features, conversations and perspectives on Christians in politics, business, education, health and beyond.</p><a class="text-link" href="#submit">Share a story with the newsroom ${icon('arrow',17)}</a><a class="text-link" href="#about">Meet the publication ${icon('diagonal',17)}</a></section></div>`, 'home');
+  homeReports = [];
+  const { lead, featured: latest } = homeSelection();
+  shell(`<div class="container"><div class="edition-line"><span><span class="status-dot"></span> THE LATEST EDITION</span><span>Faith, public life & everything in between</span></div><section class="lead-layout" aria-label="Featured stories"><article class="lead-story" data-story-slug="${escape(lead.slug)}"><a class="lead-photo" href="${href(lead)}" tabindex="-1" aria-hidden="true">${picture(lead,'',true,'(max-width: 760px) calc(100vw - 38px), 65vw')}</a><div class="lead-content"><span class="eyebrow light-eyebrow"><span class="tiny-rule"></span> NEWS · FAITH & PUBLIC LIFE</span><h1><a href="${href(lead)}">${escape(lead.title)}</a></h1><p>${escape(lead.summary)}</p><div class="lead-bottom"><span>By ${escape(lead.author)} <span class="meta-dot">·</span> ${date(lead)}</span><a href="${href(lead)}" class="circle-link" aria-label="Read the lead story">${icon('arrow',21)}</a></div></div>${mark(lead,'lead-save')}</article><aside class="latest-rail"><div class="rail-heading"><span class="eyebrow">IN THE HEADLINES</span><span class="rail-rule"></span></div>${latest.map((s,i)=>`<article class="rail-story" data-story-slug="${escape(s.slug)}"><div><span class="eyebrow clay">${escape(s.category)}</span><h2><a href="${href(s)}">${escape(s.title)}</a></h2><time datetime="${s.dateGMT}">${date(s)}</time></div><a href="${href(s)}" tabindex="-1" aria-hidden="true">${picture(s,'',false,'110px')}</a></article>`).join('')}<a href="#section/news" class="text-link rail-link">More from the newsroom ${icon('arrow',18)}</a></aside></section>
+    ${adMarker('homepage-billboard')}
+    <section class="news-section homepage-latest" id="latest">${heading('THE CURRENT EDITION','Latest news.', '<a class="text-link" href="#section/news">All news '+icon('arrow',17)+'</a>')}
+      <div class="story-filters" aria-label="Filter latest stories">${['All','News','Business','Features','Opinion','Interviews'].map(c=>`<button data-filter="${c}" aria-pressed="${filter===c}" class="${filter===c?'selected':''}">${c}</button>`).join('')}</div>
+      <div class="story-grid" id="latest-grid">${homeStories()}</div>
+      <div class="load-more-wrap" id="load-more-wrap">${loadButton()}</div>
+    </section>
+    ${adMarker('mobile-banner')}
+    <div id="home-editorial">${homeEditorial()}</div>${import.meta.env.VITE_PUBLIC_CMS_URL ? '<section class="newsroom-home" id="newsroom-home" aria-label="Published newsroom reports" hidden></section>' : ''}
+  </div>`, 'home');
   bindFilters();
   loadHomeReports();
 }
-function filteredHome(){return stories.filter(s=>filter==='All'||(filter==='Opinion'?s.categories.some(c=>['Opinion','Columnists'].includes(c)):s.categories.includes(filter)));}
-function homeStories(){const list=filteredHome();return list.length?list.slice(0,limit).map(s=>card(s)).join(''):'<div class="empty-state"><h3>No stories in this selection.</h3><p>Choose another section.</p></div>';}
+function homeEditorial() {
+  const { perspectives } = homeSelection();
+  if (!perspectives.length) return '';
+  return `<section class="homepage-perspectives" aria-label="Perspectives">${heading('PERSPECTIVES','Ideas & public life.', '<a class="text-link" href="#section/opinion">More perspectives '+icon('arrow',17)+'</a>')}<div class="story-grid">${perspectives.map(story => card(story)).join('')}</div></section>`;
+}
+function filteredHome(){ return homeSelection().latest; }
+function homeStories(){const list=homeSelection().shown;return list.length?list.map(s=>card(s)).join(''):'<div class="empty-state"><h3>No stories in this selection.</h3><p>Choose another section.</p></div>';}
 function loadButton(){return filteredHome().length>limit?`<button class="outline-button" id="load-more">More stories ${icon('down',17)}</button>`:`<span class="muted small">You’re up to date with this selection.</span>`;}
 function bindFilters(){document.querySelectorAll('[data-filter]').forEach(b=>b.addEventListener('click',()=>{filter=b.dataset.filter;limit=6;document.querySelectorAll('[data-filter]').forEach(x=>{const active=x===b;x.classList.toggle('selected',active);x.setAttribute('aria-pressed',String(active));});refreshHome();}));bindLoad();}
-function bindLoad(){document.querySelector('#load-more')?.addEventListener('click',()=>{limit+=6;refreshHome();});}
-function refreshHome(){document.querySelector('#latest-grid').innerHTML=homeStories();document.querySelector('#load-more-wrap').innerHTML=loadButton();bindSaves();bindLoad();}
+function bindLoad(){document.querySelector('#load-more')?.addEventListener('click',()=>{const previous=document.querySelectorAll('#latest-grid .story-card').length;limit+=6;refreshHome(previous);});}
+function refreshHome(focusIndex){document.querySelector('#home-editorial').innerHTML=homeEditorial();renderHomeReports();document.querySelector('#latest-grid').innerHTML=homeStories();document.querySelector('#load-more-wrap').innerHTML=loadButton();bindSaves();bindLoad();const cards=document.querySelectorAll('#latest-grid .story-card');if(Number.isInteger(focusIndex))cards[focusIndex]?.querySelector('h3 a').focus({preventScroll:true});toast(`${cards.length} ${filter==='All'?'':filter+' '}stories shown.`);}
 function intro(kicker,title,description){return `<section class="page-intro"><div class="container"><span class="eyebrow clay">${kicker}</span><h1>${title}</h1><p>${description}</p></div></section>`;}
-function sectionPage(slug){const section=sections.find(s=>s.slug===slug);if(!section){notFound();return;}const list=stories.filter(s=>inSection(s,section));shell(`${intro('THE JOURNAL',section.name,section.description)}<section class="container section-list"><div class="listing-meta"><span>${list.length} selected ${list.length===1?'story':'stories'}</span><span>From the current Church Times publication</span></div><div class="story-grid">${list.map(s=>card(s)).join('')}</div><div class="source-note">Explore more from this section on <a href="https://churchtimesnigeria.net/category/${slug==='opinion'?'columnists':slug==='health'?'health':slug}/" target="_blank" rel="noopener noreferrer">the current website ${icon('diagonal',14)}</a>.</div></section>`,slug);}
-function storyPage(slug){const s=stories.find(s=>s.slug===slug);if(!s){notFound();return;}const section=sections.find(x=>inSection(s,x));const related=stories.filter(x=>x.id!==s.id&&x.categories.some(c=>s.categories.includes(c))).slice(0,3);shell(`<article class="article-page container"><div class="breadcrumbs"><a href="#home">Home</a><span>/</span><a href="#section/${section?.slug||'news'}">${escape(s.category)}</a></div><header class="article-header"><span class="eyebrow clay">${escape(s.category)} · STORY BRIEFING</span><h1>${escape(s.title)}</h1><p class="article-deck">${escape(s.summary)}</p><div class="article-meta"><div class="author-avatar" aria-hidden="true">${s.author==='Church Times'?'CT':s.author.split(' ').map(x=>x[0]).slice(0,2).join('')}</div><div><strong>${escape(s.author)}</strong><span>Originally published ${date(s,true)}</span></div><div class="article-tools">${mark(s)}<button class="icon-button" data-share="${s.id}" aria-label="Copy original article link">${icon('share',19)}</button><a href="${s.source}" class="text-link" target="_blank" rel="noopener noreferrer">Original article ${icon('diagonal',15)}</a></div></div></header><figure class="article-figure">${picture(s,'',true)}<figcaption>Image from the original Church Times Nigeria article. <a href="${s.imageSource}" target="_blank" rel="noopener noreferrer">View source ${icon('diagonal',12)}</a></figcaption></figure><div class="article-body-layout"><aside class="article-side"><span class="eyebrow">THE STORY AT A GLANCE</span><span class="article-side-line"></span><p>A concise briefing on a report from Church Times Nigeria.</p><a class="text-link" href="${s.source}" target="_blank" rel="noopener noreferrer">Read the full story ${icon('diagonal',15)}</a></aside><div class="article-body">${s.briefing.map(p=>`<p>${escape(p)}</p>`).join('')}<div class="original-callout"><span class="eyebrow">CONTINUE READING</span><h2>The full story,<br>in the original publication.</h2><p>This briefing introduces the report. Read the complete article, quotations and context on Church Times Nigeria.</p><a href="${s.source}" class="button button-dark" target="_blank" rel="noopener noreferrer">Read the original article ${icon('diagonal',17)}</a></div><div class="article-tags">${s.categories.map(c=>`<span>${escape(c)}</span>`).join('')}</div></div></div></article><section class="container related-section">${heading('KEEP EXPLORING','More to consider.')}<div class="story-grid">${related.map(x=>card(x)).join('')}</div></section>`,section?.slug||'news');document.querySelector('[data-share]').addEventListener('click',async()=>{try{await navigator.clipboard.writeText(s.source);toast('Original article link copied.');}catch{openShareFallback(s.source);}});}
-function searchPage(query){const terms=query.toLowerCase().split(/\s+/).filter(Boolean);const results=stories.filter(s=>terms.every(t=>`${s.title} ${s.summary} ${s.author} ${s.categories.join(' ')}`.toLowerCase().includes(t)));shell(`${intro('SEARCH THE JOURNAL',query?`Results for “${escape(query)}”`:'Find a story.','Explore headlines, topics and contributors from the current publication.')}<section class="container section-list"><form id="page-search" class="page-search"><label class="sr-only" for="page-search-input">Search stories</label><div class="search-input-wrap">${icon('search')}<input id="page-search-input" name="query" type="search" value="${escape(query)}" placeholder="Search the journal…" maxlength="120" required><button class="button button-dark">Search ${icon('arrow',17)}</button></div></form><div class="listing-meta"><span>${results.length} ${results.length===1?'story':'stories'} found</span></div><div class="story-grid">${results.length?results.map(s=>card(s)).join(''):'<div class="empty-state"><h2>No matching stories.</h2><p>Try a broader word, an author’s name or another topic.</p><a class="button button-dark" href="#home">Explore the journal '+icon('arrow',17)+'</a></div>'}</div></section>`,'search');document.querySelector('#page-search').addEventListener('submit',e=>{e.preventDefault();navigateSearch(document.querySelector('#page-search-input').value);});}
+function sectionPage(slug){const section=sections.find(s=>s.slug===slug);if(!section){notFound();return;}const list=stories.filter(s=>inSection(s,section));shell(`${intro('THE JOURNAL',section.name,section.description)}<section class="container section-list"><div class="listing-meta"><span>${list.length} selected ${list.length===1?'story':'stories'}</span><span>From the current Church Times publication</span></div><div class="story-grid">${list.map(s=>card(s)).join('')}</div><div class="source-note">Explore more from this section on <a href="https://churchtimesnigeria.net/category/${slug==='opinion'?'columnists':slug==='health'?'health':slug}/" target="_blank" rel="noopener noreferrer">the current website ${icon('diagonal',14)}</a>.</div></section>`,slug);if(cmsUrl){const block=document.createElement('section');block.className='container section-list';block.innerHTML='<h2>Published newsroom reports</h2><div id="cms-section" aria-busy="true"></div>';document.querySelector('#main').append(block);latestPage({target:block.querySelector('#cms-section'),categorySlug:slug});}}
+function storyPage(slug){const s=stories.find(s=>s.slug===slug);if(!s){notFound();return;}const section=sections.find(x=>inSection(s,x));const related=stories.filter(x=>x.id!==s.id&&x.categories.some(c=>s.categories.includes(c))).slice(0,3);shell(`<article class="article-page container"><div class="breadcrumbs"><a href="#home">Home</a><span>/</span><a href="#section/${section?.slug||'news'}">${escape(s.category)}</a></div><header class="article-header"><span class="eyebrow clay">${escape(s.category)} · STORY BRIEFING</span><h1>${escape(s.title)}</h1><p class="article-deck">${escape(s.summary)}</p><div class="article-meta"><div class="author-avatar" aria-hidden="true">${s.author==='Church Times'?'CT':s.author.split(' ').map(x=>x[0]).slice(0,2).join('')}</div><div><strong>${escape(s.author)}</strong><span>Originally published ${date(s,true)}</span></div><div class="article-tools">${mark(s)}<button class="icon-button" data-share="${s.id}" aria-label="Copy original article link">${icon('share',19)}</button><a href="${s.source}" class="text-link" target="_blank" rel="noopener noreferrer">Original article ${icon('diagonal',15)}</a></div></div></header><figure class="article-figure">${picture(s,'',true,'(max-width: 1000px) calc(100vw - 38px), 1000px')}<figcaption>Image from the original Church Times Nigeria article. <a href="${s.imageSource}" target="_blank" rel="noopener noreferrer">View source ${icon('diagonal',12)}</a></figcaption></figure><div class="article-body-layout"><aside class="article-side"><span class="eyebrow">THE STORY AT A GLANCE</span><span class="article-side-line"></span><p>A concise briefing on a report from Church Times Nigeria.</p><a class="text-link" href="${s.source}" target="_blank" rel="noopener noreferrer">Read the full story ${icon('diagonal',15)}</a></aside><div class="article-body">${s.briefing.map(p=>`<p>${escape(p)}</p>`).join('')}${adMarker('article-inline')}<div class="original-callout"><span class="eyebrow">CONTINUE READING</span><h2>The full story,<br>in the original publication.</h2><p>This briefing introduces the report. Read the complete article, quotations and context on Church Times Nigeria.</p><a href="${s.source}" class="button button-dark" target="_blank" rel="noopener noreferrer">Read the original article ${icon('diagonal',17)}</a></div><div class="article-tags">${s.categories.map(c=>`<span>${escape(c)}</span>`).join('')}</div></div></div></article><section class="container related-section">${heading('KEEP EXPLORING','More to consider.')}<div class="story-grid">${related.map(x=>card(x)).join('')}</div></section>`,section?.slug||'news');document.querySelector('[data-share]').addEventListener('click',async()=>{try{await navigator.clipboard.writeText(s.source);toast('Original article link copied.');}catch{openShareFallback(s.source);}});}
+function searchPage(query){const terms=query.toLowerCase().split(/\s+/).filter(Boolean);const results=stories.filter(s=>terms.every(t=>`${s.title} ${s.summary} ${s.author} ${s.categories.join(' ')}`.toLowerCase().includes(t)));shell(`${intro('SEARCH THE JOURNAL',query?`Results for “${escape(query)}”`:'Find a story.','Explore headlines, topics and contributors from the current publication.')}<section class="container section-list"><form id="page-search" class="page-search"><label class="sr-only" for="page-search-input">Search stories</label><div class="search-input-wrap">${icon('search')}<input id="page-search-input" name="query" type="search" value="${escape(query)}" placeholder="Search the journal…" maxlength="120" required><button class="button button-dark">Search ${icon('arrow',17)}</button></div></form><div class="listing-meta"><span>${results.length} ${results.length===1?'story':'stories'} found</span></div><div class="story-grid">${results.length?results.map(s=>card(s)).join(''):'<div class="empty-state"><h2>No matching stories.</h2><p>Try a broader word, an author’s name or another topic.</p><a class="button button-dark" href="#home">Explore the journal '+icon('arrow',17)+'</a></div>'}</div></section>`,'search');if(cmsUrl && query.trim()){const block=document.createElement('section');block.className='container section-list';block.innerHTML='<h2>Published newsroom search</h2><div id="cms-search" aria-busy="true"></div>';document.querySelector('#main').append(block);latestPage({target:block.querySelector('#cms-search'),query});}document.querySelector('#page-search').addEventListener('submit',e=>{e.preventDefault();navigateSearch(document.querySelector('#page-search-input').value);});}
 function savedPage(){const list=stories.filter(s=>saved.has(s.id));shell(`${intro('YOUR READING LIST','Worth returning to.','Save a story when it catches your attention. Your selection stays in this browser.')}<section class="container section-list"><div class="listing-meta"><span>${list.length} saved ${list.length===1?'story':'stories'}</span>${list.length?'<button class="text-button" id="clear-saved">Clear reading list</button>':''}</div><div class="story-grid">${list.length?list.map(s=>card(s)).join(''):'<div class="empty-state"><span class="empty-icon">'+icon('bookmark',38)+'</span><h2>A little room for good reading.</h2><p>Use the bookmark beside a story to save it for later.</p><a class="button button-dark" href="#home">Find a story '+icon('arrow',17)+'</a></div>'}</div></section>`,'saved');document.querySelector('#clear-saved')?.addEventListener('click',()=>{saved.clear();persistSaved();savedPage();toast('Reading list cleared.');});}
 function about(){shell(`${intro('OUR STORY','A wider lens.<br><em>A lasting conviction.</em>','Professional journalism on the church, the people and the world we share.')}<section class="container about-layout"><div class="about-photo">${picture(byId(29259))}<span>From the current Church Times Nigeria publication</span></div><div class="about-copy"><span class="eyebrow clay">REPORTING WITH PURPOSE</span><h2>The story goes<br>beyond the pulpit.</h2><p>Church Times Nigeria is a publication of Churchtimes Agency Ltd. Its published mission reaches across politics, business, education, health and other spheres of life.</p><p>It brings together news, interviews, features, commentary and the publisher’s reflections, with the ambition to report the church professionally and give readers a wider understanding of Christians in society.</p><p>In the founder’s account supplied for this redesign, the publication began in April 2007 after a career at The Punch. The vision was to bring the standards of secular journalism to church reporting—and follow the story into the wider economy.</p><a href="https://churchtimesnigeria.net/" class="text-link" target="_blank" rel="noopener noreferrer">Explore the existing publication ${icon('diagonal',17)}</a></div></section><section class="container about-principles">${heading('THE DIRECTION OF OUR JOURNALISM','Faith. People. Public life.')}<div class="principle-grid">${[['01','Follow the story','Look beyond events to the people, decisions and institutions shaping public life.'],['02','Make room for context','Distinguish reported accounts, personal perspectives and theological commentary.'],['03','Keep the reader in view','Present stories clearly, identify contributors and make the original context easy to find.']].map(([n,t,p])=>`<article><span>${n}</span><h3>${t}</h3><p>${p}</p></article>`).join('')}</div></section><section class="container contact-callout"><div><span class="eyebrow">START A CONVERSATION</span><h2>Have a story worth telling?</h2><p>Contact the newsroom with news, corrections or an enquiry.</p></div><a class="button button-dark" href="#contact">Get in touch ${icon('arrow',18)}</a></section>`,'about');}
 function contact(){shell(`${intro('CONTACT THE NEWSROOM','The next story<br><em>starts with a conversation.</em>','News tips, reader correspondence and commercial enquiries for Church Times Nigeria.')}<section class="container contact-layout"><div class="contact-primary"><span class="eyebrow clay">EMAIL THE PUBLICATION</span><h2>Let’s hear from you.</h2><a class="contact-email" href="mailto:info@churchtimesnigeria.net">info@churchtimesnigeria.net ${icon('diagonal',23)}</a><p>For a news tip or correction, include the relevant article link and enough detail for the newsroom to understand your enquiry.</p><div class="contact-divider"></div><span class="eyebrow">NAMED CONTACT ON THE CURRENT SITE</span><a class="text-link" href="mailto:gbengaosinaike@churchtimesnigeria.net">gbengaosinaike@churchtimesnigeria.net ${icon('mail',17)}</a></div><aside class="contact-details"><span class="eyebrow">CHURCHTIMES AGENCY LTD</span><h3>Find the publication.</h3><address>14, Oladele Street<br>Dominion Estate<br>Ota, Ogun State<br>Nigeria</address><span class="eyebrow">CALL</span><a href="tel:+2348033336243">+234 803 333 6243</a><a href="tel:+2348023453568">+234 802 345 3568</a><p class="muted small">Contact details as published on the current website. <a href="https://churchtimesnigeria.net/contact-us/" target="_blank" rel="noopener noreferrer">View the contact page ${icon('diagonal',12)}</a></p></aside></section>${publicFormMarkup('contact')}<section class="container contact-callout"><div><span class="eyebrow">COMMERCIAL ENQUIRIES</span><h2>Reach an engaged community.</h2><p>Discuss advertising, publishing and special-edition opportunities.</p></div><a class="button button-dark" href="#advertise">Explore advertising ${icon('arrow',18)}</a></section>`,'contact');disposePublicForm=bindPublicForm('contact');}
@@ -107,27 +154,42 @@ function navigateSearch(query){const clean=query.trim().slice(0,120);location.ha
 function persistSaved(){try{localStorage.setItem('ct-reading-list',JSON.stringify([...saved]));}catch{toast('Saved for this visit. Browser storage is unavailable.');}}
 function toast(message){const t=document.querySelector('#toast');if(!t)return;t.textContent=message;t.classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('visible'),3000);}
 function bindSaves(){document.querySelectorAll('[data-save]').forEach(b=>{b.onclick=()=>{const id=Number(b.dataset.save),s=byId(id);if(saved.has(id)){saved.delete(id);toast('Removed from your reading list.');}else{saved.add(id);toast('Saved to your reading list.');}persistSaved();document.querySelectorAll(`[data-save="${id}"]`).forEach(x=>{const active=saved.has(id);x.classList.toggle('is-saved',active);x.setAttribute('aria-pressed',String(active));x.setAttribute('aria-label',`${active?'Remove from':'Save to'} reading list: ${s.title}`);});const count=document.querySelector('#saved-count');count.textContent=saved.size;count.hidden=!saved.size;document.querySelector('.reading-link').setAttribute('aria-label',`Reading list, ${saved.size} saved stories`);if(location.hash==='#saved')savedPage();};});}
-function openShareFallback(url){const d=document.querySelector('#search-dialog');d.close();toast('Copy the link from the Original article button.');}
-function bindCommon(){bindSaves();document.querySelector('[data-search]').addEventListener('click',()=>{document.querySelector('#search-dialog').showModal();document.querySelector('#search-input').focus();});document.querySelector('[data-menu]').addEventListener('click',()=>document.querySelector('#menu-dialog').showModal());document.querySelector('[data-privacy]').addEventListener('click',()=>document.querySelector('#privacy-dialog').showModal());document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click',()=>b.closest('dialog').close()));document.querySelector('#search-form').addEventListener('submit',e=>{e.preventDefault();document.querySelector('#search-dialog').close();navigateSearch(document.querySelector('#search-input').value);});document.querySelectorAll('[data-query]').forEach(b=>b.addEventListener('click',()=>{document.querySelector('#search-dialog').close();navigateSearch(b.dataset.query);}));document.querySelectorAll('dialog').forEach(d=>d.addEventListener('click',e=>{if(e.target!==d)return;const r=d.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)d.close();}));}
+function openShareFallback(url){const d=document.querySelector('#share-dialog');const input=d.querySelector('input');input.value=url;d.showModal();input.focus();input.select();}
+function openDialog(id, trigger){const d=document.querySelector(id);trigger?.setAttribute('aria-expanded','true');d.addEventListener('close',()=>trigger?.setAttribute('aria-expanded','false'),{once:true});d.showModal();}
+function bindCommon(){bindSaves();document.querySelector('#select-share-url').addEventListener('click',()=>{const input=document.querySelector('#share-url');input.focus();input.select();});document.querySelector('[data-search]').addEventListener('click',()=>{openDialog('#search-dialog',document.querySelector('[data-search]'));document.querySelector('#search-input').focus();});document.querySelector('[data-menu]').addEventListener('click',()=>openDialog('#menu-dialog',document.querySelector('[data-menu]')));document.querySelector('[data-privacy]').addEventListener('click',()=>document.querySelector('#privacy-dialog').showModal());document.querySelectorAll('[data-close]').forEach(b=>b.addEventListener('click',()=>b.closest('dialog').close()));document.querySelector('#search-form').addEventListener('submit',e=>{e.preventDefault();document.querySelector('#search-dialog').close();navigateSearch(document.querySelector('#search-input').value);});document.querySelectorAll('[data-query]').forEach(b=>b.addEventListener('click',()=>{document.querySelector('#search-dialog').close();navigateSearch(b.dataset.query);}));document.querySelectorAll('dialog').forEach(d=>d.addEventListener('click',e=>{if(e.target!==d)return;const r=d.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)d.close();}));}
 
 const cmsUrl = import.meta.env.VITE_PUBLIC_CMS_URL;
-const reportHref = article => `#report/${article.slug}`;
+const publicBase = new URL(document.baseURI).pathname.replace(/index\.html$/,'');
+const reportHref = article => reportPath(article.slug,publicBase);
+function applySocialMetadata(article,canonical) {
+  document.querySelectorAll('meta[property^="og:"],meta[property^="article:"],meta[name^="twitter:"]').forEach(meta=>meta.remove());
+  for(const [key,value] of Object.entries(socialMetadata(article,canonical))) {
+    const meta=document.createElement('meta');meta.setAttribute(key.startsWith('twitter:')?'name':'property',key);meta.content=value;document.head.append(meta);
+  }
+}
+function resetArticleMetadata() {
+  document.querySelector('link[rel="canonical"]')?.remove();
+  document.querySelector('#article-schema')?.remove();
+  const path=publicPageRoute(location.pathname,publicBase)?location.pathname:publicBase;
+  const canonical=siteCanonical(path,{siteUrl:import.meta.env.VITE_PUBLIC_SITE_URL});
+  if(canonical && !reportSlug(location.pathname,publicBase) && (!location.hash || location.hash==='#home')) {const link=document.createElement('link');link.rel='canonical';link.href=canonical;document.head.append(link);}
+  applySocialMetadata(null,canonical);
+}
+function setArticleMetadata(article) {
+  resetArticleMetadata();
+  const canonical=articleCanonical(article.slug,{siteUrl:import.meta.env.VITE_PUBLIC_SITE_URL,basePath:publicBase});
+  if(canonical) {
+    const link=document.createElement('link');link.rel='canonical';link.href=canonical;document.head.append(link);
+  }
+  applySocialMetadata(article,canonical);
+  const schema=document.createElement('script');schema.id='article-schema';schema.type='application/ld+json';schema.textContent=safeJSON(articleSchema(article,canonical));document.head.append(schema);
+}
+
 function reportDate(article) {
   return article.publishedAt ? `<time datetime="${escape(article.publishedAt)}">${date({dateGMT:article.publishedAt},true)}</time>` : '';
 }
-function reportImage(article, hero=false) {
-  const image=article.featuredImage;
-  if (!image) return '';
-  const width=hero?image.heroWidth:image.cardWidth, height=hero?image.heroHeight:image.cardHeight;
-  const size=width&&height?`width="${width}" height="${height}"`:'';
-  return `<img src="${escape(hero?image.heroUrl:image.cardUrl)}" alt="${escape(hero?image.alt:'')}" ${size} loading="${hero?'eager':'lazy'}" decoding="async">`;
-}
-function reportCorrections(article) {
-  if (!article.corrections.length) return '';
-  return `<section class="article-corrections" aria-label="Corrections"><h2>Corrections</h2><ol>${article.corrections.map(item=>`<li>${item.correctedAt?`<time datetime="${escape(item.correctedAt)}">${date({dateGMT:item.correctedAt},true)}</time>`:''}<p>${escape(item.note)}</p></li>`).join('')}</ol></section>`;
-}
-function reportCard(article) {
-  return `<article class="story-card newsroom-card">${article.featuredImage?`<a class="newsroom-card-image" href="${reportHref(article)}" tabindex="-1" aria-hidden="true">${reportImage(article)}</a>`:''}<div class="newsroom-card-meta"><span class="eyebrow clay">${escape(article.category || 'Newsroom')}</span>${reportDate(article)}</div><h2><a href="${reportHref(article)}">${escape(article.title)}</a></h2><p>${escape(article.excerpt)}</p>${article.bylineName?`<p class="newsroom-byline">By ${escape(article.bylineName)}</p>`:''}<a class="text-link" href="${reportHref(article)}" aria-label="Read article: ${escape(article.title)}">Read article ${icon('arrow',18)}</a></article>`;
+function reportCard(article, index=1) {
+  return `<article class="story-card newsroom-card" data-story-slug="${escape(article.slug)}">${article.featuredImage?`<a class="newsroom-card-image" href="${reportHref(article)}" tabindex="-1" aria-hidden="true">${cmsImage(article.featuredImage,{card:true,eager:index===0,fallbackAlt:article.title})}</a>`:''}<div class="newsroom-card-meta"><span class="eyebrow clay">${escape(article.category || 'Newsroom')}</span>${reportDate(article)}${article.bylineName?`<span class="newsroom-byline">By ${escape(article.bylineName)}</span>`:''}</div><h2><a href="${reportHref(article)}">${escape(article.title)}</a></h2><p>${escape(article.excerpt)}</p><a class="text-link" href="${reportHref(article)}" aria-label="Read article: ${escape(article.title)}">Read article ${icon('arrow',18)}</a></article>`;
 }
 function feedState(target, title, description, retry) {
   const tag = target.id === 'cms-report' ? 'h1' : 'h2';
@@ -135,57 +197,93 @@ function feedState(target, title, description, retry) {
   if (tag === 'h1') document.title = `${title} — Church Times Nigeria`;
   if (retry) target.querySelector('#retry-feed').addEventListener('click',retry);
 }
+function renderHomeReports() {
+  const target = document.querySelector('#newsroom-home');
+  if (!target) return;
+  const articles = uniqueHomeReports(homeReports, homeSelection());
+  target.hidden = !articles.length;
+  target.innerHTML = articles.length ? `${heading('JUST PUBLISHED','From the newsroom.',`<a class="text-link" href="#latest">All newsroom reports ${icon('arrow',17)}</a>`)}<div class="story-grid">${articles.map(reportCard).join('')}</div>` : '';
+  bindCMSImages(target);
+}
 async function loadHomeReports() {
   const target = document.querySelector('#newsroom-home');
   if (!target) return;
   try {
-    const { articles } = await fetchPublishedPage({baseUrl:cmsUrl,limit:3});
-    if (!target.isConnected || !articles.length) return;
-    target.innerHTML = `${heading('JUST PUBLISHED','From the newsroom.',`<a class="text-link" href="#latest">All newsroom reports ${icon('arrow',17)}</a>`)}<div class="story-grid">${articles.map(reportCard).join('')}</div>`;
-    target.hidden = false;
+    const { articles } = await fetchPublishedPage({baseUrl:cmsUrl,signal:routeController.signal,limit:3});
+    if (!target.isConnected) return;
+    homeReports = articles;
+    renderHomeReports();
   } catch { /* The independently available static edition remains the homepage. */ }
 }
-async function latestPage() {
-  shell(`${intro('THE NEWSROOM','The latest reports.','Published reporting from Church Times Nigeria.')}<section class="container section-list newsroom-feed"><div id="cms-latest" aria-busy="true"><p role="status">Loading published reports…</p></div></section>`, 'latest');
-  const target = document.querySelector('#cms-latest');
+async function latestPage({target: suppliedTarget,query,categorySlug} = {}) {
+  if(!suppliedTarget) shell(`${intro('THE NEWSROOM',categorySlug?'Published section.':'The latest reports.','Published reporting from Church Times Nigeria.')}<section class="container section-list newsroom-feed"><div id="cms-category-controls" aria-live="polite"></div><div id="cms-latest" aria-busy="true"><p role="status">Loading published reports…</p></div></section>`, 'latest');
+  const target = suppliedTarget || document.querySelector('#cms-latest');
+  const signal=routeController.signal;
   if (!cmsUrl) {
     target.setAttribute('aria-busy','false');
     feedState(target,'The newsroom is taking shape.','Read our current edition while the new newsroom feed is being prepared.');
     return;
   }
+  if(!suppliedTarget) {
+    const controls=document.querySelector('#cms-category-controls');
+    fetchPublicCategories({baseUrl:cmsUrl,signal}).then(({articles})=>{
+      if(!controls.isConnected || !articles.length) return;
+      controls.innerHTML=`<label for="cms-category">Browse published section</label><select id="cms-category"><option value="">All published reports</option>${articles.map(c=>`<option value="${escape(c.slug)}" ${c.slug===categorySlug?'selected':''}>${escape(c.title)}</option>`).join('')}</select>`;
+      controls.querySelector('select').addEventListener('change',event=>{location.hash=event.target.value?`category/${event.target.value}`:'latest';});
+    }).catch(()=>{if(controls.isConnected) controls.innerHTML='<p>The section list could not be loaded. Published reports remain available.</p>';});
+  }
+  let categoryId;
+  if(categorySlug) {
+    try {
+      const category=await fetchPublicCategory({baseUrl:cmsUrl,slug:categorySlug,signal});
+      if(!target.isConnected)return;
+      if(!category) {feedState(target,'Section unavailable.','This section is not available from the published newsroom.');target.setAttribute('aria-busy','false');return;}
+      categoryId=category.id;
+      if(!suppliedTarget) {document.querySelector('h1').textContent=category.title;document.title=`${category.title} — Church Times Nigeria`;}
+    } catch(error) {
+      if(target.isConnected){feedState(target,'We couldn’t load this section.',cmsErrorMessage(error)||'Please try again later.',()=>latestPage({target,categorySlug}));target.setAttribute('aria-busy','false');}return;
+    }
+  }
   const seen = new Set();
   let grid;
   async function load(page=1) {
     target.setAttribute('aria-busy','true');
-    const previousButton = target.querySelector('#more-reports');
+    const previousButton = target.querySelector('#more-reports, #retry-feed, #newsroom-more button');
+    const restoreFocus = target.contains(document.activeElement);
+    const previousCount = seen.size;
     if (previousButton) { previousButton.disabled = true; previousButton.textContent = 'Loading reports…'; }
     try {
-      const { articles, nextPage } = await fetchPublishedPage({baseUrl:cmsUrl,page,limit:12});
+      const { articles, nextPage } = await fetchPublishedPage({baseUrl:cmsUrl,signal,page,limit:12,query,categoryId});
       if (!target.isConnected) return;
       if (!grid && !articles.length && !nextPage) {
-        feedState(target,'More stories are on their way.','No newsroom reports have been published yet.');
+        feedState(target,query?'No matching published reports.':'More stories are on their way.',query?'Try another headline, phrase or contributor.':'No newsroom reports have been published in this section yet.');
         return;
       }
       if (!grid) {
-        target.innerHTML = '<div class="story-grid" id="newsroom-grid"></div><div class="load-more-wrap" id="newsroom-more"></div>';
+        target.innerHTML = '<p class="sr-only" aria-live="polite" aria-atomic="true" id="feed-announcement"></p><div class="story-grid" id="newsroom-grid"></div><div class="load-more-wrap" id="newsroom-more"></div>';
         grid = target.querySelector('#newsroom-grid');
       }
       const fresh = articles.filter(article => { if (seen.has(article.slug)) return false; seen.add(article.slug); return true; });
       grid.insertAdjacentHTML('beforeend',fresh.map(reportCard).join(''));
+      bindCMSImages(grid);
+      target.querySelector('#feed-announcement').textContent = `${fresh.length} ${fresh.length===1?'report':'reports'} loaded. ${seen.size} ${seen.size===1?'report':'reports'} shown.`;
       const more = target.querySelector('#newsroom-more');
       more.innerHTML = nextPage ? '<button class="outline-button" id="more-reports">More reports '+icon('down',17)+'</button>' : '<p class="muted small" role="status">You’re up to date with the newsroom.</p>';
       more.querySelector('button')?.addEventListener('click',() => load(nextPage));
-    } catch {
+    } catch(error) {
       if (!target.isConnected) return;
       if (grid) {
         const more = target.querySelector('#newsroom-more');
-        more.innerHTML = '<p role="status">More reports could not be loaded. Your stories are still here.</p><button class="outline-button">Try again</button>';
+        more.innerHTML = `<p role="status">More reports could not be loaded. Your stories are still here. ${escape(cmsErrorMessage(error))}</p><button class="outline-button">Try again</button>`;
         more.querySelector('button').addEventListener('click',() => load(page));
-      } else feedState(target,'We couldn’t reach the newsroom.','Please try again, or keep reading the current edition.',() => load(page));
-    } finally { if (target.isConnected) target.setAttribute('aria-busy','false'); }
+      } else feedState(target,'We couldn’t reach the newsroom.',cmsErrorMessage(error)||'Please try again, or keep reading the current edition.',() => load(page));
+    } finally { if (target.isConnected) { target.setAttribute('aria-busy','false'); if (restoreFocus) { const next = grid?.querySelectorAll('h2 a')[previousCount] || target.querySelector('button') || target.querySelector('h2'); if (next?.tagName === 'H2') next.tabIndex = -1; next?.focus({preventScroll:true}); } } }
   }
   await load();
 }
+let serverArticle;
+try {serverArticle=JSON.parse(document.querySelector('#public-article')?.textContent || 'null');} catch {serverArticle=null;}
+document.querySelector('#public-article')?.remove();
 async function reportPage(slug) {
   shell(`<section class="container section-list newsroom-report" id="cms-report" aria-busy="true"><div class="breadcrumbs"><a href="#home">Home</a><span>/</span><a href="#latest">Latest reports</a></div><h1 class="sr-only">Newsroom article</h1><p role="status">Loading article…</p></section>`,'latest');
   const target = document.querySelector('#cms-report');
@@ -196,8 +294,11 @@ async function reportPage(slug) {
   }
   async function load() {
     target.setAttribute('aria-busy','true');
+    const restoreFocus = target.contains(document.activeElement);
+    target.querySelector('button')?.setAttribute('disabled','');
     try {
-      const article = await fetchPublishedArticle({baseUrl:cmsUrl,slug});
+      const article = serverArticle?.slug===slug ? serverArticle : await fetchPublishedArticle({baseUrl:cmsUrl,signal:routeController.signal,slug});
+      serverArticle=null;
       if (!target.isConnected) return;
       if (!article) {
         target.innerHTML = `${intro('THE NEWSROOM','Article unavailable.','This report is not available in the published edition.')}<a class="button button-dark" href="#latest">Browse published reports ${icon('arrow',17)}</a>`;
@@ -205,23 +306,43 @@ async function reportPage(slug) {
         return;
       }
       const body = renderArticleContent(article.content,{baseUrl:cmsUrl});
-      target.innerHTML = `<div class="breadcrumbs"><a href="#home">Home</a><span>/</span><a href="#latest">Latest reports</a></div><article><header class="article-header"><span class="eyebrow clay">${escape(article.category || 'Newsroom')}</span><h1>${escape(article.title)}</h1><p class="article-deck">${escape(article.excerpt)}</p><div class="article-meta">${article.bylineName?`<strong>By ${escape(article.bylineName)}</strong>`:''}${reportDate(article)}<button class="icon-button" id="share-report" aria-label="Copy article link">${icon('share',19)}</button></div></header>${article.featuredImage?`<figure class="newsroom-figure">${reportImage(article,true)}<figcaption>${escape(article.featuredImage.caption)}${article.featuredImage.credit?` · Photo: ${escape(article.featuredImage.credit)}`:''}</figcaption></figure>`:''}<div class="newsroom-article-body article-body">${body || '<p>The full article text is not available yet. Please check back shortly.</p>'}${reportCorrections(article)}${article.legacyUrl?`<p class="legacy-source"><a href="${escape(article.legacyUrl)}" target="_blank" rel="noopener noreferrer">Original publication ${icon('diagonal',15)}</a></p>`:''}</div><div class="newsroom-article-end"><a class="text-link" href="#latest">More from the newsroom ${icon('arrow',17)}</a></div></article>`;
+      target.innerHTML = `<div class="breadcrumbs"><a href="#home">Home</a><span>/</span><a href="#latest">Latest reports</a></div><article><header class="article-header"><span class="eyebrow clay">${escape(article.category || 'Newsroom')}</span><h1>${escape(article.title)}</h1><p class="article-deck">${escape(article.excerpt)}</p><div class="article-meta"><div>${article.bylineName?`<strong class="newsroom-byline">By ${escape(article.bylineName)}</strong>`:''}${reportDate(article)}</div><button class="icon-button" id="share-report" aria-label="Copy article link">${icon('share',19)}</button></div></header>${cmsFigure(article.featuredImage,{eager:true,fallbackAlt:article.title})}<div class="newsroom-article-body article-body">${body || '<p>The full article text is not available yet. Please check back shortly.</p>'}</div>${article.corrections.length?`<section class="newsroom-corrections article-corrections" aria-labelledby="corrections-title"><h2 id="corrections-title">Corrections & updates</h2><ul>${article.corrections.map(c=>`<li>${c.correctedAt?`<time datetime="${escape(c.correctedAt)}">${date({dateGMT:c.correctedAt},true)}</time>`:''}<p>${escape(c.note)}</p></li>`).join('')}</ul></section>`:''}${article.legacyUrl?`<p class="legacy-source"><a href="${escape(article.legacyUrl)}" target="_blank" rel="noopener noreferrer">Original publication ${icon('diagonal',15)}</a></p>`:''}${adMarker('article-inline')}<div class="newsroom-article-end"><a class="text-link" href="#latest">More from the newsroom ${icon('arrow',17)}</a></div></article>`;
+      mountAdvertisingPlacements(target, advertising, { resolveAsset: asset });
+      bindCMSImages(target);
+      setArticleMetadata(article);
       document.title = `${article.title} — Church Times Nigeria`;
       document.querySelector('meta[name="description"]').content = article.excerpt;
       target.querySelector('#share-report').addEventListener('click',async() => {
         try { await navigator.clipboard.writeText(location.href); toast('Article link copied.'); }
-        catch { toast('Copy the article address from your browser to share it.'); }
+        catch { openShareFallback(location.href); }
       });
-    } catch {
-      if (target.isConnected) feedState(target,'We couldn’t load this report.','Please try again. The current edition is still available.',load);
-    } finally { if (target.isConnected) target.setAttribute('aria-busy','false'); }
+    } catch(error) {
+      if (target.isConnected) feedState(target,'We couldn’t load this report.',cmsErrorMessage(error)||'Please try again. The current edition is still available.',load);
+    } finally { if (target.isConnected) { target.setAttribute('aria-busy','false'); if (restoreFocus) { const next=target.querySelector('button, h1'); if(next?.tagName==='H1')next.tabIndex=-1; next?.focus({preventScroll:true}); } } }
   }
   await load();
 }
 
-function render(){let parts;try{parts=decodeURIComponent(location.hash.slice(1)).split('/');}catch{parts=['404'];}const [route='home',...rest]=parts;const param=rest.join('/');const pages={home,about,contact,advertise,submit:submissionPage,saved:savedPage};if(route==='main'){if(!document.querySelector('#main'))home();document.querySelector('#main').focus();return;}if(route==='connect'){if(!document.querySelector('#connect'))home();requestAnimationFrame(()=>document.querySelector('#connect').scrollIntoView({behavior:'smooth'}));return;}if(route==='section')sectionPage(param);else if(route==='story')storyPage(param);else if(route==='search')searchPage(param);else if(route==='latest')latestPage();else if(route==='report')reportPage(param);else if(pages[route])pages[route]();else if(!route)home();else notFound();const heading=document.querySelector('h1')?.textContent||'The journal';document.title=`${heading} — Church Times Nigeria`;document.querySelector('meta[name="description"]').content=document.querySelector('.article-deck')?.textContent||'Church Times Nigeria: news, features, interviews and perspectives on faith and public life.';window.scrollTo({top:0,behavior:'instant'});}
-window.addEventListener('hashchange',()=>{
+function livePage(slug){shell(livePageMarkup(),'live');mountLivePage(document.querySelector('.public-live'),{baseUrl:cmsUrl,slug,signal:routeController.signal});}
+
+let renderedLocation;
+function render(){renderRoute();renderedLocation=location.href;}
+function renderRoute(){let parts;try{parts=location.hash?decodeURIComponent(location.hash.slice(1)).split('/'):location.pathname.startsWith(publicBase+'reports/')?['report',reportSlug(location.pathname,publicBase)||'']:publicPageRoute(location.pathname,publicBase)||['home'];}catch{parts=['404'];}const [route='home',...rest]=parts;const param=rest.join('/');const pages={home,about,contact,advertise,submit:submissionPage,saved:savedPage};if(route==='main'){if(!document.querySelector('#main'))home();document.querySelector('#main').focus();return;}if(route==='connect'){if(!document.querySelector('#connect'))home();requestAnimationFrame(()=>document.querySelector('#connect').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'}));return;}resetArticleMetadata();if(route==='report' && reportPath(param,publicBase))history.replaceState(null,'',reportPath(param,publicBase));if(route==='section')sectionPage(param);else if(route==='story')storyPage(param);else if(route==='search')searchPage(param);else if(route==='latest')latestPage();else if(route==='live')livePage(param);else if(route==='category')latestPage({categorySlug:param});else if(route==='report')reportPage(param);else if(pages[route])pages[route]();else if(!route)home();else notFound();const heading=document.querySelector('h1')?.textContent||'The journal';if(publicPageRoute(location.pathname,publicBase) && !location.hash){document.querySelector('meta[property="og:title"]').content=heading;document.querySelector('meta[property="og:description"]').content=document.querySelector('.page-intro p')?.textContent||heading;}document.title=`${heading} — Church Times Nigeria`;document.querySelector('meta[name="description"]').content=document.querySelector('.article-deck')?.textContent||'Church Times Nigeria: news, features, interviews and perspectives on faith and public life.';window.scrollTo({top:0,behavior:'instant'});}
+function handlePublicNavigation(){
+  // Chromium can notify both history and hash listeners for one navigation.
+  // Replacing an already-rendered form can otherwise discard in-progress input.
+  if(location.href===renderedLocation)return;
+  if(location.hash && location.pathname!==publicBase && !['#main','#connect'].includes(location.hash))history.replaceState(null,'',publicBase+location.hash);
   render();
-  if (!['#main','#connect'].includes(location.hash)) document.querySelector('#main')?.focus({preventScroll:true});
+  if(!['#main','#connect'].includes(location.hash))document.querySelector('#main')?.focus({preventScroll:true});
+}
+window.addEventListener('hashchange',handlePublicNavigation);
+window.addEventListener('popstate',handlePublicNavigation);
+document.addEventListener('click',event=>{
+  const link=event.target.closest('a[href]');
+  if(!link || event.defaultPrevented || event.button!==0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || link.target || link.hasAttribute('download'))return;
+  const url=new URL(link.href);
+  if(url.origin!==location.origin || !reportSlug(url.pathname,publicBase) || url.hash || url.search)return;
+  event.preventDefault();history.pushState(null,'',url.pathname);render();document.querySelector('#main')?.focus({preventScroll:true});
 });
 render();

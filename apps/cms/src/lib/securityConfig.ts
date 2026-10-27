@@ -1,3 +1,4 @@
+import { parseRecipientList } from './contactMessage'
 import { isTurnstileDummySecret } from './turnstile'
 
 /**
@@ -36,10 +37,71 @@ export function normaliseOrigin(value: string): string {
   return value
 }
 
-export type OriginCheckOptions = { name: string; production: boolean }
+/** Hostnames that can only ever resolve to the machine itself (RFC 6761 `.localhost`, loopback addresses). */
+export const isLoopbackHostname = (hostname: string): boolean =>
+  hostname === 'localhost' || hostname.endsWith('.localhost') || hostname === '127.0.0.1' || hostname === '[::1]'
+
+export type InsecureLocalStaging = { enabled: boolean; problems: string[] }
+
+/**
+ * CMS_ALLOW_INSECURE_LOCAL_STAGING=true lets a DISPOSABLE staging server run the real production build
+ * (`next start` forces NODE_ENV=production) on http://*.localhost origins with Cloudflare's dummy Turnstile
+ * test secret, so API/browser end-to-end tests can run without TLS or a real Turnstile widget.
+ *
+ * It is only honoured when CMS_PUBLIC_URL is set and EVERY configured origin (CMS_PUBLIC_URL, CMS_CORS_ORIGINS,
+ * CMS_CSRF_ORIGINS, PUBLIC_SUBMISSION_ORIGINS) is a bare http(s) origin whose hostname is loopback-only
+ * (localhost, *.localhost, 127.0.0.1, [::1]). A real deployment has public https origins, so setting the
+ * flag there makes startup FAIL (it is never silently ignored) instead of weakening anything. Every other
+ * production check (secrets, TRUST_PROXY, wildcard bans, ...) still applies.
+ */
+export function insecureLocalStaging(env: NodeJS.ProcessEnv): InsecureLocalStaging {
+  if (env.CMS_ALLOW_INSECURE_LOCAL_STAGING !== 'true') return { enabled: false, problems: [] }
+  const problems: string[] = []
+  const lists: [string, string[]][] = [
+    ['CMS_PUBLIC_URL', csv(env.CMS_PUBLIC_URL)],
+    ['CMS_CORS_ORIGINS', csv(env.CMS_CORS_ORIGINS)],
+    ['CMS_CSRF_ORIGINS', csv(env.CMS_CSRF_ORIGINS)],
+    ['PUBLIC_SUBMISSION_ORIGINS', csv(env.PUBLIC_SUBMISSION_ORIGINS)],
+  ]
+  if (lists[0]![1].length === 0) problems.push('CMS_ALLOW_INSECURE_LOCAL_STAGING requires CMS_PUBLIC_URL.')
+  for (const [name, list] of lists) {
+    for (const entry of list) {
+      const url = parseOrigin(entry)
+      if (!url || !isLoopbackHostname(url.hostname)) {
+        problems.push(
+          `CMS_ALLOW_INSECURE_LOCAL_STAGING is set but ${name} entry "${entry}" is not a loopback origin ` +
+            '(localhost, *.localhost, 127.0.0.1). Remove the flag outside local staging.',
+        )
+      }
+    }
+  }
+  return { enabled: problems.length === 0, problems }
+}
+
+
+/**
+ * POST /api/users/first-register creates an admin from an unauthenticated request when the users table is empty. Outside
+ * production that is the normal bootstrap. In production it is refused unless ALLOW_FIRST_REGISTER=true (a deliberate,
+ * short-lived opt-in) or disposable loopback staging is on: create the first admin on the server instead
+ * (, docs/operations.md), before the reverse proxy exposes the site.
+ */
+export function firstRegisterAllowed(env: NodeJS.ProcessEnv): boolean {
+  if (env.NODE_ENV !== 'production') return true
+  return env.ALLOW_FIRST_REGISTER === 'true' || insecureLocalStaging(env).enabled
+}
+
+export type OriginCheckOptions = {
+  name: string
+  production: boolean
+  /** Only set from insecureLocalStaging(): also accept http for loopback hostnames in production. */
+  allowInsecureLoopback?: boolean
+}
 
 /** Returns human-readable problems with an origin list ([] when fine). */
-export function checkOriginList(list: string[], { name, production }: OriginCheckOptions): string[] {
+export function checkOriginList(
+  list: string[],
+  { name, production, allowInsecureLoopback = false }: OriginCheckOptions,
+): string[] {
   const problems: string[] = []
   for (const entry of list) {
     if (entry === '*' || entry.includes('*')) {
@@ -51,7 +113,8 @@ export function checkOriginList(list: string[], { name, production }: OriginChec
       problems.push(`${name} entry "${entry}" must be a bare origin like https://example.org (no path or trailing slash).`)
       continue
     }
-    if (url.protocol !== 'https:' && !(LOCAL_HOSTS.has(url.hostname) && !production)) {
+    const insecureOk = (LOCAL_HOSTS.has(url.hostname) && !production) || (allowInsecureLoopback && isLoopbackHostname(url.hostname))
+    if (url.protocol !== 'https:' && !insecureOk) {
       problems.push(`${name} entry "${entry}" must use https${production ? '' : ' (http is only allowed for localhost)'}.`)
     }
   }
@@ -71,8 +134,30 @@ const UNSAFE_IP_HEADERS = new Set([
   'content-length',
 ])
 
+/** Actions the contact and newsletter forms send. A TURNSTILE_EXPECTED_ACTION list that lacks one rejects that whole form. */
+export const NEW_FORM_TURNSTILE_ACTIONS = ['contact-message', 'newsletter-subscribe'] as const
+
+/**
+ * One-line startup warnings (never a startup failure): TURNSTILE_EXPECTED_ACTION is set but does not list the action of
+ * the contact or newsletter form, so every request to that form would be answered 403. Unset is fine (and is covered by
+ * the separate "not set" warning in validateProductionEnv).
+ */
+export function turnstileActionWarnings(env: NodeJS.ProcessEnv): string[] {
+  const list = csv(env.TURNSTILE_EXPECTED_ACTION)
+  if (list.length === 0) return []
+  const missing = NEW_FORM_TURNSTILE_ACTIONS.filter((a) => !list.includes(a))
+  return missing.length === 0
+    ? []
+    : [
+        `TURNSTILE_EXPECTED_ACTION is set but does not include ${missing.join(' and ')}: every request to the matching form is rejected with 403 until it is added.`,
+      ]
+}
+
 export type ProductionEnvCheck = {
+  /** Startup fails when non-empty. */
   problems: string[]
+  /** Logged at startup; never fails the start. */
+  warnings: string[]
 }
 
 /**
@@ -81,6 +166,7 @@ export type ProductionEnvCheck = {
  */
 export function validateProductionEnv(env: NodeJS.ProcessEnv): ProductionEnvCheck {
   const problems: string[] = []
+  const warnings: string[] = []
 
   const secret = env.PAYLOAD_SECRET ?? ''
   if (secret.length < 32) problems.push('PAYLOAD_SECRET must be set and at least 32 characters long.')
@@ -91,10 +177,31 @@ export function validateProductionEnv(env: NodeJS.ProcessEnv): ProductionEnvChec
 
   if ((env.IP_HASH_SALT ?? '').length < 16) problems.push('IP_HASH_SALT must be set and at least 16 characters long.')
 
+  // Disposable local staging only (see insecureLocalStaging): http loopback origins + Cloudflare's test secret.
+  const staging = insecureLocalStaging(env)
+  problems.push(...staging.problems)
+
   const turnstile = env.TURNSTILE_SECRET_KEY?.trim() ?? ''
   if (!turnstile) problems.push('TURNSTILE_SECRET_KEY is required in production (Cloudflare Turnstile secret key).')
-  else if (isTurnstileDummySecret(turnstile)) {
+  else if (isTurnstileDummySecret(turnstile) && !staging.enabled) {
     problems.push('TURNSTILE_SECRET_KEY is one of Cloudflare\'s dummy test secrets; use the real secret in production.')
+  }
+
+  // Widget pinning is REQUIRED in production: without these two settings a token minted for another hostname or widget
+  // action is accepted. Disposable loopback staging uses Cloudflare's dummy keys, which always report a fixed hostname,
+  // so the requirement does not apply there.
+  if (!staging.enabled) {
+    if (csv(env.TURNSTILE_ALLOWED_HOSTNAMES).length === 0) {
+      problems.push(
+        'TURNSTILE_ALLOWED_HOSTNAMES is required in production: set it to the public hostname(s) of the widget (comma list, for example www.churchtimesnigeria.net).',
+      )
+    }
+    if (csv(env.TURNSTILE_EXPECTED_ACTION).length === 0) {
+      problems.push(
+        'TURNSTILE_EXPECTED_ACTION is required in production: set it to the widget action(s) the public site sends ' +
+          '(for example submit-story,contact-message,newsletter-subscribe).',
+      )
+    }
   }
 
   const publicUrl = env.CMS_PUBLIC_URL?.trim() ?? ''
@@ -102,14 +209,17 @@ export function validateProductionEnv(env: NodeJS.ProcessEnv): ProductionEnvChec
   else {
     const url = parseOrigin(publicUrl)
     if (!url) problems.push('CMS_PUBLIC_URL must be a bare origin like https://cms.example.org (no path or trailing slash).')
-    else if (url.protocol !== 'https:') problems.push('CMS_PUBLIC_URL must use https in production.')
+    else if (url.protocol !== 'https:' && !staging.enabled) problems.push('CMS_PUBLIC_URL must use https in production.')
   }
 
-  problems.push(...checkOriginList(csv(env.CMS_CORS_ORIGINS), { name: 'CMS_CORS_ORIGINS', production: true }))
-  problems.push(...checkOriginList(csv(env.CMS_CSRF_ORIGINS), { name: 'CMS_CSRF_ORIGINS', production: true }))
-  problems.push(
-    ...checkOriginList(csv(env.PUBLIC_SUBMISSION_ORIGINS), { name: 'PUBLIC_SUBMISSION_ORIGINS', production: true }),
-  )
+  const originOptions = (name: string) => ({ name, production: true, allowInsecureLoopback: staging.enabled })
+  // An empty list is a misconfiguration in production (every browser call would fail, or be silently unchecked).
+  for (const name of ['CMS_CORS_ORIGINS', 'CMS_CSRF_ORIGINS', 'PUBLIC_SUBMISSION_ORIGINS'] as const) {
+    if (csv(env[name]).length === 0) problems.push(`${name} is required in production (comma list of explicit https origins).`)
+  }
+  problems.push(...checkOriginList(csv(env.CMS_CORS_ORIGINS), originOptions('CMS_CORS_ORIGINS')))
+  problems.push(...checkOriginList(csv(env.CMS_CSRF_ORIGINS), originOptions('CMS_CSRF_ORIGINS')))
+  problems.push(...checkOriginList(csv(env.PUBLIC_SUBMISSION_ORIGINS), originOptions('PUBLIC_SUBMISSION_ORIGINS')))
 
   // The app always runs behind a reverse proxy (docs/operations.md). Without TRUST_PROXY every client
   // shares one rate-limit bucket: public submissions would lock out everybody after a handful of
@@ -132,10 +242,57 @@ export function validateProductionEnv(env: NodeJS.ProcessEnv): ProductionEnvChec
     )
   }
 
+  // SMTP is required in production: staff password reset cannot be delivered without it. Explicit opt-out for a
+  // deployment that really has no mail (CMS_ALLOW_NO_SMTP=true; then use the break-glass procedure in docs/operations.md).
+  // Disposable loopback staging never needs it.
   const smtpHost = env.SMTP_HOST?.trim()
-  if (smtpHost && !(env.EMAIL_FROM_ADDRESS ?? '').trim()) {
+  if (!smtpHost && !staging.enabled) {
+    if (env.CMS_ALLOW_NO_SMTP === 'true') {
+      warnings.push('SMTP_HOST is not set (CMS_ALLOW_NO_SMTP=true): password-reset and notification e-mails are not delivered.')
+    } else {
+      problems.push(
+        'SMTP_HOST is required in production (staff password reset needs e-mail). Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS and EMAIL_FROM_ADDRESS, ' +
+          'or set CMS_ALLOW_NO_SMTP=true to start without e-mail.',
+      )
+    }
+  }
+  if (smtpHost &&!(env.EMAIL_FROM_ADDRESS ?? '').trim()) {
     problems.push('EMAIL_FROM_ADDRESS is required when SMTP_HOST is set.')
   }
 
-  return { problems }
+  // Newsletter (C4). The HMAC key for unsubscribe links must be its own strong secret in production: unsubscribe links
+  // are put in every future e-mail, so a weak or shared key would let anyone forge them. Disposable loopback staging
+  // (staging.enabled) derives a throw-away key instead (lib/newsletter.ts resolveNewsletterTokenSecret).
+  const tokenSecret = env.NEWSLETTER_TOKEN_SECRET?.trim() ?? ''
+  if (!staging.enabled) {
+    if (tokenSecret.length < 32) {
+      problems.push('NEWSLETTER_TOKEN_SECRET must be set and at least 32 characters long.')
+    } else if (tokenSecret === secret || tokenSecret === preview) {
+      problems.push('NEWSLETTER_TOKEN_SECRET must differ from PAYLOAD_SECRET and PREVIEW_SECRET.')
+    }
+  } else if (tokenSecret && tokenSecret.length < 32) {
+    problems.push('NEWSLETTER_TOKEN_SECRET must be at least 32 characters long when set.')
+  }
+  // PUBLIC_SITE_URL is where confirmation links point (the public site, never the API). Optional at startup (the
+  // sign-up answers 503 while it is unset), but when set it must be a bare https origin.
+  const siteUrl = env.PUBLIC_SITE_URL?.trim() ?? ''
+  if (siteUrl) {
+    const parsed = parseOrigin(siteUrl)
+    if (!parsed) problems.push('PUBLIC_SITE_URL must be a bare origin like https://www.example.org (no path or trailing slash).')
+    else if (parsed.protocol !== 'https:' && !(staging.enabled && isLoopbackHostname(parsed.hostname))) {
+      problems.push('PUBLIC_SITE_URL must use https in production.')
+    }
+  }
+
+  // Contact form notifications (C5). Recipients are server-side only. Invalid entries would silently drop mail,
+  // so they fail startup (the message never echoes an address). An empty list is allowed: messages are still
+  // stored (CMS > Contact messages) and each one logs that no notification was sent.
+  const notify = parseRecipientList(env.CONTACT_NOTIFY_TO)
+  if (notify.invalid.length > 0) {
+    problems.push(
+      `CONTACT_NOTIFY_TO has ${notify.invalid.length} invalid or surplus address(es); use a comma list of up to 10 valid e-mail addresses.`,
+    )
+  }
+
+  return { problems, warnings }
 }

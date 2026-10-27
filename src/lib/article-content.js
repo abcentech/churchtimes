@@ -1,6 +1,7 @@
-import { normalizePublicMedia } from './published-articles.js';
-// Render supported Payload Lexical nodes. Raw HTML, unknown blocks and
-// unpopulated uploads are omitted; only safe published-document media is shown.
+import {renderArticleTable} from './article-table.js';
+import { normalizePublicMedia, cmsFigure } from './cms-media.js';
+// Render supported Payload Lexical text and populated public media safely.
+// Unknown nodes, unpopulated relationships and embedded HTML are omitted.
 const escape = text => String(text).replace(/[&<>"']/g, char => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
 })[char]);
@@ -9,30 +10,31 @@ function safeLink(value) {
   if (typeof value !== 'string') return null;
   try {
     const url = new URL(value);
-    return ['http:', 'https:', 'mailto:'].includes(url.protocol) ? url.href : null;
+    return ['http:', 'https:', 'mailto:'].includes(url.protocol) && !url.username && !url.password ? url.href : null;
   } catch { return null; }
 }
 
-export function renderArticleContent(content, { baseUrl } = {}) {
+export function renderArticleContent(content, {baseUrl} = {}) {
   if (typeof content === 'string') {
     return content.trim().split(/\n\s*\n/).filter(Boolean).map(text => `<p>${escape(text)}</p>`).join('');
   }
-  let remaining = 5000;
+  let remaining = 5000,tableNumber=0,lastHeadingLevel=1;
   function render(node, depth = 0) {
     if (!node || typeof node !== 'object' || depth > 30 || --remaining < 0) return '';
     if (node.type === 'text' && typeof node.text === 'string') {
       let text = escape(node.text);
       if (node.format & 1) text = `<strong>${text}</strong>`;
       if (node.format & 2) text = `<em>${text}</em>`;
+      if (node.format & 4) text = `<s>${text}</s>`;
+      if (node.format & 8) text = `<u>${text}</u>`;
+      if (node.format & 16) text = `<code>${text}</code>`;
+      if (node.format & 32) text = `<sub>${text}</sub>`;
+      if (node.format & 64) text = `<sup>${text}</sup>`;
       return text;
     }
+    if (node.type === 'upload' && node.relationTo === 'media') return cmsFigure(normalizePublicMedia(node.value,baseUrl));
+    if (node.type === 'table')return renderArticleTable(node,children=>Array.isArray(children)?children.map(child=>render(child,depth+3)).join(''):'',{number:++tableNumber,consume:()=>--remaining>=0});
     if (node.type === 'linebreak') return '<br>';
-    if (node.type === 'upload' && node.relationTo === 'media') {
-      const image = normalizePublicMedia(node.value, baseUrl);
-      if (!image) return '';
-      const dimensions = image.width && image.height ? `width="${image.width}" height="${image.height}"` : '';
-      return `<figure><img src="${escape(image.url)}" alt="${escape(image.alt)}" ${dimensions} loading="lazy" decoding="async">${image.caption || image.credit ? `<figcaption>${escape(image.caption)}${image.credit ? ` · Photo: ${escape(image.credit)}` : ''}</figcaption>` : ''}</figure>`;
-    }
     const supported = ['root', 'paragraph', 'heading', 'quote', 'list', 'listitem', 'link', 'autolink'];
     if (!supported.includes(node.type)) return '';
     const children = Array.isArray(node.children) ? node.children.map(child => render(child, depth + 1)).join('') : '';
@@ -40,7 +42,9 @@ export function renderArticleContent(content, { baseUrl } = {}) {
     switch (node.type) {
       case 'paragraph': return `<p>${children}</p>`;
       case 'heading': {
-        const tag = ['h2', 'h3', 'h4'].includes(node.tag) ? node.tag : 'h2';
+        const requested=['h2','h3','h4'].includes(node.tag)?Number(node.tag[1]):2;
+        lastHeadingLevel=Math.min(requested,lastHeadingLevel+1);
+        const tag='h'+lastHeadingLevel;
         return `<${tag}>${children}</${tag}>`;
       }
       case 'quote': return `<blockquote>${children}</blockquote>`;

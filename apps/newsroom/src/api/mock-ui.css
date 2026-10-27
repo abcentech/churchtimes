@@ -1,0 +1,62 @@
+/*
+ * Dev-only styles for the mock backend's UI (role switcher, demo accounts on the login screen).
+ * Imported by src/api/mock-ui.js only, which is itself loaded only in the mock dev server, so none of this ships
+ * in the production CSS.
+ */
+
+.role-picker {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background-color: rgba(255, 255, 255, 0.1);
+  padding: 0.35rem 0.65rem;
+  border-radius: var(--radius-md);
+  font-size: 0.8125rem;
+}
+.role-picker label {
+  color: var(--color-sage);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.role-select {
+  background: transparent;
+  color: var(--color-parchment);
+  border: none;
+  font-weight: 600;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+.role-select option {
+  background-color: var(--color-forest);
+  color: var(--color-parchment);
+}
+@media (max-width: 768px) {
+  .role-picker label {
+    display: none;
+  }
+  .role-select {
+    max-width: 105px;
+    font-size: 0.6875rem;
+  }
+}
+
+.mock-login-helper {
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  border: 1px dashed var(--color-rule);
+  border-radius: var(--radius-sm);
+  background: var(--color-parchment-light);
+}
+.mock-login-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--color-muted);
+  margin-bottom: 0.35rem;
+}
+.mock-login-buttons {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}

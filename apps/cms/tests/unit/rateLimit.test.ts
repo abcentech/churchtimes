@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { createRateLimiter, getClientIp, hashIp } from '../../src/lib/rateLimit'
+import { setRetryAfterHeaders } from '../../src/lib/authRateLimit'
+import { createRateLimiter, getClientIp, hashIp, ipBucket } from '../../src/lib/rateLimit'
 
 describe('createRateLimiter', () => {
   it('allows up to limit then blocks with retryAfter', () => {
@@ -35,6 +36,56 @@ describe('createRateLimiter', () => {
   })
 })
 
+describe('rate limiter key flood', () => {
+  it('does not let a flood of new keys reset a blocked bucket', () => {
+    const t = 0
+    const rl = createRateLimiter({ limit: 2, windowMs: 60_000, now: () => t, maxKeys: 5 })
+    rl.check('attacker')
+    rl.check('attacker')
+    expect(rl.check('attacker').allowed).toBe(false)
+    for (let i = 0; i < 50; i++) rl.check('flood-' + i)
+    expect(rl.size()).toBeLessThanOrEqual(5)
+    expect(rl.check('attacker').allowed).toBe(false)
+  })
+
+  it('fails closed for new keys when every live bucket is blocked', () => {
+    const rl = createRateLimiter({ limit: 1, windowMs: 60_000, now: () => 0, maxKeys: 2 })
+    rl.check('a')
+    rl.check('b')
+    const r = rl.check('c')
+    expect(r.allowed).toBe(false)
+    expect(r.retryAfterSeconds).toBe(60)
+    expect(rl.check('a').allowed).toBe(false)
+  })
+})
+
+describe('ipBucket', () => {
+  it('keeps IPv4 exact', () => {
+    expect(ipBucket('203.0.113.9')).toBe('203.0.113.9')
+  })
+  it('buckets IPv6 by /64 regardless of notation or interface id', () => {
+    const a = ipBucket('2001:db8:1:2:aaaa:bbbb:cccc:dddd')
+    expect(a).toBe('2001:db8:1:2::/64')
+    expect(ipBucket('2001:db8:1:2::1')).toBe(a)
+    expect(ipBucket('2001:0DB8:0001:0002:0:0:0:ffff'.toLowerCase())).toBe(a)
+    expect(ipBucket('2001:db8:1:3::1')).not.toBe(a)
+    expect(ipBucket('::1')).toBe('0:0:0:0::/64')
+  })
+  it('treats IPv4-mapped IPv6 as the IPv4 address', () => {
+    expect(ipBucket('::ffff:203.0.113.9')).toBe('203.0.113.9')
+    expect(ipBucket('::ffff:cb00:7109')).toBe('203.0.113.9')
+  })
+  it('getClientIp collapses addresses of one /64', () => {
+    process.env.TRUST_PROXY = 'true'
+    delete process.env.CLIENT_IP_HEADER
+    delete process.env.TRUST_PROXY_HOPS
+    const x = getClientIp({ headers: { get: (n: string) => (n === 'x-forwarded-for' ? '2001:db8:9:9:1::1' : null) } })
+    const y = getClientIp({ headers: { get: (n: string) => (n === 'x-forwarded-for' ? '2001:db8:9:9:ffff::2' : null) } })
+    expect(x).toBe(y)
+    delete process.env.TRUST_PROXY
+  })
+})
+
 const reqWith = (headers: Record<string, string>) => ({
   headers: { get: (n: string) => headers[n.toLowerCase()] ?? null },
 })
@@ -64,7 +115,7 @@ describe('getClientIp / hashIp', () => {
     expect(getClientIp(reqWith({ 'x-forwarded-for': '6.6.6.6, 203.0.113.9' }))).toBe('203.0.113.9')
     expect(getClientIp(reqWith({ 'x-forwarded-for': '203.0.113.9' }))).toBe('203.0.113.9')
     expect(getClientIp(reqWith({ 'x-forwarded-for': ' 6.6.6.6 ,  203.0.113.9 ' }))).toBe('203.0.113.9')
-    expect(getClientIp(reqWith({ 'x-forwarded-for': '2001:db8::1' }))).toBe('2001:db8::1')
+    expect(getClientIp(reqWith({ 'x-forwarded-for': '2001:db8::1' }))).toBe('2001:db8:0:0::/64')
 
     process.env.TRUST_PROXY_HOPS = '2'
     // spoofed prefix, real client, then the address the first proxy saw (appended by the second proxy)
@@ -115,5 +166,23 @@ describe('getClientIp / hashIp', () => {
     vi.stubEnv('NODE_ENV', 'production')
     process.env.IP_HASH_SALT = 'short'
     expect(() => hashIp('1.2.3.4')).toThrow()
+  })
+})
+
+describe('setRetryAfterHeaders', () => {
+  it('sets Retry-After and exposes it cross-origin, keeping headers already on the request', () => {
+    const req: { responseHeaders?: Headers } = {}
+    setRetryAfterHeaders(req, 12.2)
+    expect(req.responseHeaders?.get('retry-after')).toBe('13')
+    expect(req.responseHeaders?.get('access-control-expose-headers')).toBe('Retry-After')
+
+    const existing = new Headers({ 'Set-Cookie': 'a=b', 'Access-Control-Expose-Headers': 'X-Foo' })
+    const req2 = { responseHeaders: existing }
+    setRetryAfterHeaders(req2, 0)
+    expect(req2.responseHeaders.get('set-cookie')).toBe('a=b')
+    expect(req2.responseHeaders.get('retry-after')).toBe('1')
+    expect(req2.responseHeaders.get('access-control-expose-headers')).toBe('X-Foo, Retry-After')
+    setRetryAfterHeaders(req2, 5)
+    expect(req2.responseHeaders.get('access-control-expose-headers')).toBe('X-Foo, Retry-After')
   })
 })

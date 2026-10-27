@@ -3,6 +3,8 @@ import { existsSync } from 'node:fs';
 
 export default defineConfig({
   testDir: './tests',
+  // Newsroom specs need the newsroom app server; run them with npm run test:newsroom-app.
+  testIgnore: ['**/newsroom.spec.js', '**/newsroom-security.spec.js', '**/newsroom-a11y.spec.js'],
   fullyParallel: true,
   use: {
     baseURL: process.env.TEST_BASE_URL || 'http://127.0.0.1:5173/',

@@ -137,8 +137,8 @@ a submission is stored (`201`) but PR4's code reports `unconfirmed` (item 1 belo
   the public site origin in `CMS_CORS_ORIGINS` (article/live reads) and `PUBLIC_SUBMISSION_ORIGINS` (tips). The CMS origin itself is
   always CSRF-allowed.
 - **Turnstile:** register the site key for the public hostname, set `TURNSTILE_ALLOWED_HOSTNAMES` to it and, if you pin the action,
-  `TURNSTILE_EXPECTED_ACTION=submit-story,public_story` (PR4 sends `public_story`; the list form is v1.3). PR4's contact action
-  `public_contact` is intentionally not listed.
+  `TURNSTILE_EXPECTED_ACTION=submit-story` (the public form sends `VITE_TURNSTILE_ACTION`, default `submit-story`; the list form is v1.3).
+  Both forms send `VITE_TURNSTILE_ACTION` when it is set; only if it is unset does the contact form fall back to `submit-contact`. The CMS has no contact endpoint, so that fallback is not listed.
 - Public CDN caching: API responses carry `Vary: Origin`; anonymous article lists have no `Cache-Control`, so cache them only with an
   explicit short TTL on the public hostname, never on a path that can carry the staff cookie.
 
@@ -180,3 +180,7 @@ schedule enforcement and cache headers. That is a product and security decision 
 **Public site (`feat/newsroom-mvp`, `src/lib/published-articles.js`)**: request shape, filtering, pagination and the Lexical renderer
 match the contract. Not yet used but available: `featuredImage` (prefix a relative `url` with the CMS origin unless `CMS_PUBLIC_URL` is set),
 `bylineName`, `corrections`, categories and the live timeline. Add the site origin to `CMS_CORS_ORIGINS`.
+
+## Newsroom editor dependencies
+
+The newsroom editor (`apps/newsroom`) sends `expectedUpdatedAt` with every article content `PATCH` (a 409 means someone else changed the story, and the editor keeps the user's text), and refreshes the staff session with `POST /api/users/refresh` about every 30 minutes while a user is active. Both must keep working as documented in `api-contracts.md`.

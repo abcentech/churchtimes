@@ -1,0 +1,288 @@
+Church Times cross-app REAL UI E2E (Playwright + Chromium) - synthetic data only, no credentials.
+Run started: 2026-10-14T10:14:08.141Z  Node v24.19.0  win32
+Stack: embedded PostgreSQL :55435; Payload CMS (next start, production build) http://cms.churchtimes.localhost:3400 (proxy) -> :3401;
+       REAL public site (vite build) http://www.churchtimes.localhost:5373; REAL newsroom SPA (vite build apps/newsroom) http://newsroom.churchtimes.localhost:5374.
+Turnstile: real Cloudflare widget from challenges.cloudflare.com with the always-pass TEST site key; the CMS verifies against the always-pass TEST secret.
+Nothing in this lane is mocked unless a test title says HARNESS.
+2026-10-14T10:14:17.110Z  [B-public-tip][desktop-chrome] step 01: public submit form with real Turnstile widget verified
+2026-10-14T10:14:18.335Z  [B-public-tip][desktop-chrome] step 02: receipt shows server reference SUB-Q8MJZVVJ
+2026-10-14T10:14:18.933Z  [B-public-tip][desktop-chrome] reference SUB-Q8MJZVVJ stored by CMS with status=new; UI calls: POST /api/public/submissions -> 201
+2026-10-14T10:14:19.138Z  [B-public-tip][desktop-chrome] step 03: public Latest list does not show the tip
+2026-10-14T10:14:28.368Z  [C-public-duplicate][desktop-chrome] step 01: duplicate: real 409 shown as an error, no receipt
+2026-10-14T10:14:33.118Z  [C-public-turnstile-HARNESS][desktop-chrome] step 01: blank Turnstile token: CMS 400 shown as verification error
+2026-10-14T10:14:36.750Z  [C-public-validation][desktop-chrome] step 01: incomplete form: field errors, nothing sent
+2026-10-14T10:14:37.396Z  [A1-reporter-draft-submit][desktop-chrome] step 01: logged out newsroom shows only the sign-in form
+2026-10-14T10:14:38.506Z  [A1-reporter-draft-submit][desktop-chrome] step 02: reporter signed in (server-verified session, LIVE CMS banner)
+2026-10-14T10:14:39.757Z  [A1-reporter-draft-submit][desktop-chrome] step 03: draft written, image uploaded and shown as featured photograph
+2026-10-14T10:14:40.747Z  [A1-reporter-draft-submit][desktop-chrome] step 04: submitted for review: server status in_review
+2026-10-14T10:14:40.942Z  [A1-reporter-draft-submit][desktop-chrome] reporter direct fetch: PATCH status=approved -> 403, status=published -> 403; server status still in_review
+2026-10-14T10:14:40.943Z  [A1-reporter-draft-submit][desktop-chrome] step 05: reporter blocked: no approve/publish buttons, direct PATCH returns 403
+2026-10-14T10:14:41.283Z  [A1-reporter-draft-submit][desktop-chrome] calls: GET /api/users/me -> 200; GET /api/users/me -> 200; POST /api/users/login -> 200; GET /api/users/me -> 200; GET /api/categories -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/users/me -> 200; GET /api/media -> 200; POST /api/media -> 201; GET /api/media/file/xappmv7yc8fe-desktop-chrome-choir.png -> 200; GET /api/media/file/xappmv7yc8fe-desktop-chrome-choir-800x450.png -> 200; POST /api/articles -> 201; PATCH /api/articles/4 -> 200; PATCH /api/articles/4 -> 403; PATCH /api/articles/4 -> 403; POST /api/users/logout -> 200
+2026-10-14T10:14:42.764Z  [A2-editor-approve-publish][desktop-chrome] step 01: review queue lists the reporter story (In Review)
+2026-10-14T10:14:43.433Z  [A2-editor-approve-publish][desktop-chrome] step 02: approved: story left the In Review queue (server status approved)
+2026-10-14T10:14:44.318Z  [A2-editor-approve-publish][desktop-chrome] step 03: published from the newsroom: server status published
+2026-10-14T10:14:44.518Z  [A2-editor-approve-publish][desktop-chrome] calls: GET /api/users/me -> 200; POST /api/users/login -> 200; GET /api/users/me -> 200; GET /api/categories -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/submissions -> 200; GET /api/users/me -> 200; GET /api/submissions -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/media/file/xappmv7yc8fe-desktop-chrome-choir.png -> 200; PATCH /api/articles/4 -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/articles -> 200; GET /api/articles -> 200; PATCH /api/articles/4 -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/articles -> 200
+2026-10-14T10:14:45.663Z  [A3-anonymous-public][desktop-chrome] step 01: anonymous public article page with the uploaded featured image
+2026-10-14T10:14:45.905Z  [A3][desktop-chrome] 4 public-origin requests reached the CMS, none with a cookie
+2026-10-14T10:14:47.490Z  [B-newsroom-tip-review][desktop-chrome] step 01: review queue lists reader tip SUB-Q8MJZVVJ (status NEW)
+2026-10-14T10:14:47.952Z  [B-newsroom-tip-review][desktop-chrome] step 02: tip converted: editor opens the new DRAFT story
+2026-10-14T10:14:48.670Z  [B-newsroom-tip-review][desktop-chrome] submission SUB-Q8MJZVVJ -> converted, article 5 status=draft, bylineName="Ada Obi"
+2026-10-14T10:14:49.179Z  [B-newsroom-tip-review][desktop-chrome] public site -> CMS while staff signed in: 4 requests, 0 with a cookie
+2026-10-14T10:14:49.180Z  [B-newsroom-tip-review][desktop-chrome] step 03: public site: converted tip is not published (article unavailable)
+2026-10-14T10:14:50.812Z  [B-reporter-tips-forbidden][desktop-chrome] reporter direct GET /api/submissions -> 403
+2026-10-14T10:14:50.813Z  [B-reporter-tips-forbidden][desktop-chrome] step 01: reporter: tips tab says only editors can review tips
+2026-10-14T10:14:51.929Z  [C-newsroom-logged-out][desktop-chrome] logged-out CMS traffic: GET /api/users/me -> 200; GET /api/users/me -> 200; GET /api/users/me -> 200; GET /api/users/me -> 200; GET /api/users/me -> 200; GET /api/users/me -> 200; GET /api/users/me -> 200
+2026-10-14T10:14:51.930Z  [C-newsroom-logged-out][desktop-chrome] step 01: logged out: sign-in form only
+2026-10-14T10:14:53.353Z  [C-newsroom-bad-login][desktop-chrome] step 01: wrong password: error from the CMS, still signed out
+2026-10-14T10:14:54.808Z  [C-newsroom-revoked-session][desktop-chrome] step 01: reporter signed in
+2026-10-14T10:14:55.492Z  [C-newsroom-revoked-session][desktop-chrome] after revoke + navigation to Review: signed-in chrome still shown=false; review tabs rendered=0
+2026-10-14T10:14:55.520Z  [C-newsroom-revoked-session][desktop-chrome] step 02: revoked session: back at sign-in with an explanation
+2026-10-14T10:14:57.306Z  [C-newsroom-revoked-write][desktop-chrome] revoked write: login view=0 editor-error=1
+2026-10-14T10:14:57.307Z  [C-newsroom-revoked-write][desktop-chrome] step 01: revoked session write: refused, nothing created
+2026-10-14T10:14:59.083Z  [C-newsroom-logout][desktop-chrome] after logout: /me user=null, GET /api/submissions -> 403
+2026-10-14T10:14:59.084Z  [C-newsroom-logout][desktop-chrome] step 01: after logout
+2026-10-14T10:15:01.061Z  [C-newsroom-forbidden-save][desktop-chrome] forbidden save shown as error: "You are not allowed to perform this action."; server title unchanged, status=in_review
+2026-10-14T10:15:01.062Z  [C-newsroom-forbidden-save][desktop-chrome] step 01: forbidden save: error banner, no success toast
+2026-10-14T10:15:03.308Z  [C-newsroom-bad-upload][desktop-chrome] bad upload error shown: "Unsupported or corrupt image. Use JPEG, PNG or WebP."; no media row created
+2026-10-14T10:15:03.309Z  [C-newsroom-bad-upload][desktop-chrome] step 01: bad upload: CMS rejection shown, nothing selected
+2026-10-14T10:15:35.664Z  [public-form-http-localhost-subdomain][desktop-chrome] Public configuration: notice="" submitDisabled=false turnstileIframes=0 challengeStatus="Verification complete. You can send your submission."
+2026-10-14T10:15:35.664Z  [public-form-http-localhost-subdomain][desktop-chrome] step 01: Public form with the documented CMS origin
+2026-10-14T10:15:38.241Z  [D-mobile-layout-dashboard][desktop-chrome] dashboard: layout width 1280px, client 1280px, scroll 1280px; first overflowing elements: none
+2026-10-14T10:15:38.242Z  [D-mobile-layout-dashboard][desktop-chrome] step 01: dashboard view
+2026-10-14T10:15:40.719Z  [D-mobile-layout-review][desktop-chrome] review: layout width 1280px, client 1280px, scroll 1280px; first overflowing elements: none
+2026-10-14T10:15:40.720Z  [D-mobile-layout-review][desktop-chrome] step 01: review view
+2026-10-14T10:15:43.173Z  [D-mobile-layout-editor][desktop-chrome] editor: layout width 1280px, client 1280px, scroll 1280px; first overflowing elements: none
+2026-10-14T10:15:43.174Z  [D-mobile-layout-editor][desktop-chrome] step 01: editor view
+2026-10-14T10:15:45.678Z  [D-mobile-layout-media][desktop-chrome] media: layout width 1280px, client 1280px, scroll 1280px; first overflowing elements: none
+2026-10-14T10:15:45.678Z  [D-mobile-layout-media][desktop-chrome] step 01: media view
+2026-10-14T10:15:48.179Z  [D-mobile-layout-live][desktop-chrome] live: layout width 1280px, client 1280px, scroll 1280px; first overflowing elements: none
+2026-10-14T10:15:48.181Z  [D-mobile-layout-live][desktop-chrome] step 01: live view
+2026-10-14T10:15:49.869Z  [L1-live-editor-posts][desktop-chrome] step 01: section editor opens Live Coverage (New Event offered)
+2026-10-14T10:15:50.697Z  [L1-live-editor-posts][desktop-chrome] step 02: event created as DRAFT (Go Live offered)
+2026-10-14T10:15:51.124Z  [L1-live-editor-posts][desktop-chrome] anonymous: draft feed -> 404, draft event listing -> 0 docs
+2026-10-14T10:15:51.351Z  [L1-live-editor-posts][desktop-chrome] step 03: update posted while draft: staff see it, anonymous still gets 404
+2026-10-14T10:15:51.984Z  [L1-live-editor-posts][desktop-chrome] step 04: event LIVE with three published updates, newest first
+2026-10-14T10:15:54.001Z  [L2-live-reporter-blocked][desktop-chrome] step 01: reporter live view: no New Event, no Go Live / End, submit-for-review wording
+2026-10-14T10:15:54.532Z  [L2-live-reporter-blocked][desktop-chrome] step 02: reporter submissions wait as pending, no approve / reject buttons
+2026-10-14T10:15:54.829Z  [L2-live-reporter-blocked][desktop-chrome] reporter direct fetch: PATCH approve own -> 403; PATCH end event -> 403; POST event -> 403; POST status=approved -> 201 stored as pending
+2026-10-14T10:15:54.829Z  [L2-live-reporter-blocked][desktop-chrome] step 03: reporter blocked: approve / end / create all 403, immediate publish downgraded to pending
+2026-10-14T10:15:55.011Z  [L2-live-reporter-blocked][desktop-chrome] calls: GET /api/users/me -> 200; POST /api/users/login -> 200; GET /api/users/me -> 200; GET /api/categories -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/users/me -> 200; GET /api/live-events -> 200; GET /api/live-updates -> 200; POST /api/live-updates -> 201; GET /api/live-updates -> 200; POST /api/live-updates -> 201; GET /api/live-updates -> 200; PATCH /api/live-updates/4 -> 403; PATCH /api/live-events/1 -> 403; POST /api/live-events -> 403; POST /api/live-updates -> 201
+2026-10-14T10:15:56.647Z  [L3-live-editor-reviews][desktop-chrome] step 01: editor sees three pending updates with Approve / Reject
+2026-10-14T10:15:57.354Z  [L3-live-editor-reviews][desktop-chrome] step 02: R2 then R1 approved, R3 rejected: timeline in publication order
+2026-10-14T10:15:58.333Z  [L4-live-anonymous-reader][desktop-chrome] step 01: anonymous reader on the public origin (no cookies) fetches the live feed
+2026-10-14T10:15:58.822Z  [L4-live-anonymous-reader][desktop-chrome] anonymous writes: POST live-updates -> 403, POST live-events -> 403
+2026-10-14T10:15:58.822Z  [L4][desktop-chrome] public feed order verified: 1,2,3,4,5
+2026-10-14T10:15:58.823Z  [L4-live-anonymous-reader][desktop-chrome] step 02: anonymous checks complete (page on public origin)
+2026-10-14T10:16:01.202Z  [L5-live-ended][desktop-chrome] step 01: coverage ended in the newsroom
+2026-10-14T10:16:03.922Z  [L6b-live-public-gap][desktop-chrome] looking for the live event and its update on the public site at /#live
+2026-10-14T10:16:03.923Z  [L6b-live-public-gap][desktop-chrome] step 01: public site #live route
+2026-10-14T10:16:14.299Z  [S1-reporter-cannot-schedule][desktop-chrome] step 01: reporter draft: no Schedule control; direct PATCH to scheduled refused (403)
+2026-10-14T10:16:14.601Z  [S1-reporter-cannot-schedule][desktop-chrome] reporter direct PATCH to scheduled: draft -> 403 (Reporters cannot set status "scheduled".); in_review -> 403; server status still in_review
+2026-10-14T10:16:14.601Z  [S1-reporter-cannot-schedule][desktop-chrome] step 02: reporter in review: still no Schedule control, PATCH 403, nothing scheduled
+2026-10-14T10:16:14.920Z  [S1-reporter-cannot-schedule][desktop-chrome] calls: GET /api/users/me -> 200; POST /api/users/login -> 200; GET /api/users/me -> 200; GET /api/categories -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/users/me -> 200; POST /api/articles -> 201; PATCH /api/articles/7 -> 403; PATCH /api/articles/7 -> 200; PATCH /api/articles/7 -> 403; POST /api/users/logout -> 200
+2026-10-14T10:16:16.225Z  [S2-editor-schedules][desktop-chrome] step 01: section editor: story approved, Schedule control visible
+2026-10-14T10:16:16.586Z  [S2-editor-schedules][desktop-chrome] step 02: past time: CMS refused ("must be in the future"), status still approved
+2026-10-14T10:16:16.925Z  [S2-editor-schedules][desktop-chrome] scheduled via the newsroom UI for 2026-10-14T10:17:06.000Z; server status scheduled, publishedAt null
+2026-10-14T10:16:16.925Z  [S2-editor-schedules][desktop-chrome] step 03: scheduled from the newsroom: status Scheduled, publishes automatically
+2026-10-14T10:16:17.280Z  [S2-editor-schedules][desktop-chrome] calls: GET /api/users/me -> 200; POST /api/users/login -> 200; GET /api/users/me -> 200; GET /api/categories -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/users/me -> 200; GET /api/articles/7 -> 200; GET /api/submissions -> 200; GET /api/submissions -> 200; GET /api/submissions -> 200; PATCH /api/articles/7 -> 200; PATCH /api/articles/7 -> 400; PATCH /api/articles/7 -> 200; POST /api/users/logout -> 200
+2026-10-14T10:16:17.971Z  [S2b-api-scheduling-rules][desktop-chrome] API-driven: past -> 400, missing -> 400, garbage -> 400; probe stays draft; real story status scheduled
+2026-10-14T10:16:18.569Z  [S3-scheduler-publishes][desktop-chrome] step 01: before the scheduled time: public site answers 404 "Article unavailable"
+2026-10-14T10:16:18.677Z  [S3-scheduler-publishes][desktop-chrome] absence checks finished 47 s before the scheduled time
+2026-10-14T10:17:07.652Z  [S3-scheduler-publishes][desktop-chrome] published by the scheduler 1365 ms after scheduledFor (publishedAt 2026-10-14T10:17:07.365Z)
+2026-10-14T10:17:08.069Z  [S3-scheduler-publishes][desktop-chrome] step 02: after the scheduler ran: anonymous public article page is live
+2026-10-14T10:17:08.205Z  [S3][desktop-chrome] scheduled story became public 1365 ms after its scheduled time
+2026-10-14T10:17:10.102Z  [I1-reporter-submit][desktop-chrome] article 9 is in_review (server)
+2026-10-14T10:17:10.102Z  [I1-reporter-submit][desktop-chrome] step 01: reporter submitted the story for review
+2026-10-14T10:17:11.803Z  [I2-editor-publish][desktop-chrome] step 01: published from the review queue: server status published
+2026-10-14T10:17:11.939Z  [I2-editor-publish][desktop-chrome] calls: GET /api/users/me -> 200; POST /api/users/login -> 200; GET /api/users/me -> 200; GET /api/categories -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/users/me -> 200; GET /api/submissions -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; PATCH /api/articles/9 -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/articles -> 200; GET /api/articles -> 200; PATCH /api/articles/9 -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/articles -> 200
+2026-10-14T10:17:12.995Z  [I3-editor-correction-note][desktop-chrome] step 01: published story edited: the correction-note modal opens before anything is saved
+2026-10-14T10:17:13.216Z  [I3-editor-correction-note][desktop-chrome] cancel: no PATCH, server text and corrections unchanged
+2026-10-14T10:17:13.389Z  [I3-editor-correction-note][desktop-chrome] step 02: empty correction note refused inside the modal; nothing saved
+2026-10-14T10:17:13.804Z  [I3-editor-correction-note][desktop-chrome] step 03: correction saved: server text corrected, one correction entry with a server date
+2026-10-14T10:17:14.238Z  [I3-editor-correction-note][desktop-chrome] calls: GET /api/users/me -> 200; POST /api/users/login -> 200; GET /api/users/me -> 200; GET /api/categories -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/users/me -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/articles/9 -> 200; GET /api/submissions -> 200; GET /api/submissions -> 200; PATCH /api/articles/9 -> 200; PATCH /api/articles/9 -> 200
+2026-10-14T10:17:14.239Z  [I3-editor-correction-note][desktop-chrome] step 04: second correction appended; first entry unchanged
+2026-10-14T10:17:15.162Z  [I4-anonymous-corrections][desktop-chrome] step 01: anonymous reader: corrected text and both corrections with dates
+2026-10-14T10:17:15.331Z  [I4-anonymous-corrections][desktop-chrome] server-rendered HTML carries both corrections and the corrected text
+2026-10-14T10:17:16.159Z  [I5-reporter-published-readonly][desktop-chrome] step 01: reporter opens the published story: read-only, no workflow buttons
+2026-10-14T10:17:16.372Z  [I5-reporter-published-readonly][desktop-chrome] reporter direct PATCH -> title 403, correction 403, archive 403; server unchanged
+2026-10-14T10:17:32.686Z  [B-public-tip][android-pixel7] step 01: public submit form with real Turnstile widget verified
+2026-10-14T10:17:33.827Z  [B-public-tip][android-pixel7] step 02: receipt shows server reference SUB-AWEJGFF8
+2026-10-14T10:17:34.249Z  [B-public-tip][android-pixel7] reference SUB-AWEJGFF8 stored by CMS with status=new; UI calls: POST /api/public/submissions -> 201
+2026-10-14T10:17:34.432Z  [B-public-tip][android-pixel7] step 03: public Latest list does not show the tip
+2026-10-14T10:17:41.332Z  [C-public-duplicate][android-pixel7] step 01: duplicate: real 409 shown as an error, no receipt
+2026-10-14T10:17:45.018Z  [C-public-turnstile-HARNESS][android-pixel7] step 01: blank Turnstile token: CMS 400 shown as verification error
+2026-10-14T10:17:48.479Z  [C-public-validation][android-pixel7] step 01: incomplete form: field errors, nothing sent
+2026-10-14T10:17:49.172Z  [A1-reporter-draft-submit][android-pixel7] step 01: logged out newsroom shows only the sign-in form
+2026-10-14T10:17:49.752Z  [A1-reporter-draft-submit][android-pixel7] step 02: reporter signed in (server-verified session, LIVE CMS banner)
+2026-10-14T10:17:50.551Z  [A1-reporter-draft-submit][android-pixel7] step 03: draft written, image uploaded and shown as featured photograph
+2026-10-14T10:17:51.295Z  [A1-reporter-draft-submit][android-pixel7] step 04: submitted for review: server status in_review
+2026-10-14T10:17:51.402Z  [A1-reporter-draft-submit][android-pixel7] reporter direct fetch: PATCH status=approved -> 403, status=published -> 403; server status still in_review
+2026-10-14T10:17:51.402Z  [A1-reporter-draft-submit][android-pixel7] step 05: reporter blocked: no approve/publish buttons, direct PATCH returns 403
+2026-10-14T10:17:51.672Z  [A1-reporter-draft-submit][android-pixel7] calls: GET /api/users/me -> 200; GET /api/users/me -> 200; POST /api/users/login -> 200; GET /api/users/me -> 200; GET /api/categories -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/users/me -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/media -> 200; GET /api/media/file/xappmv7yc8fe-desktop-chrome-choir-800x450.png -> 200; POST /api/media -> 201; GET /api/media/file/xappmv7yc8fe-android-pixel7-choir.png -> 200; GET /api/media/file/xappmv7yc8fe-android-pixel7-choir-800x450.png -> 200; POST /api/articles -> 201; PATCH /api/articles/10 -> 200; PATCH /api/articles/10 -> 403; PATCH /api/articles/10 -> 403; POST /api/users/logout -> 200
+2026-10-14T10:17:52.653Z  [A2-editor-approve-publish][android-pixel7] step 01: review queue lists the reporter story (In Review)
+2026-10-14T10:17:53.070Z  [A2-editor-approve-publish][android-pixel7] step 02: approved: story left the In Review queue (server status approved)
+2026-10-14T10:17:53.613Z  [A2-editor-approve-publish][android-pixel7] step 03: published from the newsroom: server status published
+2026-10-14T10:17:53.698Z  [A2-editor-approve-publish][android-pixel7] calls: GET /api/users/me -> 200; POST /api/users/login -> 200; GET /api/users/me -> 200; GET /api/categories -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/users/me -> 200; GET /api/submissions -> 200; GET /api/submissions -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/media/file/xappmv7yc8fe-android-pixel7-choir.png -> 200; PATCH /api/articles/10 -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/articles -> 200; GET /api/articles -> 200; PATCH /api/articles/10 -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/articles -> 200
+2026-10-14T10:17:54.563Z  [A3-anonymous-public][android-pixel7] step 01: anonymous public article page with the uploaded featured image
+2026-10-14T10:17:54.731Z  [A3][android-pixel7] 4 public-origin requests reached the CMS, none with a cookie
+2026-10-14T10:17:55.806Z  [B-newsroom-tip-review][android-pixel7] step 01: review queue lists reader tip SUB-AWEJGFF8 (status NEW)
+2026-10-14T10:17:56.114Z  [B-newsroom-tip-review][android-pixel7] step 02: tip converted: editor opens the new DRAFT story
+2026-10-14T10:17:56.543Z  [B-newsroom-tip-review][android-pixel7] submission SUB-AWEJGFF8 -> converted, article 11 status=draft, bylineName="Ada Obi"
+2026-10-14T10:17:56.945Z  [B-newsroom-tip-review][android-pixel7] public site -> CMS while staff signed in: 4 requests, 0 with a cookie
+2026-10-14T10:17:56.946Z  [B-newsroom-tip-review][android-pixel7] step 03: public site: converted tip is not published (article unavailable)
+2026-10-14T10:17:57.938Z  [B-reporter-tips-forbidden][android-pixel7] reporter direct GET /api/submissions -> 403
+2026-10-14T10:17:57.938Z  [B-reporter-tips-forbidden][android-pixel7] step 01: reporter: tips tab says only editors can review tips
+2026-10-14T10:17:58.911Z  [C-newsroom-logged-out][android-pixel7] logged-out CMS traffic: GET /api/users/me -> 200; GET /api/users/me -> 200; GET /api/users/me -> 200; GET /api/users/me -> 200; GET /api/users/me -> 200; GET /api/users/me -> 200; GET /api/users/me -> 200
+2026-10-14T10:17:58.911Z  [C-newsroom-logged-out][android-pixel7] step 01: logged out: sign-in form only
+2026-10-14T10:17:59.741Z  [C-newsroom-bad-login][android-pixel7] step 01: wrong password: error from the CMS, still signed out
+2026-10-14T10:18:01.143Z  [C-newsroom-revoked-session][android-pixel7] step 01: reporter signed in
+2026-10-14T10:18:01.708Z  [C-newsroom-revoked-session][android-pixel7] after revoke + navigation to Review: signed-in chrome still shown=false; review tabs rendered=0
+2026-10-14T10:18:01.730Z  [C-newsroom-revoked-session][android-pixel7] step 02: revoked session: back at sign-in with an explanation
+2026-10-14T10:18:02.912Z  [C-newsroom-revoked-write][android-pixel7] revoked write: login view=0 editor-error=1
+2026-10-14T10:18:02.912Z  [C-newsroom-revoked-write][android-pixel7] step 01: revoked session write: refused, nothing created
+2026-10-14T10:18:03.991Z  [C-newsroom-logout][android-pixel7] after logout: /me user=null, GET /api/submissions -> 403
+2026-10-14T10:18:03.991Z  [C-newsroom-logout][android-pixel7] step 01: after logout
+2026-10-14T10:18:05.248Z  [C-newsroom-forbidden-save][android-pixel7] forbidden save shown as error: "You are not allowed to perform this action."; server title unchanged, status=in_review
+2026-10-14T10:18:05.248Z  [C-newsroom-forbidden-save][android-pixel7] step 01: forbidden save: error banner, no success toast
+2026-10-14T10:18:06.575Z  [C-newsroom-bad-upload][android-pixel7] bad upload error shown: "Unsupported or corrupt image. Use JPEG, PNG or WebP."; no media row created
+2026-10-14T10:18:06.576Z  [C-newsroom-bad-upload][android-pixel7] step 01: bad upload: CMS rejection shown, nothing selected
+2026-10-14T10:18:38.320Z  [public-form-http-localhost-subdomain][android-pixel7] Public configuration: notice="" submitDisabled=false turnstileIframes=0 challengeStatus="Verification complete. You can send your submission."
+2026-10-14T10:18:38.321Z  [public-form-http-localhost-subdomain][android-pixel7] step 01: Public form with the documented CMS origin
+2026-10-14T10:18:40.393Z  [D-mobile-layout-dashboard][android-pixel7] dashboard: layout width 412px, client 412px, scroll 412px; first overflowing elements: table.data-table right=854 | thead. right=854 | tr. right=854 | th. right=523
+2026-10-14T10:18:40.394Z  [D-mobile-layout-dashboard][android-pixel7] step 01: dashboard view
+2026-10-14T10:18:42.352Z  [D-mobile-layout-review][android-pixel7] review: layout width 412px, client 412px, scroll 412px; first overflowing elements: none
+2026-10-14T10:18:42.353Z  [D-mobile-layout-review][android-pixel7] step 01: review view
+2026-10-14T10:18:44.249Z  [D-mobile-layout-editor][android-pixel7] editor: layout width 412px, client 412px, scroll 412px; first overflowing elements: none
+2026-10-14T10:18:44.250Z  [D-mobile-layout-editor][android-pixel7] step 01: editor view
+2026-10-14T10:18:46.291Z  [D-mobile-layout-media][android-pixel7] media: layout width 412px, client 412px, scroll 412px; first overflowing elements: none
+2026-10-14T10:18:46.292Z  [D-mobile-layout-media][android-pixel7] step 01: media view
+2026-10-14T10:18:48.239Z  [D-mobile-layout-live][android-pixel7] live: layout width 412px, client 412px, scroll 412px; first overflowing elements: none
+2026-10-14T10:18:48.240Z  [D-mobile-layout-live][android-pixel7] step 01: live view
+2026-10-14T10:18:49.327Z  [L1-live-editor-posts][android-pixel7] step 01: section editor opens Live Coverage (New Event offered)
+2026-10-14T10:18:49.948Z  [L1-live-editor-posts][android-pixel7] step 02: event created as DRAFT (Go Live offered)
+2026-10-14T10:18:50.290Z  [L1-live-editor-posts][android-pixel7] anonymous: draft feed -> 404, draft event listing -> 0 docs
+2026-10-14T10:18:50.568Z  [L1-live-editor-posts][android-pixel7] step 03: update posted while draft: staff see it, anonymous still gets 404
+2026-10-14T10:18:51.167Z  [L1-live-editor-posts][android-pixel7] step 04: event LIVE with three published updates, newest first
+2026-10-14T10:18:52.937Z  [L2-live-reporter-blocked][android-pixel7] step 01: reporter live view: no New Event, no Go Live / End, submit-for-review wording
+2026-10-14T10:18:53.389Z  [L2-live-reporter-blocked][android-pixel7] step 02: reporter submissions wait as pending, no approve / reject buttons
+2026-10-14T10:18:53.585Z  [L2-live-reporter-blocked][android-pixel7] reporter direct fetch: PATCH approve own -> 403; PATCH end event -> 403; POST event -> 403; POST status=approved -> 201 stored as pending
+2026-10-14T10:18:53.585Z  [L2-live-reporter-blocked][android-pixel7] step 03: reporter blocked: approve / end / create all 403, immediate publish downgraded to pending
+2026-10-14T10:18:53.655Z  [L2-live-reporter-blocked][android-pixel7] calls: GET /api/users/me -> 200; POST /api/users/login -> 200; GET /api/users/me -> 200; GET /api/categories -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/users/me -> 200; GET /api/live-events -> 200; GET /api/live-updates -> 200; POST /api/live-updates -> 201; GET /api/live-updates -> 200; POST /api/live-updates -> 201; GET /api/live-updates -> 200; PATCH /api/live-updates/11 -> 403; PATCH /api/live-events/3 -> 403; POST /api/live-events -> 403; POST /api/live-updates -> 201
+2026-10-14T10:18:54.764Z  [L3-live-editor-reviews][android-pixel7] step 01: editor sees three pending updates with Approve / Reject
+2026-10-14T10:18:55.329Z  [L3-live-editor-reviews][android-pixel7] step 02: R2 then R1 approved, R3 rejected: timeline in publication order
+2026-10-14T10:18:56.058Z  [L4-live-anonymous-reader][android-pixel7] step 01: anonymous reader on the public origin (no cookies) fetches the live feed
+2026-10-14T10:18:56.264Z  [L4-live-anonymous-reader][android-pixel7] anonymous writes: POST live-updates -> 403, POST live-events -> 403
+2026-10-14T10:18:56.264Z  [L4][android-pixel7] public feed order verified: 1,2,3,4,5
+2026-10-14T10:18:56.265Z  [L4-live-anonymous-reader][android-pixel7] step 02: anonymous checks complete (page on public origin)
+2026-10-14T10:18:57.913Z  [L5-live-ended][android-pixel7] step 01: coverage ended in the newsroom
+2026-10-14T10:19:00.575Z  [L6b-live-public-gap][android-pixel7] looking for the live event and its update on the public site at /#live
+2026-10-14T10:19:00.576Z  [L6b-live-public-gap][android-pixel7] step 01: public site #live route
+2026-10-14T10:19:10.204Z  [S1-reporter-cannot-schedule][android-pixel7] step 01: reporter draft: no Schedule control; direct PATCH to scheduled refused (403)
+2026-10-14T10:19:10.549Z  [S1-reporter-cannot-schedule][android-pixel7] reporter direct PATCH to scheduled: draft -> 403 (Reporters cannot set status "scheduled".); in_review -> 403; server status still in_review
+2026-10-14T10:19:10.550Z  [S1-reporter-cannot-schedule][android-pixel7] step 02: reporter in review: still no Schedule control, PATCH 403, nothing scheduled
+2026-10-14T10:19:10.771Z  [S1-reporter-cannot-schedule][android-pixel7] calls: GET /api/users/me -> 200; POST /api/users/login -> 200; GET /api/users/me -> 200; GET /api/categories -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/users/me -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; POST /api/articles -> 201; PATCH /api/articles/13 -> 403; PATCH /api/articles/13 -> 200; PATCH /api/articles/13 -> 403; POST /api/users/logout -> 200
+2026-10-14T10:19:11.882Z  [S2-editor-schedules][android-pixel7] step 01: section editor: story approved, Schedule control visible
+2026-10-14T10:19:12.179Z  [S2-editor-schedules][android-pixel7] step 02: past time: CMS refused ("must be in the future"), status still approved
+2026-10-14T10:19:12.433Z  [S2-editor-schedules][android-pixel7] scheduled via the newsroom UI for 2026-10-14T10:20:02.000Z; server status scheduled, publishedAt null
+2026-10-14T10:19:12.433Z  [S2-editor-schedules][android-pixel7] step 03: scheduled from the newsroom: status Scheduled, publishes automatically
+2026-10-14T10:19:12.658Z  [S2-editor-schedules][android-pixel7] calls: GET /api/users/me -> 200; POST /api/users/login -> 200; GET /api/users/me -> 200; GET /api/categories -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/users/me -> 200; GET /api/articles/13 -> 200; GET /api/submissions -> 200; GET /api/submissions -> 200; GET /api/submissions -> 200; PATCH /api/articles/13 -> 200; PATCH /api/articles/13 -> 400; PATCH /api/articles/13 -> 200; POST /api/users/logout -> 200
+2026-10-14T10:19:13.305Z  [S2b-api-scheduling-rules][android-pixel7] API-driven: past -> 400, missing -> 400, garbage -> 400; probe stays draft; real story status scheduled
+2026-10-14T10:19:13.722Z  [S3-scheduler-publishes][android-pixel7] step 01: before the scheduled time: public site answers 404 "Article unavailable"
+2026-10-14T10:19:13.770Z  [S3-scheduler-publishes][android-pixel7] absence checks finished 48 s before the scheduled time
+2026-10-14T10:20:04.571Z  [S3-scheduler-publishes][android-pixel7] published by the scheduler 1972 ms after scheduledFor (publishedAt 2026-10-14T10:20:03.972Z)
+2026-10-14T10:20:05.209Z  [S3-scheduler-publishes][android-pixel7] step 02: after the scheduler ran: anonymous public article page is live
+2026-10-14T10:20:05.302Z  [S3][android-pixel7] scheduled story became public 1972 ms after its scheduled time
+2026-10-14T10:20:07.306Z  [I1-reporter-submit][android-pixel7] article 15 is in_review (server)
+2026-10-14T10:20:07.307Z  [I1-reporter-submit][android-pixel7] step 01: reporter submitted the story for review
+2026-10-14T10:20:08.984Z  [I2-editor-publish][android-pixel7] step 01: published from the review queue: server status published
+2026-10-14T10:20:09.056Z  [I2-editor-publish][android-pixel7] calls: GET /api/users/me -> 200; POST /api/users/login -> 200; GET /api/users/me -> 200; GET /api/categories -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/users/me -> 200; GET /api/submissions -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/submissions -> 200; PATCH /api/articles/15 -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/articles -> 200; GET /api/articles -> 200; PATCH /api/articles/15 -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/articles -> 200
+2026-10-14T10:20:10.259Z  [I3-editor-correction-note][android-pixel7] step 01: published story edited: the correction-note modal opens before anything is saved
+2026-10-14T10:20:10.372Z  [I3-editor-correction-note][android-pixel7] cancel: no PATCH, server text and corrections unchanged
+2026-10-14T10:20:10.480Z  [I3-editor-correction-note][android-pixel7] step 02: empty correction note refused inside the modal; nothing saved
+2026-10-14T10:20:10.771Z  [I3-editor-correction-note][android-pixel7] step 03: correction saved: server text corrected, one correction entry with a server date
+2026-10-14T10:20:11.076Z  [I3-editor-correction-note][android-pixel7] calls: GET /api/users/me -> 200; POST /api/users/login -> 200; GET /api/users/me -> 200; GET /api/categories -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/articles -> 200; GET /api/users/me -> 200; GET /api/articles/15 -> 200; GET /api/articles -> 200; GET /api/submissions -> 200; GET /api/submissions -> 200; GET /api/submissions -> 200; PATCH /api/articles/15 -> 200; PATCH /api/articles/15 -> 200
+2026-10-14T10:20:11.077Z  [I3-editor-correction-note][android-pixel7] step 04: second correction appended; first entry unchanged
+2026-10-14T10:20:11.970Z  [I4-anonymous-corrections][android-pixel7] step 01: anonymous reader: corrected text and both corrections with dates
+2026-10-14T10:20:12.090Z  [I4-anonymous-corrections][android-pixel7] server-rendered HTML carries both corrections and the corrected text
+2026-10-14T10:20:13.044Z  [I5-reporter-published-readonly][android-pixel7] step 01: reporter opens the published story: read-only, no workflow buttons
+2026-10-14T10:20:13.187Z  [I5-reporter-published-readonly][android-pixel7] reporter direct PATCH -> title 403, correction 403, archive 403; server unchanged
+
+=== RESULTS ===
+PASS  [desktop-chrome] reader submits a tip with the real Turnstile widget and sees the genuine server receipt  (8s)
+PASS  [desktop-chrome] duplicate submission: the CMS answers 409 and the form shows the duplicate error without a receipt  (9s)
+PASS  [desktop-chrome] HARNESS tamper: server rejects a request whose Turnstile token was blanked in flight; UI shows the error, no receipt  (5s)
+PASS  [desktop-chrome] form validation blocks an incomplete submission client-side and sends nothing to the CMS  (3s)
+PASS  [desktop-chrome] A1 reporter: login, draft with featured image upload, submit for review; approve/publish is blocked (UI hidden + direct fetch 403)  (4s)
+PASS  [desktop-chrome] A2 section editor: sees the story in the review queue, approves, publishes  (3s)
+PASS  [desktop-chrome] A3 anonymous reader: article + featured image visible on the public site, no draft content, no cookie  (1s)
+PASS  [desktop-chrome] editor sees the reader tip with its server reference in the review queue and converts it to a draft that stays unpublished  (3s)
+PASS  [desktop-chrome] reporter cannot read reader tips: UI says editors only, direct fetch is refused  (2s)
+PASS  [desktop-chrome] logged-out newsroom shows only the sign-in form on every route and loads no protected data  (1s)
+PASS  [desktop-chrome] wrong password shows the server error and no session  (1s)
+PASS  [desktop-chrome] revoked session (admin force-logout): navigating to a protected view returns to the sign-in screen  (2s)
+PASS  [desktop-chrome] revoked session on a write: Save Draft after force-logout does not report success and the story is not created  (2s)
+PASS  [desktop-chrome] logout ends the server session: /api/users/me is anonymous and protected reads are refused  (2s)
+PASS  [desktop-chrome] stale editor: a save the CMS forbids (story moved to review meanwhile) shows an error, not a success toast, and changes nothing  (2s)
+PASS  [desktop-chrome] failed image upload (not a real PNG) shows the CMS error and selects no featured image  (3s)
+PASS  [desktop-chrome] public staging configuration enables the story form for the reserved localhost CMS origin  (32s)
+PASS  [desktop-chrome] newsroom dashboard view has no horizontal page overflow at the project viewport (REAL UI)  (3s)
+PASS  [desktop-chrome] newsroom review view has no horizontal page overflow at the project viewport (REAL UI)  (2s)
+PASS  [desktop-chrome] newsroom editor view has no horizontal page overflow at the project viewport (REAL UI)  (3s)
+PASS  [desktop-chrome] newsroom media view has no horizontal page overflow at the project viewport (REAL UI)  (2s)
+PASS  [desktop-chrome] newsroom live view has no horizontal page overflow at the project viewport (REAL UI)  (2s)
+PASS  [desktop-chrome] L1 section editor: create event (draft), post while draft, Go Live, post two more; anonymous cannot see the draft event  (4s)
+PASS  [desktop-chrome] L2 reporter: submits updates for review; no event management, no approve (UI absent + direct API refused)  (3s)
+PASS  [desktop-chrome] L3 section editor: approves two pending updates out of writing order, rejects the third (real UI)  (3s)
+PASS  [desktop-chrome] L4 anonymous reader (public origin, no cookies): published updates in publication order; drafts, pending, rejected and staff fields never leak  (2s)
+PASS  [desktop-chrome] L5 editor ends coverage (UI); feed of an ended event stays public; reporter can no longer post (API-driven)  (3s)
+PASS  [desktop-chrome] L6a API-driven setup: a live event with a published update is readable through the public feed  (1s)
+PASS  [desktop-chrome] L6b public site shows live coverage to readers (GAP: no live page exists on the public site)  (8s)  [expected failure: known gap still present]
+PASS  [desktop-chrome] S1 reporter (UI): writes and submits a story; no Schedule control, direct PATCH to "scheduled" is 403  (3s)
+PASS  [desktop-chrome] S2 section editor (UI): approves, past time is refused by the CMS, schedules ~50 s ahead with the newsroom control  (2s)
+PASS  [desktop-chrome] S2b API-DRIVEN (not UI): CMS rules for a missing, past or garbage scheduledFor  (1s)
+PASS  [desktop-chrome] S3 anonymous reader: absent before the time (API, Latest, 404), published by the scheduler afterwards (card + SSR page)  (50s)
+PASS  [desktop-chrome] I1 reporter writes a story and submits it for review (real UI)  (2s)
+PASS  [desktop-chrome] I2 section editor approves and publishes the story in the review queue (real UI)  (2s)
+PASS  [desktop-chrome] I3 section editor corrects the published text: cancel saves nothing, empty note refused, note saves, second note appends  (2s)
+PASS  [desktop-chrome] I4 anonymous reader: corrected text, "Corrections & updates" with each note and date, no staff fields  (1s)
+PASS  [desktop-chrome] I5 reporter cannot edit the published story: read-only UI, direct PATCHes answer 403 (API-driven PATCH)  (1s)
+PASS  [android-pixel7] reader submits a tip with the real Turnstile widget and sees the genuine server receipt  (4s)
+PASS  [android-pixel7] duplicate submission: the CMS answers 409 and the form shows the duplicate error without a receipt  (7s)
+PASS  [android-pixel7] HARNESS tamper: server rejects a request whose Turnstile token was blanked in flight; UI shows the error, no receipt  (4s)
+PASS  [android-pixel7] form validation blocks an incomplete submission client-side and sends nothing to the CMS  (3s)
+PASS  [android-pixel7] A1 reporter: login, draft with featured image upload, submit for review; approve/publish is blocked (UI hidden + direct fetch 403)  (3s)
+PASS  [android-pixel7] A2 section editor: sees the story in the review queue, approves, publishes  (2s)
+PASS  [android-pixel7] A3 anonymous reader: article + featured image visible on the public site, no draft content, no cookie  (1s)
+PASS  [android-pixel7] editor sees the reader tip with its server reference in the review queue and converts it to a draft that stays unpublished  (2s)
+PASS  [android-pixel7] reporter cannot read reader tips: UI says editors only, direct fetch is refused  (1s)
+PASS  [android-pixel7] logged-out newsroom shows only the sign-in form on every route and loads no protected data  (1s)
+PASS  [android-pixel7] wrong password shows the server error and no session  (1s)
+PASS  [android-pixel7] revoked session (admin force-logout): navigating to a protected view returns to the sign-in screen  (2s)
+PASS  [android-pixel7] revoked session on a write: Save Draft after force-logout does not report success and the story is not created  (1s)
+PASS  [android-pixel7] logout ends the server session: /api/users/me is anonymous and protected reads are refused  (1s)
+PASS  [android-pixel7] stale editor: a save the CMS forbids (story moved to review meanwhile) shows an error, not a success toast, and changes nothing  (1s)
+PASS  [android-pixel7] failed image upload (not a real PNG) shows the CMS error and selects no featured image  (1s)
+PASS  [android-pixel7] public staging configuration enables the story form for the reserved localhost CMS origin  (31s)
+PASS  [android-pixel7] newsroom dashboard view has no horizontal page overflow at the project viewport (REAL UI)  (2s)
+PASS  [android-pixel7] newsroom review view has no horizontal page overflow at the project viewport (REAL UI)  (2s)
+PASS  [android-pixel7] newsroom editor view has no horizontal page overflow at the project viewport (REAL UI)  (2s)
+PASS  [android-pixel7] newsroom media view has no horizontal page overflow at the project viewport (REAL UI)  (2s)
+PASS  [android-pixel7] newsroom live view has no horizontal page overflow at the project viewport (REAL UI)  (2s)
+PASS  [android-pixel7] L1 section editor: create event (draft), post while draft, Go Live, post two more; anonymous cannot see the draft event  (4s)
+PASS  [android-pixel7] L2 reporter: submits updates for review; no event management, no approve (UI absent + direct API refused)  (2s)
+PASS  [android-pixel7] L3 section editor: approves two pending updates out of writing order, rejects the third (real UI)  (2s)
+PASS  [android-pixel7] L4 anonymous reader (public origin, no cookies): published updates in publication order; drafts, pending, rejected and staff fields never leak  (1s)
+PASS  [android-pixel7] L5 editor ends coverage (UI); feed of an ended event stays public; reporter can no longer post (API-driven)  (3s)
+PASS  [android-pixel7] L6a API-driven setup: a live event with a published update is readable through the public feed  (1s)
+PASS  [android-pixel7] L6b public site shows live coverage to readers (GAP: no live page exists on the public site)  (8s)  [expected failure: known gap still present]
+PASS  [android-pixel7] S1 reporter (UI): writes and submits a story; no Schedule control, direct PATCH to "scheduled" is 403  (2s)
+PASS  [android-pixel7] S2 section editor (UI): approves, past time is refused by the CMS, schedules ~50 s ahead with the newsroom control  (2s)
+PASS  [android-pixel7] S2b API-DRIVEN (not UI): CMS rules for a missing, past or garbage scheduledFor  (0s)
+PASS  [android-pixel7] S3 anonymous reader: absent before the time (API, Latest, 404), published by the scheduler afterwards (card + SSR page)  (52s)
+PASS  [android-pixel7] I1 reporter writes a story and submits it for review (real UI)  (2s)
+PASS  [android-pixel7] I2 section editor approves and publishes the story in the review queue (real UI)  (2s)
+PASS  [android-pixel7] I3 section editor corrects the published text: cancel saves nothing, empty note refused, note saves, second note appends  (2s)
+PASS  [android-pixel7] I4 anonymous reader: corrected text, "Corrections & updates" with each note and date, no staff fields  (1s)
+PASS  [android-pixel7] I5 reporter cannot edit the published story: read-only UI, direct PATCHes answer 403 (API-driven PATCH)  (1s)
+
+Total: {"PASS":76}  overall: passed  finished 2026-10-14T10:20:15.304Z
