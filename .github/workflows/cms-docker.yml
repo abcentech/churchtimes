@@ -20,6 +20,7 @@ on:
 
 permissions:
   contents: read
+# (PR #49 touches this file only so the required docker-smoke check reports on a public-only PR.)
 
 concurrency:
   group: cms-docker-${{ github.ref }}
