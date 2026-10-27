@@ -184,3 +184,7 @@ match the contract. Not yet used but available: `featuredImage` (prefix a relati
 ## Newsroom editor dependencies
 
 The newsroom editor (`apps/newsroom`) sends `expectedUpdatedAt` with every article content `PATCH` (a 409 means someone else changed the story, and the editor keeps the user's text), and refreshes the staff session with `POST /api/users/refresh` about every 30 minutes while a user is active. Both must keep working as documented in `api-contracts.md`.
+
+## Live update photos on the public site
+
+The public live page renders the `image` object of `GET /api/live-events/{slug}/updates` (approved photo with alt text; url, width, height). An update without alt text or with an unusable image shows no picture. A revised update (same id, higher sequence) replaces the earlier entry in place. See `docs/public-live-coverage.md`.
