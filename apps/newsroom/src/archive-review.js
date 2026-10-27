@@ -77,7 +77,11 @@ export function normalizeProvenance(p) {
     originalDate: p.originalDate || null,
     sourceSha256: sha,
     confidence: CONFIDENCE_LEVELS.includes(p.confidence) ? p.confidence : '',
-    reviewStatus: REVIEW_STATUSES.includes(p.reviewStatus) ? p.reviewStatus : 'pending'
+    reviewStatus: REVIEW_STATUSES.includes(p.reviewStatus) ? p.reviewStatus : 'pending',
+    // Four-eyes stamp (server-set, editors only: the CMS leaves these out for everyone else).
+    reviewedById: p.reviewedBy && typeof p.reviewedBy === 'object' ? String(p.reviewedBy.id ?? '') : (p.reviewedBy == null ? '' : String(p.reviewedBy)),
+    reviewedByName: typeof p.reviewedByName === 'string' ? p.reviewedByName : (p.reviewedBy && typeof p.reviewedBy === 'object' && typeof p.reviewedBy.name === 'string' ? p.reviewedBy.name : ''),
+    reviewedAt: p.reviewedAt || null
   };
 }
 
@@ -85,13 +89,33 @@ export function normalizeProvenance(p) {
  * Why the CMS will refuse to publish or schedule this story, or '' when nothing blocks it. Mirrors the server rule
  * (publishBlockedByProvenance): importBatch set and reviewStatus not "reviewed".
  */
-export function publishBlockReason(story) {
+export function publishBlockReason(story, user = null) {
   const p = story?.provenance;
-  if (!p || !p.importBatch || p.reviewStatus === 'reviewed') return '';
+  if (!p || !p.importBatch) return '';
+  if (p.reviewStatus === 'reviewed') return fourEyesReason(p, user);
   if (p.reviewStatus === 'rejected') {
     return 'This recovered archive story was rejected in archive review, so it cannot be published or scheduled. An editor must approve it in Archive review first.';
   }
   return 'This recovered archive story has not been reviewed yet, so it cannot be published or scheduled. An editor must approve it in Archive review first.';
+}
+
+/**
+ * Four-eyes rule: the editor who approved a recovered story may not publish or schedule it; a different editor must (admins
+ * may do both). Mirrors the CMS (409). The approver's name is not part of this text, so it is safe in any role.
+ */
+export function fourEyesReason(p, user) {
+  if (!p?.reviewedById || !user || user.role === 'admin') return '';
+  if (String(user.id) !== String(p.reviewedById)) return '';
+  return 'You approved this recovered archive story, so a different editor must publish or schedule it.';
+}
+
+/** "Approved by Ada Obi on 12 Mar 2026", for editor roles only (the CMS does not send the stamp to anyone else). '' when unknown. */
+export function approvalNote(p, canSee) {
+  if (!canSee || !p || p.reviewStatus !== 'reviewed' || !p.reviewedAt) return '';
+  const d = new Date(p.reviewedAt);
+  if (Number.isNaN(d.getTime())) return '';
+  const when = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+  return p.reviewedByName ? `Approved by ${p.reviewedByName} on ${when}` : `Approved on ${when}`;
 }
 
 /** Which review decisions the buttons offer. The CMS enforces the same rule (editors only, in their section). */

@@ -65,6 +65,8 @@ beforeAll(async () => {
       sourceHost: 'web.archive.org',
       importBatch: `${runId}-batch`,
       reviewStatus: 'reviewed',
+      reviewedBy: f.users.eic.id,
+      reviewedAt: NOW(),
     },
   })
   await reindexArticleSearch(f.payload).catch(() => undefined)
@@ -272,6 +274,8 @@ describe('provenance, legacy, e-mail and staff-only fields are never in an anony
       `where[reviewNotes][contains]=SECRETREVIEWNOTE`,
       `where[provenance.sourceUrl][equals]=${encodeURIComponent(SOURCE_URL)}`,
       `where[provenance.importBatch][like]=${runId}`,
+      `where[provenance.reviewedBy][equals]=${f.users.eic.id}`,
+      `where[provenance.reviewedAt][exists]=true`,
       `where[author][equals]=${f.users.reporter.id}`,
       `where[author.email][equals]=${encodeURIComponent(f.users.reporter.email)}`,
       `where[author.role][equals]=reporter`,
