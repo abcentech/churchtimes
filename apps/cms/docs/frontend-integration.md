@@ -1,5 +1,6 @@
 # Frontend integration notes (newsroom UI and public site)
 
+Public-site note: the public review evidence is recorded in docs/evidence/wave2/README.md (this line also runs the required CMS checks).
 Public-site note: the public review evidence is recorded in docs/public-go-live-contract-review.md (this line also runs the required CMS checks).
 
 For: the newsroom/editor UI lane (`apps/newsroom`, `agent/gemini-ui-support`) and the public
