@@ -2,7 +2,7 @@
 
 Local gate completed on 15 October 2026 against integrated `feat/newsroom-mvp`
 (including #30/#32) plus this PR. [Full numeric/boolean aggregate](local-quality.json).
-No live host, real export or private personal data was used.
+This gate ran locally before the PR was pushed; CI did not reproduce these numbers. No live host, real export or private personal data was used.
 
 All eight desktop/Pixel 7 journeys passed WCAG, label/heading, overflow, alt,
 landmark, skip-focus, local-origin and console checks against real Payload REST.
