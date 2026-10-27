@@ -10,14 +10,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Fail on leftover merge conflict markers
         run: |
           if git grep -n -I -E "^(<{7} |>{7} )" -- . ":!*package-lock.json" ":!*.lock" ":!**/node_modules/**"; then
             echo "::error::Merge conflict markers found in tracked files (see above)."
             exit 1
           fi
-        with:
-          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
