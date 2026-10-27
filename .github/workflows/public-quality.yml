@@ -1,4 +1,5 @@
 name: Public production quality
+# (PR #46 touches this file only so the required public-quality check reports on a test-only PR.)
 on:
   push:
     branches: [feat/newsroom-mvp]
