@@ -186,9 +186,9 @@ describe('category deletion and preview', () => {
   })
 })
 
-describe('migration 20261027_115905_article_multi_category', () => {
+describe('migration 20261027_140000_article_multi_category', () => {
   it('is reversible and re-runnable (IF EXISTS), keeping the search projection usable', async () => {
-    const entry = migrations.find((m) => m.name === '20261027_115905_article_multi_category')
+    const entry = migrations.find((m) => m.name === '20261027_140000_article_multi_category')
     expect(entry).toBeTruthy()
     const args = { db: db(), payload: f.payload, req: {} } as never
     const colExists = async (table: string, col: string) => {

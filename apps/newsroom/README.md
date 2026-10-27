@@ -141,6 +141,7 @@ desk for them:
   shown to admin, editor-in-chief and the section editor of the story's section; both ask for confirmation and send the version
   seen (`expectedUpdatedAt`, a stale version answers 409 and the screen reloads). The CMS enforces the role rule, writes an
   `archive.review` audit row (who, when) and refuses everyone else. *Open in editor* goes to the normal editor.
+- **Four-eyes.** The review screen shows "Approved by <name> on <date>" to editor roles. The editor who approved a recovered story cannot publish or schedule it (the CMS answers 409); the editor disables Publish and Schedule for that user with "You approved this recovered archive story, so a different editor must publish or schedule it." (`editor-archive-blocked`, `editor-schedule-four-eyes`, `archive-four-eyes`). Admins may do both; the reason never names the approver.
 - **Publishing is unchanged.** Approval does not publish. A recovered story goes through the usual review, approve and publish
   steps; until it is approved here the CMS refuses to publish or schedule it (409). The review screen and the editor both say so
   (`archive-publish-blocked`, `editor-archive-blocked`), and the editor's Publish button is disabled with the reason.

@@ -1,4 +1,4 @@
-# Church Times CMS — API contracts (v1.26)
+# Church Times CMS — API contracts (v1.27)
 
 Status: implemented on `agent/payload-core`. v1.1 added Turnstile, duplicate detection, staff auth/session
 contract and security hardening; v1.2 closes the verified security-review findings: media ownership, version
@@ -95,7 +95,7 @@ Rules:
   seoDescription?: string | null // v1.8, ≤ 200 chars, plain text; null when unset (falls back to `excerpt`)
   content: LexicalRichText     // structured JSON, never raw HTML
   category: number | Category  // PRIMARY category (required); depends on `depth`
-  categories?: (number | Category)[]  // v1.26: ADDITIONAL categories, 0 to 5, never the primary, no duplicates; depends on `depth`
+  categories?: (number | Category)[]  // v1.27: ADDITIONAL categories, 0 to 5, never the primary, no duplicates; depends on `depth`
   featuredImage?: number | Media
   bylineName?: string          // display byline (legacy authors without accounts)
   status: 'draft' | 'in_review' | 'changes_requested' | 'approved' | 'scheduled' | 'published' | 'archived'
@@ -119,7 +119,7 @@ override: the canonical address is derived from the article path. Who may edit f
 article is a draft or changes are requested, editors in scope, trusted publishers for their own. Changing **only** these two
 fields of a published article is **not** a material change (no `corrections` entry needed) but is still versioned.
 
-**Additional categories (v1.26).** An article can sit in several sections. `category` stays the **primary** category: required, it
+**Additional categories (v1.27).** An article can sit in several sections. `category` stays the **primary** category: required, it
 drives the canonical listing, breadcrumbs, sitemap, scoping of section editors and every existing contract, so nothing that reads
 `category` changes. `categories` is an optional list of extra categories, public like `category` (published articles only), stored
 in the order written. Ordering rule: the primary comes first, the complete set of an article is `[category, ...categories]`.
@@ -355,9 +355,9 @@ GET /api/categories?limit=100
 ```
 
 - `depth=0` returns relationships as IDs (`category: 3`); `depth=1` populates them (`category: { id, title, slug }`,
-  `featuredImage: { url, alt, sizes… }`). The public site uses `depth=1` to get `category.title`. `categories` (v1.26) is returned the
+  `featuredImage: { url, alt, sizes… }`). The public site uses `depth=1` to get `category.title`. `categories` (v1.27) is returned the
   same way: ids at `depth=0`, `[{ id, title, slug }]` at `depth=1`, primary-first reading order `[category, ...categories]`.
-- **Listing a category's articles (v1.26)** includes the ones that have it as an additional category: `where[categories][in]=<id>` (or
+- **Listing a category's articles (v1.27)** includes the ones that have it as an additional category: `where[categories][in]=<id>` (or
   `[equals]`) matches only articles that carry it as an additional category; for "primary OR additional" use the `or` form
   `where[or][0][category][equals]=<id>&where[or][1][categories][equals]=<id>&where[status][equals]=published`. `categories` is a
   relationship filter like `category`: numeric ids only, anything else is `400`.
@@ -1030,7 +1030,7 @@ search reads a projection table (`article_search`) that holds nothing else, and 
 | `q` | required; whitespace-trimmed, control characters and lone surrogates removed; at most 200 characters (`400` when empty, missing or longer) |
 | `page` | 1 to 100, default 1 (larger is clamped, invalid becomes 1) |
 | `limit` | 1 to 20, default 10 (larger is clamped to `SEARCH_MAX_LIMIT`, default 20, at most 100; invalid becomes 10) |
-| `category` | category slug, or its numeric id; matches an article whose primary OR additional category it is (v1.26); an unknown category gives an empty list |
+| `category` | category slug, or its numeric id; matches an article whose primary OR additional category it is (v1.27); an unknown category gives an empty list |
 | `year` | four-digit year of `publishedAt` (UTC), 1900 to 2100; anything else is `400` |
 
 `200 { docs: [{ id, slug, title, excerpt, snippet, publishedAt, category: { id, slug, title }, categories: [{ id, slug, title }], rank }], totalDocs, totalCapped, limit, page, totalPages, hasNextPage,
@@ -1071,13 +1071,21 @@ limits: `TRUST_PROXY_HOPS` (default 1) and optional `CLIENT_IP_HEADER` (`docs/op
 
 ## 9. Changelog
 
-### v1.26: Additional categories on articles
+### v1.27: Additional categories on articles
 Additive. `articles.categories` (relationship hasMany to categories, optional, max 5, never the primary, no duplicates) next to the unchanged
 required primary `articles.category` (section 3, "Additional categories"). Public article reads, the preview projection and `GET /api/articles?where[categories][in]=`
 expose it; the C8 search `category=` filter matches primary OR additional, and each search hit gains `categories: [{ id, slug, title }]` (additional only, in
 stored order, empty when none; the primary stays in `category`). `categories` joins the numeric relationship filters (`400` on a non-numeric value).
-- **Migration** `20261027_115905_article_multi_category`: join-table column `categories_id` on `articles_rels` and `_articles_v_rels` (FK ON DELETE CASCADE, indexed) and `article_search.category_ids integer[]` (primary first, GIN indexed, backfilled from `category_id`). Run `npm run search:reindex` once after deploying to fill the additional ids of existing published articles (idempotent). Reversible, every statement `IF [NOT] EXISTS`.
+- **Migration** `20261027_140000_article_multi_category`: join-table column `categories_id` on `articles_rels` and `_articles_v_rels` (FK ON DELETE CASCADE, indexed) and `article_search.category_ids integer[]` (primary first, GIN indexed, backfilled from `category_id`). Run `npm run search:reindex` once after deploying to fill the additional ids of existing published articles (idempotent). Reversible, every statement `IF [NOT] EXISTS`.
 - **Importer:** the other WordPress categories of a post (up to 4 beyond the primary chosen by the existing chain) are stored in `categories`; see `docs/import.md`. Rollback is unchanged: join rows go with the articles, and a category an unlisted article still uses (primary or additional) is kept.
+
+### v1.26: Four-eyes rule for recovered archive articles
+Tightens one rule (listed first); new fields are staff-only.
+- **Rule (409):** the person who approved a recovered archive article (`provenance.reviewStatus` became `reviewed`) cannot publish or schedule it: `409` "A different editor must publish a recovered article you approved." Applies when a write leaves an article with an `importBatch` in status `published` or `scheduled` and either moves it into that status or changes `scheduledFor` while scheduled, by a non-admin whose id equals `provenance.reviewedBy`. It holds for REST, bulk `PATCH ?where=` (per article), the Local API with a user and `restoreVersion`. **Admins may do both** (approve and publish/schedule). The scheduler has no user, so it publishes a scheduled article without the actor rule: the rule is enforced when the article is scheduled (a different person must schedule it). Other edits by the approver on a published article are not blocked.
+- **New fields** on `articles.provenance`, server-set and never client-writable (field access `never` for create and update; a client-sent value is overwritten or ignored): `reviewedBy` (relationship to `users`), `reviewedByName` (text snapshot of the approver's name, so section editors who cannot read other users still see it) and `reviewedAt` (date). They are set from the acting user when `reviewStatus` changes to `reviewed` and cleared when it changes to `pending` or `rejected`; `restoreVersion` keeps the stored values. Readable by editor roles (admin, editor-in-chief, section-editor) only: absent for reporters, trusted publishers, anonymous callers and preview-link holders (the whole `provenance` group is already denied there). Filtering on them anonymously returns nothing or is refused.
+- Audit: unchanged. The `archive.review` row already names the approver (actor); no new audit action.
+- Migration `20261027_124620_four_eyes_review_stamp`: nullable columns on `articles` and `_articles_v` (`provenance_reviewed_by_id`, `provenance_reviewed_by_name`, `provenance_reviewed_at`), no backfill (articles approved before this change have no stamp and are not blocked).
+- Newsroom: Archive review shows "Approved by <name> on <date>" to editor roles; the editor disables Publish and Schedule for the approver with the reason.
 
 ### v1.25: Larger image cap
 Non-breaking relaxation; no shape changes. The image size cap rises from 10 MB to **25 MB by default** and is configurable with `MEDIA_IMAGE_MAX_MB` (whole MB, 1 to 50; unset or invalid gives 25). It applies to `POST/PATCH /api/media` (`413` above it, message states the limit), the legacy importer and `import:uploads-check` (`too-large`). The 40 megapixel decode limit and the sharp re-save are unchanged (peak memory for a ~23 MB / 40 MP JPEG measured at about 680 MB RSS). `/api/media` request limit: anonymous callers stay at 11 MB; callers with a VERIFIED session get max(image cap, explicit `MEDIA_AV_MAX_MB`) + 1 MB (26 MB by default; `MEDIA_UPLOAD_MAX_MB` still overrides). Next's body buffer follows (limit + 1 MB). The reverse proxy `/api/media` limit must be at least staff limit + 2 MB (28 MB by default, operations.md 4.4).
@@ -1089,7 +1097,7 @@ Additive: new endpoint `POST /api/staff/related-articles` (section 6.4); no exis
 ### v1.23: Review follow-ups (preview, search cost, upload limits, review rules)
 Additive except where a rule is tightened (listed first); the search response only gains a field.
 - **Preview** (`GET /api/preview/articles?token=`): the response never contains `provenance`, `legacyId` or `legacyUrl` (nor, as before, `reviewNotes`, `author`, `scheduledFor`, `bodyMedia`).
-- **Approve and publish are separate requests.** A recovered archive article (`provenance.importBatch` set) cannot be approved (`provenance.reviewStatus` becoming `reviewed`) and published or scheduled in the SAME write by a non-admin: `409` (also for bulk `PATCH ?where=`). Clients cannot clear or change `importBatch` (server-owned, ignored on write), so the rule cannot be dodged that way. **Admins are exempt** from the one-write rule (their approval is still audited as `archive.review`). A four-eyes rule (the reviewer and the publisher must be different people) is NOT implemented: it is an open owner decision. `provenance.reviewStatus` is refused (`400`) on an article without an import batch, and an article created already `reviewed` or `rejected` writes an `archive.review` row at creation. `restoreVersion` never changes `provenance`: the stored provenance wins over the old snapshot, so restoring cannot turn a `rejected` article back into a publishable one (the 409 publish guard then applies).
+- **Approve and publish are separate requests.** A recovered archive article (`provenance.importBatch` set) cannot be approved (`provenance.reviewStatus` becoming `reviewed`) and published or scheduled in the SAME write by a non-admin: `409` (also for bulk `PATCH ?where=`). Clients cannot clear or change `importBatch` (server-owned, ignored on write), so the rule cannot be dodged that way. **Admins are exempt** from the one-write rule (their approval is still audited as `archive.review`). The four-eyes rule (the approver cannot publish or schedule; admins exempt) is implemented from v1.26. `provenance.reviewStatus` is refused (`400`) on an article without an import batch, and an article created already `reviewed` or `rejected` writes an `archive.review` row at creation. `restoreVersion` never changes `provenance`: the stored provenance wins over the old snapshot, so restoring cannot turn a `rejected` article back into a publishable one (the 409 publish guard then applies).
 - `PATCH` with `"provenance": null` is treated as "not sent" (it used to be a 500).
 - **Search:** new `totalCapped` field and the capped `totalDocs`, `totalPages: null` while capped (see "Go-live C8"); `SEARCH_MAX_LIMIT` default lowered from 50 to 20 (env `SEARCH_MAX_LIMIT`, 1 to 100); `SEARCH_COUNT_CAP` (default 1000); `Cache-Control` is `public` only when one public origin is configured (identical ACAO on every response), else `private`.
 - **Request size (`src/proxy.ts`):** a write (`POST`/`PATCH`/`PUT`) to ANY `/api/*` route with a `Transfer-Encoding` header (a chunked body, which cannot be size-checked) is refused with `411`; a bodyless POST (no `Content-Length`, no `Transfer-Encoding`) is fine. `/api/media`: 11 MB for everyone, except that a caller with a VERIFIED session (a genuine, unexpired Payload JWT in the `payload-token` cookie or `Authorization: JWT`; merely sending such a header does not count) gets the configured larger limit, but only when one is configured: `MEDIA_UPLOAD_MAX_MB` (11 to 500) if set, else max(image cap, `MEDIA_AV_MAX_MB` when set explicitly) + 1 MB (26 MB by default since v1.25). Next's body buffer is that + 1 MB (27 MB by default) (`MEDIA_AV_MAX_MB` alone still sets the per-file audio/video cap, default 100). Next reads the body (up to `proxyClientMaxBodySize`) before the proxy runs, so the reverse proxy must enforce the real limits per location (operations.md 4.4); this is the second layer.

@@ -340,6 +340,9 @@ export interface Article {
     confidence?: ('partial' | 'citation-only' | 'missing') | null;
     importBatch?: string | null;
     reviewStatus?: ('pending' | 'reviewed' | 'rejected') | null;
+    reviewedBy?: (number | null) | User;
+    reviewedByName?: string | null;
+    reviewedAt?: string | null;
   };
   updatedAt: string;
   createdAt: string;
@@ -894,6 +897,9 @@ export interface ArticlesSelect<T extends boolean = true> {
         confidence?: T;
         importBatch?: T;
         reviewStatus?: T;
+        reviewedBy?: T;
+        reviewedByName?: T;
+        reviewedAt?: T;
       };
   updatedAt?: T;
   createdAt?: T;

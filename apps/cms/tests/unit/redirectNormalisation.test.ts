@@ -91,7 +91,14 @@ describe('everything the public host treats as junk is rejected here (its own is
 
 describe('LEGACY_SITE_HOSTS and targetPathOf', () => {
   it('defaults to the publication host and its www form, and validates a configured list', () => {
-    expect(parseLegacyHosts({})).toEqual(['churchtimesnigeria.net', 'www.churchtimesnigeria.net'])
+    expect(parseLegacyHosts({})).toEqual([
+      'churchtimesnigeria.net',
+      'www.churchtimesnigeria.net',
+      'churchtimesnigeria.org',
+      'www.churchtimesnigeria.org',
+      'churchtimesnigeria.com',
+      'www.churchtimesnigeria.com',
+    ])
     expect(parseLegacyHosts({ LEGACY_SITE_HOSTS: ' Old.Example.test ,old.example.test' })).toEqual(['old.example.test'])
     for (const bad of ['https://old.example.test', 'old.example.test/x', 'old.example.test:80', '*.example.test']) {
       expect(() => parseLegacyHosts({ LEGACY_SITE_HOSTS: bad }), bad).toThrow(RedirectConfigError)

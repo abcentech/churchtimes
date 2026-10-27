@@ -41,7 +41,16 @@ import {
   canTransition,
   isArticleStatus,
 } from '../workflow/articleWorkflow'
-import { PROVENANCE_CONFIDENCE, PROVENANCE_REVIEW_STATUSES, publishBlockedByProvenance, reviewAndPublishInOneWrite } from '../lib/provenance'
+import {
+  FOUR_EYES_MESSAGE,
+  PROVENANCE_CONFIDENCE,
+  PROVENANCE_REVIEW_STATUSES,
+  fourEyesBlocked,
+  publishBlockedByProvenance,
+  reviewAndPublishInOneWrite,
+  reviewStamp,
+  storedReviewedBy,
+} from '../lib/provenance'
 import { reconcileCorrections } from '../workflow/corrections'
 import { articlePath, resolveArticlePathTemplate } from '../lib/redirectPaths'
 import { isReservedSlug } from '../lib/reservedSlugs'
@@ -521,6 +530,22 @@ const guardUnreviewedImport: CollectionBeforeChangeHook = async ({ data, origina
   if (publishBlockedByProvenance(data as Record<string, unknown>, (originalDoc ?? undefined) as Record<string, unknown> | undefined)) {
     return fail(409, 'This recovered archive article must be reviewed (provenance review status "reviewed") before it can be published or scheduled.')
   }
+  // Server-owned review stamp: whoever flips reviewStatus to "reviewed" is recorded; any client-sent value is overwritten.
+  const ctx = (req.context ?? {}) as { systemNow?: string }
+  const stamp = reviewStamp(data as Record<string, unknown>, orig, actor, ctx.systemNow ? new Date(ctx.systemNow) : new Date())
+  const d = data as Record<string, unknown>
+  const prov = d.provenance as Record<string, unknown> | undefined
+  if (stamp) {
+    d.provenance = { ...(prov ?? {}), ...stamp }
+  } else if (prov && typeof prov === 'object') {
+    // Not a review change: nothing a client or a restored snapshot sent may alter the stamp (the stored values stay).
+    const { reviewedBy: _by, reviewedByName: _name, reviewedAt: _at, ...rest } = prov
+    d.provenance = rest
+  }
+  // Four-eyes: the approver of a recovered article cannot publish or schedule it (admins may do both). Covers REST, bulk,
+  // Local API with a user and version restore; the scheduler has no user and publishes what a different person scheduled.
+  const approver = stamp ? stamp.reviewedBy : storedReviewedBy(orig)
+  if (fourEyesBlocked({ data: d, orig, actor, reviewedById: approver })) return fail(409, FOUR_EYES_MESSAGE)
   return data
 }
 
@@ -916,6 +941,11 @@ export const Articles: CollectionConfig = {
           options: PROVENANCE_REVIEW_STATUSES.map((v) => ({ label: v, value: v })),
           access: { read: staffRead, create: never, update: editorWrite },
         },
+        // Server-set when reviewStatus changes to "reviewed" (four-eyes rule); cleared when it changes away. Never client-writable.
+        { name: 'reviewedBy', type: 'relationship', relationTo: 'users', validate: (): true => true, access: { read: editorWrite, create: never, update: never }, admin: { readOnly: true } },
+        // Display snapshot of the approver's name (section editors cannot read other users). Same visibility as reviewedBy.
+        { name: 'reviewedByName', type: 'text', maxLength: 200, access: { read: editorWrite, create: never, update: never }, admin: { readOnly: true } },
+        { name: 'reviewedAt', type: 'date', access: { read: editorWrite, create: never, update: never }, admin: { readOnly: true } },
       ],
     },
   ],

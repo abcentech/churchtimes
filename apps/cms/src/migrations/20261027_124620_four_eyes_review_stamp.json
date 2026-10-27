@@ -1066,6 +1066,24 @@
           "primaryKey": false,
           "notNull": false
         },
+        "provenance_reviewed_by_id": {
+          "name": "provenance_reviewed_by_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "provenance_reviewed_by_name": {
+          "name": "provenance_reviewed_by_name",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "provenance_reviewed_at": {
+          "name": "provenance_reviewed_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "updated_at": {
           "name": "updated_at",
           "type": "timestamp(3) with time zone",
@@ -1247,6 +1265,21 @@
           "method": "btree",
           "with": {}
         },
+        "articles_provenance_provenance_reviewed_by_idx": {
+          "name": "articles_provenance_provenance_reviewed_by_idx",
+          "columns": [
+            {
+              "expression": "provenance_reviewed_by_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "articles_updated_at_idx": {
           "name": "articles_updated_at_idx",
           "columns": [
@@ -1344,6 +1377,19 @@
           ],
           "onDelete": "set null",
           "onUpdate": "no action"
+        },
+        "articles_provenance_reviewed_by_id_users_id_fk": {
+          "name": "articles_provenance_reviewed_by_id_users_id_fk",
+          "tableFrom": "articles",
+          "tableTo": "users",
+          "columnsFrom": [
+            "provenance_reviewed_by_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -1379,12 +1425,6 @@
           "type": "varchar",
           "primaryKey": false,
           "notNull": true
-        },
-        "categories_id": {
-          "name": "categories_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
         },
         "media_id": {
           "name": "media_id",
@@ -1439,21 +1479,6 @@
           "method": "btree",
           "with": {}
         },
-        "articles_rels_categories_id_idx": {
-          "name": "articles_rels_categories_id_idx",
-          "columns": [
-            {
-              "expression": "categories_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "articles_rels_media_id_idx": {
           "name": "articles_rels_media_id_idx",
           "columns": [
@@ -1477,19 +1502,6 @@
           "tableTo": "articles",
           "columnsFrom": [
             "parent_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "articles_rels_categories_fk": {
-          "name": "articles_rels_categories_fk",
-          "tableFrom": "articles_rels",
-          "tableTo": "categories",
-          "columnsFrom": [
-            "categories_id"
           ],
           "columnsTo": [
             "id"
@@ -1775,6 +1787,24 @@
           "primaryKey": false,
           "notNull": false
         },
+        "version_provenance_reviewed_by_id": {
+          "name": "version_provenance_reviewed_by_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "version_provenance_reviewed_by_name": {
+          "name": "version_provenance_reviewed_by_name",
+          "type": "varchar",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "version_provenance_reviewed_at": {
+          "name": "version_provenance_reviewed_at",
+          "type": "timestamp(3) with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "version_updated_at": {
           "name": "version_updated_at",
           "type": "timestamp(3) with time zone",
@@ -1983,6 +2013,21 @@
           "method": "btree",
           "with": {}
         },
+        "_articles_v_version_provenance_version_provenance_review_idx": {
+          "name": "_articles_v_version_provenance_version_provenance_review_idx",
+          "columns": [
+            {
+              "expression": "version_provenance_reviewed_by_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "_articles_v_version_version_updated_at_idx": {
           "name": "_articles_v_version_version_updated_at_idx",
           "columns": [
@@ -2123,6 +2168,19 @@
           ],
           "onDelete": "set null",
           "onUpdate": "no action"
+        },
+        "_articles_v_version_provenance_reviewed_by_id_users_id_fk": {
+          "name": "_articles_v_version_provenance_reviewed_by_id_users_id_fk",
+          "tableFrom": "_articles_v",
+          "tableTo": "users",
+          "columnsFrom": [
+            "version_provenance_reviewed_by_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -2158,12 +2216,6 @@
           "type": "varchar",
           "primaryKey": false,
           "notNull": true
-        },
-        "categories_id": {
-          "name": "categories_id",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
         },
         "media_id": {
           "name": "media_id",
@@ -2218,21 +2270,6 @@
           "method": "btree",
           "with": {}
         },
-        "_articles_v_rels_categories_id_idx": {
-          "name": "_articles_v_rels_categories_id_idx",
-          "columns": [
-            {
-              "expression": "categories_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "_articles_v_rels_media_id_idx": {
           "name": "_articles_v_rels_media_id_idx",
           "columns": [
@@ -2256,19 +2293,6 @@
           "tableTo": "_articles_v",
           "columnsFrom": [
             "parent_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "_articles_v_rels_categories_fk": {
-          "name": "_articles_v_rels_categories_fk",
-          "tableFrom": "_articles_v_rels",
-          "tableTo": "categories",
-          "columnsFrom": [
-            "categories_id"
           ],
           "columnsTo": [
             "id"
@@ -5972,6 +5996,6 @@
     "tables": {},
     "columns": {}
   },
-  "id": "879de546-0ff6-4f94-9f8b-f713430af998",
+  "id": "b42e5e15-33bf-4ba7-94ed-9d7490086b96",
   "prevId": "3d42dd9d-71dd-45cf-b572-0345a7383aba"
 }

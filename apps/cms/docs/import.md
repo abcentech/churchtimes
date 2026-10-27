@@ -349,6 +349,7 @@ Imports pages recovered from web captures (format `archive-candidate/1`, fully s
 - **Publishing is gated**: an article with an `importBatch` cannot be set to `published` or `scheduled` (409) until an editor sets
   `provenance.reviewStatus` to `reviewed` in the admin. The rule runs server-side in the Articles `beforeChange` hook for every caller
   (REST, admin, scheduler, seed, importer). Only `reviewStatus` is editable (editors); the other provenance fields are server-owned.
+- **Four-eyes**: the editor who approves a recovered article (`reviewStatus` becomes `reviewed`) is recorded server-side in `provenance.reviewedBy`, `reviewedByName` and `reviewedAt` (editor roles can read them; clients cannot write them) and cannot also publish or schedule it (409, "A different editor must publish a recovered article you approved."). Admins may do both. The scheduler is not blocked: the rule applies when the article is scheduled. Articles approved before this rule have no stamp and are not blocked.
 - **Never public**: the `provenance` group has staff-only read access, so it is absent from every anonymous response, including
   published articles; the drafts themselves are invisible to anonymous reads.
 - **Rollback**: the manifest is compatible with `import:rollback` (below). An imported article is recognised by its `importBatch`
@@ -536,6 +537,7 @@ The command is read-only (no database). From `apps/cms`:
 
 ```
 npm run import:link-audit -- --file <export.xml> [--out <rows.jsonl>] [--redirects-out <rules.csv>] [--article-path '/{slug}/'] [--category-path '/category/{slug}/'] [--tag-path '/tag/{slug}/'] [--old-host a.test]
+  [--review-out <review.csv>] [--suggested-fixes-out <suggested.csv>] [--link-fixes <link-fixes.csv>]
 ```
 
 It prints counts only (types, resolved, unresolved, resolved before this change, unresolved reasons, redirect rules and what was dropped). `--out` (one JSON line per link, addresses
@@ -563,12 +565,51 @@ redirect file is empty (header only) for this export. Run the audit again after 
 
 What is left, and who does it:
 
-- **Owner**: decide what the 16 links to slugs that are not in the export should do (remove the link, or point at a replacement), and the 6 other paths. Details are in the private rows file (`--out`).
+- **Owner**: decide what the 16 links to slugs that are not in the export should do (remove the link, or point at a replacement), and the 6 other paths: see "How to fix missing links" below (`--review-out`, then `--link-fixes`).
 - **Owner**: nothing to set for the default: `/{slug}/` (D1) is the built-in default of the importer and the CMS. Set `PUBLIC_ARTICLE_PATH_TEMPLATE=/reports/{slug}/` only to override it, on the CMS and the public host alike (the importer used to write `/article/{slug}`).
-- **Owner**: `churchtimesnigeria.org` and `.com` must reach the same public host (DNS or host-level redirect) and be listed in `LEGACY_SITE_HOSTS`; path rules do not carry a host.
+- **Owner / Codex**: `churchtimesnigeria.org` and `.com` default to `churchtimesnigeria.net`: DNS must reach the public host, which answers them with a 301 to the same path on `.net` (paste-ready note in `legacy-hosts.md`); `LEGACY_SITE_HOSTS` lists them (the default includes both). Path rules do not carry a host.
 - **Codex (E3, old-host redirect map)**: covered on the CMS side for exact rules by `--redirects-out`; still the public host's job: pattern rules (`/category/*`, `/tag/*`, `/page/N/`, `/feed/`), `?p=N` through `legacyId`, the `/category/{slug}/` route itself (the CMS only emits and rewrites to that form; change it with `--category-path`), and tag pages if wanted.
 - **Codex (E4, link audit)**: covered on the CMS side by this command (read-only, counts, private rows). Still open: the 3119 uploads links (they need the media map, `export:media-map`, to resolve) and pages (a pages collection, then `pagePath`).
 - **Import**: `npm run import:redirects -- --file <rules.csv>` (dry run first) after the articles are imported.
+
+### How to fix missing links (for the owner and editors)
+
+Some links in old articles point at a page that is not in the export, or at an odd address. They are listed for you in a PRIVATE spreadsheet; nothing is changed until you decide.
+
+1. Ask the developer to run the audit with `--review-out` (the file goes outside GitHub, for example `private-reports\link-fixes-review-<date>.csv`). The screen shows only counts per likely cause.
+2. Open that file in Excel or Google Sheets. There is one row per problem link: which old article (`legacy_post_id`), which link in it (`link_index`), the address as written (`raw_target`), the likely cause (`cause`) and, when the importer found a similar article, its id, slug and a similarity score from 0 to 1 (`best_candidate_*`, `suggested_new_path`).
+3. For each row, fill the last column `decision` with ONE of:
+   - the new address of the article that should be linked, for example `/some-article/` (it must be an article that is imported; with `PUBLIC_ARTICLE_PATH_TEMPLATE=/reports/{slug}/` it starts `/reports/`);
+   - `remove-link`: the link goes, the words stay as plain text;
+   - `keep-text`: the same as `remove-link` (use whichever reads more clearly to you).
+
+   Leave `decision` empty for a row you have not decided: it is skipped and counted as "not decided yet". Do not change the `from` column. The same `from` may appear on several rows; give them the same decision (two different decisions for one address are both ignored).
+4. Save the file as `link-fixes.csv` (CSV, comma separated) in the private folder, never inside the repository.
+5. Ask the developer to run the import again with `--link-fixes <path to link-fixes.csv>` (also accepted by `import:convert-wxr`, `import:rehearse` and `import:link-audit`). The screen then reports counts: links changed, entries not matched, entries whose new address does not exist (those are not applied; fix the address and rerun).
+6. Running it again changes nothing more: the fixes are read from the source text every time.
+
+A fix only applies to a link that could not be resolved; a link that already works is never changed. A file with only `from,to` columns (or no header, `from` first and `to` second) works too, and so does JSON (`{"old-slug": "/new-slug/"}`).
+
+`--suggested-fixes-out <file>` writes a SUGGESTED fixes file with only high-confidence matches (similarity 0.95 or more and the only article that close, one-segment addresses only). It is never applied by itself: check it, and pass it as `--link-fixes` (or copy the rows you accept into your file) only after you approve it. Odd paths with two or three segments are never suggested automatically; the review file names the article the path seems to contain.
+
+Likely causes in the review file (`cause`):
+
+| Cause | Meaning |
+|---|---|
+| `near-match-case-or-encoding` | the slug differs only by capitals, `_` instead of `-`, or encoding |
+| `near-match-numeric-suffix` | like an existing slug but with (or without) a `-2` style number |
+| `near-match-trailing-characters` | an existing slug with letters added or missing at the end |
+| `near-match-similar` | spelled almost like an existing slug (similarity 0.8 or more) |
+| `draft-or-private`, `trashed`, `password-protected` | the post exists in the export but is not published (so it is not imported) |
+| `non-post-page`, `non-post-attachment`, `non-post-other-type` | the slug belongs to a page, a media item or another post type (for example a product) |
+| `not-in-export` | no post, page or media item has that slug (perhaps excluded from the export) |
+| `odd-path-contains-known-slug`, `odd-path`, `external-style-path` | a path with several parts; the first says one of the parts is an imported article's slug |
+
+The file is checked: a new address must be a path on this site under the article path template (no other host, no `javascript:`), and it must lead to an article, category or the home page that will exist; every refusal is only counted on the screen.
+
+### Old site hosts (`churchtimesnigeria.org`, `.com`, `www.`)
+
+The primary host is `churchtimesnigeria.net` (the host of `PUBLIC_SITE_URL` when set). `churchtimesnigeria.org`, `churchtimesnigeria.com` and the `www.` form of any of the three mean the same site; the list is configurable with `LEGACY_SITE_HOSTS` (comma list; default `churchtimesnigeria.org,churchtimesnigeria.com`; for `import:redirects` the default list of accepted `legacyUrl` hosts now holds all three hosts and their `www.` forms). A link to one of them is rewritten to the SAME path on this site (a root-relative path): when the article exists it becomes the article path, and when nothing resolves it still becomes the same path, so the link stays on `.net`. The public host must answer a request on `.org` or `.com` with a 301 to the same path on `.net`: see `legacy-hosts.md` (a short note for the public host owner).
 
 ## Categories: the rules mode (`--category-mode=rules`)
 
