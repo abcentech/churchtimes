@@ -44,16 +44,16 @@ export async function renderDashboard(container) {
 
     <div class="launchpad-grid">
       <div class="launch-card" id="launch-write-story" role="button" tabindex="0" aria-label="Open story editor to compose a new article">
-        <div class="launch-info"><h3>Write Story</h3><p>Compose, save drafts, attach verified media and preview</p></div>
+        <div class="launch-info"><h2>Write Story</h2><p>Compose, save drafts, attach verified media and preview</p></div>
       </div>
       <div class="launch-card accent" id="launch-review-queue" role="button" tabindex="0" aria-label="Open review queue for editorial approval">
-        <div class="launch-info"><h3>Review Queue</h3><p>Review stories and reader tips, request revisions, approve</p></div>
+        <div class="launch-info"><h2>Review Queue</h2><p>Review stories and reader tips, request revisions, approve</p></div>
       </div>
       <div class="launch-card live" id="launch-go-live" role="button" tabindex="0" aria-label="Manage live event coverage and updates">
-        <div class="launch-info"><h3>Live Coverage</h3><p>Updates for synods, conferences and breaking news</p></div>
+        <div class="launch-info"><h2>Live Coverage</h2><p>Updates for synods, conferences and breaking news</p></div>
       </div>
       <div class="launch-card" id="launch-media-lib" role="button" tabindex="0" aria-label="Browse and upload newsroom media assets">
-        <div class="launch-info"><h3>Media Library</h3><p>Photographs, credits and alt text</p></div>
+        <div class="launch-info"><h2>Media Library</h2><p>Photographs, credits and alt text</p></div>
       </div>
     </div>
 

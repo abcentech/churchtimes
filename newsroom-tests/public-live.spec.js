@@ -40,3 +40,63 @@ test('an event that becomes unavailable clears its cursor and can reload when pu
  await page.unroute('**/api/live-events/*/updates?**');let cursor;
  await page.route('**/api/live-events/*/updates?**',r=>{cursor=Number(new URL(r.request().url()).searchParams.get('since'));return r.fulfill({json:{event,docs:[row(1)],nextSince:1}});});await page.getByRole('button',{name:'Refresh updates',exact:true}).click();await expect(page.locator('#live-timeline li')).toHaveCount(1);expect(cursor).toBe(0);await expect(page.locator('#live-error')).toBeHidden();
 });
+
+const livePhotoBytes=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAACAAAAASCAIAAAC1qksFAAAAH0lEQVR4nGMQ19ajKWIYtWDUglELRi0YtWDUAnpYAABhZ/wBEOKdzAAAAABJRU5ErkJggg==','base64');
+const photo=(name,extra={})=>({url:`/api/media/file/${name}.png`,alt:`Synthetic ${name} photograph`,width:32,height:18,mimeType:'image/png',...extra});
+
+test('live photos render safely above text and same-id edits replace, reorder and remove them',async({page})=>{
+ await page.clock.install();await mock(page);
+ await page.route('**/api/media/file/*.png',r=>r.fulfill({contentType:'image/png',body:livePhotoBytes}));
+ const responses=[
+  {docs:[{...row(1),image:photo('first')},row(2)],nextSince:2},
+  {docs:[{...row(1),sequence:3,body:'Revised approved text',image:photo('replacement',{alt:'<img src=x onerror="window.compromised=true">'})}],nextSince:3},
+  {docs:[{...row(1),sequence:4,body:'Approved text with photograph removed',image:null}],nextSince:4},
+ ];let batch=0;
+ await page.route('**/api/live-events/*/updates?**',r=>r.fulfill({json:{event,...responses[Math.min(batch++,2)]}}));
+ await page.goto('/#live');const first=page.locator('#live-timeline li[data-id="1"]');
+ await expect(first.locator('img')).toHaveAttribute('alt','Synthetic first photograph');
+ await expect(first.locator('img')).toHaveAttribute('src','http://127.0.0.1:5174/api/media/file/first.png');
+ await expect(first.locator('img')).toHaveAttribute('loading','lazy');await expect(first.locator('img')).toHaveAttribute('width','32');await expect(first.locator('img')).toHaveAttribute('height','18');
+ expect(await first.evaluate(el=>el.querySelector('figure').compareDocumentPosition(el.querySelector('.live-update-body'))&Node.DOCUMENT_POSITION_FOLLOWING)).toBeTruthy();
+ await first.locator('img').scrollIntoViewIfNeeded();await expect.poll(()=>first.locator('img').evaluate(img=>img.naturalWidth)).toBe(32);
+ await page.getByRole('button',{name:'Refresh updates',exact:true}).click();
+ await expect(first).toContainText('Revised approved text');await expect(page.locator('#live-timeline li')).toHaveCount(2);
+ await expect(first.locator('img')).toHaveAttribute('src','http://127.0.0.1:5174/api/media/file/replacement.png');
+ await expect(first.locator('img')).toHaveAttribute('alt','<img src=x onerror="window.compromised=true">');
+ expect(await page.locator('#live-timeline li').evaluateAll(els=>els.map(el=>el.dataset.id))).toEqual(['2','1']);
+ await expect(page.locator('#live-announcement')).toContainText('1 update revised');
+ expect(await page.evaluate(()=>window.compromised)).toBeUndefined();
+ await page.getByRole('button',{name:'Refresh updates',exact:true}).click();
+ await expect(first).toContainText('Approved text with photograph removed');await expect(first.locator('figure,img')).toHaveCount(0);await expect(page.locator('#live-timeline li')).toHaveCount(2);
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+});
+
+test('unknown photo dimensions reserve space and failed photos leave update text intact',async({page})=>{
+ await page.clock.install();await mock(page);
+ await page.route('**/api/media/file/unknown.png',r=>r.fulfill({contentType:'image/png',body:livePhotoBytes}));
+ await page.route('**/api/live-events/*/updates?**',r=>r.fulfill({json:{event,docs:[{...row(1),image:photo('unknown',{width:null,height:null})}],nextSince:1}}));
+ await page.goto('/#live');const figure=page.locator('#live-timeline figure');
+ await expect(figure).toHaveCSS('aspect-ratio','16 / 9');expect(await figure.locator('img').getAttribute('width')).toBeNull();expect(await figure.locator('img').getAttribute('height')).toBeNull();
+ let release;const gate=new Promise(resolve=>release=resolve);
+ await page.route('**/api/media/file/broken.png',async r=>{await gate;await r.abort('failed');});
+ await page.route('**/api/live-events/*/updates?**',r=>r.fulfill({json:{event,docs:[{...row(1),sequence:2,body:'Text survives an unavailable photograph',image:photo('broken')}],nextSince:2}}));
+ await page.getByRole('button',{name:'Refresh updates',exact:true}).click();
+ await expect(page.locator('#live-timeline')).toContainText('Text survives an unavailable photograph');
+ const image=page.locator('#live-timeline img');await image.scrollIntoViewIfNeeded();release();
+ await expect(page.locator('#live-timeline figure')).toHaveCount(0);await expect(page.locator('#live-timeline li')).toHaveCount(1);
+});
+
+test('a day-long Retry-After resumes automatic refresh within ten minutes',async({page})=>{
+ await page.clock.install();await mock(page);await page.goto('/#live');await expect(page.locator('#live-timeline li')).toHaveCount(1);
+ let calls=0;await page.route('**/api/live-events/*/updates?**',r=>++calls===1?r.fulfill({status:429,headers:{'Retry-After':'86400'},json:{}}):r.fulfill({json:{event,docs:[],nextSince:1}}));
+ await page.getByRole('button',{name:'Refresh updates',exact:true}).click();await expect(page.locator('#live-error')).toBeVisible();
+ await page.clock.fastForward(599000);expect(calls).toBe(1);
+ await page.clock.fastForward(1000);await expect.poll(()=>calls).toBe(2);await expect(page.locator('#live-error')).toBeHidden();
+});
+
+test('invalid live links still discover events and wait for explicit selection',async({page})=>{
+ const calls=await mock(page);await page.goto('/#live/not_valid');
+ await expect(page.locator('#live-discovery')).toContainText('Coverage unavailable');await expect(page.locator('#live-discovery a')).toHaveCount(1);
+ await expect(page.locator('#live-event')).toBeHidden();expect(calls).toEqual([]);
+ await page.locator('#live-discovery a').click();await expect(page.locator('#live-timeline li')).toHaveCount(1);
+});

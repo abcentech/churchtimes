@@ -2,6 +2,7 @@ import { APIError, incrementLoginAttempts, resetLoginAttempts, ValidationError }
 import type {
   CollectionAfterOperationHook,
   CollectionAfterChangeHook,
+  CollectionAfterDeleteHook,
   CollectionBeforeOperationHook,
   CollectionBeforeValidateHook,
   CollectionConfig,
@@ -20,8 +21,10 @@ import {
 } from '../access/roles'
 import { writeAuditLog } from '../lib/audit'
 import { authRateLimitHook } from '../lib/authRateLimit'
+import { equaliseLoginTiming } from '../lib/loginTiming'
 import { clampLimit } from '../lib/clampLimit'
 import { checkPasswordPolicy } from '../lib/passwordPolicy'
+import { firstRegisterAllowed } from '../lib/securityConfig'
 import { verifyStoredPassword } from '../lib/passwordVerify'
 
 const isProd = process.env.NODE_ENV === 'production'
@@ -176,6 +179,12 @@ const enforcePasswordAndBootstrap: CollectionBeforeValidateHook = async ({
   if (operation === 'create' && !req.user && req.payloadAPI === 'REST') {
     const existing = await req.payload.count({ collection: 'users', overrideAccess: true, req })
     if (existing.totalDocs === 0) {
+      if (!firstRegisterAllowed(process.env)) {
+        throw new APIError(
+          'First-account registration is disabled in production. Create the first administrator on the server (npm run admin:create).',
+          403,
+        )
+      }
       data.role = 'admin'
       data.sections = []
     }
@@ -191,6 +200,25 @@ const sectionKey = (v: unknown): string =>
       .sort(),
   )
 
+/**
+ * User deleted. The audit row is written after the row is gone, so the actor FK is left empty when the user deleted
+ * themselves (it would violate the foreign key); `actorIdSnapshot` still records who it was.
+ */
+const auditUserDelete: CollectionAfterDeleteHook = async ({ doc, id, req }) => {
+  if ((req.context as { seed?: boolean } | undefined)?.seed === true) return doc
+  const actor = (req.user as { id?: number | string } | null | undefined)?.id
+  await writeAuditLog(req, {
+    action: 'user.delete',
+    collection: 'users',
+    docId: id,
+    fromStatus: (doc as { role?: string }).role,
+    summary: `User #${id} deleted (role ${(doc as { role?: string }).role ?? 'unknown'})`,
+    actor: actor !== undefined && String(actor) === String(id) ? null : actor,
+    actorIdSnapshot: actor !== undefined ? String(actor) : undefined,
+  })
+  return doc
+}
+
 const auditUserChanges: CollectionAfterChangeHook = async ({ doc, previousDoc, operation, req }) => {
   if ((req.context as { seed?: boolean } | undefined)?.seed === true) return doc
   if (operation === 'create') {
@@ -199,7 +227,7 @@ const auditUserChanges: CollectionAfterChangeHook = async ({ doc, previousDoc, o
       collection: 'users',
       docId: doc.id,
       toStatus: doc.role,
-      summary: `User ${doc.email} created with role ${doc.role}`,
+      summary: `User #${doc.id} created with role ${doc.role}`,
     })
   } else if (previousDoc) {
     if (previousDoc.role !== doc.role || sectionKey(previousDoc.sections) !== sectionKey(doc.sections)) {
@@ -209,7 +237,7 @@ const auditUserChanges: CollectionAfterChangeHook = async ({ doc, previousDoc, o
         docId: doc.id,
         fromStatus: previousDoc.role,
         toStatus: doc.role,
-        summary: `User ${doc.email} role ${previousDoc.role} -> ${doc.role}`,
+        summary: `User #${doc.id} role ${previousDoc.role} -> ${doc.role}`,
       })
     }
     // Credential changes are audited without the values (no passwords, no e-mail addresses): who
@@ -294,7 +322,7 @@ const revokeSessionsEndpoint: Endpoint = {
       action: 'user.revoke-sessions',
       collection: 'users',
       docId: id,
-      summary: `Sessions revoked for ${(target as { email?: string }).email ?? id}`,
+      summary: `Sessions revoked for user #${id}`,
     })
     return Response.json({ ok: true }, { headers: { 'Cache-Control': 'no-store' } })
   },
@@ -363,12 +391,14 @@ export const Users: CollectionConfig = {
     beforeOperation: [
       clampLimit,
       authRateLimitHook('login'),
+      equaliseLoginTiming,
       authRateLimitHook('forgotPassword'),
       authRateLimitHook('resetPassword'),
       resetPasswordPolicy,
     ],
     beforeValidate: [enforcePasswordAndBootstrap],
     afterChange: [auditUserChanges],
+    afterDelete: [auditUserDelete],
   },
   fields: [
     { name: 'name', type: 'text', required: true },

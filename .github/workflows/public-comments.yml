@@ -1,0 +1,26 @@
+name: Public archived comments contract stubs
+on:
+  pull_request:
+    paths:
+      - 'src/comments/**'
+      - 'src/lib/public-comments.js'
+      - 'src/lib/public-url.js'
+      - 'comments-tests/**'
+      - 'unit-tests/public-comments.test.js'
+      - 'playwright.comments.config.js'
+      - 'package*.json'
+      - '.github/workflows/public-comments.yml'
+  workflow_dispatch:
+jobs:
+  comments-contract-stubs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: node --test unit-tests/public-comments.test.js
+      - run: npx playwright test --config playwright.comments.config.js --reporter=list,github
