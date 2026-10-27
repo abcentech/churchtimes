@@ -280,7 +280,8 @@ async function main(): Promise<number> {
   }
   // Stopping PostgreSQL under an idle pool connection emits one late socket error: harmless once cleanup has started.
   process.on('uncaughtException', (err) => {
-    if (cleaned && /Connection terminated|ECONNRESET/.test(err.message)) return
+    // pg answers 57P01 (terminating connection due to administrator command) when embedded PostgreSQL stops under an idle pooled connection.
+    if (cleaned && (/Connection terminated|ECONNRESET|terminating connection/i.test(err.message) || (err as { code?: string }).code === '57P01')) return
     console.error(`REHEARSAL_FAILED ${err.name}`)
     process.exit(1)
   })
