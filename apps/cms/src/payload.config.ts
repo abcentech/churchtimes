@@ -188,7 +188,7 @@ export default buildConfig({
     startScheduler(payload)
   },
   sharp,
-  // The parser limit is the largest allowed file (audio/video, MEDIA_AV_MAX_MB, default 100 MB); images are capped at 10 MB in Media.checkUpload.
+  // The parser limit is the largest allowed file (audio/video, MEDIA_AV_MAX_MB, default 100 MB); images are capped at MEDIA_IMAGE_MAX_MB (default 25 MB) in Media.checkUpload.
   upload: { limits: { fileSize: avMaxBytes() } },
   graphQL: { disable: true },
   typescript: { outputFile: path.resolve(dirname, 'payload-types.ts') },

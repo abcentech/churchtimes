@@ -145,6 +145,7 @@ One line of a file (shown wrapped here; in the file it is a single line):
 | `provenance.confidence` | `confidence` |
 | `provenance.importBatch` | the run's batch label (`arc-` plus 12 hex characters of the file hash, or `--batch`) |
 | `provenance.reviewStatus` | `pending` on import; an editor sets `reviewed` or `rejected` in the admin |
+| `provenance.reviewedBy`, `reviewedByName`, `reviewedAt` | server-set when `reviewStatus` becomes `reviewed` (cleared otherwise); editor roles read them, nobody writes them. The approver cannot publish or schedule the article (admins exempt) |
 
 The group is never part of any public response. An article with an `importBatch` cannot be set to `published` or `scheduled`
 until `provenance.reviewStatus` is `reviewed` (HTTP 409 otherwise, for every caller).

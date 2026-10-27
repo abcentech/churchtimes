@@ -19,7 +19,7 @@ import { escapeHtml, formatTimeAgo, cssToken, latestGuard } from '../util.js';
 import { STALE_MESSAGE, isStaleConflict } from '../stale-guard.js';
 import {
   CONFIDENCE_LEVELS, REVIEW_STATUSES, cleanFilters, confidenceHelp, confidenceLabel, groupSha, originalDateLabel,
-  publishBlockReason, reviewActions, reviewLabel, safeSourceUrl, BATCH_RE, extractLinks, summarizeLinks, linksNeedAcknowledgement
+  approvalNote, fourEyesReason, publishBlockReason, reviewActions, reviewLabel, safeSourceUrl, BATCH_RE, extractLinks, summarizeLinks, linksNeedAcknowledgement
 } from '../archive-review.js';
 import { KNOWN_LINK_HOSTS } from '../config.js';
 
@@ -238,6 +238,8 @@ async function renderReviewScreen(container, storyId, notice = '') {
   const canReview = api.can('archive.review', { status: story.status, categoryId: story.categoryId });
   const actions = reviewActions(story, canReview);
   const block = publishBlockReason(story);
+  const fourEyes = fourEyesReason(p, api.getCurrentUser());
+  const approved = approvalNote(p, api.can('archive.view'));
   const href = safeSourceUrl(p.sourceUrl);
   const bodyHtml = markdownToHtml(story.bodyMd || '', { media: id => story.bodyMedia?.[id] });
   const linkList = extractLinks(bodyHtml, KNOWN_LINK_HOSTS);
@@ -253,6 +255,7 @@ async function renderReviewScreen(container, storyId, notice = '') {
     <div id="archive-review-error" data-testid="archive-review-error" role="alert" class="validation-summary-alert" style="display:${notice ? 'block' : 'none'}; margin-bottom:1rem;">${escapeHtml(notice)}</div>
     ${block ? `<div class="ethics-notice-box archive-block" data-testid="archive-publish-blocked" role="status"><p style="margin:0;"><strong>Publishing is blocked.</strong> ${escapeHtml(block)}</p></div>`
       : `<div class="ethics-notice-box archive-ok" data-testid="archive-publish-clear" role="status"><p style="margin:0;"><strong>Approved.</strong> This story can now follow the normal review and publish steps in the editor. Approval does not publish it.</p></div>`}
+    ${fourEyes ? `<p class="archive-block-note" data-testid="archive-four-eyes" role="note">${escapeHtml(fourEyes)}</p>` : ''}
     ${p.confidence && p.confidence !== 'partial' ? `<p class="archive-confidence-note" data-testid="archive-confidence-note"><strong>${escapeHtml(confidenceLabel(p.confidence))}:</strong> ${escapeHtml(confidenceHelp(p.confidence))}</p>` : ''}
     <div class="archive-split">
       <section class="card archive-body" aria-labelledby="archive-body-h">
@@ -273,7 +276,7 @@ async function renderReviewScreen(container, storyId, notice = '') {
           <dt>SHA-256 of the captured page</dt><dd data-testid="archive-sha"><code class="archive-code">${escapeHtml(groupSha(p.sourceSha256) || 'not recorded')}</code></dd>
           <dt>Recovery confidence</dt><dd>${escapeHtml(confidenceLabel(p.confidence))}: ${escapeHtml(confidenceHelp(p.confidence))}</dd>
           <dt>Import batch</dt><dd data-testid="archive-batch"><code class="archive-code">${escapeHtml(p.importBatch)}</code></dd>
-          <dt>Review status</dt><dd>${escapeHtml(reviewLabel(p.reviewStatus))}</dd>
+          <dt>Review status</dt><dd>${escapeHtml(reviewLabel(p.reviewStatus))}${approved ? `<div class="archive-muted" data-testid="archive-approved-by">${escapeHtml(approved)}</div>` : ''}</dd>
         </dl>
       </aside>
     </div>

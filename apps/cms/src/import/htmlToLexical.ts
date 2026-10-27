@@ -53,7 +53,7 @@ export type HtmlToLexicalOptions = {
   /** New root-relative article path, default is the configured article path (`/{slug}/`, see PUBLIC_ARTICLE_PATH_TEMPLATE). */
   articlePath?: (slug: string) => string
   /** Old-host and root-relative link resolver (see `LinkOptions.classify`). */
-  classify?: (url: string) => { to: string | null; reason: string }
+  classify?: (url: string) => { to: string | null; reason: string; remove?: boolean }
   /** Default 5 MB. */
   maxInputBytes?: number
   /** Element nesting past this is flattened to text. Default and maximum 64. */

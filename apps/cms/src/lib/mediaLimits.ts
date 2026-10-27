@@ -6,8 +6,18 @@ import { AV_EXTENSIONS, avKindFromPath, avMaxBytes } from './avMedia'
  * and the collection accept.
  */
 
-/** Largest image file the Media collection accepts. The loader and the uploads check use the same number. */
-export const MAX_IMAGE_BYTES = 10 * 1024 * 1024
+export const IMAGE_DEFAULT_MAX_MB = 25
+export const IMAGE_MAX_MB_LIMIT = 50
+
+/** Image size cap in bytes: `MEDIA_IMAGE_MAX_MB` (whole MB, default 25, 1 to 50; below 1 or unparsable gives the default, above 50 the bound). */
+export function imageMaxBytes(env: Record<string, string | undefined> = process.env): number {
+  const raw = Number(env.MEDIA_IMAGE_MAX_MB)
+  const mb = Number.isFinite(raw) && raw >= 1 ? Math.min(Math.floor(raw), IMAGE_MAX_MB_LIMIT) : IMAGE_DEFAULT_MAX_MB
+  return mb * 1024 * 1024
+}
+
+/** Largest image file the Media collection accepts (read once at start-up: rebuild/restart after changing the env). The loader and the uploads check use the same number. */
+export const MAX_IMAGE_BYTES = imageMaxBytes()
 export const MEDIA_MAX_BYTES = MAX_IMAGE_BYTES
 
 export const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp'] as const

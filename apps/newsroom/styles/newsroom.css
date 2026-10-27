@@ -1658,3 +1658,11 @@ body[data-auth="out"] .session-chip:empty {
   .archive-row { flex-direction: row; align-items: center; justify-content: space-between; }
   .archive-split { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
 }
+
+/* Additional categories: checkbox chips (wrap on a phone; the whole chip is the tap target). */
+.chip-group { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.chip { display: inline-flex; align-items: center; gap: 0.35rem; min-height: 2.25rem; padding: 0.25rem 0.75rem; border: 1px solid var(--color-border, #c9ccd1); border-radius: 999px; font-size: 0.85rem; cursor: pointer; }
+.chip input { margin: 0; }
+.chip-on { background: var(--color-primary-soft, #e8eefb); border-color: var(--color-primary, #1f4aa8); }
+.chip:has(input:disabled) { opacity: 0.55; cursor: not-allowed; }
+.chip:focus-within { outline: 2px solid var(--color-primary, #1f4aa8); outline-offset: 2px; }

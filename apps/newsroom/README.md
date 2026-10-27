@@ -100,7 +100,6 @@ npm run test:newsroom-app
 The config then builds the app with that `VITE_CMS_URL` and serves the production bundle on
 `http://newsroom.churchtimes.localhost:5274` (`NEWSROOM_LIVE_PORT`); credentials are read from the file and never printed.
 
-<<<<<<< HEAD
 ### Accessibility suite (`tests/newsroom-a11y.spec.js`)
 
 Runs inside `npm run test:newsroom-app` (also `npm run test:newsroom-a11y`) against the mock-mode dev server, on the
@@ -109,8 +108,8 @@ desktop (1440px) and mobile (Pixel 7) projects, and is part of the `newsroom` CI
 - **axe-core** (`wcag2a`, `wcag2aa`, `wcag21a`, `wcag21aa`, `best-practice`) on: login (and its error state), dashboard and
   story list (including empty), story editor (new, validation error, saved, publish confirmation and result), every review
   queue tab plus the inspect modal, live events (list, new-event form, running event), media library and detail modal, the
-  public-tip notice (`#submit`) and the dark theme. There is no separate staff settings or archive screen in this app
-  (CMS settings and the archive review live in the CMS admin; the public submit form is on the public site).
+  public-tip notice (`#submit`) and the dark theme. There is no separate staff settings screen in this app
+  (CMS settings live in the CMS admin; the archive review is the `#archive` screen below; the public submit form is on the public site).
 - **Severity policy:** `serious` and `critical` findings fail the test. `minor` and `moderate` findings are attached as
   `a11y-minor` test annotations and emitted as GitHub `::warning` annotations in CI.
 - **Keyboard and AT checks:** skip link is the first stop and moves focus to `<main>`; tab order reaches the primary actions;
@@ -122,7 +121,7 @@ desktop (1440px) and mobile (Pixel 7) projects, and is part of the `newsroom` CI
   currently empty; every entry needs a written reason and a link to the follow-up.
 - Fix real violations in `apps/newsroom/styles/newsroom.css` or the views instead of allowlisting them. Colour tokens for the
   dark theme live in the `[data-theme="dark"]` block.
-=======
+
 ## Archive review
 
 Recovered archive pages arrive as draft articles with a staff-only `provenance` group (`apps/cms/docs/archive-candidate-schema.md`).
@@ -141,6 +140,7 @@ desk for them:
   shown to admin, editor-in-chief and the section editor of the story's section; both ask for confirmation and send the version
   seen (`expectedUpdatedAt`, a stale version answers 409 and the screen reloads). The CMS enforces the role rule, writes an
   `archive.review` audit row (who, when) and refuses everyone else. *Open in editor* goes to the normal editor.
+- **Four-eyes.** The review screen shows "Approved by <name> on <date>" to editor roles. The editor who approved a recovered story cannot publish or schedule it (the CMS answers 409); the editor disables Publish and Schedule for that user with "You approved this recovered archive story, so a different editor must publish or schedule it." (`editor-archive-blocked`, `editor-schedule-four-eyes`, `archive-four-eyes`). Admins may do both; the reason never names the approver.
 - **Publishing is unchanged.** Approval does not publish. A recovered story goes through the usual review, approve and publish
   steps; until it is approved here the CMS refuses to publish or schedule it (409). The review screen and the editor both say so
   (`archive-publish-blocked`, `editor-archive-blocked`), and the editor's Publish button is disabled with the reason.
@@ -148,7 +148,6 @@ desk for them:
   build contains no public route for it.
 
 Dev mock mode seeds four synthetic recovered drafts (`old-site.test`) kept apart from the desk's stories.
->>>>>>> origin/feat/newsroom-mvp
 
 ## Stable test selectors
 

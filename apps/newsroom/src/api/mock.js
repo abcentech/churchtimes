@@ -181,6 +181,16 @@ export class MockAdapter {
     if (!can(this.currentUser, 'archive.review', this._ctx(a))) throw forbidden();
     if (!versionMatches(a.updatedAt, expectedUpdatedAt)) throw new ApiError(STALE_MESSAGE, { status: 409 });
     a.provenance.reviewStatus = reviewStatus;
+    // Server-set four-eyes stamp (editor roles only, which is who reaches this method).
+    if (reviewStatus === 'reviewed') {
+      a.provenance.reviewedById = String(this.currentUser.id);
+      a.provenance.reviewedByName = this.currentUser.name || '';
+      a.provenance.reviewedAt = new Date().toISOString();
+    } else {
+      a.provenance.reviewedById = '';
+      a.provenance.reviewedByName = '';
+      a.provenance.reviewedAt = null;
+    }
     a.updatedAt = new Date().toISOString();
     this.persist();
     return { data: clone(a) };
@@ -200,6 +210,7 @@ export class MockAdapter {
       a.categoryId = f.categoryId;
       a.categoryTitle = this.db.categories.find(c => c.id === f.categoryId)?.title || '';
     }
+    if ('extraCategoryIds' in f) a.extraCategoryIds = f.extraCategoryIds;
     if ('featuredImageId' in f) a.featuredImage = this.db.media.find(m => m.id === f.featuredImageId) || null;
     a.updatedAt = new Date().toISOString();
   }
@@ -234,7 +245,7 @@ export class MockAdapter {
       published: 'story.publish', archived: 'story.archive'
     }[status];
     if (!action || !can(this.currentUser, action, this._ctx(a))) throw forbidden();
-    if (status === 'published' && publishBlockReason(a)) throw new ApiError(publishBlockReason(a), { status: 409 });
+    if (status === 'published' && publishBlockReason(a, this.currentUser)) throw new ApiError(publishBlockReason(a, this.currentUser), { status: 409 });
     a.status = status;
     if (reviewNotes !== undefined) a.reviewNotes = reviewNotes;
     if (status === 'published' && !a.publishedAt) a.publishedAt = new Date().toISOString();

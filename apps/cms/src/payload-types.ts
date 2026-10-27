@@ -304,6 +304,10 @@ export interface Article {
     [k: string]: unknown;
   };
   category: number | Category;
+  /**
+   * Optional extra sections (up to 5). The primary category above is not repeated here.
+   */
+  categories?: (number | Category)[] | null;
   featuredImage?: (number | null) | Media;
   bodyMedia?: (number | Media)[] | null;
   author?: (number | null) | User;
@@ -336,6 +340,9 @@ export interface Article {
     confidence?: ('partial' | 'citation-only' | 'missing') | null;
     importBatch?: string | null;
     reviewStatus?: ('pending' | 'reviewed' | 'rejected') | null;
+    reviewedBy?: (number | null) | User;
+    reviewedByName?: string | null;
+    reviewedAt?: string | null;
   };
   updatedAt: string;
   createdAt: string;
@@ -861,6 +868,7 @@ export interface ArticlesSelect<T extends boolean = true> {
   seoDescription?: T;
   content?: T;
   category?: T;
+  categories?: T;
   featuredImage?: T;
   bodyMedia?: T;
   author?: T;
@@ -889,6 +897,9 @@ export interface ArticlesSelect<T extends boolean = true> {
         confidence?: T;
         importBatch?: T;
         reviewStatus?: T;
+        reviewedBy?: T;
+        reviewedByName?: T;
+        reviewedAt?: T;
       };
   updatedAt?: T;
   createdAt?: T;

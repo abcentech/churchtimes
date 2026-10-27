@@ -128,7 +128,7 @@ describe('review and the publish guard', () => {
     const a = await candidate()
     expect((await api('PATCH', `/api/articles/${a.id}`, { token: f.tokens.eic, body: { status: 'published' } })).status).toBe(409)
     await setReview(f.tokens.eic, a.id, 'reviewed')
-    expect((await api('PATCH', `/api/articles/${a.id}`, { token: f.tokens.eic, body: { status: 'published' } })).status).toBe(200)
+    expect((await api('PATCH', `/api/articles/${a.id}`, { token: f.tokens.admin, body: { status: 'published' } })).status).toBe(200)
   })
 
   it('staff can list recovered drafts filtered by confidence, batch and review status; the public cannot', async () => {
