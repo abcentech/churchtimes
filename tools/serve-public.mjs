@@ -11,6 +11,7 @@ import {siteCanonical,replaceSocialHTML} from '../src/lib/public-metadata.js';
 import {createPublicResponder} from './public-response.mjs';
 import {homeImageMetadata} from './public-home.mjs';
 import {createPublicPages} from './public-pages.mjs';
+import {createLookupCache} from './public-lookup-cache.mjs';
 import {publicSEOSettings} from './public-seo-settings.mjs';
 import {createPublicRedirects,isJunkPath,legacyHostRedirector} from './public-redirects.mjs';
 import {createPublicFeeds} from './public-feeds.mjs';
@@ -19,13 +20,13 @@ import {normalizeBasePath,reportPath,articlePathTemplate as validateArticlePathT
 const escape=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json','.svg':'image/svg+xml','.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp','.woff2':'font/woff2'};
 const replaceMeta=(html,attribute,name,value)=>html.replace(new RegExp(`(<meta ${attribute}="${name}" content=")[^"]*(">)`),(_all,a,b)=>a+escape(value)+b);
-export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(fileURLToPath(new URL('../dist/',import.meta.url))),cmsUrl=process.env.PUBLIC_CMS_URL,siteUrl=process.env.PUBLIC_SITE_URL,basePath=process.env.PUBLIC_BASE_PATH || '/',adsTxtLine=process.env.PUBLIC_ADS_TXT_LINE,searchVerification=process.env.PUBLIC_SEARCH_CONSOLE_VERIFICATION,indexable=process.env.PUBLIC_INDEXABLE==='true',articlePathTemplate=process.env.PUBLIC_ARTICLE_PATH_TEMPLATE,redirectsFile=process.env.PUBLIC_REDIRECTS_FILE,redirectsUrl=process.env.PUBLIC_REDIRECTS_URL,redirectPatterns=process.env.PUBLIC_REDIRECT_PATTERNS,redirectAllowedHosts=process.env.PUBLIC_REDIRECT_ALLOWED_HOSTS,legacySiteHosts=process.env.LEGACY_SITE_HOSTS,fetchImpl=fetch}={}) {
+export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(fileURLToPath(new URL('../dist/',import.meta.url))),cmsUrl=process.env.PUBLIC_CMS_URL,siteUrl=process.env.PUBLIC_SITE_URL,basePath=process.env.PUBLIC_BASE_PATH || '/',adsTxtLine=process.env.PUBLIC_ADS_TXT_LINE,searchVerification=process.env.PUBLIC_SEARCH_CONSOLE_VERIFICATION,indexable=process.env.PUBLIC_INDEXABLE==='true',articlePathTemplate=process.env.PUBLIC_ARTICLE_PATH_TEMPLATE,redirectsFile=process.env.PUBLIC_REDIRECTS_FILE,redirectsUrl=process.env.PUBLIC_REDIRECTS_URL,redirectPatterns=process.env.PUBLIC_REDIRECT_PATTERNS,redirectAllowedHosts=process.env.PUBLIC_REDIRECT_ALLOWED_HOSTS,legacySiteHosts=process.env.LEGACY_SITE_HOSTS,fetchImpl=fetch,lookupCache=createLookupCache()}={}) {
   const legacyHostRedirect=legacyHostRedirector({siteUrl,legacySiteHosts});
   basePath=normalizeBasePath(basePath);
   articlePathTemplate=validateArticlePathTemplate(articlePathTemplate,HOST_ARTICLE_PATH_TEMPLATE);
   if(cmsUrl && !publicOrigin(cmsUrl))throw new Error('PUBLIC_CMS_URL must be HTTPS or loopback HTTP without credentials');
   const settings=publicSEOSettings({adsTxtLine,searchVerification});
-  const publicPages=createPublicPages({dist,cmsUrl,siteUrl,basePath,indexable,fetchImpl,extraHead:settings.head,articlePathTemplate});
+  const publicPages=createPublicPages({dist,cmsUrl,siteUrl,basePath,indexable,fetchImpl,extraHead:settings.head,articlePathTemplate,lookupCache});
   const publicFeeds=createPublicFeeds({cmsUrl,siteUrl,basePath,indexable,fetchImpl,articlePathTemplate});
   const redirects=createPublicRedirects({file:redirectsFile,endpoint:redirectsUrl,patterns:redirectPatterns,allowedHosts:redirectAllowedHosts,siteUrl,fetchImpl,basePath,articlePathTemplate,resolveLegacyId:cmsUrl ? legacyId=>fetchPublishedLegacyArticle({legacyId,baseUrl:cmsUrl,fetchImpl,timeoutMs:6000}) : undefined});
   async function htmlPage(article,message) {
@@ -69,7 +70,7 @@ export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(file
         if(!slug) {const page=await htmlPage(null,'Article unavailable.');return respond(404,mime['.html'],page.html,{'X-Robots-Tag':'noindex,nofollow'});}
         if(!url.pathname.endsWith('/'))return respond(308,'text/plain','Canonical article path',{Location:reportPath(slug,basePath,articlePathTemplate)});
         let article;
-        try {article=cmsUrl ? await fetchPublishedArticle({baseUrl:cmsUrl,slug,fetchImpl,timeoutMs:6000}) : undefined;}
+        try {article=cmsUrl ? await lookupCache.get('article:'+slug,()=>fetchPublishedArticle({baseUrl:cmsUrl,slug,fetchImpl,timeoutMs:6000})) : undefined;}
         catch {const page=await htmlPage(null,'The newsroom is temporarily unavailable.');return respond(503,mime['.html'],page.html,{'X-Robots-Tag':'noindex,nofollow','Retry-After':'60'});}
         const page=await htmlPage(article,article===null?'Article unavailable.':'The newsroom connection is not configured.');
         return respond(article?200:article===null?404:503,mime['.html'],page.html,{'X-Robots-Tag':page.robots});

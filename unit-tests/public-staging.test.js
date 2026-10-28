@@ -13,10 +13,10 @@ test('reserved localhost subdomains support staging without allowing HTTP on rem
  for(const host of ['localhost','127.0.0.1','[::1]','cms.churchtimes.localhost'])assert.ok(submissionEndpoint({cmsUrl:`http://${host}:3400`}));
  for(const host of ['localhost.evil.test','evil-localhost','cms.example.test'])assert.equal(submissionEndpoint({cmsUrl:`http://${host}:3400`}), '');
 });
-test('numeric relationship filters and published-only search use real Payload query names',async()=>{
+test('numeric relationship filters and published-only listings use real Payload query names',async()=>{
  let calls=0;
- const fetchImpl=async(url,options)=>{calls++;const u=new URL(url);assert.equal(options.credentials,'omit');assert.equal(u.searchParams.get('where[status][equals]'),'published');assert.equal(u.searchParams.get('where[category][equals]'),'12');assert.equal(u.searchParams.get('where[or][2][bylineName][like]'),'Faith & service');return Response.json({docs:[article]});};
- await fetchPublishedPage({baseUrl:'https://cms.example.test',categoryId:12,query:' Faith & service ',fetchImpl});
+ const fetchImpl=async(url,options)=>{calls++;const u=new URL(url);assert.equal(options.credentials,'omit');assert.equal(u.searchParams.get('where[status][equals]'),'published');assert.equal(u.searchParams.get('where[and][0][or][0][category][equals]'),'12');assert.equal(u.searchParams.get('where[and][0][or][1][categories][equals]'),'12');return Response.json({docs:[article]});};
+ await fetchPublishedPage({baseUrl:'https://cms.example.test',categoryId:12,fetchImpl});
  await assert.rejects(fetchPublishedPage({baseUrl:'https://cms.example.test',categoryId:'news',fetchImpl}),e=>e.type==='configuration');assert.equal(calls,1);
  const cat=await fetchPublicCategory({baseUrl:'https://cms.example.test',slug:'news',fetchImpl:async url=>{assert.equal(new URL(url).pathname,'/api/categories');return Response.json({docs:[{id:12,slug:'news',title:'News'}]});}});assert.equal(cat.id,'12');
 });

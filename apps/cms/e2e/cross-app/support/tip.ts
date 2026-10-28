@@ -36,6 +36,13 @@ export async function fillTip(page: Page, tip: TipInput): Promise<void> {
 export async function openForm(page: Page, cfg: XappConfig): Promise<void> {
   await page.goto(`${cfg.publicOrigin}/#submit`)
   await expect(page.locator('#public-form')).toBeVisible()
+  // Turnstile loads only after the reader allows spam protection (consent gating, #46/#51): do what a real reader does.
+  const allow = page.locator('#allow-submission-verification')
+  // The choice is remembered in this browser, so after a reload the button is already hidden and the widget loads by itself.
+  if (await allow.isVisible()) {
+    await expect(allow).toBeEnabled()
+    await allow.click()
+  }
   // the real widget lives in an iframe served by challenges.cloudflare.com (inside a closed shadow root: check the frame list)
   await expect.poll(() => page.frames().some((f) => f.url().startsWith('https://challenges.cloudflare.com/')), { timeout: 45_000 }).toBe(true)
   await waitForTurnstile(page)

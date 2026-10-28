@@ -106,3 +106,34 @@ test('renders populated Lexical media safely and never resolves private/unpopula
   assert.match(html,/src="https:\/\/cms.example.test\/api\/media\/file\/photo.jpg"/);assert.match(html,/&lt;script&gt;/);assert.doesNotMatch(html,/<script>|<img onerror/);
   assert.equal(renderArticleContent(make(123),{baseUrl:'https://cms.example.test'}),'');
 });
+import { cmsErrorMessage } from '../src/lib/published-articles.js';
+import { searchArticles } from '../src/lib/public-search.js';
+const hit = {id:7,slug:'faith-and-service',title:'Faith and service',excerpt:'Excerpt',snippet:'A matching snippet',publishedAt:'2026-10-13T08:00:00Z',category:{id:1,slug:'news',title:'News'},categories:[],rank:0.9};
+test('search uses the C8 endpoint, maps hits to cards and exposes totalCapped', async () => {
+  let seen;
+  const result = await searchArticles({baseUrl:'https://cms.example.test',query:'  Faith & service ',page:2,limit:12,fetchImpl:async (url,options) => {
+    seen = new URL(url);
+    assert.equal(options.credentials,'omit');
+    return {ok:true,json:async()=>({docs:[hit,{...hit,slug:'../bad'}],totalDocs:1000,totalCapped:true,hasNextPage:true,nextPage:3})};
+  }});
+  assert.equal(seen.pathname,'/api/public/search');
+  assert.equal(seen.searchParams.get('q'),'Faith & service');
+  assert.equal(seen.searchParams.get('page'),'2');
+  assert.equal(seen.searchParams.get('limit'),'12');
+  assert.ok(![...seen.searchParams.keys()].some(key=>key.startsWith('where')));
+  assert.equal(result.articles.length,1);
+  assert.deepEqual({slug:result.articles[0].slug,category:result.articles[0].category,excerpt:result.articles[0].excerpt},{slug:'faith-and-service',category:'News',excerpt:'A matching snippet'});
+  assert.equal(result.nextPage,3);assert.equal(result.totalCapped,true);
+});
+test('search with an empty query makes no request', async () => {
+  let calls = 0;
+  const result = await searchArticles({baseUrl:'https://cms.example.test',query:'   ',fetchImpl:async()=>{calls++;}});
+  assert.equal(calls,0);assert.deepEqual(result.articles,[]);assert.equal(result.nextPage,null);
+});
+test('search 429 carries Retry-After into the reader message and other failures stay typed', async () => {
+  const tooMany = searchArticles({baseUrl:'https://cms.example.test',query:'faith',fetchImpl:async()=>({ok:false,status:429,headers:new Headers({'Retry-After':'17'})})});
+  await assert.rejects(tooMany,error=>{assert.equal(error.status,429);assert.equal(error.retryAfter,17);assert.match(cmsErrorMessage(error),/wait 17s before/);return true;});
+  await assert.rejects(searchArticles({baseUrl:'https://cms.example.test',query:'faith',fetchImpl:async()=>({ok:false,status:429,headers:new Headers()})}),error=>error.retryAfter===0&&/Please wait before/.test(cmsErrorMessage(error)));
+  await assert.rejects(searchArticles({baseUrl:'https://cms.example.test',query:'faith',fetchImpl:async()=>({ok:true,json:async()=>({nope:1})})}),error=>error.type==='response');
+  await assert.rejects(searchArticles({baseUrl:'not a url',query:'faith'}),error=>error.type==='configuration');
+});

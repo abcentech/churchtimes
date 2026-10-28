@@ -24,7 +24,7 @@ export function publicBuildMode({eventName,baseRef='',refName='',headRef='',chan
 export function changedPublicFiles({baseSha,headSha,cwd,pullRequest=false}) {
   for(const sha of [baseSha,headSha])if(!/^[a-f0-9]{40}$/i.test(sha||'')||/^0+$/.test(sha))throw new Error('Public build policy requires explicit nonzero event base and head commit SHAs.');
   for(const sha of [baseSha,headSha])execFileSync('git',['rev-parse','--verify',sha+'^{commit}'],{cwd,stdio:'pipe'});
-  return execFileSync('git',['diff','--name-only','-z',...(pullRequest?[baseSha+'...'+headSha]:[baseSha,headSha])],{cwd,encoding:'utf8'}).split('\0').filter(Boolean);
+  return execFileSync('git',['diff','--name-only','--no-renames','-z',...(pullRequest?[baseSha+'...'+headSha]:[baseSha,headSha])],{cwd,encoding:'utf8'}).split('\0').filter(Boolean);
 }
 export async function checkPublicBuildPolicy(env=process.env,cwd=process.cwd()) {
   const context={eventName:env.PUBLIC_CI_EVENT,baseRef:env.PUBLIC_CI_BASE_REF,refName:env.PUBLIC_CI_REF_NAME,headRef:env.PUBLIC_CI_HEAD_REF};

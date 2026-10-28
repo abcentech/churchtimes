@@ -72,6 +72,11 @@ export const RESERVED_ROOT_SLUGS: ReadonlySet<string> = new Set([
   "trackback",
   "embed",
   "amp",
+  // public host / SPA shell routes (identical to src/lib/public-routes.js; unit-tests/public-reserved-slugs.test.js enforces it)
+  "latest",
+  "site",
+  "index",
+  "saved",
 ]);
 
 /** True when `slug` would collide with a real root route under `/{slug}/`. */

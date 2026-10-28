@@ -125,6 +125,8 @@ export function createMediaResolver(opts: MediaResolverOptions): MediaResolver {
   const stats: MediaStats = { reused: 0, created: 0, unresolved: {} }
   const hosts = new Set(opts.oldHosts.map((h) => h.toLowerCase()))
   const cache = new Map<string, MediaOutcome>()
+  /** Dry run only: legacy paths that WOULD have a media document by now, so a later address that maps onto one counts as reused, as in a real run. */
+  const dryPaths = new Set<string>()
   let req = opts.req
 
   const fail = (reason: string): MediaOutcome => {
@@ -148,6 +150,14 @@ export function createMediaResolver(opts: MediaResolverOptions): MediaResolver {
 
   async function resolveOne(legacyPath: string, ctx: { alt?: string; caption?: string; articleTitle?: string }): Promise<MediaOutcome> {
     const candidates = candidatePaths(legacyPath)
+    if (opts.dryRun) {
+      for (const candidate of candidates) {
+        if (dryPaths.has(candidate)) {
+          stats.reused++
+          return { ok: true, mediaId: 1, created: false }
+        }
+      }
+    }
     for (const candidate of candidates) {
       const id = await findExisting(candidate)
       if (id !== null) {
@@ -171,6 +181,7 @@ export function createMediaResolver(opts: MediaResolverOptions): MediaResolver {
       const checked = readCheckedFile(fs.realpathSync.native(opts.uploadsRoot as string), candidate)
       if (!checked.ok) return fail(checked.reason === 'too-large' ? 'too-large' : checked.reason === 'unsupported-type' ? 'unsupported-type' : 'rejected-unsafe')
       if (opts.dryRun) {
+        dryPaths.add(candidate)
         stats.created++
         // A placeholder (never written): 1 and not 0, so the converter treats it as a resolved image exactly as in a real run.
         return { ok: true, mediaId: 1, created: true }

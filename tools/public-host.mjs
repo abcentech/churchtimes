@@ -4,7 +4,7 @@ import {fileURLToPath} from 'node:url';
 import {stat,realpath} from 'node:fs/promises';
 import {createPublicServer} from './serve-public.mjs';
 import {checkPublicSource} from './check-public-source.mjs';
-import {publicOrigin} from '../src/lib/public-url.js';
+import {publicOrigin,isLoopbackHostname} from '../src/lib/public-url.js';
 
 export function publicHostConfig(env=process.env) {
   const host=env.HOST||'127.0.0.1',port=Number(env.PORT||5373);
@@ -13,6 +13,8 @@ export function publicHostConfig(env=process.env) {
   const siteUrl=publicOrigin(env.PUBLIC_SITE_URL);
   if(!siteUrl||new URL(env.PUBLIC_SITE_URL).pathname!=='/'||new URL(env.PUBLIC_SITE_URL).search||new URL(env.PUBLIC_SITE_URL).hash)throw new Error('PUBLIC_SITE_URL must be an explicit safe origin.');
   if(env.PUBLIC_CMS_URL&&!publicOrigin(env.PUBLIC_CMS_URL))throw new Error('PUBLIC_CMS_URL must be HTTPS or loopback HTTP without credentials.');
+  // Media URLs must share the CMS origin (mediaUrl). A loopback CMS origin cannot be reached by readers, so on an https site every image would silently vanish.
+  if(env.PUBLIC_CMS_URL&&env.PUBLIC_HOST_ALLOW_LOOPBACK_CMS!=='true'&&siteUrl.startsWith('https:')&&isLoopbackHostname(new URL(env.PUBLIC_CMS_URL).hostname))throw new Error('PUBLIC_CMS_URL must be a public HTTPS origin, not loopback, when PUBLIC_SITE_URL is https: media would not load (disposable smoke tests may set PUBLIC_HOST_ALLOW_LOOPBACK_CMS=true).');
   if(env.PUBLIC_REDIRECTS_FILE&&!isAbsolute(env.PUBLIC_REDIRECTS_FILE))throw new Error('PUBLIC_REDIRECTS_FILE must be an absolute private filesystem path.');
   const dist=resolve(env.PUBLIC_DIST||'dist');
   if(env.PUBLIC_REDIRECTS_FILE&&(resolve(env.PUBLIC_REDIRECTS_FILE)===dist||resolve(env.PUBLIC_REDIRECTS_FILE).startsWith(dist+sep)))throw new Error('Private redirects must be outside the public build.');
