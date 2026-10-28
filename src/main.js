@@ -23,7 +23,6 @@ subscribeConsent(()=>analytics?.update(hasConsent('analytics')));
 import {bindSkipLink} from './lib/skip-link.js';
 import {publicPageRoute} from './lib/public-page-routes.js';
 import {siteCanonical,socialMetadata} from './lib/public-metadata.js';
-import {livePageMarkup,mountLivePage} from './live/public-live-page.js';
 import { reportPath, reportSlug, articleCanonical, articleSchema, safeJSON } from './lib/public-routes.js';
 import { cmsImage, cmsFigure, bindCMSImages } from './lib/cms-media.js';
 import { selectHomepage, uniqueHomeReports } from './lib/homepage.js';
@@ -399,7 +398,7 @@ async function reportPage(slug) {
   return load();
 }
 
-function livePage(slug){shell(livePageMarkup(),'live');mountLivePage(document.querySelector('.public-live'),{baseUrl:cmsUrl,slug,signal:routeController.signal});}
+function livePage(slug){const signal=routeController.signal;import('./live/public-live-page.js').then(m=>{if(signal.aborted)return;shell(m.livePageMarkup(),'live');m.mountLivePage(document.querySelector('.public-live'),{baseUrl:cmsUrl,slug,signal});});}
 
 let renderedLocation;
 let pendingPage;
