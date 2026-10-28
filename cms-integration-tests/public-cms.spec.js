@@ -80,6 +80,7 @@ test('real CMS category selection resolves a numeric relationship and public sea
  expect(requests.some(u=>u.pathname==='/api/public/search'&&u.searchParams.get('q')===article.title)).toBe(true);
  await page.goto('/#search/does-not-exist-'+fixture.runId);
  await expect(page.locator('#cms-search')).toContainText('No matching published reports.');
+ await expect(page.getByRole('heading',{name:'No matching stories.'})).toHaveCount(0);
 });
 
 test('clean direct article URLs reload, preserve navigation and expose canonical metadata',async({page,request},testInfo)=>{
