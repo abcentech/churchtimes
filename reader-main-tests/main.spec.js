@@ -82,3 +82,31 @@ test('public search uses the C8 endpoint, shows capped counts and honours Retry-
   await expect(page.locator('#cms-search')).toContainText('Over 1,000 matches');
   expect(urls.every(u=>u.pathname==='/api/public/search'&&u.searchParams.get('q')==='faith')).toBe(true);
 });
+
+test('a client-rendered article has a share bar and the site footer has follow links',async({page,context})=>{
+  const title='Faith & "Hope" — Ọ̀gbẹ̀ni';
+  await stubArticles(page,{'share-story':article('share-story',title)});
+  const external=[];
+  page.on('request',request=>{if(!request.url().startsWith('http://127.0.0.1:6398'))external.push(request.url());});
+  await page.goto('/');
+  await page.evaluate(()=>{const a=document.createElement('a');a.id='go';a.href='/reports/share-story/';a.textContent='Go';document.querySelector('#main').prepend(a);});
+  await page.locator('#go').click();
+  const bar=page.locator('[data-share-bar]');
+  await expect(bar).toBeVisible();
+  for(const name of ['Facebook','X','WhatsApp','Telegram','LinkedIn','Email'])await expect(bar.getByRole('link',{name:`Share on ${name}`})).toBeVisible();
+  const x=new URL(await bar.getByRole('link',{name:'Share on X'}).getAttribute('href'));
+  expect(x.searchParams.get('text')).toBe(title);
+  expect(x.searchParams.get('url')).toMatch(/\/reports\/share-story\/$/);
+  await context.grantPermissions(['clipboard-read','clipboard-write'],{origin:'http://127.0.0.1:6398'});
+  await bar.getByRole('button',{name:'Copy link'}).click();
+  await expect(bar.locator('[role=status]')).toHaveText('Link copied.');
+  expect(await page.evaluate(()=>navigator.clipboard.readText())).toMatch(/\/reports\/share-story\/$/);
+  await expect(bar.getByRole('button',{name:'Share using your device'})).toBeHidden();
+  const follow=page.locator('.site-footer').getByRole('link',{name:/^Church Times Nigeria on /});
+  await expect(follow).toHaveCount(7);
+  await expect(follow.first()).toHaveAttribute('rel','noopener noreferrer me');
+  expect(external).toEqual([]);
+  const AxeBuilder=(await import('@axe-core/playwright')).default;
+  const results=await new AxeBuilder({page}).include('[data-share-bar]').include('.site-footer').analyze();
+  expect(results.violations).toEqual([]);
+});

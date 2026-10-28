@@ -1,0 +1,10 @@
+.social-links,.share-bar ul{display:flex;flex-wrap:wrap;gap:4px;list-style:none;margin:0;padding:0}
+.social-links a,.share-bar a,.share-bar button{display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border:1px solid var(--line);color:var(--ink);background:none}
+.site-footer .social-links a{color:inherit;border-color:currentColor;opacity:.85}
+.social-links a:hover,.share-bar a:hover,.share-bar button:hover{border-color:var(--clay);color:var(--clay)}
+.social-links a:focus-visible,.share-bar a:focus-visible,.share-bar button:focus-visible{outline:3px solid var(--clay);outline-offset:2px}
+.share-bar{margin:32px 0;padding-top:20px;border-top:1px solid var(--line)}
+.share-bar h2{font:11px var(--sans);letter-spacing:.14em;text-transform:uppercase;margin:0 0 12px}
+.share-bar [hidden]{display:none}
+.share-status{min-height:1.5em;margin:10px 0 0;font-size:13px}
+[data-social-links]{margin-top:18px;min-height:44px}

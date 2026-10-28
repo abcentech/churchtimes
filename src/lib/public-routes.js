@@ -37,7 +37,7 @@ export function articleCanonical(slug,{siteUrl,basePath='/',articlePathTemplate:
     return new URL(path,url.origin).href;
   } catch { return ''; }
 }
-export function articleSchema(article,canonical) {
+export function articleSchema(article,canonical,{sameAs}={}) {
   const image=cmsSources(article.featuredImage);
   return {'@context':'https://schema.org','@type':'NewsArticle',headline:article.title,description:article.seoDescription || article.excerpt,
     ...(canonical ? {url:canonical,mainEntityOfPage:canonical} : {}),
@@ -45,6 +45,6 @@ export function articleSchema(article,canonical) {
     ...(article.bylineName ? {author:{'@type':'Person',name:article.bylineName}} : {}),
     ...(article.category ? {articleSection:article.category} : {}),
     ...(image ? {image:[{'@type':'ImageObject',url:image.url,...(image.width?{width:image.width,height:image.height}:{})}]} : {}),
-    publisher:{'@type':'Organization',name:'Church Times Nigeria'}};
+    publisher:{'@type':'Organization',name:'Church Times Nigeria',...(sameAs?.length?{sameAs}:{})}};
 }
 export const safeJSON = value => JSON.stringify(value).replace(/</g,'\\u003c').replace(/\u2028/g,'\\u2028').replace(/\u2029/g,'\\u2029');
