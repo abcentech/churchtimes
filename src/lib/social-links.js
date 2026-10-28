@@ -1,10 +1,11 @@
 // Single source of truth for Church Times Nigeria's official social pages. Edit here only.
 // Verification status (owner-supplied 2026-10-28):
-//  - facebook: owner gave web.facebook.com/churchtimes.nigeria; the www host is used as canonical. Not verified by us.
+//  - facebook: facebook.com/ChurchTimesNg is the page linked from the current churchtimesnigeria.net site (checked 2026-10-29); the owner-supplied churchtimes.nigeria slug is not used.
+//  - x, instagram, youtube, telegram, tiktok: the same ChurchTimesNg handle is linked from churchtimesnigeria.net (handles are case-insensitive).
 //  - whatsapp: this is a GROUP INVITE link (chat.whatsapp.com), not a whatsapp.com/channel/ broadcast channel.
 //  - x, instagram, youtube, telegram, tiktok: handle "churchtimesng" was owner-supplied (corrected from "churchtimes") and is not verified by us (UNVERIFIED HANDLE).
 export const SOCIAL_LINKS=[
-  {id:'facebook',name:'Facebook',url:'https://www.facebook.com/churchtimes.nigeria'},
+  {id:'facebook',name:'Facebook',url:'https://www.facebook.com/ChurchTimesNg'},
   {id:'x',name:'X',url:'https://x.com/churchtimesng',unverified:true},
   {id:'instagram',name:'Instagram',url:'https://www.instagram.com/churchtimesng/',unverified:true},
   {id:'youtube',name:'YouTube',url:'https://www.youtube.com/@churchtimesng',unverified:true},
