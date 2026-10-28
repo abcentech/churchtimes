@@ -398,7 +398,7 @@ async function reportPage(slug) {
   return load();
 }
 
-function livePage(slug){const signal=routeController.signal;import('./live/public-live-page.js').then(m=>{if(signal.aborted)return;shell(m.livePageMarkup(),'live');m.mountLivePage(document.querySelector('.public-live'),{baseUrl:cmsUrl,slug,signal});});}
+function livePage(slug){const signal=routeController.signal;import('./live/public-live-page.js').then(m=>{if(signal.aborted)return;shell(m.livePageMarkup(),'live');m.mountLivePage(document.querySelector('.public-live'),{baseUrl:cmsUrl,slug,signal:routeController.signal});});}
 
 let renderedLocation;
 let pendingPage;
