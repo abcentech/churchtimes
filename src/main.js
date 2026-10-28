@@ -17,8 +17,8 @@ const newsletterTokenMarkup=(...args)=>readerForms?readerForms.newsletterTokenMa
 const readerFormConfig=()=>readerForms?.readerFormConfig()||{contact:import.meta.env.VITE_PUBLIC_CONTACT_URL,siteKey:import.meta.env.VITE_TURNSTILE_SITE_KEY};
 const bindReaderForms=(...args)=>readerForms?.bindReaderForms(...args)||(()=>{});
 import { hasConsent, subscribeConsent, requestConsent, consentMarkup, bindConsentControls } from './lib/reader-consent.js';
-let analytics;
-if(import.meta.env.VITE_PUBLIC_GA4_ID && import.meta.env.VITE_PUBLIC_INDEXABLE==='true')import('./lib/reader-analytics.js').then(module=>{analytics=module.createAnalytics({env:import.meta.env});analytics.update(hasConsent('analytics'));}).catch(()=>{});
+let analytics,pageSettled=false;
+if(import.meta.env.VITE_PUBLIC_GA4_ID && import.meta.env.VITE_PUBLIC_INDEXABLE==='true')import('./lib/reader-analytics.js').then(module=>{analytics=module.createAnalytics({env:import.meta.env,onReady:()=>{if(pageSettled)analytics.page();}});analytics.update(hasConsent('analytics'));}).catch(()=>{});
 subscribeConsent(()=>analytics?.update(hasConsent('analytics')));
 import {bindSkipLink} from './lib/skip-link.js';
 import {publicPageRoute} from './lib/public-page-routes.js';
@@ -312,7 +312,7 @@ async function latestPage({target: suppliedTarget,query,categorySlug} = {}) {
     const previousCount = seen.size;
     if (previousButton) { previousButton.disabled = true; previousButton.textContent = 'Loading reports…'; }
     try {
-      const { articles, nextPage } = await fetchPublishedPage({baseUrl:cmsUrl,signal,page,limit:12,query,categoryId});
+      const { articles, nextPage, note } = query ? await (await import('./lib/public-search.js')).searchArticles({baseUrl:cmsUrl,signal,page,limit:12,query}) : await fetchPublishedPage({baseUrl:cmsUrl,signal,page,limit:12,categoryId});
       if (!target.isConnected) return;
       if (!grid && !articles.length && !nextPage) {
         feedState(target,query?'No matching published reports.':'More stories are on their way.',query?'Try another headline, phrase or contributor.':'No newsroom reports have been published in this section yet.');
@@ -327,7 +327,7 @@ async function latestPage({target: suppliedTarget,query,categorySlug} = {}) {
       bindCMSImages(grid);
       target.querySelector('#feed-announcement').textContent = `${fresh.length} ${fresh.length===1?'report':'reports'} loaded. ${seen.size} ${seen.size===1?'report':'reports'} shown.`;
       const more = target.querySelector('#newsroom-more');
-      more.innerHTML = nextPage ? '<button class="outline-button" id="more-reports">More reports '+icon('down',17)+'</button>' : '<p class="muted small" role="status">You’re up to date with the newsroom.</p>';
+      more.innerHTML = (note?`<p class="muted small">${note}</p>`:'')+(nextPage ? '<button class="outline-button" id="more-reports">More reports '+icon('down',17)+'</button>' : '<p class="muted small" role="status">You’re up to date with the newsroom.</p>');
       more.querySelector('button')?.addEventListener('click',() => load(nextPage));
     } catch(error) {
       if (!target.isConnected) return;
@@ -343,7 +343,14 @@ async function latestPage({target: suppliedTarget,query,categorySlug} = {}) {
 let serverArticle;
 try {serverArticle=JSON.parse(document.querySelector('#public-article')?.textContent || 'null');} catch {serverArticle=null;}
 document.querySelector('#public-article')?.remove();
+let interceptedNav;
 async function reportPage(slug) {
+  const intercepted=interceptedNav===location.href;
+  if(serverArticle?.slug===slug && document.querySelector('#app article')) {
+    // Keep the server article on screen until the lazy renderer is ready, then swap once.
+    const signal=routeController.signal;
+    if(!await import('./lib/article-content.js').then(()=>1,()=>0)||signal.aborted)return;
+  }
   shell(`<section class="container section-list newsroom-report" id="cms-report" aria-busy="true"><div class="breadcrumbs"><a href="#home">Home</a><span>/</span><a href="#latest">Latest reports</a></div><h1 class="sr-only">Newsroom article</h1><p role="status">Loading article…</p></section>`,'latest');
   const target = document.querySelector('#cms-report');
   if (!cmsUrl) {
@@ -360,6 +367,8 @@ async function reportPage(slug) {
       serverArticle=null;
       if (!target.isConnected) return;
       if (!article) {
+        // A client-side link to a slug the CMS lacks must reach the server, which owns renamed-slug and legacy redirects.
+        if (intercepted) { location.replace(location.href); return false; }
         target.innerHTML = `${intro('THE NEWSROOM','Article unavailable.','This report is not available in the published edition.')}<a class="button button-dark" href="#latest">Browse published reports ${icon('arrow',17)}</a>`;
         document.title = 'Article unavailable — Church Times Nigeria';
         return;
@@ -385,14 +394,19 @@ async function reportPage(slug) {
       if (target.isConnected) feedState(target,'We couldn’t load this report.',cmsErrorMessage(error)||'Please try again. The current edition is still available.',load);
     } finally { if (target.isConnected) { target.setAttribute('aria-busy','false'); if (restoreFocus) { const next=target.querySelector('button, h1'); if(next?.tagName==='H1')next.tabIndex=-1; next?.focus({preventScroll:true}); } } }
   }
-  await load();
+  return load();
 }
 
 function livePage(slug){shell(livePageMarkup(),'live');mountLivePage(document.querySelector('.public-live'),{baseUrl:cmsUrl,slug,signal:routeController.signal});}
 
 let renderedLocation;
-function render(){renderRoute();renderedLocation=location.href;analytics?.update(hasConsent('analytics'));analytics?.page();}
-function renderRoute(){if(newsletterLink && /\/newsletter\/(confirm|unsubscribe)\/?$/.test(location.pathname)){shell(`<section class="container section-list">${newsletterTokenMarkup(newsletterLink.action,newsletterLink.token)}</section>`,'newsletter');return;}let parts;try{parts=location.hash?decodeURIComponent(location.hash.slice(1)).split('/'):(reportSlug(location.pathname,publicBase)||location.pathname.startsWith(publicBase+'reports/'))?['report',reportSlug(location.pathname,publicBase)||'']:publicPageRoute(location.pathname,publicBase)||['home'];}catch{parts=['404'];}const [route='home',...rest]=parts;const param=rest.join('/');const pages={home,about,contact,advertise,submit:submissionPage,saved:savedPage};if(route==='main'){if(!document.querySelector('#main'))home();document.querySelector('#main').focus();return;}if(route==='connect'){if(!document.querySelector('#connect'))home();requestAnimationFrame(()=>document.querySelector('#connect').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'}));return;}resetArticleMetadata();if(route==='report' && reportPath(param,publicBase))history.replaceState(null,'',reportPath(param,publicBase));if(route==='section')sectionPage(param);else if(route==='story')storyPage(param);else if(route==='search')searchPage(param);else if(route==='latest')latestPage();else if(route==='live')livePage(param);else if(route==='category')latestPage({categorySlug:param});else if(route==='report')reportPage(param);else if(pages[route])pages[route]();else if(!route)home();else notFound();const heading=document.querySelector('h1')?.textContent||'The journal';if(publicPageRoute(location.pathname,publicBase) && !location.hash){document.querySelector('meta[property="og:title"]').content=heading;document.querySelector('meta[property="og:description"]').content=document.querySelector('.page-intro p')?.textContent||heading;}if(route!=='report' || !document.querySelector('#article-schema')){document.title=`${heading} — Church Times Nigeria`;document.querySelector('meta[name="description"]').content=document.querySelector('.article-deck')?.textContent||'Church Times Nigeria: news, features, interviews and perspectives on faith and public life.';}window.scrollTo({top:0,behavior:'instant'});}
+let pendingPage;
+function render(){
+  pendingPage=undefined;pageSettled=false;renderRoute();const href=location.href;renderedLocation=href;analytics?.update(hasConsent('analytics'));
+  // Async article/feed pages report once drawn, so the title is final; a superseded or redirected route reports nothing.
+  Promise.resolve(pendingPage).catch(()=>{}).then(ok=>{if(ok!==false&&location.href===href){pageSettled=true;analytics?.page();}});
+}
+function renderRoute(){if(newsletterLink && /\/newsletter\/(confirm|unsubscribe)\/?$/.test(location.pathname)){shell(`<section class="container section-list">${newsletterTokenMarkup(newsletterLink.action,newsletterLink.token)}</section>`,'newsletter');return;}let parts;try{parts=location.hash?decodeURIComponent(location.hash.slice(1)).split('/'):(reportSlug(location.pathname,publicBase)||location.pathname.startsWith(publicBase+'reports/'))?['report',reportSlug(location.pathname,publicBase)||'']:publicPageRoute(location.pathname,publicBase)||['home'];}catch{parts=['404'];}const [route='home',...rest]=parts;const param=rest.join('/');const pages={home,about,contact,advertise,submit:submissionPage,saved:savedPage};if(route==='main'){if(!document.querySelector('#main'))home();document.querySelector('#main').focus();return;}if(route==='connect'){if(!document.querySelector('#connect'))home();requestAnimationFrame(()=>document.querySelector('#connect').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'}));return;}resetArticleMetadata();if(route==='report' && reportPath(param,publicBase))history.replaceState(null,'',reportPath(param,publicBase));if(route==='section')sectionPage(param);else if(route==='story')storyPage(param);else if(route==='search')searchPage(param);else if(route==='latest')latestPage();else if(route==='live')livePage(param);else if(route==='category')latestPage({categorySlug:param});else if(route==='report')pendingPage=reportPage(param);else if(pages[route])pages[route]();else if(!route)home();else notFound();const heading=document.querySelector('h1')?.textContent||'The journal';if(publicPageRoute(location.pathname,publicBase) && !location.hash){document.querySelector('meta[property="og:title"]').content=heading;document.querySelector('meta[property="og:description"]').content=document.querySelector('.page-intro p')?.textContent||heading;}if(route!=='report' || !document.querySelector('#article-schema')){document.title=`${heading} — Church Times Nigeria`;document.querySelector('meta[name="description"]').content=document.querySelector('.article-deck')?.textContent||'Church Times Nigeria: news, features, interviews and perspectives on faith and public life.';}window.scrollTo({top:0,behavior:'instant'});}
 function handlePublicNavigation(){
   // Chromium can notify both history and hash listeners for one navigation.
   // Replacing an already-rendered form can otherwise discard in-progress input.
@@ -409,7 +423,7 @@ document.addEventListener('click',event=>{
   if(!link || event.defaultPrevented || event.button!==0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || link.target || link.hasAttribute('download'))return;
   const url=new URL(link.href);
   if(url.origin!==location.origin || !reportSlug(url.pathname,publicBase) || url.hash || url.search)return;
-  event.preventDefault();history.pushState(null,'',url.pathname);render();document.querySelector('#main')?.focus({preventScroll:true});
+  event.preventDefault();history.pushState(null,'',url.pathname);interceptedNav=location.href;render();document.querySelector('#main')?.focus({preventScroll:true});
 });
 render();
 readerFormsReady.then(()=>{
