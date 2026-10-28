@@ -1,0 +1,22 @@
+name: CMS Docker smoke (not applicable)
+
+# docker-smoke is a required check on feat/newsroom-mvp but cms-docker.yml only runs when apps/cms changes, so
+# public-site PRs would wait forever. This workflow is the complement: it runs on exactly the pull requests that
+# cms-docker.yml skips and reports the same check name as a pass, because the CMS image is unaffected.
+# Keep the path list identical to cms-docker.yml.
+
+on:
+  pull_request:
+    paths-ignore:
+      - 'apps/cms/**'
+      - '.github/workflows/cms-docker.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  docker-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: echo "No apps/cms changes in this pull request; the CMS Docker image is unaffected."
