@@ -18,7 +18,7 @@ export function publicBuildMode({eventName,baseRef='',refName='',headRef='',chan
   if(eventName==='pull_request' && changedFiles.some(exported))throw new Error('Feature PRs must not change site/, newsletter/, index.html or .nojekyll. Edit src/index.template.html and rebuild once in a dedicated agent/rebuild-site PR.');
   // The integration push after an approved rebuild must also prove the export.
   if(eventName==='push' && changedFiles.some(exported)) {
-    if(changedFiles.some(path=>!exported(path)&&!path.startsWith('docs/')))throw new Error('Integration pushes must keep feature source and generated rebuilds separate.');
+    if(changedFiles.some(path=>!exported(path)&&!rebuildNote(path)&&!path.startsWith('docs/')))throw new Error('Integration pushes must keep feature source and generated rebuilds separate.');
     return 'strict';
   }
   return 'source';

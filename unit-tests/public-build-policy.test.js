@@ -23,6 +23,8 @@ test('integration source pushes declare pending exports; rebuild pushes and main
  assert.equal(publicBuildMode({eventName:'push',refName:'feat/newsroom-mvp',changedFiles:['src/main.js']}),'source');
  assert.equal(publicBuildMode({eventName:'push',refName:'feat/newsroom-mvp',changedFiles:['index.html','site/assets/synthetic.js']}),'strict');
  assert.throws(()=>publicBuildMode({eventName:'push',refName:'feat/newsroom-mvp',changedFiles:['index.html','src/main.js']}),/keep feature source and generated rebuilds separate/);
+ assert.equal(publicBuildMode({eventName:'push',refName:'feat/newsroom-mvp',changedFiles:['index.html','site/assets/synthetic.js','apps/cms/docs/public-site-rebuild.md']}),'strict');
+ for(const path of ['apps/cms/docs/public-rebuild-policy.md','apps/cms/docs/other.md','src/main.js'])assert.throws(()=>publicBuildMode({eventName:'push',refName:'feat/newsroom-mvp',changedFiles:['index.html',path]}),/keep feature source and generated rebuilds separate/);
  assert.equal(publicBuildMode({eventName:'push',refName:'main'}),'strict');
  assert.equal(publicBuildMode({...feature,baseRef:'main'}),'strict');
 });
