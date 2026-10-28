@@ -14,7 +14,7 @@ export function shareTargets({title,url}) {
 }
 export function shareBarHTML({title,url}) {
   const links=shareTargets({title,url}).map(l=>`<li><a href="${esc(l.href)}"${l.external===false?'':' target="_blank" rel="noopener noreferrer"'} aria-label="Share on ${l.name}" title="${l.name}">${socialIcon(l.id)}</a></li>`).join('');
-  return `<section class="share-bar" aria-labelledby="share-bar-title" data-share-bar data-share-title="${esc(title)}" data-share-url="${esc(url)}"><h2 id="share-bar-title">Share this story</h2><ul>${links}<li><button type="button" data-share-native hidden aria-label="Share using your device">${socialIcon('share')}</button></li><li><button type="button" data-share-copy aria-label="Copy article link">${socialIcon('link')}</button></li></ul><p class="share-status" role="status" aria-live="polite" data-share-status></p></section>`;
+  return `<section class="share-bar" aria-labelledby="share-bar-title" data-share-bar data-share-title="${esc(title)}" data-share-url="${esc(url)}"><h2 id="share-bar-title">Share this story</h2><ul>${links}<li><button type="button" data-share-native hidden aria-label="Share using your device">${socialIcon('share')}</button></li><li><button type="button" data-share-copy aria-label="Copy link">${socialIcon('link')}</button></li></ul><p class="share-status" role="status" aria-live="polite" data-share-status></p></section>`;
 }
 export function bindShareBar(root,nav=globalThis.navigator) {
   const bar=root?.querySelector?.('[data-share-bar]');

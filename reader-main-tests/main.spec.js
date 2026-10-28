@@ -98,7 +98,7 @@ test('a client-rendered article has a share bar and the site footer has follow l
   expect(x.searchParams.get('text')).toBe(title);
   expect(x.searchParams.get('url')).toMatch(/\/reports\/share-story\/$/);
   await context.grantPermissions(['clipboard-read','clipboard-write'],{origin:'http://127.0.0.1:6398'});
-  await bar.getByRole('button',{name:'Copy article link'}).click();
+  await bar.getByRole('button',{name:'Copy link'}).click();
   await expect(bar.locator('[role=status]')).toHaveText('Link copied.');
   expect(await page.evaluate(()=>navigator.clipboard.readText())).toMatch(/\/reports\/share-story\/$/);
   await expect(bar.getByRole('button',{name:'Share using your device'})).toBeHidden();
