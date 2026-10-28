@@ -15,6 +15,8 @@ test('dedicated rebuilds require generated exports, exclude source changes and r
  const rebuild={...feature,headRef:'agent/rebuild-site-wave2'};
  assert.equal(publicBuildMode({...rebuild,changedFiles:['site/assets/synthetic.js','index.html','newsletter/confirm/index.html','docs/synthetic-build.md']}),'strict');
  assert.throws(()=>publicBuildMode({...rebuild,changedFiles:['docs/synthetic-build.md']}),/must contain/);
+ assert.equal(publicBuildMode({...rebuild,changedFiles:['index.html','apps/cms/docs/public-site-rebuild.md']}),'strict');
+ assert.throws(()=>publicBuildMode({...rebuild,changedFiles:['index.html','apps/cms/docs/other.md']}),/only generated exports and docs/);
  for(const path of ['src/main.js','tools/export-pages.mjs','.github/workflows/ci.yml'])assert.throws(()=>publicBuildMode({...rebuild,changedFiles:['index.html',path]}),/only generated exports and docs/);
 });
 test('integration source pushes declare pending exports; rebuild pushes and main stay strict',()=>{
