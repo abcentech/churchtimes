@@ -4,7 +4,7 @@
 defaults to `/{slug}/` when the variable is unset or empty, and the value must equal the CMS's own
 `PUBLIC_ARTICLE_PATH_TEMPLATE` (also default `/{slug}/`). Set `/reports/{slug}/` only for a rollback. Anything else stops startup.
 Under `/{slug}/` the host refuses to treat a first path segment owned by a real route as an article. The list mirrors the CMS
-`apps/cms/src/lib/reservedSlugs.ts` (`admin`, `api`, `newsletter`, `search`, `wp-admin`, `about`, `latest` and so on); the CMS renames an
+`apps/cms/src/lib/reservedSlugs.ts` (`admin`, `api`, `newsletter`, `search`, `wp-admin`, `about`, `latest` and so on; the public host list in `src/lib/public-routes.js` is identical, enforced by `unit-tests/public-reserved-slugs.test.js`); the CMS renames an
 imported slug that collides, and any new top-level public route must be added to both lists.
 
 The Node public host uses one template for clean article routing, canonical tags, JSON-LD URL, social-card URL, sitemap,
