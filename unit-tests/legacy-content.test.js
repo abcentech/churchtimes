@@ -29,3 +29,66 @@ test('article headings cannot skip levels below the page headline',()=>{
  const headings=['h4','h4','h4','h2'].map(tag=>({type:'heading',tag,children:[{type:'text',text:'Synthetic heading'}]}));
  assert.deepEqual([...renderArticleContent({root:{type:'root',children:headings}}).matchAll(/<(h[2-4])>/g)].map(match=>match[1]),['h2','h3','h4','h2']);
 });
+const textNode=text=>({type:'text',text});
+const paragraph=text=>({type:'paragraph',children:[textNode(text)]});
+const article=children=>({root:{type:'root',children}});
+test('full 100x20 table has an independent budget and preserves subsequent article text',()=>{
+ const html=renderArticleContent(syntheticLegacyContent(50,media),{baseUrl});
+ assert.equal([...html.matchAll(/<(?:td|th)(?: |>)/g)].length,2000);
+ assert.match(html,/Synthetic cell 100-20/);assert.match(html,/Synthetic narrative after table 50/);
+ assert.doesNotMatch(html,/Table shortened/);
+});
+test('oversize tables and cell contents show a visible shortening note and preserve article prose',()=>{
+ for(const children of [Array.from({length:101},()=>({type:'tablerow',children:[{type:'tablecell',children:[paragraph('Cell')]}]})),[{type:'tablerow',children:Array.from({length:21},()=>({type:'tablecell',children:[paragraph('Cell')]}))}],[{type:'tablerow',children:[{type:'tablecell',children:Array.from({length:11000},()=>paragraph('Cell'))}]}]]) {
+  const html=renderArticleContent(article([{type:'table',children},paragraph('After the table')]));
+  assert.match(html,/Table shortened/);assert.match(html,/<p>After the table<\/p>/);
+ }
+});
+test('h1 through h6 progress below the page h1; empty headings never advance the counter',()=>{
+ const heading=(tag,text)=>({type:'heading',tag,children:[textNode(text)]});
+ const html=renderArticleContent(article([heading('h6',' \u00a0 '),heading('h1','One'),heading('h6','\t'),heading('h5','Two'),heading('h6','Three'),heading('h5','Four'),heading('h6','Five')]));
+ assert.equal(html,'<h2>One</h2><h3>Two</h3><h4>Three</h4><h5>Four</h5><h6>Five</h6>');
+});
+test('table spans cap at20, rejecting nonintegers instead of copying arbitrary attributes',()=>{
+ const html=renderArticleContent(article([{type:'table',children:[{type:'tablerow',children:[{type:'tablecell',colSpan:500,rowSpan:900,children:[textNode('Cell')]}]}]}]));
+ assert.match(html,/colspan="20" rowspan="20"/);
+});
+test('root-relative body links remain links; protocol-relative, controls and backslashes do not',()=>{
+ for(const url of ['/news/x','/news/x?from=archive&n=1','/news/x#heading']) {
+  assert.match(renderArticleContent(article([{type:'link',fields:{url},children:[textNode('Reference')]}])),/<a href="\/news\/x/);
+ }
+ for(const url of ['//evil.test/x','/\\evil.test/x','/\nevil.test/x','javascript:alert(1)']) {
+  assert.equal(renderArticleContent(article([{type:'link',fields:{url},children:[textNode('Reference')]}])),'Reference');
+ }
+});
+test('C1 youtubeEmbed contract fixture is an escaped labelled link only, never an embed or arbitrary URL',()=>{
+ const block=fields=>({type:'block',version:2,fields:{blockType:'youtubeEmbed',...fields}});
+ const html=renderArticleContent(article([block({videoId:'abc_DE-1234',title:'Synthetic <title> & video'})]));
+ assert.equal(html,'<p><a href="https://www.youtube.com/watch?v=abc_DE-1234" rel="noopener noreferrer">Watch video on YouTube: Synthetic &lt;title&gt; &amp; video</a></p>');
+ assert.doesNotMatch(html,/<iframe|<script|<img|embed\//);
+ assert.match(renderArticleContent(article([block({videoId:'abc_DE-1234',title:'\u00a0'})])),/>Watch video on YouTube<\/a>/);
+ for(const videoId of ['x','abc_DE-1234?evil','https://evil.test','abc<DEF1234'])assert.equal(renderArticleContent(article([block({videoId})])), '');
+});
+test('cumulative table budget remains separate from prose and every shortened table is labelled',()=>{
+ const table=syntheticLegacyContent(50,media).root.children.find(node=>node.type==='table');
+ const html=renderArticleContent(article([table,table,table,table,paragraph('Prose survives all tables')]));
+ assert.match(html,/Table shortened/);assert.match(html,/Prose survives all tables/);
+ assert.ok([...html.matchAll(/<(?:td|th)(?: |>)/g)].length<8000);
+});
+test('absolute and mailto links preserve URL-encoded spaces and trim surrounding whitespace',()=>{
+ for(const [url,expected] of [['https://example.test/My File.pdf','https://example.test/My%20File.pdf'],[' https://example.test/My File.pdf ','https://example.test/My%20File.pdf'],['mailto:news@example.test?subject=Hi there','mailto:news@example.test?subject=Hi%20there']]) {
+  const html=renderArticleContent(article([{type:'link',fields:{url},children:[textNode('Reference')]}]));
+  assert.match(html,/<a /);assert.ok(html.includes(`href="${expected}"`));
+ }
+ for(const url of ['/news/My File','https://user:password@example.test/My File',' https://example.test/\n','mailto:news@example.test?subject=Hi\tthere']) {
+  assert.equal(renderArticleContent(article([{type:'link',fields:{url},children:[textNode('Reference')]}])),'Reference');
+ }
+});
+test('YouTube titles are bounded before escaping and paragraph-nested blocks stay valid inline links',()=>{
+ const block={type:'block',fields:{blockType:'youtubeEmbed',videoId:'abcdefghijk',title:'<'.repeat(100000)}};
+ const html=renderArticleContent(article([{type:'paragraph',children:[textNode('Video: '),block]}]));
+ assert.equal(html,`<p>Video: <a href="https://www.youtube.com/watch?v=abcdefghijk" rel="noopener noreferrer">Watch video on YouTube: ${'&lt;'.repeat(200)}</a></p>`);
+ assert.ok(html.length<1200);assert.doesNotMatch(html,/<p><p>/);
+ const unicode=renderArticleContent(article([{...block,fields:{...block.fields,title:'a'.repeat(199)+'\ud83d\ude00'}}]));
+ assert.doesNotMatch(unicode,/[\ud800-\udbff]/u);
+});

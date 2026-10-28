@@ -41,6 +41,7 @@
     "import:redirects": "payload run src/scripts/importRedirects.ts --",
     "import:convert": "tsx src/scripts/convertHtmlReport.ts",
     "db:local": "node scripts/local-db.mjs",
+    "demo": "tsx scripts/demo.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run --project unit",

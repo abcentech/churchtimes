@@ -22,7 +22,9 @@
     "test:cms": "node tools/run-public-cms-tests.mjs",
     "test:newsroom-unit": "node --test apps/newsroom/test/*.test.js",
     "serve:public": "node tools/serve-public.mjs",
-    "test:quality": "node tools/run-public-quality.mjs"
+    "test:quality": "node tools/run-public-quality.mjs",
+    "check:redirects": "node tools/check-redirects.mjs",
+    "check:reader-budget": "node tools/check-reader-budget.mjs"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",

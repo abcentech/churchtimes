@@ -728,3 +728,7 @@ Findings from this rehearsal:
 - Open: a body image that points at a size variant that exists on disk (`name-300x200.jpg`) imports the variant file when the original has not been imported yet, and reuses the original when it has. The same address can therefore give a thumbnail or the original depending on post order.
 - Open: two attachments whose paths differ only by letter case collide on a case-insensitive file system (Windows); on Linux the loader looks files up exactly, so a case mismatch is "missing". Rename on the copy.
 - Open: under memory pressure (about 700 MB free) a valid image can fail the Media re-save and is counted `rejected-by-media-rules`, or a post write fails (PostgreSQL 53200 out of memory). Nothing is wrong with the files; run the apply again.
+
+## Historical archive recovery (outside the CMS)
+
+`tools/archive-recovery/` (Python standard library, GET-only, rate limited) collects Wayback and public-site evidence into a private store outside Git; see its README and `docs/archive-coverage-report.md`. It writes nothing to the CMS: recovered candidates still go through the archive-candidate review and the four-eyes rule.

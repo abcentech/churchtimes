@@ -1,5 +1,8 @@
 # Frontend integration notes (newsroom UI and public site)
 
+Public-site note: the public review evidence is recorded in docs/evidence/wave2/README.md (this line also runs the required CMS checks).
+Public-site note: the public review evidence is recorded in docs/public-go-live-contract-review.md (this line also runs the required CMS checks).
+
 For: the newsroom/editor UI lane (`apps/newsroom`, `agent/gemini-ui-support`) and the public
 site lane (`agent/chatgpt-frontend`). The backend contract is [api-contracts.md](api-contracts.md);
 this file lists what the current consumer code needs to change to work against it.
@@ -181,6 +184,23 @@ schedule enforcement and cache headers. That is a product and security decision 
 match the contract. Not yet used but available: `featuredImage` (prefix a relative `url` with the CMS origin unless `CMS_PUBLIC_URL` is set),
 `bylineName`, `corrections`, categories and the live timeline. Add the site origin to `CMS_CORS_ORIGINS`.
 
+## Archive SEO and discovery proof
+
+`cms-integration-tests/public-seo-completion.spec.js` (`docs/public-seo-completion.md`) checks the public host's structured data, canonical, Open Graph, sitemap and RSS for a synthetic archive-style article against the real CMS, under both `PUBLIC_ARTICLE_PATH_TEMPLATE` values. It uses only landed fields (C2 SEO fields, `bylineName`, `publishedAt`, featured image dimensions).
+
 ## Newsroom editor dependencies
 
 The newsroom editor (`apps/newsroom`) sends `expectedUpdatedAt` with every article content `PATCH` (a 409 means someone else changed the story, and the editor keeps the user's text), and refreshes the staff session with `POST /api/users/refresh` about every 30 minutes while a user is active. Both must keep working as documented in `api-contracts.md`.
+
+## Public quality evidence
+
+The combined public CMS and mobile quality evidence for Wave 3 (synthetic data only, local runs) is in `docs/evidence/wave3-public/README.md`. Its before and after quality JSON files are machine-validated; the four SEO scores in the README are manually transcribed from local Lighthouse reports and are labelled as such. It is evidence of a local audit, not of production.
+
+## Live update photos on the public site
+
+The public live page renders the `image` object of `GET /api/live-events/{slug}/updates` (approved photo with alt text; url, width, height). An update without alt text or with an unusable image shows no picture. A revised update (same id, higher sequence) replaces the earlier entry in place. See `docs/public-live-coverage.md`.
+
+Public-site note: legacy article rendering now preserves spaced absolute links and bounds video link titles; see docs/public-legacy-rendering.md (this line also runs the required CMS checks).
+Public-site note: the owner ads.txt record parser now rejects vertical whitespace; see docs/public-wave1-seo.md (this line also runs the required CMS checks).
+Public advertising delivery (C3): the public site origin must be listed in PUBLIC_SUBMISSION_ORIGINS before VITE_PUBLIC_ADVERTISING_URL is set; see docs/public-advertising-delivery.md.
+Share and Listen (public site) are client-side only and need no CMS configuration; see docs/public-sharing-listen.md.

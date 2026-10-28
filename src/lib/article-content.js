@@ -1,5 +1,6 @@
 import {renderArticleTable} from './article-table.js';
 import { normalizePublicMedia, cmsFigure } from './cms-media.js';
+import { renderAudioVideo } from './article-av.js';
 // Render supported Payload Lexical text and populated public media safely.
 // Unknown nodes, unpopulated relationships and embedded HTML are omitted.
 const escape = text => String(text).replace(/[&<>"']/g, char => ({
@@ -7,7 +8,9 @@ const escape = text => String(text).replace(/[&<>"']/g, char => ({
 })[char]);
 
 function safeLink(value) {
-  if (typeof value !== 'string') return null;
+  if (typeof value !== 'string' || /[\u0000-\u001f\u007f\\]/.test(value)) return null;
+  value=value.trim();
+  if (value.startsWith('/')) return !value.startsWith('//')&&!/\s/.test(value)?value:null;
   try {
     const url = new URL(value);
     return ['http:', 'https:', 'mailto:'].includes(url.protocol) && !url.username && !url.password ? url.href : null;
@@ -18,9 +21,22 @@ export function renderArticleContent(content, {baseUrl} = {}) {
   if (typeof content === 'string') {
     return content.trim().split(/\n\s*\n/).filter(Boolean).map(text => `<p>${escape(text)}</p>`).join('');
   }
-  let remaining = 5000,tableNumber=0,lastHeadingLevel=1;
-  function render(node, depth = 0) {
-    if (!node || typeof node !== 'object' || depth > 30 || --remaining < 0) return '';
+  let tableNumber=0,lastHeadingLevel=1,tableRemaining=20000;
+  const articleBudget={remaining:5000};
+  function render(node, depth = 0, budget=articleBudget,tableState=null,parentType=null) {
+    if (!node || typeof node !== 'object') return '';
+    if (depth > 30 || --budget.remaining < 0) {if(tableState)tableState.shortened=true;return '';}
+    if(tableState && --tableRemaining<0){tableState.shortened=true;return '';}
+    if(node.type==='block' && node.fields?.blockType==='youtubeEmbed') {
+      const {videoId,title}=node.fields;
+      if(typeof videoId!=='string'||!/^[-_A-Za-z0-9]{11}$/.test(videoId))return '';
+      // Cap UTF-16 code units before escaping, so oversized CMS titles cannot grow HTML.
+      const shortTitle=typeof title==='string'?title.trim().slice(0,200).replace(/[\uD800-\uDBFF]$/,''):'';
+      const label=shortTitle?`Watch video on YouTube: ${shortTitle}`:'Watch video on YouTube';
+      const link=`<a href="https://www.youtube.com/watch?v=${videoId}" rel="noopener noreferrer">${escape(label)}</a>`;
+      return parentType==='paragraph'?link:`<p>${link}</p>`;
+    }
+    if(node.type==='block' && node.fields?.blockType==='audioVideo') return renderAudioVideo(node.fields,{baseUrl,inline:parentType==='paragraph'});
     if (node.type === 'text' && typeof node.text === 'string') {
       let text = escape(node.text);
       if (node.format & 1) text = `<strong>${text}</strong>`;
@@ -33,16 +49,32 @@ export function renderArticleContent(content, {baseUrl} = {}) {
       return text;
     }
     if (node.type === 'upload' && node.relationTo === 'media') return cmsFigure(normalizePublicMedia(node.value,baseUrl));
-    if (node.type === 'table')return renderArticleTable(node,children=>Array.isArray(children)?children.map(child=>render(child,depth+3)).join(''):'',{number:++tableNumber,consume:()=>--remaining>=0});
+    if (node.type === 'table') {
+      const state=tableState||{shortened:false},tableBudget=tableState?budget:{remaining:10000};
+      return renderArticleTable(node,children=>{
+        const html=[];
+        for(const child of Array.isArray(children)?children:[]) {
+          if(tableBudget.remaining<=0||tableRemaining<=0){state.shortened=true;break;}
+          html.push(render(child,depth+3,tableBudget,state));
+        }
+        return html.join('');
+      },{number:++tableNumber,state,consume:()=>--tableBudget.remaining>=0&&--tableRemaining>=0});
+    }
     if (node.type === 'linebreak') return '<br>';
     const supported = ['root', 'paragraph', 'heading', 'quote', 'list', 'listitem', 'link', 'autolink'];
     if (!supported.includes(node.type)) return '';
-    const children = Array.isArray(node.children) ? node.children.map(child => render(child, depth + 1)).join('') : '';
+    const rendered=[];
+    for(const child of Array.isArray(node.children)?node.children:[]) {
+      if(budget.remaining<=0 || (tableState&&tableRemaining<=0)){if(tableState)tableState.shortened=true;break;}
+      rendered.push(render(child,depth+1,budget,tableState,node.type));
+    }
+    const children=rendered.join('');
     if (!children) return '';
     switch (node.type) {
       case 'paragraph': return `<p>${children}</p>`;
       case 'heading': {
-        const requested=['h2','h3','h4'].includes(node.tag)?Number(node.tag[1]):2;
+        if(!children.replace(/<[^>]*>/g,'').trim())return '';
+        const requested=/^h[1-6]$/.test(node.tag)?Math.max(2,Number(node.tag[1])):2;
         lastHeadingLevel=Math.min(requested,lastHeadingLevel+1);
         const tag='h'+lastHeadingLevel;
         return `<${tag}>${children}</${tag}>`;
