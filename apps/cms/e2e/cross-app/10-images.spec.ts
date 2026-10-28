@@ -8,8 +8,7 @@
  *      (article page, cold reload).
  *   I3 live coverage: a reporter attaches a photo to a live update, the editor approves it; the anonymous public feed
  *      API returns the photo as { url, alt, width, height, mimeType }.
- *   I4 public #live page: the update text is shown and the photo is NOT rendered yet. This pins the public-site gap and
- *      goes RED when the public team ships photos (then assert the photo instead).
+ *   I4 public #live page: the update text is shown and the update's photo is rendered with its alt text (#31).
  *   I5 after publication the reporter cannot replace or re-describe a body image (direct PATCH /api/media/<id> -> 403)
  *      and the public article still shows the original pictures.
  *
@@ -291,13 +290,8 @@ test.describe('Images in stories and live updates (REAL UI)', () => {
     lives.set(info.project.name, { eventId, slug, title, body, alt, mediaId: media.id, updateId: rows[0].id })
   })
 
-  // KNOWN GAP (public-site follow-up): src/live/public-live-page.js does not render `image` yet. The data is public (I3).
-  // The text check is a real assertion; the gap is pinned with toHaveCount(0) and goes red when photos ship.
-  test('I4 public #live page shows the update text; its photo is not rendered yet (KNOWN GAP pinned, goes red when the public site ships photos)', async ({ browser }, info) => {
-    info.annotations.push({
-      type: 'known-gap',
-      description: 'The public #live timeline does not render update photos yet (public-site follow-up). When it does, the last assertion fails on purpose: replace toHaveCount(0) with a check for the photo (alt = update photo alt).',
-    })
+  // src/live/public-live-page.js renders the approved update photo (#31); the data is public (I3).
+  test('I4 public #live page shows the update text and its photo with the alt text', async ({ browser }, info) => {
     const l = need(lives, info.project.name, 'I3')
     const ev = new Evidence(cfg, info, 'I4-live-public-photo')
     const ctx = await freshContext(browser, info)
@@ -305,10 +299,12 @@ test.describe('Images in stories and live updates (REAL UI)', () => {
     await page.goto(`${cfg.publicOrigin}/#live/${l.slug}`)
     const item = page.locator('#live-timeline li').filter({ hasText: l.body })
     await expect(item).toBeVisible({ timeout: 30_000 })
-    ev.note('the update text is on the public page; looking for its photo')
+    ev.note('the update text is on the public page; checking its photo')
+    const photo = item.locator('img')
+    await expect(photo, 'the public #live item renders exactly the update photo').toHaveCount(1)
+    await expect(photo).toHaveAttribute('alt', l.alt)
+    await expect.poll(() => photo.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth), { timeout: 30_000, message: 'the photo loads' }).toBeGreaterThan(0)
     await ev.shot(page, 'public #live page, update with a photo', { final: true })
-    // The gap, pinned: no picture in the public timeline item today. Goes red when the public team renders update photos.
-    await expect(item.locator('img'), 'KNOWN GAP: public #live does not render update photos yet').toHaveCount(0)
     await ctx.close()
   })
 
