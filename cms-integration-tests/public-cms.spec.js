@@ -66,18 +66,18 @@ test('real rejected/spent Turnstile response cannot show success and preserves t
   await expect(page.locator('#form-result')).toBeHidden();await expect(page.locator('#public-message')).toHaveValue(/must be rejected/);
 });
 
-test('real CMS category selection resolves a numeric relationship and search includes public bylines',async({page,request})=>{
+test('real CMS category selection resolves a numeric relationship and public search finds a published title',async({page,request})=>{
  const fixture=await (await request.get(cms+'/__test/fixtures')).json();
  const response=await request.get(cms+'/api/articles?depth=1&where[slug][equals]='+fixture.publishedSlug);
  const article=(await response.json()).docs[0];expect(article.category.id).toBeTruthy();
- const requests=[];page.on('request',r=>{if(r.url().includes('/api/articles?'))requests.push(new URL(r.url()));});
+ const requests=[];page.on('request',r=>{if(r.url().includes('/api/articles?')||r.url().includes('/api/public/search?'))requests.push(new URL(r.url()));});
  await page.goto('/#latest');await expect(page.locator('#cms-category')).toBeVisible();
  await page.locator('#cms-category').selectOption(article.category.slug);
  await expect(page.locator('#cms-latest')).toContainText(article.title);
  expect(requests.some(u=>u.searchParams.get('where[and][0][or][0][category][equals]')===String(article.category.id))).toBe(true);
- await page.goto('/#search/'+encodeURIComponent(article.bylineName));
+ await page.goto('/#search/'+encodeURIComponent(article.title));
  await expect(page.locator('#cms-search')).toContainText(article.title);
- expect(requests.some(u=>u.searchParams.get('where[or][2][bylineName][like]')===article.bylineName)).toBe(true);
+ expect(requests.some(u=>u.pathname==='/api/public/search'&&u.searchParams.get('q')===article.title)).toBe(true);
  await page.goto('/#search/does-not-exist-'+fixture.runId);
  await expect(page.locator('#cms-search')).toContainText('No matching published reports.');
 });

@@ -14,12 +14,12 @@ import { publicOrigin } from './public-url.js';
 const MAX_ITEMS = 100;
 const DEFAULT_TIMEOUT_MS = 6000;
 export class CMSReadError extends Error {
-  constructor(type, message, status=0) { super(message); this.type=type; this.status=status; }
+  constructor(type, message, status=0, retryAfter=0) { super(message); this.type=type; this.status=status; this.retryAfter=retryAfter; }
 }
 export function cmsErrorMessage(error) {
   if(error?.type==='configuration')return 'The newsroom connection is not configured correctly. You can still read the current edition.';
   if(error?.type==='timeout')return 'The newsroom took too long to respond. Please try again or read the current edition.';
-  if(error?.status===429)return 'The newsroom is receiving too many requests. Please wait before trying again.';
+  if(error?.status===429)return `The newsroom is receiving too many requests. Please wait ${error.retryAfter>0?error.retryAfter+'s ':''}before trying again.`;
   if([401,403].includes(error?.status))return 'Public reporting is unavailable from this newsroom connection. You can still read the current edition.';
   if(error?.type==='response')return 'The newsroom returned an unreadable response. Please try again later or read the current edition.';
   return '';
@@ -107,7 +107,6 @@ async function requestPublishedArticles({
   slug,
   signal,
   categoryId,
-  query,
   collection = 'articles',
   categorySlug,
   legacyId,
@@ -136,8 +135,6 @@ async function requestPublishedArticles({
     url.searchParams.set('where[and][0][or][0][category][equals]',String(categoryId));
     url.searchParams.set('where[and][0][or][1][categories][equals]',String(categoryId));
   }
-  const term=typeof query==='string' ? query.trim().slice(0,120) : '';
-  if(term) ['title','excerpt','bylineName'].forEach((field,i)=>url.searchParams.set(`where[or][${i}][${field}][like]`,term));
 
   const controller = new AbortController();
   const abort = () => controller.abort();

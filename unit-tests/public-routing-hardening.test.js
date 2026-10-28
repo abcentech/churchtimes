@@ -9,16 +9,16 @@ import {createLookupCache} from '../tools/public-lookup-cache.mjs';
 import {publicHostConfig} from '../tools/public-host.mjs';
 import {changedPublicFiles,publicBuildMode} from '../tools/public-build-policy.mjs';
 
-test('category listing matches primary OR additional category without colliding with text search',async()=>{
+test('category listing matches primary OR additional category (nested under and)',async()=>{
   let request;
   const fetchImpl=async url=>{request=new URL(url);return {ok:true,json:async()=>({docs:[]})};};
-  await fetchPublishedPage({baseUrl:'https://cms.example.test',categoryId:'7',query:'lagos',fetchImpl});
+  await fetchPublishedPage({baseUrl:'https://cms.example.test',categoryId:'7',fetchImpl});
   const p=request.searchParams;
   assert.equal(p.get('where[and][0][or][0][category][equals]'),'7');
   assert.equal(p.get('where[and][0][or][1][categories][equals]'),'7');
   assert.equal(p.get('where[category][equals]'),null);
   assert.equal(p.get('where[status][equals]'),'published');
-  assert.equal(p.get('where[or][0][title][like]'),'lagos');
+  assert.equal(p.get('where[or][0][title][like]'),null);
   await assert.rejects(()=>fetchPublishedPage({baseUrl:'https://cms.example.test',categoryId:'news',fetchImpl}),/numeric IDs/);
 });
 
