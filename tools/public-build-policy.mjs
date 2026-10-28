@@ -3,6 +3,8 @@ import {appendFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
+// The one CMS docs note a rebuild PR may carry so the path-filtered required checks (docker-smoke, public-quality) run.
+const rebuildNote=path=>path==='apps/cms/docs/public-site-rebuild.md';
 const exported=path=>path==='index.html'||path==='.nojekyll'||path==='OneSignalSDKWorker.js'||path.startsWith('site/')||path.startsWith('newsletter/');
 export function publicBuildMode({eventName,baseRef='',refName='',headRef='',changedFiles=[]}) {
   const integration=eventName==='pull_request'?baseRef==='feat/newsroom-mvp':refName==='feat/newsroom-mvp';
@@ -10,7 +12,7 @@ export function publicBuildMode({eventName,baseRef='',refName='',headRef='',chan
   const rebuild=eventName==='pull_request' && /^agent\/rebuild-site(?:[-/]|$)/.test(headRef);
   if(rebuild) {
     if(!changedFiles.some(exported))throw new Error('A dedicated rebuild PR must contain a generated export.');
-    if(changedFiles.some(path=>!exported(path)&&!path.startsWith('docs/')))throw new Error('Dedicated rebuild PRs may change only generated exports and docs; merge feature source first.');
+    if(changedFiles.some(path=>!exported(path)&&!rebuildNote(path)&&!path.startsWith('docs/')))throw new Error('Dedicated rebuild PRs may change only generated exports and docs; merge feature source first.');
     return 'strict';
   }
   if(eventName==='pull_request' && changedFiles.some(exported))throw new Error('Feature PRs must not change site/, newsletter/, index.html or .nojekyll. Edit src/index.template.html and rebuild once in a dedicated agent/rebuild-site PR.');
