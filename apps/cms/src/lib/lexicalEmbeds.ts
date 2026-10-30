@@ -13,6 +13,15 @@
  */
 
 import { AV_BLOCK_SLUG, AV_CAPTION_MAX, AV_KINDS, AV_TITLE_MAX, avTextProblem, isSafeAvSourceUrl, isSafeAvUrl } from './avMedia'
+import {
+  GALLERY_BLOCK_SLUG,
+  GALLERY_CAPTION_MAX,
+  GALLERY_IMAGES_MAX,
+  PULL_QUOTE_ATTRIBUTION_MAX,
+  PULL_QUOTE_BLOCK_SLUG,
+  PULL_QUOTE_MAX,
+  plainTextProblem,
+} from './newsroomFields'
 
 export const YOUTUBE_BLOCK_SLUG = 'youtubeEmbed'
 export const YOUTUBE_TITLE_MAX = 120
@@ -128,6 +137,84 @@ function avBlockProblem(rec: Record<string, unknown>, fields: Record<string, unk
   return avTextProblem(fields.title, 'title', AV_TITLE_MAX) ?? avTextProblem(fields.caption, 'caption', AV_CAPTION_MAX)
 }
 
+/** Keys a `pullQuote` block's `fields` may carry (waves 1-2). */
+const PULL_QUOTE_FIELD_KEYS = new Set(['id', 'blockName', 'blockType', 'quote', 'attribution'])
+/** Keys a `gallery` block's `fields` and each of its rows may carry. */
+const GALLERY_FIELD_KEYS = new Set(['id', 'blockName', 'blockType', 'images'])
+const GALLERY_ROW_KEYS = new Set(['id', 'image', 'caption'])
+
+const isLeafBlock = (rec: Record<string, unknown>): boolean =>
+  !(
+    (Array.isArray(rec.children) && rec.children.length > 0) ||
+    (rec.children !== undefined && !Array.isArray(rec.children)) ||
+    Object.keys(rec).some((k) => URL_LIKE_KEY_RE.test(k))
+  )
+
+/** Shape check of one `pullQuote` block: a required plain-text quote (1-400) and an optional attribution (up to 120). */
+function pullQuoteProblem(rec: Record<string, unknown>, fields: Record<string, unknown>): string | null {
+  if (!isLeafBlock(rec)) return 'A pull quote block must not carry children or URL fields.'
+  const extra = Object.keys(fields).filter((k) => !PULL_QUOTE_FIELD_KEYS.has(k))
+  if (extra.length > 0) return `A pull quote block has unexpected fields (${extra.slice(0, 3).join(', ')}).`
+  return (
+    plainTextProblem(fields.quote, 'The pull quote', PULL_QUOTE_MAX, { required: true }) ??
+    plainTextProblem(fields.attribution, 'The pull quote attribution', PULL_QUOTE_ATTRIBUTION_MAX)
+  )
+}
+
+/**
+ * Shape check of one `gallery` block: 1-12 rows of `{ image, caption? }`, each image a valid media id (that it exists, is a
+ * JPEG/PNG/WebP and has alt text is checked against the database by the Articles validator), captions plain text up to 300.
+ */
+function galleryProblem(rec: Record<string, unknown>, fields: Record<string, unknown>): string | null {
+  if (!isLeafBlock(rec)) return 'A gallery block must not carry children or URL fields.'
+  const extra = Object.keys(fields).filter((k) => !GALLERY_FIELD_KEYS.has(k))
+  if (extra.length > 0) return `A gallery block has unexpected fields (${extra.slice(0, 3).join(', ')}).`
+  const rows = fields.images
+  if (!Array.isArray(rows) || rows.length === 0) return 'A gallery needs at least one image.'
+  if (rows.length > GALLERY_IMAGES_MAX) return `A gallery holds at most ${GALLERY_IMAGES_MAX} images.`
+  for (const row of rows) {
+    if (row === null || typeof row !== 'object' || Array.isArray(row)) return 'A gallery image entry is malformed.'
+    const r = row as Record<string, unknown>
+    const extraRow = Object.keys(r).filter((k) => !GALLERY_ROW_KEYS.has(k))
+    if (extraRow.length > 0) return `A gallery image has unexpected fields (${extraRow.slice(0, 3).join(', ')}).`
+    if (!isRelId(relId(r.image))) return 'A gallery image has an invalid media id (expected an integer from 1 to 2147483647).'
+    const p = plainTextProblem(r.caption, 'A gallery caption', GALLERY_CAPTION_MAX)
+    if (p) return p
+  }
+  return null
+}
+
+/** The distinct media ids of every `gallery` block row in the body (valid ids only), in document order. */
+export function collectGalleryMedia(content: unknown): number[] {
+  const out: number[] = []
+  const walk = (node: unknown, depth: number) => {
+    if (depth > BODY_MAX_DEPTH || node === null || typeof node !== 'object') return
+    if (Array.isArray(node)) {
+      for (const child of node) walk(child, depth + 1)
+      return
+    }
+    const rec = node as Record<string, unknown>
+    if (rec.type === 'block' && rec.fields !== null && typeof rec.fields === 'object') {
+      const f = rec.fields as Record<string, unknown>
+      if (f.blockType === GALLERY_BLOCK_SLUG) {
+        if (Array.isArray(f.images)) {
+          for (const row of f.images) {
+            const id = relId((row as { image?: unknown } | null)?.image)
+            if (isRelId(id) && !out.includes(id as number)) out.push(id as number)
+          }
+        }
+        return
+      }
+    }
+    for (const key of Object.keys(rec)) {
+      const child = rec[key]
+      if (child !== null && typeof child === 'object') walk(child, depth + 1)
+    }
+  }
+  walk(content, 0)
+  return out
+}
+
 export type AvBlockRef = { kind: unknown; media?: number; poster?: number }
 
 /** One entry per `audioVideo` block in the body (document order): its kind and the media ids it names, when valid ids. */
@@ -195,6 +282,14 @@ export function findEmbedProblem(content: unknown): string | null {
             : {}
         if (type === 'block' && fields.blockType === AV_BLOCK_SLUG) {
           problem = avBlockProblem(rec, fields)
+          return
+        }
+        if (type === 'block' && fields.blockType === PULL_QUOTE_BLOCK_SLUG) {
+          problem = pullQuoteProblem(rec, fields)
+          return
+        }
+        if (type === 'block' && fields.blockType === GALLERY_BLOCK_SLUG) {
+          problem = galleryProblem(rec, fields)
           return
         }
         if (type === 'inlineBlock' || fields.blockType !== YOUTUBE_BLOCK_SLUG) {

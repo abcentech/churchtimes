@@ -51,6 +51,12 @@ export const collectionMatrix: Record<string, CollectionOps> = {
   // Replaced by the public projection endpoint; `article` is mandatory (400 without it).
   'legacy-comments': publicRead({ find: [400, 200] }),
   'audit-logs': staffOnly,
+  // Waves 1-2 (docs/w12/schema-contract.md): public profiles/topics are filtered by isPublic (content + w12-schema tests).
+  authors: publicRead(),
+  topics: publicRead(),
+  // Giving ledger and newsletter issues: never anonymous.
+  donations: staffOnly,
+  'newsletter-issues': staffOnly,
   'payload-kv': staffOnly,
   'payload-locked-documents': staffOnly,
   // Payload internal: reads answer 200 with a null value, never data. Writes are refused.
@@ -132,6 +138,24 @@ export const endpointMatrix: Record<string, EndpointEntry> = {
   'GET /api/public/search': { anon: [200, 400], public: true },
   'HEAD /api/public/search': { anon: [200, 400], public: true },
   'OPTIONS /api/public/search': { anon: [204], public: true },
+  'GET /api/public/authors': { anon: [200, 400, 404], public: true, note: 'waves 1-2 public read' },
+  'HEAD /api/public/authors': { anon: [200, 400, 404], public: true },
+  'OPTIONS /api/public/authors': { anon: [204], public: true },
+  'GET /api/public/authors/:slug': { anon: [200, 400, 404], public: true, note: 'waves 1-2 public read' },
+  'HEAD /api/public/authors/:slug': { anon: [200, 400, 404], public: true },
+  'OPTIONS /api/public/authors/:slug': { anon: [204], public: true },
+  'GET /api/public/topics': { anon: [200, 400, 404], public: true, note: 'waves 1-2 public read' },
+  'HEAD /api/public/topics': { anon: [200, 400, 404], public: true },
+  'OPTIONS /api/public/topics': { anon: [204], public: true },
+  'GET /api/public/topics/:slug': { anon: [200, 400, 404], public: true, note: 'waves 1-2 public read' },
+  'HEAD /api/public/topics/:slug': { anon: [200, 400, 404], public: true },
+  'OPTIONS /api/public/topics/:slug': { anon: [204], public: true },
+  'GET /api/public/site-trust': { anon: [200, 400, 404], public: true, note: 'waves 1-2 public read' },
+  'HEAD /api/public/site-trust': { anon: [200, 400, 404], public: true },
+  'OPTIONS /api/public/site-trust': { anon: [204], public: true },
+  'GET /api/public/corrections': { anon: [200, 400, 404], public: true, note: 'waves 1-2 public read' },
+  'HEAD /api/public/corrections': { anon: [200, 400, 404], public: true },
+  'OPTIONS /api/public/corrections': { anon: [204], public: true },
   'POST /api/staff/related-articles': { anon: [401], note: 'staff session only' },
   'GET /api/preview/articles': { anon: [401], note: 'needs a signed, unexpired preview token' },
   // --- Payload built-ins that are not collection routes

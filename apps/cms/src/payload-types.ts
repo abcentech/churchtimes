@@ -81,6 +81,10 @@ export interface Config {
     'ad-campaigns': AdCampaign;
     'legacy-comments': LegacyComment;
     'audit-logs': AuditLog;
+    authors: Author;
+    topics: Topic;
+    donations: Donation;
+    'newsletter-issues': NewsletterIssue;
     'payload-kv': PayloadKv;
     'payload-locked-documents': PayloadLockedDocument;
     'payload-preferences': PayloadPreference;
@@ -91,6 +95,7 @@ export interface Config {
       publishedAsFeatured: 'articles';
       publishedInBody: 'articles';
       liveUpdateImages: 'live-updates';
+      authorPhotos: 'authors';
       adCampaignCreatives: 'ad-campaigns';
     };
   };
@@ -109,6 +114,10 @@ export interface Config {
     'ad-campaigns': AdCampaignsSelect<false> | AdCampaignsSelect<true>;
     'legacy-comments': LegacyCommentsSelect<false> | LegacyCommentsSelect<true>;
     'audit-logs': AuditLogsSelect<false> | AuditLogsSelect<true>;
+    authors: AuthorsSelect<false> | AuthorsSelect<true>;
+    topics: TopicsSelect<false> | TopicsSelect<true>;
+    donations: DonationsSelect<false> | DonationsSelect<true>;
+    'newsletter-issues': NewsletterIssuesSelect<false> | NewsletterIssuesSelect<true>;
     'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
     'payload-locked-documents': PayloadLockedDocumentsSelect<false> | PayloadLockedDocumentsSelect<true>;
     'payload-preferences': PayloadPreferencesSelect<false> | PayloadPreferencesSelect<true>;
@@ -118,8 +127,16 @@ export interface Config {
     defaultIDType: number;
   };
   fallbackLocale: null;
-  globals: {};
-  globalsSelect: {};
+  globals: {
+    'site-trust': SiteTrust;
+    'giving-settings': GivingSetting;
+    'newsletter-settings': NewsletterSetting;
+  };
+  globalsSelect: {
+    'site-trust': SiteTrustSelect<false> | SiteTrustSelect<true>;
+    'giving-settings': GivingSettingsSelect<false> | GivingSettingsSelect<true>;
+    'newsletter-settings': NewsletterSettingsSelect<false> | NewsletterSettingsSelect<true>;
+  };
   locale: null;
   widgets: {
     collections: CollectionsWidget;
@@ -205,6 +222,7 @@ export interface Media {
   alt: string;
   caption?: string | null;
   credit?: string | null;
+  lqip?: string | null;
   uploadedBy?: (number | null) | User;
   /**
    * Original WordPress upload path. Set by the import; staff only.
@@ -222,6 +240,11 @@ export interface Media {
   };
   liveUpdateImages?: {
     docs?: (number | LiveUpdate)[];
+    hasNextPage?: boolean;
+    totalDocs?: number;
+  };
+  authorPhotos?: {
+    docs?: (number | Author)[];
     hasNextPage?: boolean;
     totalDocs?: number;
   };
@@ -266,6 +289,22 @@ export interface Media {
       filesize?: number | null;
       filename?: string | null;
     };
+    cardAvif?: {
+      url?: string | null;
+      width?: number | null;
+      height?: number | null;
+      mimeType?: string | null;
+      filesize?: number | null;
+      filename?: string | null;
+    };
+    heroAvif?: {
+      url?: string | null;
+      width?: number | null;
+      height?: number | null;
+      mimeType?: string | null;
+      filesize?: number | null;
+      filename?: string | null;
+    };
   };
 }
 /**
@@ -280,6 +319,35 @@ export interface Article {
    */
   slug: string;
   excerpt?: string | null;
+  /**
+   * Optional short label above the headline, up to 60 characters.
+   */
+  kicker?: string | null;
+  /**
+   * Shown to readers. Use "Sponsored" for any paid or partner content.
+   */
+  contentType?: ('news' | 'analysis' | 'opinion' | 'sponsored' | 'explainer' | 'factcheck') | null;
+  /**
+   * "What you need to know": up to 5 short points, each up to 200 characters.
+   */
+  keyPoints?:
+    | {
+        text: string;
+        id?: string | null;
+      }[]
+    | null;
+  /**
+   * Set only when the story changed in substance; readers see "Updated" with this date.
+   */
+  lastSubstantiveUpdate?: string | null;
+  /**
+   * Up to 10 topics readers can follow. Only public topics are shown to readers.
+   */
+  topics?: (number | Topic)[] | null;
+  /**
+   * Optional author profile for the byline link. Only public profiles are shown to readers.
+   */
+  bylineAuthor?: (number | null) | Author;
   /**
    * Optional search-result title, up to 70 characters. Leave empty to use the headline.
    */
@@ -344,6 +412,71 @@ export interface Article {
     reviewedByName?: string | null;
     reviewedAt?: string | null;
   };
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "topics".
+ */
+export interface Topic {
+  id: number;
+  name: string;
+  /**
+   * Address of the topic page (/topic/<slug>/). Generated from the name when empty.
+   */
+  slug: string;
+  kind: 'topic' | 'denomination' | 'series' | 'ministry';
+  description?: string | null;
+  /**
+   * Show this topic on articles and give it a public topic page.
+   */
+  isPublic?: boolean | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * Public byline profiles (author pages). Separate from staff log-in accounts.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "authors".
+ */
+export interface Author {
+  id: number;
+  name: string;
+  /**
+   * Address of the author page (/author/<slug>/). Generated from the name when empty.
+   */
+  slug: string;
+  /**
+   * For example "Senior Correspondent, Abuja".
+   */
+  role?: string | null;
+  bio?: string | null;
+  /**
+   * Optional square head-and-shoulders photo with alt text. Public only while the profile is public.
+   */
+  photo?: (number | null) | Media;
+  avatar?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  socials?:
+    | {
+        kind: 'x' | 'facebook' | 'instagram' | 'linkedin' | 'website';
+        url: string;
+        id?: string | null;
+      }[]
+    | null;
+  /**
+   * Show this profile and its author page to readers.
+   */
+  isPublic?: boolean | null;
   updatedAt: string;
   createdAt: string;
 }
@@ -637,6 +770,61 @@ export interface AuditLog {
   createdAt: string;
 }
 /**
+ * Read-only ledger of giving attempts. Amounts are in minor units (kobo, pence, cents).
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "donations".
+ */
+export interface Donation {
+  id: number;
+  reference: string;
+  provider: 'paystack' | 'flutterwave';
+  amountMinor: number;
+  currency: 'NGN' | 'USD' | 'GBP' | 'EUR';
+  status: 'pending' | 'succeeded' | 'failed' | 'abandoned';
+  /**
+   * Payment channel reported by the provider (card, bank, ussd, ...).
+   */
+  channel?: string | null;
+  cause: 'general' | 'relief' | 'ministry';
+  email?: string | null;
+  name?: string | null;
+  anonymous?: boolean | null;
+  /**
+   * When the giver accepted the privacy notice (NDPA).
+   */
+  consentAt?: string | null;
+  receiptSentAt?: string | null;
+  providerRef?: string | null;
+  paidAt?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "newsletter-issues".
+ */
+export interface NewsletterIssue {
+  id: number;
+  date: string;
+  subject: string;
+  status: 'draft' | 'sending' | 'sent' | 'failed';
+  bodyText?: string | null;
+  /**
+   * Generated from the fixed template; shown as source, never rendered here.
+   */
+  bodyHtml?: string | null;
+  sentCount?: number | null;
+  failedCount?: number | null;
+  /**
+   * The daily send cap stopped this issue before every subscriber was reached.
+   */
+  capApplied?: boolean | null;
+  lastError?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "payload-kv".
  */
@@ -715,6 +903,22 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'audit-logs';
         value: number | AuditLog;
+      } | null)
+    | ({
+        relationTo: 'authors';
+        value: number | Author;
+      } | null)
+    | ({
+        relationTo: 'topics';
+        value: number | Topic;
+      } | null)
+    | ({
+        relationTo: 'donations';
+        value: number | Donation;
+      } | null)
+    | ({
+        relationTo: 'newsletter-issues';
+        value: number | NewsletterIssue;
       } | null);
   globalSlug?: string | null;
   user: {
@@ -804,11 +1008,13 @@ export interface MediaSelect<T extends boolean = true> {
   alt?: T;
   caption?: T;
   credit?: T;
+  lqip?: T;
   uploadedBy?: T;
   legacyPath?: T;
   publishedAsFeatured?: T;
   publishedInBody?: T;
   liveUpdateImages?: T;
+  authorPhotos?: T;
   adCampaignCreatives?: T;
   updatedAt?: T;
   createdAt?: T;
@@ -854,6 +1060,26 @@ export interface MediaSelect<T extends boolean = true> {
               filesize?: T;
               filename?: T;
             };
+        cardAvif?:
+          | T
+          | {
+              url?: T;
+              width?: T;
+              height?: T;
+              mimeType?: T;
+              filesize?: T;
+              filename?: T;
+            };
+        heroAvif?:
+          | T
+          | {
+              url?: T;
+              width?: T;
+              height?: T;
+              mimeType?: T;
+              filesize?: T;
+              filename?: T;
+            };
       };
 }
 /**
@@ -864,6 +1090,17 @@ export interface ArticlesSelect<T extends boolean = true> {
   title?: T;
   slug?: T;
   excerpt?: T;
+  kicker?: T;
+  contentType?: T;
+  keyPoints?:
+    | T
+    | {
+        text?: T;
+        id?: T;
+      };
+  lastSubstantiveUpdate?: T;
+  topics?: T;
+  bylineAuthor?: T;
   seoTitle?: T;
   seoDescription?: T;
   content?: T;
@@ -1105,6 +1342,80 @@ export interface AuditLogsSelect<T extends boolean = true> {
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "authors_select".
+ */
+export interface AuthorsSelect<T extends boolean = true> {
+  name?: T;
+  slug?: T;
+  role?: T;
+  bio?: T;
+  photo?: T;
+  avatar?: T;
+  socials?:
+    | T
+    | {
+        kind?: T;
+        url?: T;
+        id?: T;
+      };
+  isPublic?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "topics_select".
+ */
+export interface TopicsSelect<T extends boolean = true> {
+  name?: T;
+  slug?: T;
+  kind?: T;
+  description?: T;
+  isPublic?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "donations_select".
+ */
+export interface DonationsSelect<T extends boolean = true> {
+  reference?: T;
+  provider?: T;
+  amountMinor?: T;
+  currency?: T;
+  status?: T;
+  channel?: T;
+  cause?: T;
+  email?: T;
+  name?: T;
+  anonymous?: T;
+  consentAt?: T;
+  receiptSentAt?: T;
+  providerRef?: T;
+  paidAt?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "newsletter-issues_select".
+ */
+export interface NewsletterIssuesSelect<T extends boolean = true> {
+  date?: T;
+  subject?: T;
+  status?: T;
+  bodyText?: T;
+  bodyHtml?: T;
+  sentCount?: T;
+  failedCount?: T;
+  capApplied?: T;
+  lastError?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "payload-kv_select".
  */
 export interface PayloadKvSelect<T extends boolean = true> {
@@ -1142,6 +1453,192 @@ export interface PayloadMigrationsSelect<T extends boolean = true> {
   batch?: T;
   updatedAt?: T;
   createdAt?: T;
+}
+/**
+ * Text of the public trust pages: editorial standards, ownership and funding, ethics and corrections.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "site-trust".
+ */
+export interface SiteTrust {
+  id: number;
+  /**
+   * Show these pages to readers. Untick to take them down.
+   */
+  published?: boolean | null;
+  editorialStandards?: {
+    root: {
+      type: string;
+      children: {
+        type: any;
+        version: number;
+        [k: string]: unknown;
+      }[];
+      direction: ('ltr' | 'rtl') | null;
+      format: 'left' | 'start' | 'center' | 'right' | 'end' | 'justify' | '';
+      indent: number;
+      version: number;
+    };
+    [k: string]: unknown;
+  } | null;
+  ownershipFunding?: {
+    root: {
+      type: string;
+      children: {
+        type: any;
+        version: number;
+        [k: string]: unknown;
+      }[];
+      direction: ('ltr' | 'rtl') | null;
+      format: 'left' | 'start' | 'center' | 'right' | 'end' | 'justify' | '';
+      indent: number;
+      version: number;
+    };
+    [k: string]: unknown;
+  } | null;
+  ethicsCorrectionsPolicy?: {
+    root: {
+      type: string;
+      children: {
+        type: any;
+        version: number;
+        [k: string]: unknown;
+      }[];
+      direction: ('ltr' | 'rtl') | null;
+      format: 'left' | 'start' | 'center' | 'right' | 'end' | 'justify' | '';
+      indent: number;
+      version: number;
+    };
+    [k: string]: unknown;
+  } | null;
+  /**
+   * Plain text: how readers reach the editors (address, e-mail, phone).
+   */
+  contactEditors?: string | null;
+  updatedAt?: string | null;
+  createdAt?: string | null;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "giving-settings".
+ */
+export interface GivingSetting {
+  id: number;
+  /**
+   * Show the Give page and the "Support our journalism" ask. Also needs the provider keys in the server environment.
+   */
+  enabled?: boolean | null;
+  provider?: ('paystack' | 'flutterwave') | null;
+  /**
+   * Amounts are minor units: 500000 kobo = N5,000.
+   */
+  currencies?:
+    | {
+        currency: 'NGN' | 'USD' | 'GBP' | 'EUR';
+        presets?: number[] | null;
+        minimum: number;
+        maximum: number;
+        label?: string | null;
+        id?: string | null;
+      }[]
+    | null;
+  causes?:
+    | {
+        key: 'general' | 'relief' | 'ministry';
+        label: string;
+        enabled?: boolean | null;
+        id?: string | null;
+      }[]
+    | null;
+  thankYouNote?: string | null;
+  bankTransferNote?: string | null;
+  updatedAt?: string | null;
+  createdAt?: string | null;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "newsletter-settings".
+ */
+export interface NewsletterSetting {
+  id: number;
+  /**
+   * Master switch for sending. Off: nothing is sent (dry runs still write drafts).
+   */
+  enabled?: boolean | null;
+  dailyDigestEnabled?: boolean | null;
+  sendHourLagos?: number | null;
+  /**
+   * Hard stop: no more than this many e-mails in one Lagos day, whatever else is configured.
+   */
+  dailySendCap: number;
+  fromName?: string | null;
+  replyTo?: string | null;
+  maxStoriesPerDigest?: number | null;
+  includeDevotional?: boolean | null;
+  updatedAt?: string | null;
+  createdAt?: string | null;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "site-trust_select".
+ */
+export interface SiteTrustSelect<T extends boolean = true> {
+  published?: T;
+  editorialStandards?: T;
+  ownershipFunding?: T;
+  ethicsCorrectionsPolicy?: T;
+  contactEditors?: T;
+  updatedAt?: T;
+  createdAt?: T;
+  globalType?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "giving-settings_select".
+ */
+export interface GivingSettingsSelect<T extends boolean = true> {
+  enabled?: T;
+  provider?: T;
+  currencies?:
+    | T
+    | {
+        currency?: T;
+        presets?: T;
+        minimum?: T;
+        maximum?: T;
+        label?: T;
+        id?: T;
+      };
+  causes?:
+    | T
+    | {
+        key?: T;
+        label?: T;
+        enabled?: T;
+        id?: T;
+      };
+  thankYouNote?: T;
+  bankTransferNote?: T;
+  updatedAt?: T;
+  createdAt?: T;
+  globalType?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "newsletter-settings_select".
+ */
+export interface NewsletterSettingsSelect<T extends boolean = true> {
+  enabled?: T;
+  dailyDigestEnabled?: T;
+  sendHourLagos?: T;
+  dailySendCap?: T;
+  fromName?: T;
+  replyTo?: T;
+  maxStoriesPerDigest?: T;
+  includeDevotional?: T;
+  updatedAt?: T;
+  createdAt?: T;
+  globalType?: T;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema

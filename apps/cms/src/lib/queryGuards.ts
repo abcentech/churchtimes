@@ -138,6 +138,8 @@ export const STATUS_FILTER_VALUES: ReadonlySet<string> = new Set([
   'pending', 'hidden',
   'confirmed', 'unsubscribed', 'bounced', 'erased',
   'pending_approval', 'paused', 'cancelled',
+  // Waves 1-2: donations and newsletter issues.
+  'succeeded', 'failed', 'abandoned', 'sending', 'sent',
 ])
 
 const STATUS_KEY = /\[(?:[A-Za-z]+\.)*status\]\[(equals|not_equals|in|not_in)\](?:\[\d{1,4}\])?$/

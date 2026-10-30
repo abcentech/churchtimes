@@ -21,6 +21,7 @@ import { Redirects } from './collections/Redirects'
 import { Submissions } from './collections/Submissions'
 import { Subscribers } from './collections/Subscribers'
 import { Users } from './collections/Users'
+import { w12Collections, w12Endpoints, w12Globals } from './w12'
 import { previewArticleEndpoint } from './endpoints/previewArticle'
 import { publicSearchEndpoints } from './endpoints/publicSearch'
 import { staffRelatedArticlesEndpoints } from './endpoints/staffRelatedArticles'
@@ -160,7 +161,9 @@ export default buildConfig({
     AdCampaigns,
     LegacyComments,
     AuditLogs,
+    ...w12Collections,
   ],
+  globals: [...w12Globals],
   endpoints: [
     publicSubmissionsEndpoint,
     publicSubmissionsPreflightEndpoint,
@@ -176,6 +179,7 @@ export default buildConfig({
     previewArticleEndpoint,
     ...publicSearchEndpoints,
     ...staffRelatedArticlesEndpoints,
+    ...w12Endpoints,
   ],
   editor: lexicalEditor(),
   db: postgresAdapter({

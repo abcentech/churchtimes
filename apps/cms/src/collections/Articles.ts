@@ -29,7 +29,21 @@ import { articlePreviewTokenEndpoint } from '../endpoints/articlePreviewToken'
 import { writeAuditLog } from '../lib/audit'
 import { clampLimit } from '../lib/clampLimit'
 import { deepEqual } from '../lib/deepEqual'
-import { collectAvBlocks, collectAvMedia, findEmbedProblem } from '../lib/lexicalEmbeds'
+import { collectAvBlocks, collectAvMedia, collectGalleryMedia, findEmbedProblem } from '../lib/lexicalEmbeds'
+import {
+  CONTENT_TYPES,
+  CONTENT_TYPE_LABELS,
+  DEFAULT_CONTENT_TYPE,
+  KEY_POINTS_MAX,
+  KEY_POINT_MAX,
+  KICKER_MAX,
+  TOPICS_PER_ARTICLE_MAX,
+  keyPointTexts,
+  keyPointsProblem,
+  plainTextProblem,
+  plainTextValidator,
+  updateStampProblem,
+} from '../lib/newsroomFields'
 import { assertExpectedUpdatedAt, captureExpectedUpdatedAt } from '../lib/expectedUpdatedAt'
 import { collectUploadNodes, uploadValueId } from '../lib/lexicalMedia'
 import { ALLOWED_IMAGE_MIME, assertAttachableAv, assertAttachableImage, isMediaId } from '../lib/mediaChecks'
@@ -265,6 +279,11 @@ const validateBodyImages: CollectionBeforeValidateHook = async ({ data, req }) =
     seen.add(id)
     await assertAttachableImage(req, id, `An image in the article body (media ${id})`)
   }
+  for (const id of collectGalleryMedia(data.content)) {
+    if (seen.has(id)) continue
+    seen.add(id)
+    await assertAttachableImage(req, id, `A gallery image (media ${id})`)
+  }
   return data
 }
 
@@ -333,6 +352,64 @@ const validateSecondaryCategories: CollectionBeforeValidateHook = async ({ data,
 }
 
 /**
+ * Waves 1-2 newsroom fields (docs/w12/schema-contract.md), checked server-side whatever the client: kicker (plain text, 60),
+ * key points (at most 5 x 200 characters of plain text), `lastSubstantiveUpdate` (a real date, not in the future; set by an
+ * editor, never automatically), topics (at most 10, existing) and `bylineAuthor` (an existing author profile). Ids that do not
+ * exist would otherwise end in a foreign-key error (500). Runs for seed and import too: they must not store bad values either.
+ */
+const validateNewsroomFields: CollectionBeforeValidateHook = async ({ data, req }) => {
+  if (!data) return data
+  if ('kicker' in data) {
+    if (data.kicker === '' || data.kicker === null) data.kicker = null
+    else {
+      if (typeof data.kicker === 'string') data.kicker = data.kicker.trim() || null
+      const p = plainTextProblem(data.kicker, 'The kicker', KICKER_MAX)
+      if (p) throw new APIError(p, 400)
+    }
+  }
+  if ('contentType' in data && data.contentType !== null && !(CONTENT_TYPES as readonly unknown[]).includes(data.contentType)) {
+    throw new APIError(`contentType must be one of: ${CONTENT_TYPES.join(', ')}.`, 400)
+  }
+  if ('keyPoints' in data) {
+    if (data.keyPoints === null) data.keyPoints = []
+    if (Array.isArray(data.keyPoints)) {
+      data.keyPoints = (data.keyPoints as unknown[]).map((r) =>
+        r && typeof r === 'object' && typeof (r as { text?: unknown }).text === 'string'
+          ? { ...(r as object), text: (r as { text: string }).text.trim() }
+          : r,
+      )
+    }
+    const p = keyPointsProblem(data.keyPoints)
+    if (p) throw new APIError(p, 400)
+  }
+  if ('lastSubstantiveUpdate' in data) {
+    if (data.lastSubstantiveUpdate === '') data.lastSubstantiveUpdate = null
+    const p = updateStampProblem(data.lastSubstantiveUpdate)
+    if (p) throw new APIError(p, 400)
+  }
+  if (data.topics !== undefined && data.topics !== null) {
+    if (!Array.isArray(data.topics)) throw new APIError('Topics must be a list.', 400)
+    const wanted = [...new Set((data.topics as unknown[]).map((t) => String(idOf(t))))]
+    if (wanted.some((id) => !/^[1-9]\d{0,9}$/.test(id))) throw new APIError('Topics must be topic ids.', 400)
+    if (wanted.length > TOPICS_PER_ARTICLE_MAX) throw new APIError(`At most ${TOPICS_PER_ARTICLE_MAX} topics per article.`, 400)
+    if (wanted.length > 0) {
+      const found = await req.payload.count({ collection: 'topics', where: { id: { in: wanted.map(Number) } }, overrideAccess: true, req })
+      if (found.totalDocs !== wanted.length) throw new APIError('Topics must be existing topics.', 400)
+    }
+    data.topics = wanted.map(Number)
+  }
+  if (data.bylineAuthor === '') data.bylineAuthor = null
+  if (data.bylineAuthor !== undefined && data.bylineAuthor !== null) {
+    const id = String(idOf(data.bylineAuthor))
+    if (!/^[1-9]\d{0,9}$/.test(id)) throw new APIError('bylineAuthor must be an author profile id.', 400)
+    const found = await req.payload.count({ collection: 'authors', where: { id: { equals: Number(id) } }, overrideAccess: true, req })
+    if (found.totalDocs !== 1) throw new APIError('bylineAuthor must be an existing author profile.', 400)
+    data.bylineAuthor = Number(id)
+  }
+  return data
+}
+
+/**
  * `bodyMedia` is derived, server-only: the distinct media ids referenced by the body's upload nodes. It exists
  * so the media freeze (collections/Media.ts) can find "media shown in a published article body" with a plain
  * query instead of scanning jsonb. Recomputed whenever `content` is written (client values are stripped by field
@@ -346,7 +423,7 @@ const deriveBodyMedia: CollectionBeforeChangeHook = ({ data }) => {
     if (node.relationTo === 'media' && isMediaId(id) && !ids.includes(id)) ids.push(id)
   }
   const av = collectAvMedia(data.content)
-  for (const id of [...av.media, ...av.poster]) if (!ids.includes(id)) ids.push(id)
+  for (const id of [...av.media, ...av.poster, ...collectGalleryMedia(data.content)]) if (!ids.includes(id)) ids.push(id)
   data.bodyMedia = ids
   return data
 }
@@ -360,7 +437,24 @@ const CONTENT_KEYS = [
   'bylineName',
   'seoTitle',
   'seoDescription',
+  // Waves 1-2: the same who-may-edit rule (a reporter cannot change them once the story is in review).
+  'kicker',
+  'contentType',
+  'keyPoints',
+  'lastSubstantiveUpdate',
+  'topics',
+  'bylineAuthor',
 ] as const
+
+/** The comparable value of a content key: relationship ids rather than populated objects, key-point texts without row ids. */
+const comparable = (key: (typeof CONTENT_KEYS)[number], value: unknown): unknown => {
+  if (key === 'featuredImage' || key === 'bylineAuthor') return idOf(value) ?? null
+  if (key === 'topics') return Array.isArray(value) ? value.map((t) => String(idOf(t))) : []
+  if (key === 'keyPoints') return keyPointTexts(value)
+  if (key === 'lastSubstantiveUpdate') return value ? new Date(value as string).getTime() : null
+  if (key === 'kicker' || key === 'contentType') return value ?? null
+  return value
+}
 
 const fail = (status: number, message: string): never => {
   throw new APIError(message, status)
@@ -423,12 +517,7 @@ const enforceWorkflow: CollectionBeforeChangeHook = async ({ data, originalDoc, 
   if (!isCreate) {
     const contentChanged =
       CONTENT_KEYS.some(
-        (k) =>
-          k in data &&
-          !same(
-            k === 'featuredImage' ? idOf(data[k]) : data[k],
-            k === 'featuredImage' ? idOf(orig[k]) : orig[k],
-          ),
+        (k) => k in data && !same(comparable(k, data[k]), comparable(k, orig[k])),
       ) ||
       (data.category !== undefined && String(idOf(data.category)) !== String(origCategoryId))
     if (contentChanged) {
@@ -787,7 +876,7 @@ export const Articles: CollectionConfig = {
   },
   hooks: {
     beforeOperation: [clampLimit, markRestore, dropNullProvenance, captureExpectedUpdatedAt],
-    beforeValidate: [autoSlug, normalizeSeoFields, validateEmbeds, validateBodyImages, validateAvMedia, validateFeaturedImage, validateSecondaryCategories],
+    beforeValidate: [autoSlug, normalizeSeoFields, validateNewsroomFields, validateEmbeds, validateBodyImages, validateAvMedia, validateFeaturedImage, validateSecondaryCategories],
     beforeChange: [assertExpectedUpdatedAt('articles'), guardUnreviewedImport, deriveBodyMedia, guardPublishedSlug, enforceWorkflow],
     beforeDelete: [refuseDeleteWithLegacyComments],
     afterChange: [auditChanges, redirectOnSlugChange, syncSearch],
@@ -812,6 +901,59 @@ export const Articles: CollectionConfig = {
       },
     },
     { name: 'excerpt', type: 'textarea', maxLength: 600 },
+    {
+      // Waves 1-2: short label above the headline ("Exclusive", "Analysis: Kaduna"). Plain text.
+      name: 'kicker',
+      type: 'text',
+      maxLength: KICKER_MAX,
+      validate: plainTextValidator('The kicker', KICKER_MAX),
+      admin: { description: `Optional short label above the headline, up to ${KICKER_MAX} characters.` },
+    },
+    {
+      // Reader-facing label of the story type. Legacy rows read as "news". "sponsored" must be used for paid content.
+      name: 'contentType',
+      type: 'select',
+      defaultValue: DEFAULT_CONTENT_TYPE,
+      options: CONTENT_TYPES.map((v) => ({ label: CONTENT_TYPE_LABELS[v], value: v })),
+      admin: { position: 'sidebar', description: 'Shown to readers. Use "Sponsored" for any paid or partner content.' },
+    },
+    {
+      name: 'keyPoints',
+      type: 'array',
+      maxRows: KEY_POINTS_MAX,
+      labels: { singular: 'Key point', plural: 'Key points' },
+      admin: { description: `"What you need to know": up to ${KEY_POINTS_MAX} short points, each up to ${KEY_POINT_MAX} characters.` },
+      fields: [
+        { name: 'text', type: 'text', required: true, maxLength: KEY_POINT_MAX, validate: plainTextValidator('Each key point', KEY_POINT_MAX, { required: true }) },
+      ],
+    },
+    {
+      // Editor-set only (never stamped automatically): shown to readers as "Updated <date>".
+      name: 'lastSubstantiveUpdate',
+      type: 'date',
+      validate: (v: unknown) => updateStampProblem(v) ?? true,
+      admin: {
+        position: 'sidebar',
+        date: { pickerAppearance: 'dayAndTime' },
+        description: 'Set only when the story changed in substance; readers see "Updated" with this date.',
+      },
+    },
+    {
+      name: 'topics',
+      type: 'relationship',
+      relationTo: 'topics',
+      hasMany: true,
+      maxRows: TOPICS_PER_ARTICLE_MAX,
+      admin: { position: 'sidebar', description: `Up to ${TOPICS_PER_ARTICLE_MAX} topics readers can follow. Only public topics are shown to readers.` },
+    },
+    {
+      // Public byline profile (author page). `bylineName` stays the fallback text byline; `author` stays the staff account.
+      name: 'bylineAuthor',
+      type: 'relationship',
+      relationTo: 'authors',
+      index: true,
+      admin: { position: 'sidebar', description: 'Optional author profile for the byline link. Only public profiles are shown to readers.' },
+    },
     {
       name: 'seoTitle',
       type: 'text',
