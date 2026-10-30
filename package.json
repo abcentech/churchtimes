@@ -25,6 +25,7 @@
     "test:quality": "node tools/run-public-quality.mjs",
     "check:redirects": "node tools/check-redirects.mjs",
     "check:reader-budget": "node tools/check-reader-budget.mjs",
+    "test:reader-trust": "playwright test --config playwright.reader-trust.config.js",
     "test:giving": "playwright test --config playwright.giving.config.js",
     "giving:reconcile": "npm --prefix apps/cms run giving:reconcile --",
     "whatsapp:brief": "npm --prefix apps/cms run whatsapp:brief --",
