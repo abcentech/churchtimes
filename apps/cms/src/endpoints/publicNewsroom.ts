@@ -5,6 +5,8 @@ import { positiveInt } from '../lib/publicEndpoint'
 import { createRateLimiter, getClientIp } from '../lib/rateLimit'
 import { safeErrorFields } from '../lib/safeLog'
 import { SLUG_MAX, SLUG_RE } from '../lib/newsroomFields'
+import { resolvePublicSiteUrl } from '../lib/newsletter'
+import { articlePath, resolveArticlePathTemplate, type ArticlePathTemplate } from '../lib/redirectPaths'
 import { isOriginAllowed } from './publicSubmissions'
 
 /**
@@ -85,6 +87,58 @@ const fail = (status: number, message: string, extra: Record<string, string> = {
 type Ctx = { payload: Payload; params: URLSearchParams; routeParams: Record<string, unknown> }
 class NotFound extends Error {}
 class BadRequest extends Error {}
+/** A non-JSON body (the topic RSS feed). */
+class RawBody {
+  constructor(
+    readonly text: string,
+    readonly contentType: string,
+  ) {}
+}
+
+const xml = (s: unknown): string =>
+  String(s ?? '')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F￾￿]/g, '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;')
+
+/** RSS 2.0 for a topic page: absolute links on the public site (`PUBLIC_SITE_URL` + the article path template). */
+export function topicFeedXml(site: string, template: ArticlePathTemplate, topic: Record<string, unknown>, cards: Array<Record<string, unknown>>): string {
+  const rfc822 = (v: unknown) => (typeof v === 'string' && Number.isFinite(Date.parse(v)) ? new Date(v).toUTCString() : '')
+  const items = cards.map((c) => {
+    const link = `${site}${articlePath(template, String(c.slug))}`
+    const category = c.category && typeof c.category === 'object' ? (c.category as { title?: unknown }).title : ''
+    const author = c.bylineAuthor && typeof c.bylineAuthor === 'object' ? (c.bylineAuthor as { name?: unknown }).name : c.bylineName
+    return [
+      '<item>',
+      `<title>${xml(c.title)}</title>`,
+      `<link>${xml(link)}</link>`,
+      `<guid isPermaLink="true">${xml(link)}</guid>`,
+      c.excerpt ? `<description>${xml(c.excerpt)}</description>` : '',
+      rfc822(c.publishedAt) ? `<pubDate>${rfc822(c.publishedAt)}</pubDate>` : '',
+      category ? `<category>${xml(category)}</category>` : '',
+      author ? `<dc:creator>${xml(author)}</dc:creator>` : '',
+      '</item>',
+    ].join('')
+  })
+  const self = `${site}/topic/${String(topic.slug)}/`
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/">',
+    '<channel>',
+    `<title>${xml(`${String(topic.name)} - Church Times Nigeria`)}</title>`,
+    `<link>${xml(self)}</link>`,
+    `<description>${xml(topic.description || `Latest stories on ${String(topic.name)}`)}</description>`,
+    '<language>en-NG</language>',
+    ...items,
+    '</channel>',
+    '</rss>',
+    '',
+  ].join('\n')
+}
 
 /** Wraps a read: origin check, rate limit, errors (never leaking internals), cache headers, HEAD. */
 function publicRead(path: string, maxAge: number, read: (ctx: Ctx) => Promise<unknown>): Endpoint[] {
@@ -108,11 +162,12 @@ function publicRead(path: string, maxAge: number, read: (ctx: Ctx) => Promise<un
       req.payload.logger.error(safeErrorFields(err), `[public] ${path} failed`)
       return fail(500, 'Temporarily unavailable.', cors)
     }
-    return new Response(withBody ? JSON.stringify(body) : null, {
+    const raw = body instanceof RawBody ? body : null
+    return new Response(withBody ? (raw ? raw.text : JSON.stringify(body)) : null, {
       status: 200,
       headers: {
         ...cors,
-        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Type': raw ? raw.contentType : 'application/json; charset=utf-8',
         'Cache-Control': fixed ? `public, max-age=${maxAge}` : `private, max-age=${maxAge}`,
         Vary: 'Origin',
         'X-Content-Type-Options': 'nosniff',
@@ -255,6 +310,14 @@ export const publicNewsroomEndpoints: Endpoint[] = [
     const topic = await findPublicBySlug(ctx.payload, 'topics', slug, 0)
     const articles = await articleCards(ctx.payload, { topics: { equals: topic.id as number } }, page)
     return { topic, articles: articles.docs, page: articles.page, totalDocs: articles.totalDocs, hasNextPage: articles.hasNextPage }
+  }),
+  ...publicRead('/public/topics/:slug/feed.xml', 300, async (ctx) => {
+    const site = resolvePublicSiteUrl()
+    if (!site) throw new NotFound('Feeds are not configured (PUBLIC_SITE_URL).')
+    const slug = slugParam(ctx)
+    const topic = await findPublicBySlug(ctx.payload, 'topics', slug, 0)
+    const articles = await articleCards(ctx.payload, { topics: { equals: topic.id as number } }, 1)
+    return new RawBody(topicFeedXml(site, resolveArticlePathTemplate(), topic, articles.docs), 'application/rss+xml; charset=utf-8')
   }),
   ...publicRead('/public/site-trust', 300, async ({ payload }) => {
     // Trusted read of the global, then only the public fields, and only once published.

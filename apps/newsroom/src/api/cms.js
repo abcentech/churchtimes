@@ -8,8 +8,9 @@
 
 import { CMS_URL, CMS_HOST_LABEL, cmsAssetUrl } from '../config.js';
 import { can } from '../permissions.js';
-import { lexicalToMarkdown, markdownToLexical } from '../lexical.js';
+import { galleryMediaOf, lexicalToMarkdown, markdownToLexical } from '../lexical.js';
 import { categoryFieldsToCms, extraIdsFromCms } from '../categories.js';
+import { metaFromCms, metaToCms, profileOptions } from '../story-meta.js';
 import { ApiError, toApiError } from './errors.js';
 import { createCountCache } from './count-cache.js';
 import { liveUpdatePayload } from '../live-photo.js';
@@ -77,7 +78,9 @@ function normalizeArticle(doc) {
   // Media documents the CMS populated inside the body (upload nodes), by id, for the editor's previews.
   const bodyMedia = {};
   for (const img of images) if (img.media) bodyMedia[img.id] = normalizeMedia(img.media);
+  for (const m of galleryMediaOf(doc.content)) bodyMedia[String(m.id)] = normalizeMedia(m);
   return {
+    ...metaFromCms(doc),
     id: String(doc.id),
     title: doc.title || '',
     slug: doc.slug || '',
@@ -159,6 +162,8 @@ export class CmsAdapter {
     this.currentUser = null;
     this.listeners = new Set();
     this.categoriesPromise = null;
+    this.topicsPromise = null;
+    this.authorProfilesPromise = null;
     this.articleCounts = createCountCache();
   }
 
@@ -242,6 +247,8 @@ export class CmsAdapter {
     if (!this.currentUser) return;
     this.currentUser = null;
     this.categoriesPromise = null;
+    this.topicsPromise = null;
+    this.authorProfilesPromise = null;
     this.articleCounts.invalidate();
     this.emit('unauthorized', null);
   }
@@ -314,6 +321,8 @@ export class CmsAdapter {
   clearLocalState() {
     this.currentUser = null;
     this.categoriesPromise = null;
+    this.topicsPromise = null;
+    this.authorProfilesPromise = null;
     this.articleCounts.invalidate();
     try {
       for (const key of Object.keys(localStorage)) {
@@ -387,7 +396,24 @@ export class CmsAdapter {
       out.featuredImage = fields.featuredImageId ? Number(safeId(fields.featuredImageId)) : null;
     }
     if ('corrections' in fields) out.corrections = fields.corrections;
+    Object.assign(out, metaToCms(fields));
     return out;
+  }
+
+  /** Topics for the story-details picker (staff read every topic; non-public ones are marked). Cached per session. */
+  async getTopics() {
+    this.topicsPromise ||= this.request('/topics', { query: { limit: '200', depth: '0', sort: 'name' } })
+      .then(data => profileOptions(data?.docs))
+      .catch(err => { this.topicsPromise = null; throw err; });
+    return this.topicsPromise;
+  }
+
+  /** Public byline profiles for the story-details picker (non-public ones are marked). Cached per session. */
+  async getAuthorProfiles() {
+    this.authorProfilesPromise ||= this.request('/authors', { query: { limit: '200', depth: '0', sort: 'name' } })
+      .then(data => profileOptions(data?.docs))
+      .catch(err => { this.authorProfilesPromise = null; throw err; });
+    return this.authorProfilesPromise;
   }
 
   async createArticle(fields) {

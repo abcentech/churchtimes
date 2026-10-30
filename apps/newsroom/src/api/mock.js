@@ -12,6 +12,18 @@ import { can, normRole } from '../permissions.js';
 import { cleanFilters, publishBlockReason, reviewPatchBody, REVIEW_STATUSES, CONFIDENCE_LEVELS } from '../archive-review.js';
 import { ApiError } from './errors.js';
 import { STALE_MESSAGE, versionMatches } from '../stale-guard.js';
+import { META_KEYS, blankMeta } from '../story-meta.js';
+
+// Dev-only story-details pickers (waves 1-2). Ids are numeric strings like the CMS ones.
+const MOCK_TOPICS = [
+  { id: '1', label: 'Persecution', hidden: false },
+  { id: '2', label: 'Anglican Communion', hidden: false },
+  { id: '3', label: 'Youth ministry', hidden: true }
+];
+const MOCK_AUTHOR_PROFILES = [
+  { id: '1', label: 'Ada Okafor', hidden: false },
+  { id: '2', label: 'Tunde Bello', hidden: false }
+];
 
 const STORAGE_KEY = 'ctn_mock_store_v2';
 const ARTICLE_STATUSES = ['draft', 'in_review', 'changes_requested', 'approved', 'scheduled', 'published', 'archived'];
@@ -137,6 +149,8 @@ export class MockAdapter {
   get mockPassword() { return MOCK_PASSWORD; }
 
   async getCategories() { return clone(this.db.categories); }
+  async getTopics() { return clone(MOCK_TOPICS); }
+  async getAuthorProfiles() { return clone(MOCK_AUTHOR_PROFILES); }
 
   // articles
   _ctx(a) {
@@ -212,6 +226,7 @@ export class MockAdapter {
     }
     if ('extraCategoryIds' in f) a.extraCategoryIds = f.extraCategoryIds;
     if ('featuredImageId' in f) a.featuredImage = this.db.media.find(m => m.id === f.featuredImageId) || null;
+    for (const key of META_KEYS) if (key in f) a[key] = f[key];
     a.updatedAt = new Date().toISOString();
   }
   async createArticle(fields) {
@@ -220,7 +235,8 @@ export class MockAdapter {
       id: `art-${Date.now()}`, title: '', slug: '', standfirst: '', bodyMd: '', lossy: false,
       categoryId: this.db.categories[0].id, categoryTitle: this.db.categories[0].title, featuredImage: null,
       status: 'draft', authorId: this.currentUser.id, authorName: this.currentUser.name,
-      createdAt: new Date().toISOString(), publishedAt: null, scheduledFor: null, reviewNotes: '', corrections: []
+      createdAt: new Date().toISOString(), publishedAt: null, scheduledFor: null, reviewNotes: '', corrections: [],
+      ...blankMeta()
     };
     this._apply(a, fields);
     this.db.articles.unshift(a);

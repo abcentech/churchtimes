@@ -296,6 +296,27 @@ This is done in the **CMS admin**, not in the newsroom app. The newsroom upload 
 
 *Good to know.* YouTube videos use a separate YouTube block, also added in the CMS admin. A story that holds these blocks opens with a read-only body in the newsroom app. Edit the body in the CMS admin.
 
+### Story details: kicker, story type, key points, "Updated", topics and author profile
+
+Under the byline there is a box called **Story details**. Everything in it is optional.
+
+| Field | What to do |
+| --- | --- |
+| **Kicker** | A short label above the headline, for example `Exclusive` or `Rebuilding Together`. Up to 60 characters, plain text. |
+| **Story type** | News (the default), Analysis, Opinion, Sponsored, Explainer or Fact-check. Readers see the label. **Any paid or partner content must be "Sponsored".** |
+| **Author profile** | Links the byline to the writer's public author page. Choose "None" to show only the text byline. A profile marked "(not public)" is never shown to readers. |
+| **"Updated" date** | Only when the story changed in substance (new facts, a new development). Click **Now** to stamp it, **Clear** to remove it. It is never set automatically; do not use it for typo fixes. |
+| **Key points** | The "What you need to know" box. One point per line, up to 5 points, up to 200 characters each. The counter under the box tells you when you are over. |
+| **Topics** | Tick up to 10 topics readers can follow, for example **Religious freedom**. Topics marked "(not public)" are not shown to readers. Editors create topics in the CMS admin (Newsroom > Topics). |
+
+Like the headline, a reporter can change these only while the story is a draft or sent back. Changing them on a published story does not need a correction note.
+
+### Pull quotes and photo galleries
+
+- **Pull quote.** Click **Pull quote** above the body. A line like `>> We will rebuild. -- Bishop A` appears. Type the exact words from the story after `>>` and the speaker's name after `--`. Up to 400 characters, plain text. The preview shows it as a large quote.
+- **Photo gallery.** Click **Gallery image** and choose a photo (it needs alt text). A line like `[gallery](media:12)` appears. Keep the cursor on that line and click **Gallery image** again to add more, up to 12. Gallery photos become public when the story is published, like other photos.
+- Per-photo gallery captions are added in the CMS admin. A story whose gallery has captions opens with a read-only body here (the notice says so).
+
 ### Save and send for review
 
 1. Click **Save Draft** (or press Ctrl+S). You see "Draft saved successfully" and **All changes saved**.
@@ -750,6 +771,25 @@ The list of people who signed up. You may mark someone as unsubscribed or bounce
 **Audit Logs** is a read-only record of who did what and when: status changes, live updates, comment hides, role changes and more. Use it to answer "who published this?"
 
 ![Audit Logs. Each row has an action, the item, the person and the time.](staff-manual/img/96-cms-audit-logs.png)
+
+### Author profiles and topics (editors)
+
+In the CMS admin, under **Newsroom**:
+
+- **Author profiles** are the public byline pages (`/author/<slug>/`). They are separate from log-in accounts. Fill in name, role (for example "Senior Correspondent, Abuja"), a short bio (up to 600 characters) and links (X, Facebook, Instagram, LinkedIn, website; full `https://` addresses). Tick **isPublic** to show the profile. Until then it is hidden everywhere, also when a story points at it.
+- **Author photo.** Upload a clear head-and-shoulders photo, square if you can, at least 600 by 600 pixels, JPEG or PNG, with alt text such as "Ada Okafor, Senior Correspondent". Use a photo the person agreed to publish. The photo becomes public only while the profile is public.
+- **Topics** are what readers follow (`/topic/<slug>/`): a topic, a denomination, a series or a ministry. Tick **isPublic** to show it. Deleting a topic removes it from every story.
+- Section editors, the editor-in-chief and admins can create and edit both; only the editor-in-chief or an admin can delete them.
+
+### Site trust pages (editor-in-chief and admin)
+
+**Newsroom > Site trust pages** holds the text of Editorial standards, Ownership and funding, and Ethics and corrections, plus how to contact the editors. Use headings, paragraphs, lists and links only. Tick **published** to show the pages to readers; untick it to take them down. The corrections log on `/corrections/` is built automatically from the correction notes on published stories.
+
+### Donations and newsletter issues (read-only records)
+
+- **Giving > Donations** lists every giving attempt: reference, status, amount (in kobo, pence or cents), currency and cause. Nobody can edit a row. Admins also see the giver's name and e-mail; the editor-in-chief does not. **Download CSV** above the list gives a file for reconciliation; it contains names and e-mails only when an admin downloads it. Store it securely and delete it after use.
+- **Giving > Giving settings** (admin only to change) holds amounts and causes. Giving stays off until **enabled** is ticked and the payment keys are set on the server.
+- **Newsletter > Newsletter issues** lists the digests the system prepared or sent. Only the subject can be changed, and only while the issue is a draft. **Newsletter > Newsletter settings** holds the send time and the hard daily cap.
 
 ---
 

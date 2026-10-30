@@ -3,6 +3,7 @@ import sharp from 'sharp'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { resetPublicReadLimiter } from '../../src/endpoints/publicNewsroom'
+import { backfillLqip } from '../../src/lib/lqipBackfill'
 import { migrations } from '../../src/migrations'
 import { api, lexical, newRunId, setupFixtures, type Fixtures } from './helpers'
 
@@ -176,6 +177,14 @@ describe('media: lqip and AVIF sizes', () => {
     expect(patch.status).toBe(200)
     expect(patch.json.doc.lqip).toBe(m.lqip)
 
+    // Backfill (media:lqip-backfill) restores a missing placeholder from the stored file, dry run first; then nothing is left.
+    await drizzle().execute(sql`UPDATE "media" SET "lqip" = NULL WHERE "id" = ${m.id}`)
+    const dry = await backfillLqip(f.payload, { dryRun: true })
+    expect(dry.updated).toBeGreaterThanOrEqual(1)
+    expect((await drizzle().execute(sql`select lqip from media where id = ${m.id}`)).rows[0].lqip).toBeNull()
+    expect((await backfillLqip(f.payload)).updated).toBe(dry.updated)
+    expect((await drizzle().execute(sql`select lqip from media where id = ${m.id}`)).rows[0].lqip).toMatch(/^data:image\/webp;base64,/)
+    expect((await backfillLqip(f.payload, { dryRun: true })).updated).toBe(0)
     // AVIF is only a generated size: an AVIF original is still refused.
     const avif = await sharp({ create: { width: 64, height: 64, channels: 3, background: { r: 1, g: 2, b: 3 } } }).avif().toBuffer()
     const form = new FormData()
@@ -323,6 +332,28 @@ describe('public endpoints', () => {
     const allowed = await api('GET', '/api/public/topics', { headers: { origin: 'http://allowed.test' } })
     expect(allowed.status).toBe(200)
     expect(allowed.headers.get('access-control-allow-origin')).toBe('http://allowed.test')
+  })
+
+  it('topic RSS feed: 404 until PUBLIC_SITE_URL is set, then escaped RSS with public links only', async () => {
+    const prev = process.env.PUBLIC_SITE_URL
+    delete process.env.PUBLIC_SITE_URL
+    try {
+      expect((await api('GET', `/api/public/topics/${topic.slug}/feed.xml`)).status).toBe(404)
+      process.env.PUBLIC_SITE_URL = 'https://site.example'
+      await f.seedArticle({ status: 'published', publishedAt: new Date().toISOString(), title: `${runId} Feed <b>&</b> "quotes"`, topics: [topic.id] })
+      const res = await api('GET', `/api/public/topics/${topic.slug}/feed.xml`)
+      expect(res.status).toBe(200)
+      expect(res.headers.get('content-type')).toMatch(/application\/rss\+xml/)
+      expect(res.text).toContain('<rss version="2.0"')
+      expect(res.text).toContain(`<link>https://site.example/topic/${topic.slug}/</link>`)
+      expect(res.text).toContain(`${runId} Feed &lt;b&gt;&amp;&lt;/b&gt; &quot;quotes&quot;`)
+      expect(res.text).toContain(`<link>https://site.example/${published.slug}/</link>`)
+      expect(res.text).not.toContain(draft.slug)
+      expect((await api('GET', `/api/public/topics/${hidden.slug}/feed.xml`)).status).toBe(404)
+    } finally {
+      if (prev === undefined) delete process.env.PUBLIC_SITE_URL
+      else process.env.PUBLIC_SITE_URL = prev
+    }
   })
 
   it('corrections log lists published articles with their corrections', async () => {

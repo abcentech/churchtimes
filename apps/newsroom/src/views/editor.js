@@ -19,7 +19,11 @@ import { showToast } from '../components/toast.js';
 import { askText, askConfirm } from '../components/modal.js';
 import { showApiError } from '../components/notify.js';
 import { openMediaPicker, mediaImageProblem } from '../components/media-picker.js';
-import { markdownToHtml, countWords, imageToken, insertBlockLine, listImages, removeImageLine, stripImageLabels } from '../lexical.js';
+import { markdownToHtml, countWords, imageToken, insertBlockLine, listImages, removeImageLine, stripImageLabels, pullQuoteToken, galleryToken, matchGalleryLine, GALLERY_MAX } from '../lexical.js';
+import {
+  CONTENT_TYPES, KICKER_MAX, KEY_POINTS_MAX, KEY_POINT_MAX, TOPICS_MAX, META_KEYS, blankMeta, contentTypeLabel,
+  keyPointsFromText, normalizeKeyPointsText, normalizeIso, metaProblem, parseIdList, toggleTopic, isoToLocalMinutes, localMinutesToIso
+} from '../story-meta.js';
 import { ApiError } from '../api/errors.js';
 import { STALE_MESSAGE, CONTENT_CONFLICT_MESSAGE, isStaleConflict } from '../stale-guard.js';
 import { saveLocalCopy, readLocalCopy, clearLocalCopy, copyDiffers } from '../draft-guard.js';
@@ -70,12 +74,27 @@ function snapshot(story) {
     bodyMd: stripImageLabels((story.bodyMd || '').trim()),
     categoryId: story.categoryId ? String(story.categoryId) : '',
     extraCategoryIds: cleanExtraIds(story.categoryId, story.extraCategoryIds),
-    featuredImageId: story.featuredImage?.id ? String(story.featuredImage.id) : ''
+    featuredImageId: story.featuredImage?.id ? String(story.featuredImage.id) : '',
+    ...metaSnapshot(story)
+  };
+}
+
+/** Story details (waves 1-2) in their canonical string form; stories from an older mock store default like a new one. */
+function metaSnapshot(story) {
+  const base = blankMeta();
+  return {
+    kicker: String(story.kicker ?? base.kicker).trim(),
+    contentType: String(story.contentType || base.contentType),
+    keyPointsText: normalizeKeyPointsText(story.keyPointsText ?? base.keyPointsText),
+    lastUpdate: normalizeIso(story.lastUpdate ?? base.lastUpdate),
+    topicIds: parseIdList(story.topicIds ?? base.topicIds).join(','),
+    bylineAuthorId: parseIdList([story.bylineAuthorId ?? base.bylineAuthorId])[0] || ''
   };
 }
 
 function blankStory(user, categories) {
   return {
+    ...blankMeta(),
     id: null, title: '', slug: '', standfirst: '', bylineName: '', bodyMd: '', lossy: false,
     categoryId: categories[0] ? String(categories[0].id) : '', categoryTitle: categories[0]?.title || '', extraCategoryIds: '',
     featuredImage: null, status: 'draft', authorId: user?.id || null, authorName: user?.name || '',
@@ -134,7 +153,12 @@ export async function renderEditor(container, storyId = null) {
     inflight: null,
     autosavePending: false,
     autosaveTimer: null,
-    fromTip: false
+    fromTip: false,
+    // Story details whose control does not hold the canonical value itself (chips; minute-precision date input).
+    topicIds: metaSnapshot(story).topicIds,
+    lastUpdate: metaSnapshot(story).lastUpdate,
+    topics: null, // [{ id, label, hidden }] once loaded
+    authorProfiles: null
   };
   states.set(container, st);
   activeEditor = container;
@@ -231,6 +255,8 @@ export async function renderEditor(container, storyId = null) {
           </div>
         </div>
 
+        ${storyDetailsHtml(story, editable)}
+
         <div class="form-group">
           <label class="form-label">Featured Photograph</label>
           <div class="featured-image-box" id="featured-image-container" data-testid="editor-featured-image"></div>
@@ -250,7 +276,10 @@ export async function renderEditor(container, storyId = null) {
             <button type="button" class="format-btn" data-fmt="list" title="Bullet List" ${bodyReadonly ? 'disabled' : ''}>&bull; List</button>
             <button type="button" class="format-btn" data-fmt="link" title="Link" ${bodyReadonly ? 'disabled' : ''}>Link</button>
             <button type="button" class="format-btn" data-fmt="image" id="btn-insert-image" data-testid="editor-insert-image" title="Insert an image from the media library (or upload one) at the cursor" ${bodyReadonly ? 'disabled' : ''}>Insert image</button>
+            <button type="button" class="format-btn" data-fmt="pullquote" data-testid="editor-insert-pull-quote" title="Pull quote: a line starting with >> (quote -- who said it)" ${bodyReadonly ? 'disabled' : ''}>Pull quote</button>
+            <button type="button" class="format-btn" data-fmt="gallery" id="btn-insert-gallery" data-testid="editor-insert-gallery" title="Photo gallery: adds an image to the gallery line under the cursor, or starts a new gallery (up to ${GALLERY_MAX} images)" ${bodyReadonly ? 'disabled' : ''}>Gallery image</button>
           </div>
+          <p class="form-hint" style="font-size:0.75rem;color:var(--color-muted);margin:0.25rem 0;overflow-wrap:anywhere;">Pull quote: <code>&gt;&gt; Quote text -- Name</code> on its own line. Gallery: <code>[gallery](media:12,13)</code>; put the cursor on that line and press "Gallery image" to add more. Gallery captions are edited in the CMS admin.</p>
           <div id="body-images" class="body-images" data-testid="editor-body-images" aria-label="Images in this story" style="display:none;"></div>
           <textarea id="story-body-input" data-testid="editor-body" class="story-body-textarea"
             placeholder="Write the full report here with independent sourcing and evidence..." aria-required="true" ${bodyReadonly}>${escapeHtml(story.bodyMd)}</textarea>
@@ -260,8 +289,10 @@ export async function renderEditor(container, storyId = null) {
       <div class="preview-pane" id="editor-preview-pane" aria-label="Reader Preview of article">
         <span class="preview-watermark">Live Reader Preview</span>
         <div class="preview-category-tag" id="preview-category"></div>
+        <div class="preview-kicker" id="preview-kicker" data-testid="preview-kicker"></div>
         <h1 class="preview-headline" id="preview-headline"></h1>
         <div class="preview-standfirst" id="preview-standfirst"></div>
+        <div class="preview-key-points" id="preview-key-points" data-testid="preview-key-points"></div>
         <div class="preview-byline" id="preview-byline"></div>
         <div id="preview-image-box"></div>
         <div class="preview-body" id="preview-body-content"></div>
@@ -275,6 +306,8 @@ export async function renderEditor(container, storyId = null) {
   updateWordCount(container);
   renderBodyImages(container);
   bindEditorListeners(container);
+  bindStoryDetails(container);
+  loadStoryDetailOptions(container);
   loadTipOrigin(container);
   offerRestore(container);
 }
@@ -326,6 +359,7 @@ function offerRestore(container) {
     if (copy.values.categoryId && [...sel.options].some(o => o.value === copy.values.categoryId)) sel.value = copy.values.categoryId;
     st.extraCategoryIds = cleanExtraIds(sel.value, copy.values.extraCategoryIds);
     renderExtraCategories(container);
+    restoreStoryDetails(container, copy.values);
     box.style.display = 'none';
     triggerAutosave(container);
     updatePreview(container);
@@ -431,7 +465,13 @@ function formValues(container) {
     bodyMd: container.querySelector('#story-body-input').value.trim(),
     categoryId: container.querySelector('#story-category-select').value,
     extraCategoryIds: cleanExtraIds(container.querySelector('#story-category-select').value, st.extraCategoryIds),
-    featuredImageId: st.currentStory.featuredImage?.id ? String(st.currentStory.featuredImage.id) : ''
+    featuredImageId: st.currentStory.featuredImage?.id ? String(st.currentStory.featuredImage.id) : '',
+    kicker: container.querySelector('#story-kicker-input').value.trim(),
+    contentType: container.querySelector('#story-type-select').value,
+    keyPointsText: normalizeKeyPointsText(container.querySelector('#story-keypoints-input').value),
+    lastUpdate: st.lastUpdate,
+    topicIds: parseIdList(st.topicIds).join(','),
+    bylineAuthorId: container.querySelector('#story-byline-profile').value
   };
 }
 
@@ -481,9 +521,13 @@ async function doSave(container, { auto }) {
   const st = stateOf(container);
   try {
     const vals = formValues(container);
+    const detailProblem = metaProblem(vals);
+    if (detailProblem) throw new ApiError(detailProblem, { status: 400 });
     if (!st.currentStory.id) {
       if (!vals.title) throw new ApiError('Enter a headline before saving.', { status: 400 });
       const fields = { title: vals.title, standfirst: vals.standfirst, bodyMd: vals.bodyMd, categoryId: vals.categoryId };
+      const blank = blankMeta();
+      for (const key of META_KEYS) if (vals[key] !== blank[key]) fields[key] = vals[key];
       if (vals.extraCategoryIds) fields.extraCategoryIds = vals.extraCategoryIds;
       if (vals.slug) fields.slug = vals.slug;
       if (vals.bylineName) fields.bylineName = vals.bylineName;
@@ -585,6 +629,14 @@ function bindEditorListeners(container) {
   container.querySelectorAll('.format-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       if (btn.getAttribute('data-fmt') === 'image') return insertImage(container);
+      if (btn.getAttribute('data-fmt') === 'gallery') return insertGalleryImage(container);
+      if (btn.getAttribute('data-fmt') === 'pullquote') {
+        insertPullQuote(bodyInput);
+        triggerAutosave(container);
+        updatePreview(container);
+        updateWordCount(container);
+        return;
+      }
       applyFormatting(bodyInput, btn.getAttribute('data-fmt'));
       triggerAutosave(container);
       updatePreview(container);
@@ -965,8 +1017,18 @@ function updatePreview(container) {
   container.querySelector('#preview-category').textContent = [catTitle, ...extraTitles].filter(Boolean).join(' · ');
   container.querySelector('#preview-headline').textContent = headline || 'Untitled Headline';
   container.querySelector('#preview-standfirst').textContent = standfirst || 'Lead summary will appear here.';
+  const type = container.querySelector('#story-type-select').value;
+  const kicker = container.querySelector('#story-kicker-input').value.trim();
+  container.querySelector('#preview-kicker').textContent = [type !== 'news' ? contentTypeLabel(type) : '', kicker].filter(Boolean).join(' · ');
+  const points = keyPointsFromText(container.querySelector('#story-keypoints-input').value);
+  container.querySelector('#preview-key-points').innerHTML = points.length
+    ? `<h2 class="preview-key-points-title">What you need to know</h2><ul>${points.map(p => `<li>${escapeHtml(p)}</li>`).join('')}</ul>`
+    : '';
+  const profileSelect = container.querySelector('#story-byline-profile');
+  const profileName = profileSelect.value ? profileSelect.selectedOptions[0]?.dataset.name || '' : '';
+  const updated = st.lastUpdate ? ` &middot; <span data-testid="preview-updated">Updated ${escapeHtml(formatDate(st.lastUpdate))}</span>` : '';
   container.querySelector('#preview-byline').innerHTML =
-    `By <strong>${escapeHtml(container.querySelector('#story-byline-input').value.trim() || st.currentStory.authorName || api.getCurrentUser()?.name || '')}</strong> &middot; <span>${escapeHtml(formatDate(st.currentStory.publishedAt || st.currentStory.updatedAt))}</span>`;
+    `By <strong>${escapeHtml(container.querySelector('#story-byline-input').value.trim() || profileName || st.currentStory.authorName || api.getCurrentUser()?.name || '')}</strong> &middot; <span>${escapeHtml(formatDate(st.currentStory.publishedAt || st.currentStory.updatedAt))}</span>${updated}`;
   container.querySelector('#preview-body-content').innerHTML =
     body.trim() ? markdownToHtml(body, { media: id => st.mediaCache.get(id) }) : '<p>Story body will render here as you type...</p>';
 
@@ -1071,4 +1133,218 @@ function applyFormatting(textarea, format) {
   textarea.value = val.substring(0, start) + replacement + val.substring(end);
   textarea.focus();
   textarea.selectionStart = textarea.selectionEnd = start + replacement.length;
+}
+
+// ---------------------------------------------------------------------------------------------------
+// Story details (waves 1-2): kicker, story type, byline profile, "Updated" stamp, key points, topics
+// ---------------------------------------------------------------------------------------------------
+
+function storyDetailsHtml(story, editable) {
+  const meta = metaSnapshot(story);
+  const ro = editable ? '' : 'readonly';
+  const dis = editable ? '' : 'disabled';
+  return `
+    <fieldset class="story-details" data-testid="editor-details" style="min-width:0; min-inline-size:0; border:1px solid var(--color-border, #d6d3d1); border-radius:8px; padding:0.75rem 1rem; margin:0 0 1rem;">
+      <legend class="form-label" style="padding:0 0.25rem;">Story details</legend>
+      <div class="form-grid-2">
+        <div class="form-group">
+          <label for="story-kicker-input" class="form-label">Kicker above the headline (optional, up to ${KICKER_MAX} characters)</label>
+          <input type="text" id="story-kicker-input" data-testid="editor-kicker" class="form-input" maxlength="${KICKER_MAX}"
+            value="${escapeHtml(meta.kicker)}" placeholder="for example: Exclusive" ${ro} />
+        </div>
+        <div class="form-group">
+          <label for="story-type-select" class="form-label">Story type</label>
+          <select id="story-type-select" data-testid="editor-content-type" class="form-select" aria-describedby="story-type-hint" ${dis}>
+            ${CONTENT_TYPES.map(t => `<option value="${t.value}" ${t.value === meta.contentType ? 'selected' : ''}>${t.label}</option>`).join('')}
+          </select>
+          <div class="form-hint" id="story-type-hint" style="font-size:0.75rem;color:var(--color-muted);margin-top:0.25rem;">Shown to readers. Use "Sponsored" for any paid or partner content.</div>
+        </div>
+        <div class="form-group">
+          <label for="story-byline-profile" class="form-label">Author profile (links the byline to an author page)</label>
+          <select id="story-byline-profile" data-testid="editor-byline-profile" class="form-select" ${dis}>
+            <option value="">None (text byline only)</option>
+            ${meta.bylineAuthorId ? `<option value="${escapeHtml(meta.bylineAuthorId)}" selected data-name="">Profile #${escapeHtml(meta.bylineAuthorId)}</option>` : ''}
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="story-updated-input" class="form-label">"Updated" date (only after a substantive change)</label>
+          <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+            <input type="datetime-local" id="story-updated-input" data-testid="editor-updated" class="form-input" style="width:100%; max-width:16rem; min-width:0;"
+              value="${escapeHtml(isoToLocalMinutes(meta.lastUpdate))}" aria-describedby="story-updated-hint" ${ro} />
+            ${editable ? `<button type="button" class="btn btn-outline btn-sm" id="btn-updated-now" data-testid="editor-updated-now">Now</button>
+            <button type="button" class="btn btn-outline btn-sm" id="btn-updated-clear" data-testid="editor-updated-clear">Clear</button>` : ''}
+          </div>
+          <div class="form-hint" id="story-updated-hint" style="font-size:0.75rem;color:var(--color-muted);margin-top:0.25rem;">Never set automatically. Leave empty for typo fixes.</div>
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="story-keypoints-input" class="form-label">Key points: "What you need to know" (one per line, up to ${KEY_POINTS_MAX}, ${KEY_POINT_MAX} characters each)</label>
+        <textarea id="story-keypoints-input" data-testid="editor-key-points" class="standfirst-textarea" rows="3" aria-describedby="keypoints-count" ${ro}>${escapeHtml(meta.keyPointsText)}</textarea>
+        <div class="form-hint" id="keypoints-count" data-testid="editor-key-points-count" aria-live="polite" style="font-size:0.75rem;color:var(--color-muted);margin-top:0.25rem;"></div>
+      </div>
+      <div class="form-group" style="margin-bottom:0;">
+        <span class="form-label" id="story-topics-label">Topics readers can follow (up to ${TOPICS_MAX})</span>
+        <div id="story-topics" data-testid="editor-topics" class="chip-group" role="group" aria-labelledby="story-topics-label"></div>
+      </div>
+    </fieldset>`;
+}
+
+function bindStoryDetails(container) {
+  const st = stateOf(container);
+  const changed = () => { triggerAutosave(container); updatePreview(container); };
+  container.querySelector('#story-kicker-input').addEventListener('input', changed);
+  container.querySelector('#story-type-select').addEventListener('change', changed);
+  container.querySelector('#story-byline-profile').addEventListener('change', changed);
+  container.querySelector('#story-keypoints-input').addEventListener('input', () => { updateKeyPointsCount(container); changed(); });
+  const updatedInput = container.querySelector('#story-updated-input');
+  updatedInput.addEventListener('change', () => { st.lastUpdate = localMinutesToIso(updatedInput.value); changed(); });
+  container.querySelector('#btn-updated-now')?.addEventListener('click', () => {
+    st.lastUpdate = new Date().toISOString();
+    updatedInput.value = isoToLocalMinutes(st.lastUpdate);
+    changed();
+  });
+  container.querySelector('#btn-updated-clear')?.addEventListener('click', () => {
+    st.lastUpdate = '';
+    updatedInput.value = '';
+    changed();
+  });
+  container.querySelector('#story-topics').addEventListener('change', e => {
+    const box = e.target.closest('input[type="checkbox"]');
+    if (!box || box.disabled) return;
+    st.topicIds = toggleTopic(st.topicIds, box.value);
+    renderTopicChips(container);
+    changed();
+  });
+  updateKeyPointsCount(container);
+  renderTopicChips(container);
+}
+
+/** Topic and profile lists load after the form is on screen; a failure leaves the current values untouched. */
+async function loadStoryDetailOptions(container) {
+  const st = stateOf(container);
+  const [topics, profiles] = await Promise.allSettled([api.getTopics(), api.getAuthorProfiles()]);
+  if (!container.isConnected || stateOf(container) !== st) return;
+  st.topics = topics.status === 'fulfilled' ? topics.value : [];
+  st.authorProfiles = profiles.status === 'fulfilled' ? profiles.value : [];
+  st.optionsFailed = topics.status === 'rejected' || profiles.status === 'rejected';
+  renderTopicChips(container);
+  renderProfileOptions(container);
+  updatePreview(container);
+}
+
+function renderTopicChips(container) {
+  const st = stateOf(container);
+  const host = container.querySelector('#story-topics');
+  if (!st || !host) return;
+  const chosen = parseIdList(st.topicIds);
+  if (st.topics === null) {
+    host.innerHTML = `<span class="form-hint" style="font-size:0.75rem;color:var(--color-muted);">${chosen.length ? `${chosen.length} topic(s) selected; loading the list...` : 'Loading topics...'}</span>`;
+    return;
+  }
+  const editable = canEdit(st.currentStory);
+  const full = chosen.length >= TOPICS_MAX;
+  const known = new Set(st.topics.map(t => t.id));
+  const list = [...st.topics, ...chosen.filter(id => !known.has(id)).map(id => ({ id, label: `Topic #${id}`, hidden: true }))];
+  if (!list.length) {
+    host.innerHTML = `<span class="form-hint" style="font-size:0.75rem;color:var(--color-muted);">${st.optionsFailed ? 'Could not load topics. Try reopening the story.' : 'No topics yet. Editors create them in the CMS admin (Newsroom > Topics).'}</span>`;
+    return;
+  }
+  host.innerHTML = list.map(t => {
+    const on = chosen.includes(t.id);
+    const off = !editable || (full && !on);
+    return `<label class="chip ${on ? 'chip-on' : ''}"><input type="checkbox" value="${escapeHtml(t.id)}" data-testid="editor-topic" ${on ? 'checked' : ''} ${off ? 'disabled' : ''} />${escapeHtml(t.label)}${t.hidden ? ' <span style="opacity:0.75;">(not public)</span>' : ''}</label>`;
+  }).join('');
+}
+
+function renderProfileOptions(container) {
+  const st = stateOf(container);
+  const select = container.querySelector('#story-byline-profile');
+  if (!st || !select || !st.authorProfiles) return;
+  const current = select.value;
+  const list = [...st.authorProfiles];
+  if (current && !list.some(p => p.id === current)) list.push({ id: current, label: `Profile #${current}`, hidden: true });
+  select.innerHTML = `<option value="">None (text byline only)</option>` + list.map(p =>
+    `<option value="${escapeHtml(p.id)}" data-name="${escapeHtml(p.label)}" ${p.id === current ? 'selected' : ''}>${escapeHtml(p.label)}${p.hidden ? ' (not public)' : ''}</option>`).join('');
+}
+
+function updateKeyPointsCount(container) {
+  const out = container.querySelector('#keypoints-count');
+  const input = container.querySelector('#story-keypoints-input');
+  if (!out || !input) return;
+  const points = keyPointsFromText(input.value);
+  const long = points.filter(p => p.length > KEY_POINT_MAX).length;
+  out.textContent = `${points.length} of ${KEY_POINTS_MAX} key points` +
+    (points.length > KEY_POINTS_MAX ? ': too many, remove some.' : long ? `: ${long} longer than ${KEY_POINT_MAX} characters.` : '.');
+}
+
+/** Restore the story details of a local copy (copies made before these fields existed simply have none). */
+function restoreStoryDetails(container, values) {
+  const st = stateOf(container);
+  if ('kicker' in values) container.querySelector('#story-kicker-input').value = values.kicker;
+  if ('contentType' in values && CONTENT_TYPES.some(t => t.value === values.contentType)) container.querySelector('#story-type-select').value = values.contentType;
+  if ('keyPointsText' in values) container.querySelector('#story-keypoints-input').value = values.keyPointsText;
+  if ('lastUpdate' in values) {
+    st.lastUpdate = normalizeIso(values.lastUpdate);
+    container.querySelector('#story-updated-input').value = isoToLocalMinutes(st.lastUpdate);
+  }
+  if ('topicIds' in values) { st.topicIds = parseIdList(values.topicIds).join(','); renderTopicChips(container); }
+  if ('bylineAuthorId' in values) {
+    const select = container.querySelector('#story-byline-profile');
+    const id = parseIdList([values.bylineAuthorId])[0] || '';
+    if (id && ![...select.options].some(o => o.value === id)) select.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(id)}" data-name="">Profile #${escapeHtml(id)}</option>`);
+    select.value = id;
+  }
+  updateKeyPointsCount(container);
+}
+
+function insertPullQuote(textarea) {
+  if (textarea.readOnly) return;
+  const selected = textarea.value.substring(textarea.selectionStart, textarea.selectionEnd);
+  const line = pullQuoteToken(selected || 'Quote text', 'Name of the speaker');
+  const edited = insertBlockLine(textarea.value, textarea.selectionStart, textarea.selectionEnd, line);
+  textarea.value = edited.value;
+  textarea.focus();
+  textarea.selectionStart = textarea.selectionEnd = edited.caret;
+}
+
+/** Add a picked image to the gallery line under the cursor, or start a new gallery line there. */
+function insertGalleryImage(container) {
+  const st = stateOf(container);
+  const bodyInput = container.querySelector('#story-body-input');
+  if (!st || !bodyInput || bodyInput.readOnly) return;
+  const start = bodyInput.selectionStart;
+  const end = bodyInput.selectionEnd;
+  openMediaPicker({
+    title: 'Add an image to the gallery',
+    validate: mediaImageProblem,
+    onSelect: media => {
+      if (!container.isConnected || stateOf(container) !== st) return;
+      st.mediaCache.set(String(media.id), media);
+      const value = bodyInput.value;
+      const lineStart = value.lastIndexOf('\n', Math.max(0, start - 1)) + 1;
+      const lineEndRaw = value.indexOf('\n', start);
+      const lineEnd = lineEndRaw < 0 ? value.length : lineEndRaw;
+      const ids = matchGalleryLine(value.slice(lineStart, lineEnd));
+      if (ids) {
+        if (ids.length >= GALLERY_MAX) {
+          showToast(`A gallery holds at most ${GALLERY_MAX} images. Start a new gallery on another line.`, 'info');
+          return;
+        }
+        const line = galleryToken([...ids, String(media.id)]);
+        bodyInput.value = value.slice(0, lineStart) + line + value.slice(lineEnd);
+        bodyInput.selectionStart = bodyInput.selectionEnd = lineStart + line.length;
+      } else {
+        const token = galleryToken([String(media.id)]);
+        const edited = insertBlockLine(value, start, end, token);
+        bodyInput.value = edited.value;
+        // Leave the cursor at the end of the new gallery line, so the next "Gallery image" adds to it.
+        const at = edited.value.indexOf(token, Math.max(0, start - 2));
+        bodyInput.selectionStart = bodyInput.selectionEnd = at >= 0 ? at + token.length : edited.caret;
+      }
+      bodyInput.focus();
+      triggerAutosave(container);
+      updatePreview(container);
+      updateWordCount(container);
+    }
+  });
 }

@@ -23,6 +23,7 @@
     "newsletter:purge-unconfirmed": "payload run src/seed/purgeUnconfirmedSubscribers.ts --",
     "newsletter:digest": "payload run src/seed/newsletterDigest.ts --",
     "search:reindex": "payload run src/scripts/reindexSearch.ts --",
+    "media:lqip-backfill": "payload run src/scripts/backfillLqip.ts --",
     "export:redirects": "payload run src/scripts/exportRedirects.ts --",
     "export:media-map": "payload run src/scripts/exportMediaMap.ts --",
     "check:redirects": "payload run src/scripts/checkRedirects.ts --",

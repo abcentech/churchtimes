@@ -45,6 +45,16 @@ const avatarHook: FieldHook = async ({ siblingData, req }) => {
   const raw = siblingData?.photo
   const id = raw && typeof raw === 'object' ? (raw as { id?: unknown }).id : raw
   if (typeof id !== 'number' && typeof id !== 'string') return null
+  // One lookup per photo per request: a list of 20 stories by the same writer must not cost 20 media reads.
+  const ctx = (req.context ?? {}) as { w12AvatarCache?: Map<string, Promise<unknown>> }
+  const cache = (ctx.w12AvatarCache ??= new Map())
+  if (req.context) (req.context as typeof ctx).w12AvatarCache = cache
+  const key = `${String(id)}:${req.user ? String((req.user as { id?: unknown }).id) : 'anon'}`
+  if (!cache.has(key)) cache.set(key, loadAvatar(req, id))
+  return cache.get(key)
+}
+
+async function loadAvatar(req: Parameters<FieldHook>[0]['req'], id: number | string) {
   const media = (await req.payload
     .findByID({ collection: 'media', id, depth: 0, overrideAccess: false, user: req.user, req, disableErrors: true })
     .catch(() => null)) as {

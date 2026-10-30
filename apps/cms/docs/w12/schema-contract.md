@@ -71,8 +71,8 @@ Both are ordinary Payload block nodes (`type: "block"`), siblings of paragraphs 
 ## 2. Media (`/api/media`)
 
 - `lqip`: `string | null`, a base64 `data:image/webp;base64,...` URI of a 16 px blur, at most 1,500 characters. Generated
-  by the server on every image upload or file replacement; never client-writable. Older media have `null` (no backfill in
-  this sprint: render without blur-up).
+  by the server on every image upload or file replacement; never client-writable. Older media have `null` until the owner
+  runs `npm run media:lqip-backfill` (section 6.1); always render correctly without blur-up.
 - New sizes under `sizes` (next to the existing `thumbnail` 400 w, `card` 800 w, `hero` 1600 w webp):
   - `sizes.cardAvif`: `{ url, width: 800, height, mimeType: "image/avif", filesize, filename }`
   - `sizes.heroAvif`: `{ url, width: 1600, height, mimeType: "image/avif", filesize, filename }`
@@ -127,7 +127,11 @@ newest first.
 
 ### 3.5 `GET /api/public/topics/:slug?page=1` (max-age 60)
 `{ "topic": { "id", "name", "slug", "kind", "description", "isPublic": true }, "articles": [Card], "page", "totalDocs", "hasNextPage" }`.
-(The optional `feed.xml` is not built; see the hand-back.)
+### 3.5.1 `GET /api/public/topics/:slug/feed.xml` (max-age 300)
+RSS 2.0 (`application/rss+xml`) of the latest 20 published articles of a public topic: `title`, absolute `link` and `guid`
+on the public site (`PUBLIC_SITE_URL` + the article path template, e.g. `https://churchtimesnigeria.net/<slug>/`),
+`description` (excerpt), `pubDate`, `category`, `dc:creator`. Channel link `${PUBLIC_SITE_URL}/topic/<slug>/`. Every value is
+XML-escaped. 404 for an unknown or non-public topic, and while `PUBLIC_SITE_URL` is unset.
 
 ### 3.6 `GET /api/public/site-trust` (max-age 300)
 ```json
@@ -205,10 +209,31 @@ columns, `articles.content_type` with `DEFAULT 'news'`, new FKs (`SET NULL` for 
 snapshot (`20261027_140000`) had lost the four-eyes columns added by the hand-written `20261027_124620`, so the next
 `migrate:create` will not try to re-add them.
 
+### 6.1 Operations
+
+- `npm run media:lqip-backfill [-- --dry-run] [-- --batch 200]` (apps/cms): adds `lqip` to existing images from their files
+  in the media folder. Idempotent, counts only, writes only that column (no hooks, no audit noise). Run once after the
+  deploy and after an archive import. AVIF sizes are NOT backfilled: older media keep only their webp/original sizes.
+- AVIF encoding runs on every new image upload and import (`effort: 2`); expect each image upload to take noticeably longer
+  than before (about a second for a large photo on a small VPS).
+- `GET /api/donations/export?status=&from=YYYY-MM-DD&to=YYYY-MM-DD`: CSV of the giving ledger (admin and editor-in-chief;
+  `name`, `email`, `providerRef` columns for admins only; formula-injection safe; audited as `donation.export`; at most
+  50,000 rows). Linked from the admin list view of Donations.
+
 ## 7. New environment variables
 
 - `PUBLIC_READ_RATE_LIMIT` (default 120) and `PUBLIC_READ_RATE_WINDOW_SECONDS` (default 60): per-IP limit of the section-3
   endpoints. Optional.
+- `PUBLIC_SITE_URL` (existing, newsletter links): also enables the topic RSS feed (3.5.1).
+
+## 7.1 Newsroom app (apps/newsroom)
+
+The story editor has a **Story details** box (kicker, story type, author profile, "Updated" date with Now/Clear, key
+points one per line, topic chips) and two body blocks written as their own line: `>> Quote -- Attribution` (pullQuote) and
+`[gallery](media:12,13)` (gallery, toolbar button adds the picked image to the gallery line under the cursor). Gallery
+captions and block names are edited in the CMS admin; a body holding them opens read-only in the newsroom (as with other
+blocks it cannot represent). Topics and author profiles come from `GET /api/topics` and `GET /api/authors` as the staff
+user (non-public entries are marked). Mapping: `apps/newsroom/src/story-meta.js`, blocks: `apps/newsroom/src/lexical.js`.
 
 ## 8. Questions
 
