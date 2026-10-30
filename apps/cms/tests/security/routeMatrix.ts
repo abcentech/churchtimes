@@ -165,6 +165,13 @@ export const endpointMatrix: Record<string, EndpointEntry> = {
   'GET /api/public/giving/settings': { anon: [200], public: true, note: 'public-safe fields only' },
   'OPTIONS /api/public/giving/settings': { anon: [204], public: true },
   'GET /api/giving/stats': { anon: [401], note: 'admin / editor-in-chief' },
+  // growth (docs/w12/growth.md)
+  'POST /api/public/newsletter/one-click': { anon: [400], public: true, note: 'RFC 8058; the signed token in the query is the only credential' },
+  'GET /api/public/newsletter/one-click': { anon: [400, 303], public: true, note: 'never changes state: redirects to the public page' },
+  'POST /api/newsletter/digest/dry-run': { anon: [401], note: 'editors and admins' },
+  'POST /api/newsletter/digest/test-send': { anon: [401], note: "editors and admins; mails only the caller's own address" },
+  'GET /api/public/share-card/:slug': { anon: [404, 400, 200, 304], public: true, note: 'PNG; 404 unless SHARE_CARDS_ENABLED=true' },
+  'HEAD /api/public/share-card/:slug': { anon: [404, 400, 200, 304], public: true },
   'POST /api/staff/related-articles': { anon: [401], note: 'staff session only' },
   'GET /api/preview/articles': { anon: [401], note: 'needs a signed, unexpired preview token' },
   // --- Payload built-ins that are not collection routes
