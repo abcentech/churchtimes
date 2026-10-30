@@ -17,6 +17,7 @@ import {createLookupCache} from './public-lookup-cache.mjs';
 import {publicSEOSettings} from './public-seo-settings.mjs';
 import {createPublicRedirects,isJunkPath,legacyHostRedirector} from './public-redirects.mjs';
 import {createPublicFeeds} from './public-feeds.mjs';
+import {createChurchCalendarRoute} from './public-routes/church-calendar.mjs';
 import {publicOrigin} from '../src/lib/public-url.js';
 import {normalizeBasePath,reportPath,articlePathTemplate as validateArticlePathTemplate,HOST_ARTICLE_PATH_TEMPLATE,reportSlug,articleCanonical,articleSchema,safeJSON} from '../src/lib/public-routes.js';
 const escape=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -66,6 +67,7 @@ export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(file
       if(await redirects({method:req.method,url,rawUrl:req.url},respond))return;
       if(settings.route(url,respond))return;
       if(!url.pathname.startsWith(basePath))return respond(404,'text/plain','Not found');
+      if(await createChurchCalendarRoute({dist,siteUrl,basePath,indexable,extraHead:settings.head})(url,respond))return;
       if(await publicFeeds(url,respond) || await publicPages(url,respond))return;
       const slug=reportSlug(url.pathname,basePath,articlePathTemplate);
       if(slug || (articlePathTemplate==='/reports/{slug}/' && url.pathname.startsWith(basePath+'reports/'))) {

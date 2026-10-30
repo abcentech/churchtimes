@@ -1,0 +1,28 @@
+/* Lazy stylesheet for the verse of the day and scripture reference cards (loaded with the scripture chunk only). */
+/* Colours follow the site tokens (style.css :root), so any theme that redefines them (dark mode, high contrast) applies here too. */
+.ct-scripture,.ct-daily-verse{--ct-s-bg:var(--white,#fffefa);--ct-s-fg:var(--ink,#172b2e);--ct-s-muted:var(--muted,#657071);--ct-s-accent:var(--clay,#9c4d35);--ct-s-line:var(--line,#dcded6);--ct-s-focus:var(--clay,#9c4d35)}
+.ct-scripture{position:relative;display:inline}
+.ct-scripture-ref{font:inherit;color:var(--ct-s-accent);background:none;border:0;padding:0;margin:0;cursor:pointer;text-decoration:underline dotted;text-decoration-thickness:1px;text-underline-offset:.2em;border-radius:2px;text-align:inherit;line-height:inherit}
+.ct-scripture-ref:hover,.ct-scripture.is-open .ct-scripture-ref{text-decoration-style:solid}
+.ct-scripture-ref:focus-visible,.ct-scripture-close:focus-visible{outline:2px solid var(--ct-s-focus);outline-offset:2px}
+.ct-scripture-card{position:absolute;z-index:40;top:calc(100% + .4rem);left:0;transform:translateX(var(--ct-shift,0));display:block;width:max-content;max-width:min(26rem,calc(100vw - 32px));padding:.85rem 1rem .75rem;background:var(--ct-s-bg);color:var(--ct-s-fg);border:1px solid var(--ct-s-line);border-radius:6px;box-shadow:0 8px 24px rgb(0 0 0 / .18);font-size:1rem;line-height:1.5;text-align:left;font-style:normal;font-weight:400;white-space:normal}
+.ct-scripture-card[hidden]{display:none}
+.ct-scripture-head{display:flex;align-items:baseline;gap:.5rem;margin-bottom:.4rem}
+.ct-scripture-head strong{font-size:1rem}
+.ct-scripture-version{font-size:.8125rem;letter-spacing:.06em;color:var(--ct-s-muted);text-decoration:none}
+.ct-scripture-close{margin-left:auto;min-width:44px;min-height:44px;margin-block:-.6rem;margin-right:-.6rem;font:inherit;font-size:1.35rem;line-height:1;color:var(--ct-s-fg);background:none;border:0;border-radius:4px;cursor:pointer}
+.ct-scripture-text{display:block}
+.ct-scripture-verse{display:block;margin-bottom:.25rem}
+.ct-scripture-verse sup{font-size:.75rem;color:var(--ct-s-muted);margin-right:.15rem}
+.ct-scripture-foot{display:block;margin-top:.5rem;font-size:.8125rem;color:var(--ct-s-muted)}
+@media (prefers-reduced-motion:no-preference){.ct-scripture-card{animation:ct-scripture-in .12s ease-out}@keyframes ct-scripture-in{from{opacity:0}to{opacity:1}}}
+.ct-daily-verse{margin:0;padding:1.25rem 1.25rem 1rem;background:var(--ct-s-bg);color:var(--ct-s-fg);border:1px solid var(--ct-s-line);border-left:4px solid var(--ct-s-accent);border-radius:4px}
+.ct-daily-verse-head{display:flex;flex-wrap:wrap;gap:.25rem .75rem;justify-content:space-between;font-size:.8125rem;letter-spacing:.06em;text-transform:uppercase;color:var(--ct-s-muted)}
+.ct-daily-verse-eyebrow{color:var(--ct-s-accent);font-weight:600}
+.ct-daily-verse-text{margin:.6rem 0 .5rem;padding:0;border:0;font-size:1.125rem;line-height:1.55}
+.ct-daily-verse-text p{margin:0}
+.ct-daily-verse-ref{margin:0;font-weight:600}
+.ct-daily-verse-ref cite{font-style:normal}
+.ct-daily-verse-ref abbr{margin-left:.35rem;font-size:.8125rem;font-weight:400;color:var(--ct-s-muted);text-decoration:none}
+.ct-daily-verse-label{margin:.35rem 0 0;font-size:.8125rem;color:var(--ct-s-muted)}
+@media print{.ct-scripture-card{display:none}.ct-scripture-ref{color:inherit;text-decoration:none}}
