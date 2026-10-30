@@ -412,6 +412,41 @@ describe('donations, newsletter issues and settings: never public, server-owned'
     expect((await api('DELETE', `/api/donations/${donationId}`, { token: f.tokens.eic })).status).toBe(403)
   })
 
+  it('donations CSV export: admin and editor-in-chief only, personal columns for admins, formula-safe, audited', async () => {
+    await f.payload.create({
+      collection: 'donations',
+      data: { reference: `${runId}-ref-csv`, provider: 'paystack', amountMinor: 250050, currency: 'NGN', status: 'succeeded', name: '=HYPERLINK("http://evil.test")', email: 'csv@example.org' } as never,
+      overrideAccess: true,
+    })
+    expect((await api('GET', '/api/donations/export')).status).toBe(401)
+    expect((await api('GET', '/api/donations/export', { token: f.tokens.sectionEditor })).status).toBe(403)
+    expect((await api('GET', '/api/donations/export', { token: f.tokens.reporter })).status).toBe(403)
+    expect((await api('GET', '/api/donations/export?status=bogus', { token: f.tokens.eic })).status).toBe(400)
+    expect((await api('GET', '/api/donations/export?from=yesterday', { token: f.tokens.eic })).status).toBe(400)
+    const eic = await api('GET', '/api/donations/export?status=succeeded', { token: f.tokens.eic })
+    expect(eic.status).toBe(200)
+    expect(eic.headers.get('content-type')).toMatch(/text\/csv/)
+    expect(eic.headers.get('cache-control')).toBe('no-store')
+    const [header, ...lines] = eic.text.trim().split('\r\n')
+    expect(header).toBe('reference,createdAt,paidAt,status,provider,currency,amountMinor,amount,cause,channel,anonymous,consentAt,receiptSentAt')
+    expect(eic.text).not.toContain('csv@example.org')
+    expect(eic.text).not.toContain('HYPERLINK')
+    const row = lines.find((l) => l.startsWith(`${runId}-ref-csv,`))
+    expect(row).toContain(',250050,2500.50,')
+    expect(eic.text).not.toContain(`${runId}-ref-1,`) // pending: filtered out
+    const admin = await api('GET', '/api/donations/export', { token: f.tokens.admin })
+    expect(admin.text.split('\r\n')[0]).toMatch(/,name,email,providerRef$/)
+    expect(admin.text).toContain('csv@example.org')
+    expect(admin.text).toContain(`"'=HYPERLINK(""http://evil.test"")"`)
+    const today = new Date().toISOString().slice(0, 10)
+    const ranged = await api('GET', `/api/donations/export?from=${today}&to=${today}`, { token: f.tokens.eic })
+    expect(ranged.text).toContain(`${runId}-ref-csv`)
+    const past = await api('GET', '/api/donations/export?from=2001-01-01&to=2001-01-02', { token: f.tokens.eic })
+    expect(past.text.trim().split('\r\n')).toHaveLength(1)
+    const audit = await f.payload.find({ collection: 'audit-logs', where: { action: { equals: 'donation.export' } }, sort: '-createdAt', limit: 1, overrideAccess: true })
+    expect(JSON.stringify(audit.docs[0])).not.toContain('csv@example.org')
+  })
+
   it('donations: the reference is unique and the amount bounded even for server code', async () => {
     await expect(
       f.payload.create({ collection: 'donations', data: { reference: `${runId}-ref-1`, provider: 'paystack', amountMinor: 100, currency: 'NGN' } as never, overrideAccess: true }),

@@ -94,6 +94,7 @@ export const endpointMatrix: Record<string, EndpointEntry> = {
   'POST /api/articles/:id/preview-token': { anon: [401] },
   'POST /api/submissions/:id/convert': { anon: DENIED },
   'GET /api/subscribers/export': { anon: DENIED },
+  'GET /api/donations/export': { anon: DENIED, note: 'admin / editor-in-chief; personal columns admin only' },
   'POST /api/subscribers/:id/erase': { anon: DENIED },
   'GET /api/subscribers/:id/subject-data': { anon: DENIED },
   'GET /api/live-events/:slug/updates': { anon: [404], public: true, note: 'approved updates of a non-draft event' },

@@ -3,6 +3,7 @@ import type { Access, CollectionConfig, FieldAccess } from 'payload'
 import { adminOnly, isAdmin, isEditorInChief, type UserLike } from '../access/roles'
 import { auditDeleteHook } from '../lib/audit'
 import { clampLimit } from '../lib/clampLimit'
+import { donationsExportEndpoint } from '../endpoints/donationsExport'
 
 const asUser = (u: unknown): UserLike | null => (u ? (u as UserLike) : null)
 
@@ -31,7 +32,9 @@ export const Donations: CollectionConfig = {
     defaultColumns: ['reference', 'status', 'amountMinor', 'currency', 'cause', 'createdAt'],
     group: 'Giving',
     description: 'Read-only ledger of giving attempts. Amounts are in minor units (kobo, pence, cents).',
+    components: { beforeListTable: ['/components/DonationsExportLink#DonationsExportLink'] },
   },
+  endpoints: [donationsExportEndpoint],
   access: {
     read: ledgerRead,
     create: () => false,

@@ -19,6 +19,7 @@ import { runImport } from '../src/import/run'
 import { textToLexical } from '../src/endpoints/convertSubmission'
 import { IMAGE_DIR, imageName, largeWxr } from '../tests/fixtures/wxr/large'
 import { DEMO_CATEGORIES, DEMO_TARGETS, DEMO_USERS, stubMp4, tinyMp3, withRealCategories, type DemoPasswords } from './demo-lib'
+import { seedWaves12 } from './demo-seed-w12'
 
 const PREFIX = 'demo'
 const workDir = process.env.DEMO_WORK_DIR
@@ -64,6 +65,8 @@ async function main() {
   const existing = await payload.count({ collection: 'articles', overrideAccess: true })
   if (existing.totalDocs > 0) {
     say(`database already holds ${existing.totalDocs} articles: kept as is (run with --reset for a fresh demo)`)
+    // A demo database made before waves 1-2 gets their content added once (profiles, topics, blocks, trust pages).
+    await seedWaves12(payload, { admin: staff.admin, categories: cat, say })
     await payload.destroy()
     return
   }
@@ -191,6 +194,9 @@ async function main() {
     say(`live event skipped (${e instanceof Error ? e.message.slice(0, 80) : 'error'})`)
   }
 
+  // ---- 6. Waves 1-2: author profiles, topics, key points, pull quote, gallery, sponsored label, trust pages -----------------
+  await seedWaves12(payload, { admin: staff.admin, categories: cat, say })
+
   // ---- Summary (counts only) -------------------------------------------------------------------------------------------------
   const n = async (sql: string) => Number((await pool.query(sql)).rows[0]?.n ?? 0)
   const summary = {
@@ -203,6 +209,8 @@ async function main() {
     redirects: await n('SELECT count(*)::int AS n FROM redirects'),
     media: await n('SELECT count(*)::int AS n FROM media'),
     extraCategoryLinks: await n("SELECT count(*)::int AS n FROM articles_rels WHERE path = 'categories'"),
+    authorProfiles: await n('SELECT count(*)::int AS n FROM authors'),
+    topicLinks: await n("SELECT count(*)::int AS n FROM articles_rels WHERE path = 'topics'"),
   }
   say(`SUMMARY ${JSON.stringify(summary)}`)
   await payload.destroy()
