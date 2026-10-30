@@ -2,14 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const runner = {
   createDigestDraft: vi.fn(async () => ({ outcome: 'draft', issueId: 7, stories: 2 })),
-  loadDigestSettings: vi.fn(async () => ({ fromName: 'Church Times Nigeria', replyTo: '' })),
-  buildTodaysDigest: vi.fn(async () => ({
-    date: '2026-10-30',
-    stories: [{ id: '1', slug: 'synod-opens', title: 'Synod opens', excerpt: 'E', publishedAt: '2026-10-30T05:00:00.000Z', category: 'Church' }],
-    siteUrl: 'https://churchtimesnigeria.net',
-    template: '/{slug}/',
-    devotional: null,
-  })),
+  sendTestDigest: vi.fn(async () => ({ outcome: 'sent', sent: 1, stories: 1 })),
 }
 vi.mock('../../src/lib/newsletterDigestRunner', () => runner)
 
@@ -45,11 +38,9 @@ describe('digest staff tools', () => {
     const p = payload()
     const res = await digestTestSendEndpoint.handler(req({ id: 3, role: 'admin', email: 'staff@example.org' }, p))
     expect(res.status).toBe(200)
-    expect(p.sendEmail).toHaveBeenCalledTimes(1)
-    const mail = (p.sendEmail.mock.calls[0] as unknown as [Record<string, unknown>])[0]
-    expect(mail.to).toBe('staff@example.org')
-    expect(String(mail.subject)).toMatch(/^\[TEST\] /)
-    expect(mail.headers).toBeUndefined() // not a list mail: no List-Unsubscribe for a staff test
+    expect(runner.sendTestDigest).toHaveBeenCalledTimes(1)
+    expect(runner.sendTestDigest.mock.calls[0]).toEqual([p, 'staff@example.org'])
+    expect(await res.json()).toMatchObject({ ok: true, outcome: 'test-sent', stories: 1 })
   })
 
   it('test send is limited to 5 per hour per user and needs SMTP', async () => {

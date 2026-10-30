@@ -275,3 +275,28 @@ describe('verse of the day in the digest', () => {
     expect(failing?.stories).toHaveLength(2)
   })
 })
+
+describe('staff test send and CLI arguments', () => {
+  it('sends one [TEST] mail to the given staff address, without list headers or tokens', async () => {
+    const { sendTestDigest } = await import('../../src/lib/newsletterDigestRunner')
+    const p = fakePayload({ settings: on, articles, subscribers })
+    const r = await sendTestDigest(p as never, 'staff@example.org', { now: NOW, env, cap: new DailyMailCap(() => 5) })
+    expect(r).toMatchObject({ outcome: 'sent', sent: 1, stories: 2 })
+    expect(p.sent).toHaveLength(1)
+    expect(p.sent[0]).toMatchObject({ to: 'staff@example.org' })
+    expect(String(p.sent[0]!.subject)).toMatch(/^\[TEST\] Church Times Nigeria daily briefing/)
+    expect(p.sent[0]!.headers).toBeUndefined()
+    expect(String(p.sent[0]!.text)).not.toContain('token=')
+    expect(p.create).not.toHaveBeenCalled()
+  })
+
+  it('parses newsletter:digest arguments strictly', async () => {
+    const { parseDigestCliArgs } = await import('../../src/lib/newsletterDigestRunner')
+    expect(parseDigestCliArgs([])).toEqual({ mode: 'dry-run' })
+    expect(parseDigestCliArgs(['--dry-run'])).toEqual({ mode: 'dry-run' })
+    expect(parseDigestCliArgs(['--test-send', ' Staff@Example.org '])).toEqual({ mode: 'test-send', to: 'staff@example.org' })
+    expect(() => parseDigestCliArgs(['--test-send'])).toThrow('staff account')
+    expect(() => parseDigestCliArgs(['--test-send', 'a@b.org', '--dry-run'])).toThrow('either')
+    expect(() => parseDigestCliArgs(['--send-all'])).toThrow('Unknown option --send-all')
+  })
+})

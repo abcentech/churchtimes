@@ -2,9 +2,8 @@ import type { Endpoint, PayloadRequest } from 'payload'
 
 import { isEditorRole, type UserLike } from '../access/roles'
 import { writeAuditLog } from '../lib/audit'
-import { isMailConfigured, sendHtmlMail } from '../lib/mailer'
-import { digestSubject, renderDigestHtml, renderDigestText } from '../lib/newsletterDigest'
-import { buildTodaysDigest, createDigestDraft, loadDigestSettings } from '../lib/newsletterDigestRunner'
+import { isMailConfigured } from '../lib/mailer'
+import { createDigestDraft, sendTestDigest } from '../lib/newsletterDigestRunner'
 import { createRateLimiter } from '../lib/rateLimit'
 import { safeErrorFields } from '../lib/safeLog'
 import { isValidEmail } from '../lib/sanitize'
@@ -62,25 +61,15 @@ export const digestTestSendEndpoint: Endpoint = {
     const limited = getTestLimiter().check(String(user.id))
     if (!limited.allowed) return err(429, 'Too many test sends. Try again later.')
     try {
-      const settings = await loadDigestSettings(req.payload)
-      const content = await buildTodaysDigest(req.payload, settings)
-      if (!content) return json({ ok: true, outcome: 'no-stories' })
-      const page = content.siteUrl ? `${content.siteUrl}/newsletter/unsubscribe` : 'https://example.invalid/'
-      await sendHtmlMail(req.payload, {
-        to: email,
-        subject: `[TEST] ${digestSubject(content)}`,
-        text: renderDigestText(content, { unsubscribePageUrl: page }),
-        html: renderDigestHtml(content, { unsubscribePageUrl: page }),
-        fromName: settings.fromName,
-        replyTo: isValidEmail(settings.replyTo) ? settings.replyTo : undefined,
-      })
+      const result = await sendTestDigest(req.payload, email)
+      if (result.outcome === 'no-stories') return json({ ok: true, outcome: 'no-stories' })
       await writeAuditLog(req, {
         action: 'newsletter.digest-test-send',
         collection: 'newsletter-issues',
         docId: 'test',
-        summary: `Digest test send to the requesting staff member (${content.stories.length} stories)`,
+        summary: `Digest test send to the requesting staff member (${result.stories ?? 0} stories)`,
       }).catch(() => undefined)
-      return json({ ok: true, outcome: 'test-sent', stories: content.stories.length })
+      return json({ ok: true, outcome: 'test-sent', stories: result.stories ?? 0 })
     } catch (e) {
       req.payload.logger.error(safeErrorFields(e), 'newsletter digest test send failed')
       return err(502, 'The test send failed. Check the SMTP settings.')

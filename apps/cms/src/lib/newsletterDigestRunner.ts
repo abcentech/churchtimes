@@ -20,7 +20,7 @@ import {
 } from './newsletterDigest'
 import { resolveArticlePathTemplate } from './redirectPaths'
 import { isValidEmail } from './sanitize'
-import { safeErrorFields, safeErrorSummary } from './safeLog'
+import { CliUsageError, safeErrorFields, safeErrorSummary } from './safeLog'
 
 /**
  * Daily digest, the part that touches the database and the relay. Schema (owned by Agent B, see docs/w12/schema-contract.md):
@@ -424,4 +424,46 @@ export function tickDigest(payload: Payload): void {
     .finally(() => {
       inFlight = false
     })
+}
+
+// ---- Staff test send (shared by the staff endpoint and `npm run newsletter:digest`) ----
+
+/**
+ * Sends today's digest to ONE staff address, subject prefixed "[TEST]", with no List-Unsubscribe headers (it is not a
+ * list mail) and no subscriber token. The caller has already established that `to` belongs to a staff account.
+ */
+export async function sendTestDigest(payload: Payload, to: string, deps: DigestDeps = {}): Promise<DigestRunResult> {
+  const settings = await loadDigestSettings(payload)
+  const content = await buildTodaysDigest(payload, settings, deps)
+  if (!content) return { outcome: 'no-stories' }
+  const page = content.siteUrl ? `${content.siteUrl}/newsletter/unsubscribe` : 'https://example.invalid/'
+  await sendHtmlMail(
+    payload,
+    {
+      to,
+      subject: `[TEST] ${digestSubject(content)}`,
+      text: renderDigestText(content, { unsubscribePageUrl: page }),
+      html: renderDigestHtml(content, { unsubscribePageUrl: page }),
+      fromName: settings.fromName,
+      replyTo: isValidEmail(settings.replyTo) ? settings.replyTo : undefined,
+    },
+    { cap: deps.cap ?? processHtmlMailCap, now: deps.now ?? new Date() },
+  )
+  return { outcome: 'sent', sent: 1, stories: content.stories.length }
+}
+
+export type DigestCliArgs = { mode: 'dry-run' } | { mode: 'test-send'; to: string }
+
+/** `npm run newsletter:digest -- [--dry-run] | --test-send <staff address>` */
+export function parseDigestCliArgs(argv: string[]): DigestCliArgs {
+  const i = argv.indexOf('--test-send')
+  if (i >= 0) {
+    if (argv.includes('--dry-run')) throw new CliUsageError('Use either --dry-run or --test-send, not both.')
+    const to = (argv[i + 1] ?? '').trim().toLowerCase()
+    if (!isValidEmail(to)) throw new CliUsageError('--test-send needs the e-mail address of a staff account.')
+    return { mode: 'test-send', to }
+  }
+  const unknown = argv.filter((a) => a.startsWith('--') && a !== '--dry-run')
+  if (unknown.length) throw new CliUsageError(`Unknown option ${unknown[0]}.`)
+  return { mode: 'dry-run' }
 }
