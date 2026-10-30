@@ -17,7 +17,7 @@ function normalizeSearchHit(record) {
     category: plainText(category, 100), bylineName: '', featuredImage: null,
   };
 }
-export async function searchArticles({ baseUrl, query, page = 1, limit = 12, signal, fetchImpl = fetch, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+export async function searchArticles({ baseUrl, query, page = 1, limit = 12, category, year, signal, fetchImpl = fetch, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   const term = typeof query === 'string' ? query.trim().slice(0, SEARCH_MAX_QUERY) : '';
   // The endpoint rejects an empty query; there is nothing to look for, so make no request.
   if (!term) return { articles: [], nextPage: null, totalDocs: 0, totalCapped: false };
@@ -28,6 +28,10 @@ export async function searchArticles({ baseUrl, query, page = 1, limit = 12, sig
   url.searchParams.set('q', term);
   url.searchParams.set('page', String(pageNumber));
   url.searchParams.set('limit', String(Math.max(1, Math.min(20, Math.floor(Number(limit)) || 12))));
+  // Optional filters (C8): a category slug (primary or additional category) and a four-digit publication year.
+  if (validSlug(category) && category.length <= 100) url.searchParams.set('category', category);
+  const yearNumber = Number(year);
+  if (Number.isInteger(yearNumber) && yearNumber >= 1900 && yearNumber <= 2100) url.searchParams.set('year', String(yearNumber));
   const controller = new AbortController();
   const abort = () => controller.abort();
   if (signal?.aborted) abort(); else signal?.addEventListener('abort', abort, { once: true });

@@ -1,0 +1,49 @@
+/* Growth features (lazy: loaded with src/features/growth/hooks.js, never in the initial stylesheet). */
+mark.growth-mark{display:inline;font:inherit;letter-spacing:inherit;line-height:inherit;white-space:normal;background:#f1dfb4;color:inherit;padding:0 .08em;border-radius:2px}
+.growth-suggest{list-style:none;margin:0;padding:0;border:1px solid var(--line);border-top:0;background:var(--white);max-height:min(50vh,360px);overflow:auto}
+.growth-suggest[hidden]{display:none}
+.growth-suggest [role=option]{display:flex;flex-direction:column;gap:3px;padding:12px 14px;border-top:1px solid var(--line);cursor:pointer;min-height:44px;justify-content:center}
+.growth-suggest [role=option]:first-child{border-top:0}
+.growth-suggest [role=option][aria-selected=true],.growth-suggest [role=option]:hover{background:var(--sage);box-shadow:inset 4px 0 0 var(--clay)}
+.growth-suggest-title{font:500 16px/1.35 var(--serif)}
+.growth-suggest-meta{font-size:12px;color:var(--muted)}
+.growth-suggest-all{font-size:14px;font-weight:600;color:var(--clay)}
+dialog .growth-suggest-status{font-size:13px;margin:8px 0 0;color:var(--muted);min-height:1em}
+.growth-recent{margin-top:28px}
+.growth-recent[hidden]{display:none}
+.growth-recent .eyebrow{color:var(--muted);font-size:12px;margin-bottom:8px}
+.growth-recent ul{list-style:none;display:flex;flex-wrap:wrap;gap:10px;margin:0 0 10px;padding:0}
+.growth-recent ul button{border:1px solid var(--line);padding:10px 13px;font-size:14px;min-height:44px}
+.growth-recent ul button:hover{border-color:var(--clay)}
+.growth-recent-clear{font-size:13px;min-height:44px}
+.growth-suggest [role=option]:focus-visible,.growth-recent button:focus-visible,.growth-search-filters :focus-visible,.growth-follow:focus-visible,.growth-wa :focus-visible,.growth-following :focus-visible{outline:3px solid var(--clay);outline-offset:3px}
+.growth-search-filters{display:flex;flex-wrap:wrap;align-items:end;gap:14px 20px;margin:0 0 24px}
+.growth-search-filters label{display:block;font:600 13px/1.5 var(--sans);margin-bottom:4px}
+.growth-search-filters select{min-height:44px;padding:8px 10px;border:1px solid #65766d;background:var(--white);color:var(--ink);font:15px var(--sans);max-width:100%}
+.growth-search-filters button{min-height:44px;font-size:14px}
+.growth-note{flex-basis:100%;font-size:14px;color:var(--muted);margin:0}
+.growth-follow{min-width:0;gap:10px;font-size:14px}
+.growth-follow.is-following{background:var(--ink);color:var(--paper)}
+.growth-topic-actions{display:flex;flex-wrap:wrap;align-items:center;gap:16px 24px;margin:0 0 28px}
+.growth-topic-index ul{list-style:none;padding:0;margin:0;display:grid;gap:12px}
+.growth-topic-index li{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;border-bottom:1px solid var(--line);padding-bottom:12px}
+.growth-topic-index li a{font:500 20px/1.3 var(--serif)}
+.growth-topic-index small{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:1px}
+.growth-following{padding-block:32px}
+.growth-following-head h2{font-size:34px;line-height:1.1;margin:8px 0 18px}
+.growth-following-head .eyebrow{font-size:12px}
+.growth-following-manage{margin-top:22px;font-size:14px}
+.growth-following-manage summary{cursor:pointer;min-height:44px;display:flex;align-items:center;font-weight:600}
+.growth-following-manage ul{list-style:none;padding:0;margin:8px 0;display:grid;gap:6px}
+.growth-following-manage li{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center}
+.growth-following-manage small{font-size:12px;color:var(--muted)}
+.growth-following-manage .text-button{min-height:44px}
+.growth-wa{display:flex;gap:18px;align-items:flex-start;border:1px solid var(--line);background:var(--white);padding:22px;margin:32px auto;max-width:760px}
+.growth-wa-icon{flex:none;width:44px;height:44px;display:grid;place-items:center;border-radius:50%;background:#1f6f43;color:#fff}
+.growth-wa h2{font-size:24px;line-height:1.2;margin:0 0 8px}
+.growth-wa p{font-size:15px;line-height:1.55;margin:0 0 14px}
+.growth-wa-actions{display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px}
+.growth-wa-actions .text-button{min-height:44px;font-size:14px}
+#main>.growth-wa{margin-inline:auto;width:calc(100% - 36px)}
+@media(max-width:600px){.growth-wa{flex-direction:column;padding:18px}.growth-following-head h2{font-size:28px}}
+@media(prefers-reduced-motion:reduce){.growth-suggest [role=option]{scroll-behavior:auto;transition:none}}

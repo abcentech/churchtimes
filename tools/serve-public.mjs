@@ -79,6 +79,7 @@ export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(file
       if(await createChurchCalendarRoute({dist,siteUrl,basePath,indexable,extraHead:settings.head})(url,respond))return;
       if(await verseOfTheDay(url,respond))return;
       if(await givingRoutes(url,respond))return;
+      if(await (await import('./public-routes/topic-pages.mjs')).topicPages(url,respond,{dist,cmsUrl,siteUrl,basePath,indexable,fetchImpl,extraHead:settings.head,articlePathTemplate,lookupCache}))return;
       if(await publicFeeds(url,respond) || await publicPages(url,respond))return;
       const slug=reportSlug(url.pathname,basePath,articlePathTemplate);
       if(slug || (articlePathTemplate==='/reports/{slug}/' && url.pathname.startsWith(basePath+'reports/'))) {
