@@ -53,13 +53,16 @@ export function normalizePublicMedia(record, baseUrl) {
   if (!url) return null;
   const dimension = value => Number.isSafeInteger(value) && value > 0 && value <= 20000 ? value : null;
   const original={url,width:dimension(record.width),height:dimension(record.height)};
-  const sizes=Object.values(record.sizes || {}).slice(0,32).filter(size=>size && typeof size==='object');
-  const pick=size=>({url:mediaUrl(size.url,baseUrl),width:dimension(size.width),height:dimension(size.height)});
+  const sizes=Object.entries(record.sizes || {}).slice(0,32).filter(([,size])=>size && typeof size==='object');
+  const pick=([,size])=>({url:mediaUrl(size.url,baseUrl),width:dimension(size.width),height:dimension(size.height)});
   const unique=list=>list.filter(v=>v.url && v.width && v.height).sort((a,b)=>a.width-b.width)
     .filter((v,i,all)=>all.findIndex(other=>other.width===v.width)===i);
   // AVIF sizes are only ever offered as <source type="image/avif">; the <img> fallback stays JPEG/PNG/WebP.
-  const variants=unique([original,...sizes.filter(size=>size.mimeType!=='image/avif').map(pick)]);
-  const avif=unique(sizes.filter(size=>size.mimeType==='image/avif').map(pick));
+  // Recognised by mimeType, size name or file extension: the stored mimeType comes from content sniffing,
+  // which may report AVIF as image/heif, and an AVIF <img> candidate would break older browsers.
+  const isAvif=([name,size])=>/^image\/(?:avif|heif|heic)$/.test(size.mimeType) || /avif$/i.test(name) || /\.avif(?:$|\?)/i.test(String(size.url));
+  const variants=unique([original,...sizes.filter(size=>!isAvif(size)).map(pick)]);
+  const avif=unique(sizes.filter(isAvif).map(pick));
   const choose = minimum => variants.find(v=>v.width>=minimum) || variants.at(-1) || original;
   const card=choose(420),hero=choose(800);
   return {

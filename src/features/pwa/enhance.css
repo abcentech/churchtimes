@@ -9,5 +9,5 @@
 .ct-install button:focus-visible{outline:3px solid #e0a283;outline-offset:3px}
 .ct-offline-note{margin-top:12px;font-size:14px;color:var(--muted,#657071)}
 .ct-offline-badge{display:inline-block;margin-top:6px;padding:2px 8px;border:1px solid currentColor;font-size:12px;letter-spacing:.3px;color:var(--muted,#657071)}
-img[data-lite-src]{cursor:pointer}
+img[data-lite-src]{cursor:pointer;background-color:var(--sage,#e9ece4)}
 @media print{.ct-lite-pill,.ct-install{display:none}}

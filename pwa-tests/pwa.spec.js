@@ -162,6 +162,6 @@ test('Yoruba and Igbo dotted vowels load the lazy Newsreader subset; English pag
     expect(fonts.some(url=>url.includes('newsreader-vietnamese-wght-normal'))).toBe(true);
     // View transitions name the article headline (the cross-document rule itself is CSS-only).
     await page.goto(origin+'/bishops-meet-in-abuja/');
-    await expect(page.locator('.article-header h1')).toHaveCSS('view-transition-name','ct-headline');
+    await expect(page.locator('.article-header h1')).toHaveCSS('view-transition-name','ct-title');
   } finally {await stop();}
 });

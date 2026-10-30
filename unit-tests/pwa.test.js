@@ -221,3 +221,20 @@ test('competitor benchmark stays polite: capped runs, minimum pause, plain URLs,
   const {readFile}=await import('node:fs/promises');
   assert.match(await readFile(new URL('../.gitignore',import.meta.url),'utf8'),/^private-reports\/$/m);
 });
+test('media: AVIF sizes are recognised even when the sniffed mimeType says heif or is missing',async()=>{
+  const {normalizePublicMedia}=await import('../src/lib/published-articles.js');
+  const record={url:'/api/media/file/a.png',mimeType:'image/png',width:1200,height:900,alt:'x',sizes:{
+    card:{url:'/api/media/file/a-800x600.png',width:800,height:600,mimeType:'image/png'},
+    cardAvif:{url:'/api/media/file/a-800x600.avif',width:800,height:600,mimeType:'image/heif'},
+    other:{url:'/api/media/file/b-1600x1200.avif',width:1600,height:1200}}};
+  for(const order of [record.sizes,{cardAvif:record.sizes.cardAvif,other:record.sizes.other,card:record.sizes.card}]) {
+    const media=normalizePublicMedia({...record,sizes:order},'https://cms.example.test');
+    assert.ok(media.variants.every(v=>!v.url.endsWith('.avif')),'no AVIF <img> candidate');
+    assert.deepEqual(media.avif.map(v=>v.width),[800,1600]);
+  }
+});
+test('worker never touches giving, newsletter or CMS API routes (navigation, fetch or POST)',()=>{
+  for(const path of ['/give/','/give/thanks/','/give/thanks/?reference=CT-1','/giving/','/api/public/giving/init','/api/public/giving/status?reference=CT-1','/api/public/giving/webhook/paystack','/api/public/giving/settings','/newsletter/','/newsletter/unsubscribe/?token=x','/api/public/newsletter/subscribe','/api/public/newsletter/unsubscribe','/api/public/articles','/api/public/search?q=x','/api/users/me','/admin/'])
+    for(const mode of ['navigate','cors','no-cors'])for(const method of ['GET','POST'])
+      assert.equal(classify(req(path,{mode,method}),config),'skip',`${method} ${mode} ${path}`);
+});

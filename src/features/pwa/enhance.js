@@ -116,7 +116,7 @@ export function startEnhance() {
     const link=event.target.closest?.('a[href]'),card=link?.closest('[data-story-slug]');
     if(card&&!event.defaultPrevented&&documentNav()&&!link.getAttribute('href').startsWith('#')&&!document.querySelector('.article-header h1')) {
       const heading=card.querySelector('h1,h2,h3'),picture=card.querySelector('img');
-      if(heading)heading.style.viewTransitionName='ct-headline';
+      if(heading)heading.style.viewTransitionName='ct-title';
       if(picture)picture.style.viewTransitionName='ct-hero';
     }
   });
