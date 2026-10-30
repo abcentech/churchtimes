@@ -193,3 +193,17 @@ export function renderDigestHtml(content: DigestContent, links: DigestRecipientL
 export const digestDate = (now: Date): string => lagosDay(now)
 
 export { escapeHtml }
+
+/**
+ * Whitelist copy of the public host's `scripture/verse-of-the-day.json` (tools/public-routes/verse-of-the-day.mjs).
+ * Only the bundled public-domain KJV is accepted; anything else (or anything malformed) means no verse in the mail.
+ */
+export function parseDevotional(raw: unknown, date: string): Devotional | null {
+  if (!raw || typeof raw !== 'object') return null
+  const r = raw as Record<string, unknown>
+  if (r.ok !== true || r.version !== 'KJV' || r.date !== date) return null
+  const reference = cleanCardText(r.reference, 80)
+  const text = cleanCardText(r.text, 1200)
+  if (!/^[1-3]?\s?[A-Za-z][A-Za-z ]{1,40} \d{1,3}(?::\d{1,3})?(?:[–-]\d{1,3}(?::\d{1,3})?)?$/.test(reference) || text.length < 5) return null
+  return { reference, text, version: 'KJV' }
+}

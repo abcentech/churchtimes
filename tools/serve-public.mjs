@@ -18,6 +18,7 @@ import {publicSEOSettings} from './public-seo-settings.mjs';
 import {createPublicRedirects,isJunkPath,legacyHostRedirector} from './public-redirects.mjs';
 import {createPublicFeeds} from './public-feeds.mjs';
 import {createChurchCalendarRoute} from './public-routes/church-calendar.mjs';
+import {createVerseOfTheDayRoute} from './public-routes/verse-of-the-day.mjs';
 import {createGivingRoutes} from './public-routes/giving.mjs';
 import {createPwaRoutes} from './public-routes/pwa.mjs';
 import {publicOrigin} from '../src/lib/public-url.js';
@@ -35,6 +36,7 @@ export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(file
   const givingRoutes=createGivingRoutes({dist,cmsUrl,siteUrl,basePath,indexable,fetchImpl,articlePathTemplate,extraHead:settings.head});
   const pwaRoute=createPwaRoutes({dist,basePath,articlePathTemplate});
   const publicFeeds=createPublicFeeds({cmsUrl,siteUrl,basePath,indexable,fetchImpl,articlePathTemplate});
+  const verseOfTheDay=createVerseOfTheDayRoute({dist,basePath});
   const redirects=createPublicRedirects({file:redirectsFile,endpoint:redirectsUrl,patterns:redirectPatterns,allowedHosts:redirectAllowedHosts,siteUrl,fetchImpl,basePath,articlePathTemplate,resolveLegacyId:cmsUrl ? legacyId=>fetchPublishedLegacyArticle({legacyId,baseUrl:cmsUrl,fetchImpl,timeoutMs:6000}) : undefined});
   async function htmlPage(article,message) {
     let html=await readFile(resolve(dist,'index.html'),'utf8');
@@ -73,6 +75,7 @@ export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(file
       if(settings.route(url,respond))return;
       if(!url.pathname.startsWith(basePath))return respond(404,'text/plain','Not found');
       if(await createChurchCalendarRoute({dist,siteUrl,basePath,indexable,extraHead:settings.head})(url,respond))return;
+      if(await verseOfTheDay(url,respond))return;
       if(await givingRoutes(url,respond))return;
       if(await publicFeeds(url,respond) || await publicPages(url,respond))return;
       const slug=reportSlug(url.pathname,basePath,articlePathTemplate);

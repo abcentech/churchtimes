@@ -10,6 +10,7 @@ import {
   lagosHour,
   normaliseDigestSettings,
   normaliseDigestStory,
+  parseDevotional,
   renderDigestHtml,
   renderDigestText,
   selectDigestStories,
@@ -158,27 +159,47 @@ export type DigestDeps = {
   now?: Date
   env?: NodeJS.ProcessEnv
   cap?: DailyMailCap
-  /** Optional verse of the day (public-domain text only); supplied by the scheduler when `includeDevotional` is on. */
+  /** Verse of the day override (tests); by default it is read from the public site when `includeDevotional` is on. */
   devotional?: Devotional | null
+  fetchImpl?: typeof fetch
   sleep?: (ms: number) => Promise<void>
+}
+
+/**
+ * The site's own verse of the day (public host route `scripture/verse-of-the-day.json`, bundled public-domain KJV).
+ * Our own static data, not an external API. Any failure (timeout 4 s) just leaves the verse out of the mail.
+ */
+export async function fetchDevotional(siteUrl: string, date: string, fetchImpl: typeof fetch = fetch): Promise<Devotional | null> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null
+  try {
+    const res = await fetchImpl(`${siteUrl}/scripture/verse-of-the-day.json?date=${date}`, {
+      headers: { Accept: 'application/json' },
+      redirect: 'error',
+      signal: AbortSignal.timeout(4000),
+    })
+    if (!res.ok) return null
+    return parseDevotional(await res.json(), date)
+  } catch {
+    return null
+  }
 }
 
 /** Builds the content of today's issue. Null when there is nothing new to send. */
 export async function buildTodaysDigest(
   payload: Payload,
   settings: DigestSettings,
-  { now = new Date(), env = process.env, devotional = null }: DigestDeps = {},
+  { now = new Date(), env = process.env, devotional, fetchImpl }: DigestDeps = {},
 ): Promise<DigestContent | null> {
   const since = digestWindowStart(await previousSentAt(payload, lagosDayStart(now)), now)
   const stories = await loadStories(payload, since, now, settings.maxStoriesPerDigest)
   if (stories.length === 0) return null
-  return {
-    date: lagosDay(now),
-    stories,
-    siteUrl: resolvePublicSiteUrl(env),
-    template: resolveArticlePathTemplate(env),
-    devotional: settings.includeDevotional ? devotional : null,
+  const date = lagosDay(now)
+  const siteUrl = resolvePublicSiteUrl(env)
+  let verse: Devotional | null = null
+  if (settings.includeDevotional) {
+    verse = devotional !== undefined ? devotional : siteUrl ? await fetchDevotional(siteUrl, date, fetchImpl) : null
   }
+  return { date, stories, siteUrl, template: resolveArticlePathTemplate(env), devotional: verse }
 }
 
 /** Generic copy stored on the issue (no recipient token in it). */

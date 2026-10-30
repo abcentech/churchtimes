@@ -14,7 +14,7 @@ vi.mock('../../src/lib/dbTransaction', () => ({
 
 const { DailyMailCap } = await import('../../src/lib/mailer')
 const { signUnsubscribeToken, verifyUnsubscribeToken } = await import('../../src/lib/newsletter')
-const { buildOneClickUrl, createDigestDraft, resetDigestMemo, resolveOneClickBase, runScheduledDigest, sendDigest } = await import(
+const { buildOneClickUrl, buildTodaysDigest, createDigestDraft, fetchDevotional, resetDigestMemo, resolveOneClickBase, runScheduledDigest, sendDigest } = await import(
   '../../src/lib/newsletterDigestRunner'
 )
 const { normaliseDigestSettings } = await import('../../src/lib/newsletterDigest')
@@ -244,5 +244,34 @@ describe('scheduled digest', () => {
     expect(draft).toMatchObject({ outcome: 'draft', stories: 1 })
     const none = fakePayload({ settings: on, articles: [articles[3]!], subscribers })
     expect((await createDigestDraft(none as never, { now: NOW, env })).outcome).toBe('no-stories')
+  })
+})
+
+describe('verse of the day in the digest', () => {
+  const verse = { ok: true, date: '2026-10-30', reference: 'Luke 2:10–11', text: 'And the angel said unto them, Fear not', version: 'KJV' }
+  const respond = (body: unknown, status = 200) => vi.fn(async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch
+
+  it('reads the public site route and accepts only matching KJV data', async () => {
+    const f = respond(verse)
+    expect(await fetchDevotional('https://churchtimesnigeria.net', '2026-10-30', f)).toEqual({ reference: 'Luke 2:10–11', text: 'And the angel said unto them, Fear not', version: 'KJV' })
+    expect((f as unknown as { mock: { calls: string[][] } }).mock.calls[0]![0]).toBe('https://churchtimesnigeria.net/scripture/verse-of-the-day.json?date=2026-10-30')
+    expect(await fetchDevotional('https://x.test', '2026-10-30', respond({ ...verse, version: 'NIV' }))).toBeNull()
+    expect(await fetchDevotional('https://x.test', '2026-10-30', respond({ ...verse, date: '2026-10-29' }))).toBeNull()
+    expect(await fetchDevotional('https://x.test', '2026-10-30', respond({ ...verse, reference: '<script>' }))).toBeNull()
+    expect(await fetchDevotional('https://x.test', '2026-10-30', respond(verse, 503))).toBeNull()
+    expect(await fetchDevotional('https://x.test', '2026-10-30', vi.fn(async () => Promise.reject(new Error('down'))) as never)).toBeNull()
+  })
+
+  it('is fetched only when includeDevotional is on, and its failure never blocks the digest', async () => {
+    const p = fakePayload({ settings: on, articles, subscribers })
+    const f = respond(verse)
+    const off = await buildTodaysDigest(p as never, normaliseDigestSettings(on), { now: NOW, env, fetchImpl: f })
+    expect(off?.devotional).toBeNull()
+    expect(f).not.toHaveBeenCalled()
+    const withVerse = await buildTodaysDigest(p as never, normaliseDigestSettings({ ...on, includeDevotional: true }), { now: NOW, env, fetchImpl: f })
+    expect(withVerse?.devotional?.reference).toBe('Luke 2:10–11')
+    const failing = await buildTodaysDigest(p as never, normaliseDigestSettings({ ...on, includeDevotional: true }), { now: NOW, env, fetchImpl: respond({}, 500) })
+    expect(failing?.devotional).toBeNull()
+    expect(failing?.stories).toHaveLength(2)
   })
 })
