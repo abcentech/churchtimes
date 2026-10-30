@@ -18,6 +18,7 @@ import {publicSEOSettings} from './public-seo-settings.mjs';
 import {createPublicRedirects,isJunkPath,legacyHostRedirector} from './public-redirects.mjs';
 import {createPublicFeeds} from './public-feeds.mjs';
 import {createChurchCalendarRoute} from './public-routes/church-calendar.mjs';
+import {createGivingRoutes} from './public-routes/giving.mjs';
 import {publicOrigin} from '../src/lib/public-url.js';
 import {normalizeBasePath,reportPath,articlePathTemplate as validateArticlePathTemplate,HOST_ARTICLE_PATH_TEMPLATE,reportSlug,articleCanonical,articleSchema,safeJSON} from '../src/lib/public-routes.js';
 const escape=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -30,6 +31,7 @@ export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(file
   if(cmsUrl && !publicOrigin(cmsUrl))throw new Error('PUBLIC_CMS_URL must be HTTPS or loopback HTTP without credentials');
   const settings=publicSEOSettings({adsTxtLine,searchVerification});
   const publicPages=createPublicPages({dist,cmsUrl,siteUrl,basePath,indexable,fetchImpl,extraHead:settings.head,articlePathTemplate,lookupCache});
+  const givingRoutes=createGivingRoutes({dist,cmsUrl,siteUrl,basePath,indexable,fetchImpl,articlePathTemplate,extraHead:settings.head});
   const publicFeeds=createPublicFeeds({cmsUrl,siteUrl,basePath,indexable,fetchImpl,articlePathTemplate});
   const redirects=createPublicRedirects({file:redirectsFile,endpoint:redirectsUrl,patterns:redirectPatterns,allowedHosts:redirectAllowedHosts,siteUrl,fetchImpl,basePath,articlePathTemplate,resolveLegacyId:cmsUrl ? legacyId=>fetchPublishedLegacyArticle({legacyId,baseUrl:cmsUrl,fetchImpl,timeoutMs:6000}) : undefined});
   async function htmlPage(article,message) {
@@ -68,6 +70,7 @@ export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(file
       if(settings.route(url,respond))return;
       if(!url.pathname.startsWith(basePath))return respond(404,'text/plain','Not found');
       if(await createChurchCalendarRoute({dist,siteUrl,basePath,indexable,extraHead:settings.head})(url,respond))return;
+      if(await givingRoutes(url,respond))return;
       if(await publicFeeds(url,respond) || await publicPages(url,respond))return;
       const slug=reportSlug(url.pathname,basePath,articlePathTemplate);
       if(slug || (articlePathTemplate==='/reports/{slug}/' && url.pathname.startsWith(basePath+'reports/'))) {

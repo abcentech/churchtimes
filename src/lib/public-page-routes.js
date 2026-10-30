@@ -5,6 +5,7 @@ export function publicPageRoute(path,basePath='/') {
   if(!path.startsWith(base))return null;
   const relative=path.slice(base.length).replace(/\/$/,'');
   if(['latest','about','contact','advertise'].includes(relative))return [relative];
+  if(relative==='give'||relative==='give/thanks')return relative.split('/');
   const category=relative.match(/^category\/([^/]+)$/);
   return category && validReportSlug(category[1])?['category',category[1]]:null;
 }

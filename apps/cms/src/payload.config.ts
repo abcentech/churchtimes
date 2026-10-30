@@ -28,6 +28,7 @@ import { staffRelatedArticlesEndpoints } from './endpoints/staffRelatedArticles'
 import { startupSelfCheck } from './lib/health'
 import { publicContactEndpoint, publicContactPreflightEndpoint } from './endpoints/publicContact'
 import { newsletterEndpoints } from './endpoints/publicNewsletter'
+import { givingEndpoints } from './endpoints/publicGiving'
 import {
   publicAdvertisingEndpoint,
   publicAdvertisingHeadEndpoint,
@@ -180,6 +181,7 @@ export default buildConfig({
     ...publicSearchEndpoints,
     ...staffRelatedArticlesEndpoints,
     ...w12Endpoints,
+    ...givingEndpoints,
   ],
   editor: lexicalEditor(),
   db: postgresAdapter({

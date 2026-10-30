@@ -156,6 +156,15 @@ export const endpointMatrix: Record<string, EndpointEntry> = {
   'GET /api/public/corrections': { anon: [200, 400, 404], public: true, note: 'waves 1-2 public read' },
   'HEAD /api/public/corrections': { anon: [200, 400, 404], public: true },
   'OPTIONS /api/public/corrections': { anon: [204], public: true },
+  // giving (docs/w12/giving.md): off (404 / { enabled: false }) unless giving-settings.enabled AND PAYSTACK_SECRET_KEY
+  'POST /api/public/giving/init': { anon: [415, 404, 400, 403], public: true },
+  'OPTIONS /api/public/giving/init': { anon: [204], public: true },
+  'POST /api/public/giving/webhook/:provider': { anon: [404, 415, 401], public: true, note: 'HMAC on the raw body; 404 when no key' },
+  'GET /api/public/giving/status': { anon: [400, 404, 200], public: true, note: 'reference required' },
+  'OPTIONS /api/public/giving/status': { anon: [204], public: true },
+  'GET /api/public/giving/settings': { anon: [200], public: true, note: 'public-safe fields only' },
+  'OPTIONS /api/public/giving/settings': { anon: [204], public: true },
+  'GET /api/giving/stats': { anon: [401], note: 'admin / editor-in-chief' },
   'POST /api/staff/related-articles': { anon: [401], note: 'staff session only' },
   'GET /api/preview/articles': { anon: [401], note: 'needs a signed, unexpired preview token' },
   // --- Payload built-ins that are not collection routes
