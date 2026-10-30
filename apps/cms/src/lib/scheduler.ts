@@ -1,5 +1,7 @@
 import type { Payload } from 'payload'
 
+import { tickDigest } from './newsletterDigestRunner'
+
 /** Publish every `scheduled` article whose `scheduledFor <= now`. Returns the number published. */
 export async function publishDueArticles(payload: Payload, now: Date = new Date()): Promise<number> {
   const due = await payload.find({
@@ -44,6 +46,7 @@ export function startScheduler(payload: Payload): void {
 
   let running = false
   const tick = async () => {
+    tickDigest(payload) // daily newsletter digest: own in-flight guard, never blocks publishing (docs/w12/growth.md)
     if (running) return
     running = true
     try {

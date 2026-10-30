@@ -324,45 +324,55 @@ export const publicNewsletterUnsubscribeEndpoint: Endpoint = {
     const read = await readToken(req, ctx)
     if ('response' in read) return read.response
 
-    const id = verifyUnsubscribeToken(read.token, resolveNewsletterTokenSecret())
-    if (!id) return ctx.fail(400, INVALID_LINK_MESSAGE)
-
-    const doc = (await req.payload
-      .findByID({ collection: 'subscribers', id, depth: 0, overrideAccess: true })
-      .catch(() => null)) as unknown as SubscriberDoc | null
-    if (!doc) return ctx.fail(400, INVALID_LINK_MESSAGE)
-
-    // Idempotent: already unsubscribed (or erased, which stays erased) is a success and changes nothing.
-    if (doc.status !== 'unsubscribed' && doc.status !== 'erased') {
-      try {
-        await req.payload.update({
-          collection: 'subscribers',
-          id: doc.id,
-          data: {
-            status: 'unsubscribed',
-            unsubscribedAt: new Date().toISOString(),
-            confirmTokenHash: null,
-            confirmTokenExpiresAt: null,
-          } as never,
-          overrideAccess: true,
-          context: internal,
-        })
-        await writeAuditLog(req, {
-          action: 'subscriber.unsubscribe',
-          collection: 'subscribers',
-          docId: doc.id,
-          actor: null,
-          fromStatus: doc.status,
-          toStatus: 'unsubscribed',
-          summary: `Subscriber ${doc.id} unsubscribed`,
-        })
-      } catch (err) {
-        req.payload.logger.error(safeErrorFields(err), 'newsletter unsubscribe failed')
-        return ctx.fail(500, 'Could not unsubscribe. Please try again.')
-      }
-    }
+    const result = await unsubscribeByToken(req, read.token)
+    if (result === 'invalid') return ctx.fail(400, INVALID_LINK_MESSAGE)
+    if (result === 'error') return ctx.fail(500, 'Could not unsubscribe. Please try again.')
     return ctx.ok({ ok: true }, 200)
   },
+}
+
+/**
+ * Shared by the reader's unsubscribe page and the RFC 8058 one-click endpoint (endpoints/newsletterOneClick.ts).
+ * Verifies the signed token, then flips the row to `unsubscribed` at once. Idempotent: already unsubscribed (or erased,
+ * which stays erased) is a success and changes nothing. Writes the same single audit row as before, nothing more.
+ */
+export async function unsubscribeByToken(req: PayloadRequest, token: string): Promise<'ok' | 'invalid' | 'error'> {
+  const id = verifyUnsubscribeToken(token, resolveNewsletterTokenSecret())
+  if (!id) return 'invalid'
+
+  const doc = (await req.payload
+    .findByID({ collection: 'subscribers', id, depth: 0, overrideAccess: true })
+    .catch(() => null)) as unknown as SubscriberDoc | null
+  if (!doc) return 'invalid'
+
+  if (doc.status === 'unsubscribed' || doc.status === 'erased') return 'ok'
+  try {
+    await req.payload.update({
+      collection: 'subscribers',
+      id: doc.id,
+      data: {
+        status: 'unsubscribed',
+        unsubscribedAt: new Date().toISOString(),
+        confirmTokenHash: null,
+        confirmTokenExpiresAt: null,
+      } as never,
+      overrideAccess: true,
+      context: internal,
+    })
+    await writeAuditLog(req, {
+      action: 'subscriber.unsubscribe',
+      collection: 'subscribers',
+      docId: doc.id,
+      actor: null,
+      fromStatus: doc.status,
+      toStatus: 'unsubscribed',
+      summary: `Subscriber ${doc.id} unsubscribed`,
+    })
+  } catch (err) {
+    req.payload.logger.error(safeErrorFields(err), 'newsletter unsubscribe failed')
+    return 'error'
+  }
+  return 'ok'
 }
 
 export const newsletterEndpoints: Endpoint[] = [

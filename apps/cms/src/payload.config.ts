@@ -46,6 +46,7 @@ import {
 import { avMaxBytes } from './lib/avMedia'
 import { parseAllowedHosts, parseLegacyHosts, resolveArticlePathTemplate } from './lib/redirectPaths'
 import { startScheduler } from './lib/scheduler'
+import { growthEndpoints } from './endpoints/growth'
 import {
   checkOriginList,
   csv,
@@ -182,6 +183,7 @@ export default buildConfig({
     ...staffRelatedArticlesEndpoints,
     ...w12Endpoints,
     ...givingEndpoints,
+    ...growthEndpoints,
   ],
   editor: lexicalEditor(),
   db: postgresAdapter({
