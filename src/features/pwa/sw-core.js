@@ -5,6 +5,9 @@ export const ASSETS_CACHE='ct-assets-v1';
 export const SHELL_PREFIX='ct-shell-';
 export const MAX_PAGES=25;
 export const MAX_ASSETS=80;
+// Bundled public-domain KJV books (daily verse and scripture cards): kept for offline devotions, capped.
+export const SCRIPTURE_CACHE='ct-scripture-v1';
+export const MAX_SCRIPTURE=12;
 export const MAX_PAGE_BYTES=1048576;
 // First path segments the worker never touches, cached or not: staff, APIs, giving, newsletter, feeds and push.
 // Other public pages (search, contact, submit) are network-only with the offline page as their fallback.
@@ -32,11 +35,14 @@ export function classify(request,config) {
   if(request.headers&&request.headers.get('range'))return 'skip';
   if(request.mode==='navigate') {
     if(rel===''||rel==='index.html')return 'home';
+    // The church calendar is a server-rendered devotional page: keep its default view like the front page.
+    if(rel==='church-calendar/')return url.search?'page':'home';
     // Files (feeds, sitemaps, downloads) are not pages: the browser handles them as usual.
     if(/\.[a-z0-9]+$/i.test(rel))return 'skip';
     return articleSlug(rel,config)?'article':'page';
   }
   if(/^(?:site\/)?assets\/[^/]+\.(?:js|css|woff2)$/.test(rel))return 'asset';
+  if(/^(?:site\/)?scripture\/kjv\/[a-z0-9-]{1,40}\.json$/.test(rel)&&!url.search)return 'scripture';
   if(config.statics.includes(rel))return 'static';
   return 'skip';
 }
@@ -52,6 +58,7 @@ export function storable(response,kind) {
   if(response.headers.get('set-cookie'))return false;
   const type=(response.headers.get('content-type')||'').toLowerCase();
   if(kind==='article'||kind==='home')return type.startsWith('text/html');
+  if(kind==='scripture')return type.includes('json');
   return true;
 }
 export function pageTitle(html) {
@@ -64,5 +71,5 @@ export function evictions(entries,max) {
   return [...entries].sort((a,b)=>a.at-b.at).slice(0,entries.length-max).map(entry=>entry.key);
 }
 export function staleCaches(names,version) {
-  return names.filter(name=>name.startsWith('ct-')&&name!==SHELL_PREFIX+version&&name!==PAGES_CACHE&&name!==ASSETS_CACHE);
+  return names.filter(name=>name.startsWith('ct-')&&name!==SHELL_PREFIX+version&&name!==PAGES_CACHE&&name!==ASSETS_CACHE&&name!==SCRIPTURE_CACHE);
 }

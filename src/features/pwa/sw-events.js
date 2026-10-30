@@ -46,11 +46,11 @@ async function navigate(event,kind) {
   }
 }
 async function cacheFirst(event,kind) {
-  const name=kind==='asset'?ASSETS_CACHE:SHELL_CACHE,cache=await caches.open(name);
+  const name=kind==='asset'?ASSETS_CACHE:kind==='scripture'?SCRIPTURE_CACHE:SHELL_CACHE,cache=await caches.open(name);
   const hit=await cache.match(event.request);
   if(hit)return hit;
   const response=await fetch(event.request);
-  if(storable(response,kind))event.waitUntil(stamp(response.clone()).then(copy=>copy&&cache.put(event.request,copy)).then(()=>kind==='asset'&&trim(ASSETS_CACHE,MAX_ASSETS)).catch(()=>{}));
+  if(storable(response,kind))event.waitUntil(stamp(response.clone()).then(copy=>copy&&cache.put(event.request,copy)).then(()=>kind==='asset'?trim(ASSETS_CACHE,MAX_ASSETS):kind==='scripture'&&trim(SCRIPTURE_CACHE,MAX_SCRIPTURE)).catch(()=>{}));
   return response;
 }
 self.addEventListener('install',event=>{
@@ -82,5 +82,5 @@ self.addEventListener('activate',event=>{
 self.addEventListener('fetch',event=>{
   const kind=classify(event.request,config);
   if(kind==='skip')return;
-  event.respondWith(kind==='asset'||kind==='static'?cacheFirst(event,kind):navigate(event,kind));
+  event.respondWith(['asset','static','scripture'].includes(kind)?cacheFirst(event,kind):navigate(event,kind));
 });

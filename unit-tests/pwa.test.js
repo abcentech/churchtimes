@@ -23,6 +23,11 @@ test('worker policy: only same-origin public GETs; staff, API, giving, newslette
   assert.equal(classify({...req('/a-story/',{mode:'navigate'}),url:'https://cms.example.test/a-story/'},config),'skip');
   assert.equal(classify(req('/site/assets/a.mp3',{headers:{range:'bytes=0-'}}),config),'skip');
   assert.equal(classify(req('/news-media/1.jpg'),config),'skip');
+  assert.equal(classify(req('/site/scripture/kjv/psalms.json'),config),'scripture');
+  assert.equal(classify(req('/site/scripture/kjv/psalms.json?v=2'),config),'skip');
+  assert.equal(classify(req('/church-calendar/',{mode:'navigate'}),config),'home');
+  assert.equal(classify(req('/church-calendar/?year=2027',{mode:'navigate'}),config),'page');
+  assert.equal(classify(req('/scripture/verse-of-the-day.json'),config),'skip');
   // Base path and the /reports/{slug}/ template.
   const reports={...config,base:'/beta/',template:'/reports/{slug}/'};
   assert.equal(classify(req('/beta/reports/a-story/',{mode:'navigate'}),reports),'article');
