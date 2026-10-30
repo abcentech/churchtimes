@@ -201,3 +201,18 @@ test('fonts: Newsreader carries ẹ ọ ị ụ and tone marks in its lazy subse
   // No Newsreader subset has these; they render in the system fallback (documented in speed.md).
   assert.deepEqual(latin.hausa.filter(c=>'ɓɗƙ'.includes(c)),['ɓ','ɗ','ƙ']);
 });
+test('responsiveness report: INP proxy is the slowest event of the slowest interaction; non-interactions ignored',async()=>{
+  const {inpFromEntries}=await import('../tools/public-responsiveness.mjs');
+  assert.equal(inpFromEntries([{interactionId:1,duration:40},{interactionId:1,duration:72},{interactionId:2,duration:24},{interactionId:0,duration:500}]),72);
+  assert.equal(inpFromEntries([]),null);
+});
+test('competitor benchmark stays polite: capped runs, minimum pause, plain URLs, ignored output folder',async()=>{
+  const {benchmarkOptions,aggregate,SITES,LIMITS}=await import('../tools/benchmark-competitors.mjs');
+  const options=benchmarkOptions(['--runs','50','--pause','0','--only','punchng.com']);
+  assert.equal(options.runs,LIMITS.maxRuns);assert.equal(options.pause,LIMITS.minPauseSeconds);assert.deepEqual(options.sites,['https://punchng.com/']);
+  assert.ok(SITES.length>=6&&SITES.length<=8);
+  assert.throws(()=>benchmarkOptions(['--ours','https://user:pass@example.org/']));
+  assert.deepEqual(aggregate([{lcpMs:3},{lcpMs:1},{lcpMs:2}]).lcpMs,2);
+  const {readFile}=await import('node:fs/promises');
+  assert.match(await readFile(new URL('../.gitignore',import.meta.url),'utf8'),/^private-reports\/$/m);
+});

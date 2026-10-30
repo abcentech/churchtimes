@@ -9,7 +9,8 @@ export function checkPublicLighthouse(reports,limits=budgets) {
     if(!report || report.runtimeError){failures.push(name+': missing or failed Lighthouse run');continue;}
     const score=key=>report.categories?.[key]?.score;
     const lcp=report.audits?.['largest-contentful-paint']?.numericValue,cls=report.audits?.['cumulative-layout-shift']?.numericValue;
-    const result={page:name,performance:Math.round(score('performance')*100),accessibility:Math.round(score('accessibility')*100),bestPractices:Math.round(score('best-practices')*100),lcpMs:lcp,cls};
+    // tbtMs/fcpMs are reported, never gated (lab responsiveness proxy; see responsiveness.json for the INP proxy).
+    const result={page:name,performance:Math.round(score('performance')*100),accessibility:Math.round(score('accessibility')*100),bestPractices:Math.round(score('best-practices')*100),lcpMs:lcp,cls,tbtMs:report.audits?.['total-blocking-time']?.numericValue??null,fcpMs:report.audits?.['first-contentful-paint']?.numericValue??null};
     for(const [key,min] of [['performance',limits.minPerformance],['accessibility',limits.minAccessibility],['best-practices',limits.minBestPractices]])if(!Number.isFinite(score(key)) || score(key)*100<min)failures.push(name+': '+key+' below '+min);
     if(!Number.isFinite(lcp)||lcp>limits.maxLcpMs)failures.push(name+': LCP exceeds budget or is missing');
     if(!Number.isFinite(cls)||cls>limits.maxCls)failures.push(name+': CLS exceeds budget or is missing');

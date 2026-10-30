@@ -40,6 +40,8 @@ export async function auditPublic({cmsUrl,dist,output,port,sourceRoot}) {
       results.push(row);console.log(name,JSON.stringify({...row,failures:row.failures.map(f=>f.id)}));
     }
     await writeFile(join(output,'summary.json'),JSON.stringify(results,null,2));
+    // Report only (never a gate): INP proxy from real taps on a throttled mobile profile.
+    if(process.env.PUBLIC_AUDIT_ONLY_SCREENSHOTS!=='true')try {const {reportResponsiveness}=await import('./public-responsiveness.mjs');console.log('responsiveness',JSON.stringify((await reportResponsiveness({origin,output,chromePath,articlePath:pages[2][1]})).rows));} catch(error){console.error('Responsiveness report unavailable (non-failing): '+error.message);}
     if(process.env.PUBLIC_QUALITY_GATE==='true') {
       const {writePublicQualityReport}=await import('./public-quality-report.mjs');
       const report=await writePublicQualityReport({output,dist});
