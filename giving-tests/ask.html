@@ -1,0 +1,8 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>STUB giving ask harness</title>
+<style>:root{--paper:#f7f5ef;--white:#fffefa;--ink:#172b2e;--muted:#596465;--line:#dcded6;--clay:#9c4d35;--sans:Arial,sans-serif;--serif:Georgia,serif}body{margin:0;font-family:var(--sans);color:var(--ink);background:var(--paper)}.button{display:inline-flex;padding:12px 18px}.button-dark{background:var(--ink);color:var(--white)}</style>
+</head><body><main id="main"><h1>STUB article page</h1></main><footer class="site-footer"><div class="footer-main"><div><a href="#a">Explore</a></div><div><a href="#about">Our story</a></div></div></footer><script type="module">
+import { ask } from '/src/features/giving/entry.js';
+await ask();
+// The report body arrives after the ask was mounted, like a CMS article fetch.
+setTimeout(() => { document.querySelector('#main').insertAdjacentHTML('beforeend', '<article><div class="article-body"><p>Body.</p></div><div class="share-bar">Share</div></article>'); }, 300);
+</script></body></html>
