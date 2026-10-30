@@ -19,6 +19,7 @@ import {createPublicRedirects,isJunkPath,legacyHostRedirector} from './public-re
 import {createPublicFeeds} from './public-feeds.mjs';
 import {createChurchCalendarRoute} from './public-routes/church-calendar.mjs';
 import {createVerseOfTheDayRoute} from './public-routes/verse-of-the-day.mjs';
+import {applyShareCardMeta} from './public-routes/share-card-meta.mjs';
 import {createGivingRoutes} from './public-routes/giving.mjs';
 import {createPwaRoutes} from './public-routes/pwa.mjs';
 import {publicOrigin} from '../src/lib/public-url.js';
@@ -43,6 +44,7 @@ export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(file
     html=html.replace('<head>',`<head><base href="${escape(basePath)}">`);
     const canonical=article ? articleCanonical(article.slug,{siteUrl,basePath,articlePathTemplate}) : message ? '' : siteCanonical(basePath,{siteUrl});
     html=replaceSocialHTML(html,article,canonical);
+    if(article)html=applyShareCardMeta(html,article,{cmsUrl});
     if(!article && !message)html=html.replace('</head>',()=>homeImageMetadata({siteUrl,basePath})+'</head>');
     const robots=indexable && canonical ? 'index,follow' : 'noindex,nofollow';
     let metadata=`<meta name="robots" content="${robots}"><meta name="public-article-path-template" content="${escape(articlePathTemplate)}">${settings.head}`;
