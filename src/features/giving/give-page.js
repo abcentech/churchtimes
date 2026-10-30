@@ -73,7 +73,8 @@ function bindForm(root, { endpoint, settings, siteKey, signal }) {
 
   const verify = $('[data-give-verify]');
   const startChallenge = () => {
-    if (!verify || signal.aborted) return;
+    // The SPA replaces the page without calling the disposer: a detached form must not start a challenge.
+    if (!verify || signal.aborted || !form.isConnected) return;
     const consent = hasConsent('forms');
     $('[data-give-permission]').hidden = consent;
     const text = $('[data-give-challenge]');

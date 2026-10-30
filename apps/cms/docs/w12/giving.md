@@ -170,6 +170,10 @@ cancels and then sends a signed webhook).
   provider down, receipt once / retry, feature off with no DB read and no network, logs free of personal data).
 - `cd apps/cms && npx vitest run --project integration tests/integration/giving.test.ts` (real schema + PostgreSQL).
 - `node --test unit-tests/giving-public.test.js` (integer money parsing, checkout allow-list, /give/ host routes).
+- `npm run test:giving` (Playwright, desktop + mobile, CMS API and Turnstile routed in the browser; port 6293): the
+  form sends integer minor units only, currency switch, anonymous sends no name, client and server errors are announced
+  without leaving the page, a foreign checkout URL is refused, Turnstile loads only with consent, the return page polls
+  and then strips the reference from the URL, the ask appears only when giving is on; axe WCAG 2.2 AA clean.
 - Manual: `PAYSTACK_SECRET_KEY=sk_test_<anything 16+ chars> node apps/cms/scripts/fake-paystack.mjs --port 3291 --webhook http://127.0.0.1:<cms port>/api/public/giving/webhook/paystack`,
   then run the CMS with `PAYSTACK_API_BASE=http://127.0.0.1:3291` and the same key (never in production: refused there).
 
