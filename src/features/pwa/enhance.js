@@ -50,10 +50,12 @@ function litePill() {
   const hidden=isLite()&&document.querySelector('#app img[data-lite-src]');
   if(!hidden){pill?.remove();return;}
   if(pill)return;
+  // In the page flow at the top of the content (never a fixed overlay that could hide focus or content).
   pill=document.createElement('div');pill.className='ct-lite-pill';
-  pill.innerHTML='<span>Data saver is on.</span> <button type="button" data-lite-show>Show images</button>';
+  pill.innerHTML='<p>Data saver is on: images load when you ask.</p><button type="button" data-lite-show>Show images</button>';
   pill.querySelector('button').addEventListener('click',()=>{revealImages(document);pill.remove();});
-  document.body.append(pill);
+  const main=document.querySelector('#main');
+  if(main)main.prepend(pill);else document.body.prepend(pill);
 }
 // Never on a first visit: offered from the third separate visit, once per 60 days if dismissed.
 export function installEligible(visits,now=Date.now()) {

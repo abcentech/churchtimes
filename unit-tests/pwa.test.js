@@ -191,3 +191,13 @@ test('media: AVIF sizes become a typed <source> only, LQIP blur-up is validated,
   const odd=normalizePublicMedia({...record,sizes:{...record.sizes,cardAvif:{...record.sizes.cardAvif,height:800},heroAvif:{url:null}}},cms);
   assert.deepEqual(cmsSources(odd).avif,[]);
 });
+test('fonts: Newsreader carries ẹ ọ ị ụ and tone marks in its lazy subset; missing hooked letters are known',async()=>{
+  const {fontCoverage}=await import('../tools/check-font-coverage.mjs');
+  const file=name=>new URL('../node_modules/@fontsource-variable/newsreader/files/'+name,import.meta.url);
+  const vietnamese=await fontCoverage(file('newsreader-vietnamese-wght-normal.woff2')),latin=await fontCoverage(file('newsreader-latin-wght-normal.woff2'));
+  for(const c of 'ẹẸọỌịỊụỤ')assert.ok(!vietnamese.yoruba.includes(c)&&!vietnamese.igbo.includes(c),c);
+  assert.deepEqual(vietnamese.combining,[]);assert.deepEqual(latin.combining,[]);
+  for(const c of 'àáèéìíòóùú')assert.ok(!latin.yoruba.includes(c),c);
+  // No Newsreader subset has these; they render in the system fallback (documented in speed.md).
+  assert.deepEqual(latin.hausa.filter(c=>'ɓɗƙ'.includes(c)),['ɓ','ɗ','ƙ']);
+});

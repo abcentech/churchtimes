@@ -58,6 +58,8 @@ self.addEventListener('install',event=>{
     const shell=await caches.open(SHELL_CACHE);
     // The offline page is required; everything else is best effort (usually an HTTP-cache hit).
     await shell.add(new Request(absolute(CT_PWA.offline),{cache:'reload'}));
+    // The front page is the offline shell: the bundled edition renders without the network.
+    await shell.add(absolute(CT_PWA.base)).catch(()=>{});
     await Promise.all(CT_PWA.statics.filter(path=>path!=='offline.html').map(path=>shell.add(absolute(CT_PWA.base+path)).catch(()=>{})));
     const assets=await caches.open(ASSETS_CACHE);
     await Promise.all(CT_PWA.precache.map(absolute).map(async url=>{

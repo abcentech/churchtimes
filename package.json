@@ -27,7 +27,9 @@
     "check:reader-budget": "node tools/check-reader-budget.mjs",
     "test:giving": "playwright test --config playwright.giving.config.js",
     "giving:reconcile": "npm --prefix apps/cms run giving:reconcile --",
-    "whatsapp:brief": "npm --prefix apps/cms run whatsapp:brief --"
+    "whatsapp:brief": "npm --prefix apps/cms run whatsapp:brief --",
+    "test:pwa": "playwright test --config playwright.pwa.config.js",
+    "check:fonts": "node tools/check-font-coverage.mjs"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
