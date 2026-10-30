@@ -162,3 +162,32 @@ test('host routes: manifest, worker and offline page with explicit cache headers
     await run('/a-story/',{'save-data':'on'});assert.equal(typeof respond.transform,'function');
   } finally {await rm(dist,{recursive:true,force:true});}
 });
+test('media: AVIF sizes become a typed <source> only, LQIP blur-up is validated, dimensions stay fixed',async()=>{
+  const {normalizePublicMedia}=await import('../src/lib/published-articles.js');
+  const {cmsImage,cmsPreload,cmsSources}=await import('../src/lib/cms-media.js');
+  const cms='https://cms.example.test',lqip='data:image/webp;base64,UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA';
+  const record={url:'/api/media/file/choir.jpg',mimeType:'image/jpeg',width:1800,height:1000,alt:'The choir',lqip,sizes:{
+    card:{url:'/api/media/file/choir-800x444.webp',width:800,height:444,mimeType:'image/webp'},
+    hero:{url:'/api/media/file/choir-1600x889.webp',width:1600,height:889,mimeType:'image/webp'},
+    cardAvif:{url:'/api/media/file/choir-800x444.avif',width:800,height:444,mimeType:'image/avif'},
+    heroAvif:{url:'/api/media/file/choir-1600x889.avif',width:1600,height:889,mimeType:'image/avif'},
+    thumbnail:{url:null,width:null,height:null,mimeType:null}}};
+  const media=normalizePublicMedia(record,cms);
+  assert.equal(media.lqip,lqip);
+  assert.ok(media.variants.every(v=>!v.url.endsWith('.avif')),'no AVIF in the <img> fallback');
+  assert.deepEqual(media.avif.map(v=>v.width),[800,1600]);
+  const html=cmsImage(media,{eager:true});
+  assert.match(html,/^<picture><source type="image\/avif" srcset="https:\/\/cms\.example\.test\/api\/media\/file\/choir-800x444\.avif 800w, [^"]+1600x889\.avif 1600w" sizes="[^"]+"><img /);
+  assert.match(html,/<img class="cms-image" src="[^"]+\.webp" srcset="[^"]*\.webp 800w[^"]*" sizes="[^"]+" width="800" height="444"/);
+  assert.ok(html.includes(`style="background:url(${lqip}) center/cover"`));
+  assert.match(cmsPreload(media),/type="image\/avif"[^>]*imagesrcset="[^"]*\.avif 800w/);
+  // Bad or oversized LQIP values and legacy media without AVIF render the plain <img>.
+  for(const bad of ['javascript:alert(1)','data:image/svg+xml;base64,PHN2Zz4=','data:image/webp;base64,'+'A'.repeat(1500),'data:image/webp;base64,AA") ;x']){
+    const plain=normalizePublicMedia({...record,lqip:bad,sizes:{card:record.sizes.card}},cms);
+    assert.equal(plain.lqip,null,bad.slice(0,30));assert.deepEqual(plain.avif,[]);
+    assert.match(cmsImage(plain),/^<img /);assert.doesNotMatch(cmsImage(plain),/style=/);
+  }
+  // An AVIF crop with a different ratio would change the box: it is dropped.
+  const odd=normalizePublicMedia({...record,sizes:{...record.sizes,cardAvif:{...record.sizes.cardAvif,height:800},heroAvif:{url:null}}},cms);
+  assert.deepEqual(cmsSources(odd).avif,[]);
+});

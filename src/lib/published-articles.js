@@ -44,6 +44,8 @@ export function mediaUrl(value, baseUrl) {
     return url.pathname.startsWith('/api/media/file/') ? url.href : '';
   } catch { return ''; }
 }
+// Server-generated 16 px blur (schema contract section 2): a short base64 image data URI or nothing.
+export const validLqip=value=>typeof value==='string' && value.length<=1500 && /^data:image\/(?:webp|jpeg|png);base64,[A-Za-z0-9+/]+={0,2}$/.test(value) ? value : null;
 export function normalizePublicMedia(record, baseUrl) {
   if (!record || typeof record !== 'object') return null;
   if (!['image/jpeg','image/png','image/webp'].includes(record.mimeType)) return null;
@@ -51,14 +53,17 @@ export function normalizePublicMedia(record, baseUrl) {
   if (!url) return null;
   const dimension = value => Number.isSafeInteger(value) && value > 0 && value <= 20000 ? value : null;
   const original={url,width:dimension(record.width),height:dimension(record.height)};
-  const variants=[original,...Object.values(record.sizes || {}).slice(0,32).map(size=>({
-    url:mediaUrl(size?.url,baseUrl),width:dimension(size?.width),height:dimension(size?.height),
-  }))].filter(v=>v.url && v.width && v.height).sort((a,b)=>a.width-b.width)
+  const sizes=Object.values(record.sizes || {}).slice(0,32).filter(size=>size && typeof size==='object');
+  const pick=size=>({url:mediaUrl(size.url,baseUrl),width:dimension(size.width),height:dimension(size.height)});
+  const unique=list=>list.filter(v=>v.url && v.width && v.height).sort((a,b)=>a.width-b.width)
     .filter((v,i,all)=>all.findIndex(other=>other.width===v.width)===i);
+  // AVIF sizes are only ever offered as <source type="image/avif">; the <img> fallback stays JPEG/PNG/WebP.
+  const variants=unique([original,...sizes.filter(size=>size.mimeType!=='image/avif').map(pick)]);
+  const avif=unique(sizes.filter(size=>size.mimeType==='image/avif').map(pick));
   const choose = minimum => variants.find(v=>v.width>=minimum) || variants.at(-1) || original;
   const card=choose(420),hero=choose(800);
   return {
-    ...original,variants,mimeType:record.mimeType,
+    ...original,variants,avif,lqip:validLqip(record.lqip),mimeType:record.mimeType,
     fileSize:Number.isSafeInteger(record.filesize) && record.filesize>0 ? record.filesize : null,
     cardUrl:mediaUrl(record.sizes?.card?.url,baseUrl) || card.url,
     cardWidth:mediaUrl(record.sizes?.card?.url,baseUrl) ? dimension(record.sizes.card.width) : card.width,
