@@ -1,0 +1,21 @@
+/* Reader display preferences (W12 A). Every theme colour is a token; the head bootstrap sets data-theme/data-contrast/data-text before first paint. */
+:root{--panel:#172b2e;--on-panel:#fffefa;--btn-hover:#29474a;--sel:#d7dcca;--error:#923522;--error-bg:#fff3eb;--field:#82908b;--rz:1}
+:root[data-theme=dark]{color-scheme:dark;--paper:#111819;--white:#182224;--ink:#e8ebe4;--muted:#a9b3ae;--line:#36443f;--clay:#eb9c80;--gold:#d9b086;--sage:#1d2a2b;--panel:#0b1213;--on-panel:#f3f1ea;--btn-hover:#c9d2cc;--sel:#3c5a55;--error:#ffab91;--error-bg:#2a1712;--field:#8d9a95}
+:root[data-contrast=more]{--paper:#fff;--white:#fff;--ink:#000;--muted:#2e3436;--line:#4a4a4a;--clay:#7a2810;--gold:#7a5a20;--sage:#eef0ea;--panel:#000;--on-panel:#fff;--btn-hover:#2e3436;--error:#7a1d0e;--field:#000}
+:root[data-contrast=more][data-theme=dark]{--paper:#000;--white:#0a0a0a;--ink:#fff;--muted:#e2e6e3;--line:#b8bfbb;--clay:#ffb79c;--gold:#f0cf9f;--sage:#141a1a;--btn-hover:#e2e6e3;--error:#ffc4b3;--field:#fff}
+::selection{background:var(--sel)}
+.skip-link,.utility-bar,.lead-story,.interview-feature,.lead-save.is-saved{background:var(--panel)}
+.skip-link,.utility-bar,.lead-content,.lead-save,.image-source,.connect-band,.interview-feature{color:var(--on-panel)}
+.lead-content a:focus-visible,.lead-save:focus-visible,.interview-copy a:focus-visible,.connect-band a:focus-visible{outline-color:var(--on-panel)}
+.button-dark:hover{background:var(--btn-hover)}.button-light:hover{background:var(--white)}.perspective-feature{background:var(--sage)}.perspective-number,.search-input-wrap input::placeholder{color:var(--muted)}
+.reading-link span{color:var(--paper);min-width:18px;line-height:18px;border-radius:9px}
+[data-theme=dark] :is(.article-body,.advertising-slot,.reader-gallery) img{background:#fff}
+@media(max-width:430px){.wordmark{font-size:min(61px,14.5vw)}.footer-wordmark{font-size:min(45px,12.2vw)}.wordmark i{font-size:.95em}.utility-inner{flex-wrap:wrap;column-gap:12px;padding-block:6px}.utility-inner>span{flex-basis:100%}.utility-inner a{white-space:nowrap}}
+/* Text size: zoom the reading column only, never ads or forms inside it. */
+[data-text="0"]{--rz:.9}[data-text="2"]{--rz:1.12}[data-text="3"]{--rz:1.25}[data-text="4"]{--rz:1.4}
+:is(.article-body,.article-deck,.reader-keypoints){zoom:var(--rz)}.article-body :is(.advertising-slot,[data-reader-pending],.reader-form-section,.original-callout){zoom:calc(1/var(--rz))}
+/* Reading progress: scroll-driven where supported; a lazy scroll listener sets --reader-progress elsewhere. */
+:is(.article-page,.newsroom-report article){view-timeline:--reader-article block}
+:is(.article-page,.newsroom-report article)::before{content:"";position:fixed;inset:0 0 auto;height:4px;z-index:95;pointer-events:none;background:var(--clay);transform-origin:0;transform:scaleX(var(--reader-progress,0))}
+@supports(animation-timeline:view()){:is(.article-page,.newsroom-report article)::before{animation:reader-progress linear both;animation-timeline:--reader-article;animation-range:contain}}
+@keyframes reader-progress{to{transform:scaleX(1)}}

@@ -3,7 +3,7 @@
 :where(select,textarea):focus-visible{outline:3px solid var(--clay);outline-offset:3px}
 
 /* Keep secondary navigation and supporting copy legible on mobile. */
-@media(max-width:760px){.utility-inner>span,.utility-inner>div{font-size:10px}.footer-main>div:not(:first-child),.footer-bottom,.footer-main>div .eyebrow,.connect-action small,.connect-inner .eyebrow,.small{font-size:12px}}
+@media(max-width:760px){.utility-inner>span,.utility-inner>div{font-size:12px}.footer-main>div:not(:first-child),.footer-bottom,.footer-main>div .eyebrow,.connect-action small,.connect-inner .eyebrow,.small{font-size:12px}}
 
 @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
 .wordmark i svg{width:.11em;height:.11em;vertical-align:baseline;display:inline}

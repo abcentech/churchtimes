@@ -40,6 +40,7 @@ for (const width of widths) {
 }
 
 test('public pages and search dialog have no detected WCAG AA violations', async ({ page }) => {
+  test.setTimeout(120_000); // six full-page axe scans exceed the 30 s default on busy machines
   for (const route of ['home', 'contact', 'advertise', 'search/faith', `story/${edition.stories[3].slug}`, 'saved']) {
     await page.goto(`./#${route}`);
     const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze();

@@ -8,11 +8,13 @@
       if (!document.querySelector('base')) {
         const base = document.createElement('base');
         const path = location.pathname;
-        const report = path.match(/^(.*\/)reports\/[^/]+\/?$/);
+        const report = path.match(/^(.*\/)(?:(?:reports|author|topic|about)\/[^/]+|corrections)\/?$/);
         base.href = report ? report[1] : path.endsWith('/') ? path : path.slice(0, path.lastIndexOf('/') + 1);
         document.head.prepend(base);
       }
     </script>
+    <!-- Apply saved display preferences before first paint (no theme flash). Keys and logic mirror src/lib/reader-prefs.js. -->
+    <script id="reader-prefs-bootstrap">(function(){var d=document.documentElement,q=function(m){return matchMedia('(prefers-'+m+')')},g=function(k){try{return localStorage.getItem('ct-'+k)}catch(e){}};function a(){var t=g('theme'),c=g('contrast'),z=g('text');d.dataset.theme=t=='dark'||t=='light'?t:q('color-scheme: dark').matches?'dark':'light';if(c=='more'||c!='normal'&&q('contrast: more').matches)d.dataset.contrast='more';else delete d.dataset.contrast;if(/^[0-4]$/.test(z))d.dataset.text=z;else delete d.dataset.text}a();q('color-scheme: dark').addEventListener('change',a);q('contrast: more').addEventListener('change',a);addEventListener('storage',a);window.ctReaderPrefs=a})()</script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#172b2e">
     <meta name="description" content="Church Times Nigeria: news, features, interviews and perspectives on faith and public life.">
