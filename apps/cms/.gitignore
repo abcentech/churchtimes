@@ -11,3 +11,4 @@ next-env.d.ts
 *.log
 .staging*
 docs/evidence/cross-app-steps/
+private-reports/

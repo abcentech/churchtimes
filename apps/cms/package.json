@@ -36,6 +36,7 @@
     "import:convert-wxr": "tsx scripts/import-convert-stats.ts",
     "import:link-audit": "tsx scripts/import-link-audit.ts",
     "import:categorise-eval": "tsx scripts/import-categorise-eval.ts",
+    "whatsapp:brief": "tsx scripts/whatsapp-brief.ts",
     "perf:read": "tsx scripts/perf-read-paths.ts",
     "load:test": "tsx scripts/load-test.ts",
     "import:redirects": "payload run src/scripts/importRedirects.ts --",

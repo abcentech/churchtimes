@@ -24,7 +24,8 @@
     "serve:public": "node tools/serve-public.mjs",
     "test:quality": "node tools/run-public-quality.mjs",
     "check:redirects": "node tools/check-redirects.mjs",
-    "check:reader-budget": "node tools/check-reader-budget.mjs"
+    "check:reader-budget": "node tools/check-reader-budget.mjs",
+    "whatsapp:brief": "npm --prefix apps/cms run whatsapp:brief --"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
