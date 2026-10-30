@@ -43,6 +43,9 @@ export function articleSchema(article,canonical,{sameAs}={}) {
     ...(canonical ? {url:canonical,mainEntityOfPage:canonical} : {}),
     ...(article.publishedAt ? {datePublished:article.publishedAt} : {}),
     ...(article.bylineName ? {author:{'@type':'Person',name:article.bylineName}} : {}),
+    // W12: a public author profile links to its /author/{slug}/ page; the editor-set Updated date is the substantive change.
+    ...(article.bylineProfile ? {author:{'@type':'Person',name:article.bylineProfile.name,...(canonical?{url:canonical.replace(/(?:reports\/)?[^/]+\/$/,`author/${article.bylineProfile.slug}/`)}:{})}} : {}),
+    ...(article.lastSubstantiveUpdate ? {dateModified:article.lastSubstantiveUpdate} : {}),
     ...(article.category ? {articleSection:article.category} : {}),
     ...(image ? {image:[{'@type':'ImageObject',url:image.url,...(image.width?{width:image.width,height:image.height}:{})}]} : {}),
     publisher:{'@type':'Organization',name:'Church Times Nigeria',...(sameAs?.length?{sameAs}:{})}};

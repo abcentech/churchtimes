@@ -3,6 +3,7 @@ import {fetchPublishedPage,fetchPublicCategories} from '../src/lib/published-art
 import {siteCanonical,HOME_DESCRIPTION,SITE_NAME} from '../src/lib/public-metadata.js';
 import {reportPath} from '../src/lib/public-routes.js';
 import {cmsSources} from '../src/lib/cms-media.js';
+import {readerSitemapPaths} from './public-routes/reader-pages.mjs';
 export const SITEMAP_PAGE_SIZE=100;
 const MAX_SITEMAP_PAGES=1000,MAX_CATEGORY_PAGES=20,CACHE_MS=60000;
 export const xml=value=>String(value ?? '').replace(/[^\u0009\u000a\u000d\u0020-\ud7ff\ue000-\ufffd\u{10000}-\u{10ffff}]/gu,'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
@@ -41,6 +42,8 @@ export function createPublicFeeds({cmsUrl,siteUrl,basePath='/',indexable=false,a
     if(!page || page===1) {
       urls.push(...PUBLIC_STATIC_PAGES.map(path=>({url:canonical(path)})));
       urls.push(...(await categories()).map(category=>({url:canonical('category/'+category.slug+'/')})));
+      // Trust pages and public author profiles; an outage of those endpoints never blocks the article sitemap.
+      urls.push(...(await readerSitemapPaths({cmsUrl,fetchImpl}).catch(()=>[])).map(path=>({url:canonical(path)})));
     }
     const seen=new Set();
     for(const article of result.articles.slice(0,SITEMAP_PAGE_SIZE)) {

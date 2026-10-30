@@ -44,13 +44,15 @@ test('The settings dialog uses labelled radio groups with the saved values check
 });
 
 // Run the real inline head script against fake browser globals: it must agree with resolvePrefs.
-function runBootstrap(saved,{dark=false,more=false}={}) {
+function runBootstrap(saved,env={}) {
   const html=readFileSync(new URL('../src/index.template.html',import.meta.url),'utf8');
   const source=html.match(/<script id="reader-prefs-bootstrap">([\s\S]*?)<\/script>/)[1];
-  const element=root(),listeners=[];
-  const context={document:{documentElement:element},localStorage:saved===null?broken:memory(saved),matchMedia:q=>({matches:q.includes('dark')?dark:more,addEventListener:(type,fn)=>listeners.push(fn)}),addEventListener:()=>{},window:{}};
+  const element=root(),queries=[];
+  // Storage is read by key (localStorage['ct-theme']); null simulates storage that throws (blocked site data).
+  const storage=saved===null?new Proxy({},{get(){throw new Error('denied');}}):{...saved};
+  const context={document:{documentElement:element},localStorage:storage,matchMedia:q=>{const list={query:q,matches:Boolean(q.includes('dark')?env.dark:env.more)};queries.push(list);return list;}};
   vm.runInNewContext(source,context);
-  return {dataset:element.dataset,listeners,reapply:context.window.ctReaderPrefs};
+  return {dataset:element.dataset,listeners:queries.filter(list=>typeof list.onchange==='function')};
 }
 test('The inline head bootstrap applies saved preferences before first paint',()=>{
   assert.deepEqual({...runBootstrap({}).dataset},{theme:'light'});
@@ -58,7 +60,10 @@ test('The inline head bootstrap applies saved preferences before first paint',()
   assert.deepEqual({...runBootstrap({'ct-theme':'light','ct-contrast':'normal','ct-text':'2'},{dark:true,more:true}).dataset},{theme:'light',text:'2'});
   assert.deepEqual({...runBootstrap({'ct-theme':'x','ct-text':'7'}).dataset},{theme:'light'});
   assert.deepEqual({...runBootstrap(null,{dark:true}).dataset},{theme:'dark'});
-  const run=runBootstrap({});assert.equal(run.listeners.length,2);assert.equal(typeof run.reapply,'function');
+  const run=runBootstrap({});assert.deepEqual(run.listeners.map(list=>list.query).sort(),['(prefers-color-scheme:dark)','(prefers-contrast:more)']);
+  // A device colour-scheme change re-runs the same decision without a reload.
+  const env={dark:false},live=runBootstrap({},env);assert.equal(live.dataset.theme,'light');
+  env.dark=true;live.listeners.find(list=>list.query.includes('dark')).onchange();assert.equal(live.dataset.theme,'dark');
 });
 
 test('No public stylesheet sets interface type below 12px',()=>{

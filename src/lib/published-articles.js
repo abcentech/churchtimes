@@ -81,6 +81,7 @@ function legacyUrl(value) {
     return url.protocol === 'https:' && ['churchtimesnigeria.net','www.churchtimesnigeria.net'].includes(url.hostname) && !url.username && !url.password ? url.href : '';
   } catch { return ''; }
 }
+const publicRef = value => value && value.isPublic === true && validSlug(value.slug) && plainText(value.name,120) ? {name:plainText(value.name,120),slug:value.slug} : null;
 export function normalizePublishedArticle(record, {baseUrl} = {}) {
   if (!record || record.status !== 'published') return null;
   const slug = plainText(record.slug, 160);
@@ -97,6 +98,12 @@ export function normalizePublishedArticle(record, {baseUrl} = {}) {
     updatedAt: publicationDate(record.updatedAt),
     category: plainText(typeof record.category === 'object' ? record.category?.title : record.category, 100),
     bylineName: plainText(record.bylineName,200),
+    // W12 reader fields (apps/cms/docs/w12/schema-contract.md section 1); a non-public byline profile stays an id and is dropped.
+    kicker: plainText(record.kicker,60),
+    contentType: ['news','analysis','opinion','sponsored','explainer','factcheck'].includes(record.contentType) ? record.contentType : 'news',
+    keyPoints: Array.isArray(record.keyPoints) ? record.keyPoints.slice(0,5).map(point=>plainText(point?.text,200)).filter(Boolean) : [],
+    lastSubstantiveUpdate: publicationDate(record.lastSubstantiveUpdate),
+    bylineProfile: publicRef(record.bylineAuthor),
     featuredImage: normalizePublicMedia(record.featuredImage,baseUrl),
     legacyUrl:legacyUrl(record.legacyUrl),
     legacyId:Number.isSafeInteger(record.legacyId) && record.legacyId>0 ? record.legacyId : null,

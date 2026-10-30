@@ -22,6 +22,8 @@ import {createVerseOfTheDayRoute} from './public-routes/verse-of-the-day.mjs';
 import {applyShareCardMeta} from './public-routes/share-card-meta.mjs';
 import {createGivingRoutes} from './public-routes/giving.mjs';
 import {createPwaRoutes} from './public-routes/pwa.mjs';
+import {createReaderPages,createReaderStylesheet} from './public-routes/reader-pages.mjs';
+import {articleHeaderHTML,keyPointsHTML} from '../src/lib/reader-article.js';
 import {publicOrigin} from '../src/lib/public-url.js';
 import {normalizeBasePath,reportPath,articlePathTemplate as validateArticlePathTemplate,HOST_ARTICLE_PATH_TEMPLATE,reportSlug,articleCanonical,articleSchema,safeJSON} from '../src/lib/public-routes.js';
 const escape=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -38,6 +40,7 @@ export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(file
   const pwaRoute=createPwaRoutes({dist,basePath,articlePathTemplate});
   const publicFeeds=createPublicFeeds({cmsUrl,siteUrl,basePath,indexable,fetchImpl,articlePathTemplate});
   const verseOfTheDay=createVerseOfTheDayRoute({dist,basePath});
+  const readerStylesheet=createReaderStylesheet(dist),readerPages=createReaderPages({dist,cmsUrl,siteUrl,basePath,indexable,fetchImpl,articlePathTemplate,extraHead:settings.head,stylesheet:readerStylesheet});
   const redirects=createPublicRedirects({file:redirectsFile,endpoint:redirectsUrl,patterns:redirectPatterns,allowedHosts:redirectAllowedHosts,siteUrl,fetchImpl,basePath,articlePathTemplate,resolveLegacyId:cmsUrl ? legacyId=>fetchPublishedLegacyArticle({legacyId,baseUrl:cmsUrl,fetchImpl,timeoutMs:6000}) : undefined});
   async function htmlPage(article,message) {
     let html=await readFile(resolve(dist,'index.html'),'utf8');
@@ -53,9 +56,9 @@ export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(file
     if(article) {
       html=html.replace(/<title>[^<]*<\/title>/,()=>`<title>${escape(article.seoTitle || article.title)} — Church Times Nigeria</title>`);
       html=replaceMeta(html,'name','description',article.seoDescription || article.excerpt);
-      metadata+=`<script id="public-article" type="application/json">${safeJSON(article)}</script>`;
+      metadata+=await readerStylesheet()+`<script id="public-article" type="application/json">${safeJSON(article)}</script>`;
       metadata+=`<script id="article-schema" type="application/ld+json">${safeJSON(articleSchema(article,canonical,{sameAs:SOCIAL_SAME_AS}))}</script>`;
-      body=`<main id="main" class="container section-list newsroom-report"><a href="${escape(basePath)}#latest">Latest published reports</a><article><header class="article-header"><p>${escape(article.category)}</p><h1>${escape(article.title)}</h1><p class="article-deck">${escape(article.excerpt)}</p>${article.bylineName?`<p>By ${escape(article.bylineName)}</p>`:''}${article.publishedAt?`<time datetime="${escape(article.publishedAt)}">${escape(article.publishedAt.slice(0,10))}</time>`:''}</header>${cmsFigure(article.featuredImage,{eager:true,fallbackAlt:article.title})}<div class="article-body newsroom-article-body">${renderArticleContent(article.content,{baseUrl:cmsUrl})}</div>${canonical?shareBarHTML({title:article.title,url:canonical}):''}${article.corrections.length?`<section class="article-corrections"><h2>Corrections & updates</h2>${article.corrections.map(c=>`<p>${escape(c.note)}</p>`).join('')}</section>`:''}${article.legacyUrl?`<p><a href="${escape(article.legacyUrl)}" rel="noopener noreferrer">Original publication</a></p>`:''}</article></main>`;
+      body=`<main id="main" class="container section-list newsroom-report"><a href="${escape(basePath)}#latest">Latest published reports</a><article>${articleHeaderHTML(article,{base:basePath})}${cmsFigure(article.featuredImage,{eager:true,fallbackAlt:article.title})}${keyPointsHTML(article)}<div class="article-body newsroom-article-body">${renderArticleContent(article.content,{baseUrl:cmsUrl})}</div>${canonical?shareBarHTML({title:article.title,url:canonical}):''}${article.corrections.length?`<section class="article-corrections"><h2>Corrections & updates</h2>${article.corrections.map(c=>`<p>${escape(c.note)}</p>`).join('')}</section>`:''}${article.legacyUrl?`<p><a href="${escape(article.legacyUrl)}" rel="noopener noreferrer">Original publication</a></p>`:''}</article></main>`;
     }
     return {html:html.replace('</head>',()=>metadata+'</head>').replace('<div id="app"></div>',()=>`<div id="app">${body}</div>`),robots};
   }
@@ -80,6 +83,7 @@ export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(file
       if(await verseOfTheDay(url,respond))return;
       if(await givingRoutes(url,respond))return;
       if(await (await import('./public-routes/topic-pages.mjs')).topicPages(url,respond,{dist,cmsUrl,siteUrl,basePath,indexable,fetchImpl,extraHead:settings.head,articlePathTemplate,lookupCache}))return;
+      if(await readerPages(url,respond))return;
       if(await publicFeeds(url,respond) || await publicPages(url,respond))return;
       const slug=reportSlug(url.pathname,basePath,articlePathTemplate);
       if(slug || (articlePathTemplate==='/reports/{slug}/' && url.pathname.startsWith(basePath+'reports/'))) {

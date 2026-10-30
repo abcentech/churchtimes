@@ -1,0 +1,74 @@
+/* Article furniture, author and trust pages, and the article print stylesheet (W12 A). Lazy: loaded with the article
+   renderer on the client and linked by the public host on the pages it server-renders. Colours are theme tokens only. */
+.reader-type{font-weight:700}
+.reader-type:not([data-type=news]){border:1px solid currentColor;padding:1px 6px}
+.reader-type[data-type=sponsored]{background:var(--ink);border-color:var(--ink);color:var(--paper)}
+.reader-kicker{font:italic 400 21px/1.3 var(--serif);color:var(--clay);margin:20px 0 -10px;overflow-wrap:anywhere}
+.reader-disclosure{max-width:800px;margin-top:16px;padding:8px 14px;border-left:3px solid var(--clay);font-size:14px;line-height:1.6;color:var(--ink);background:var(--sage)}
+.reader-disclosure[data-type=sponsored]{border-left-color:var(--ink)}
+.article-meta .reader-meta{display:flex;flex-wrap:wrap;gap:2px 6px;margin-top:6px;font-size:13px;color:var(--muted)}
+.newsroom-byline a{text-decoration:underline;text-underline-offset:3px}
+.reader-updated{color:var(--ink);font-weight:600}
+.reader-keypoints{max-width:700px;margin:36px auto 0;padding:22px 24px;background:var(--sage);border-top:3px solid var(--clay)}
+.reader-keypoints h2{font:600 13px/1.4 var(--sans);letter-spacing:1.2px;text-transform:uppercase;margin-bottom:10px}
+.reader-keypoints ul{margin:0;padding-left:20px;font:18px/1.6 var(--serif)}
+.reader-keypoints li+li{margin-top:8px}
+.reader-pullquote{margin:40px 0;border-block:1px solid var(--line);padding:6px 0 14px}
+.newsroom-article-body .reader-pullquote blockquote,.reader-pullquote blockquote{margin:0;border:0;padding:18px 0 8px;font:italic 400 30px/1.35 var(--serif);color:var(--ink)}
+.reader-pullquote blockquote p{margin:0}
+.reader-pullquote figcaption{font:600 13px/1.5 var(--sans);letter-spacing:.4px;color:var(--muted)}
+.reader-pullquote figcaption::before{content:"— "}
+.reader-gallery{margin:36px 0}
+.newsroom-article-body .reader-gallery ul,.reader-gallery ul{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:18px;font:inherit}
+.newsroom-article-body .reader-gallery li,.reader-gallery li{margin:0}
+.reader-gallery .reader-gallery-single{grid-template-columns:1fr}
+.reader-gallery .cms-figure{margin:0}
+.reader-gallery ul:not(.reader-gallery-single) img{aspect-ratio:4/3;object-fit:cover}
+.reader-gallery figcaption{font-size:13px;line-height:1.5}
+@media(max-width:760px){.reader-kicker{font-size:19px}.reader-pullquote blockquote,.newsroom-article-body .reader-pullquote blockquote{font-size:25px}.reader-keypoints{padding:18px}.reader-keypoints ul{font-size:17px}}
+/* Author and trust pages */
+.reader-page{max-width:1000px}
+.reader-profile{display:grid;grid-template-columns:128px 1fr;gap:28px;align-items:start;margin:36px 0 12px}
+.reader-profile .reader-avatar{width:128px;height:128px;border-radius:50%;object-fit:cover;background:var(--sage)}
+.reader-profile h1,.reader-page-head h1{font-size:clamp(38px,5vw,60px);line-height:1.05;overflow-wrap:anywhere}
+.reader-role{margin-top:8px;color:var(--muted);font-size:15px}
+.reader-bio p{font:18px/1.7 var(--serif);margin-top:14px;max-width:680px}
+.reader-socials{display:flex;flex-wrap:wrap;gap:8px;list-style:none;padding:0;margin:18px 0 0}
+.reader-socials a{display:inline-flex;align-items:center;min-height:44px;padding:0 14px;border:1px solid var(--line);font-size:14px}
+.reader-socials a:hover{border-color:var(--ink)}
+.reader-page-head{margin:36px 0 24px}
+.reader-page-head p{color:var(--muted);font-size:16px;margin-top:12px;max-width:680px}
+.reader-page h2.reader-section-title{font-size:30px;margin:40px 0 18px;padding-top:18px;border-top:1px solid var(--line)}
+.reader-prose{margin:0 0 32px;max-width:700px}
+.reader-prose p,.reader-prose li{font:19px/1.7 var(--serif)}
+.reader-prose p{margin-bottom:18px}
+.reader-log>li:first-child{border-top:0;padding-top:4px}
+.reader-contact{margin:32px 0;padding:20px 24px;background:var(--sage)}
+.reader-contact h2{font-size:24px;margin-bottom:8px}
+.reader-log{list-style:none;margin:0;padding:0}
+.reader-log>li{border-top:1px solid var(--line);padding:22px 0}
+.reader-log h3{font-size:24px;line-height:1.25;overflow-wrap:anywhere}
+.reader-log h3 a{text-decoration:underline;text-underline-offset:3px}
+.reader-log ul{margin:10px 0 0;padding-left:20px}
+.reader-log li li{margin-top:8px;line-height:1.6}
+.reader-log time{display:block;font-size:13px;color:var(--muted)}
+.reader-pager{display:flex;justify-content:space-between;gap:16px;margin:28px 0}
+.reader-trust-links{display:flex;flex-wrap:wrap;gap:8px 20px;margin-top:16px;font-size:14px}
+.reader-trust-links a{text-decoration:underline;text-underline-offset:3px}
+@media(max-width:600px){.reader-profile{grid-template-columns:1fr;gap:16px}.reader-profile .reader-avatar{width:96px;height:96px}}
+/* Print: the article, its labels, corrections and sources; no navigation, ads, forms or sharing. */
+@media print{
+  :root,:root[data-theme]{--paper:#fff;--white:#fff;--ink:#000;--muted:#333;--line:#999;--clay:#000;--sage:#fff;color-scheme:light}
+  body{background:#fff;color:#000}
+  .utility-bar,.masthead,.nav-shell,.site-footer,.connect-band,dialog,#toast,.skip-link,.advertising-slot,[data-ad-placement],.share-bar,#share-report,.reader-form-section,[data-reader-pending],[data-public-comments],.newsroom-article-end,.breadcrumbs,.related-section,.article-tools,.save-button,.reader-pager{display:none!important}
+  :is(.article-page,.newsroom-report article)::before{display:none}
+  .container{width:100%;max-width:none}
+  .article-body,.article-deck,.reader-keypoints{zoom:1}
+  .article-header h1{font-size:28pt}
+  .article-body>p,.newsroom-article-body p,.newsroom-article-body li{font-size:12pt;line-height:1.5}
+  .reader-keypoints,.reader-disclosure,.reader-contact{border:1px solid #000}
+  .newsroom-article-body a[href^="http"]::after{content:" (" attr(href) ")";font-size:10pt;word-break:break-all}
+  img{max-height:60vh;break-inside:avoid}
+  .reader-pullquote,.reader-gallery li,.reader-keypoints,figure{break-inside:avoid}
+  h1,h2,h3{break-after:avoid}
+}

@@ -1,6 +1,7 @@
 import {renderArticleTable} from './article-table.js';
 import { normalizePublicMedia, cmsFigure } from './cms-media.js';
 import { renderAudioVideo } from './article-av.js';
+import { renderPullQuote, renderGallery } from './reader-blocks.js';
 // Render supported Payload Lexical text and populated public media safely.
 // Unknown nodes, unpopulated relationships and embedded HTML are omitted.
 const escape = text => String(text).replace(/[&<>"']/g, char => ({
@@ -37,6 +38,8 @@ export function renderArticleContent(content, {baseUrl} = {}) {
       return parentType==='paragraph'?link:`<p>${link}</p>`;
     }
     if(node.type==='block' && node.fields?.blockType==='audioVideo') return renderAudioVideo(node.fields,{baseUrl,inline:parentType==='paragraph'});
+    if(node.type==='block' && node.fields?.blockType==='pullQuote') return parentType==='paragraph'?'':renderPullQuote(node.fields);
+    if(node.type==='block' && node.fields?.blockType==='gallery') return parentType==='paragraph'?'':renderGallery(node.fields,{baseUrl});
     if (node.type === 'text' && typeof node.text === 'string') {
       let text = escape(node.text);
       if (node.format & 1) text = `<strong>${text}</strong>`;

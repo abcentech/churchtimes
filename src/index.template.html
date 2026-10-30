@@ -14,7 +14,7 @@
       }
     </script>
     <!-- Apply saved display preferences before first paint (no theme flash). Keys and logic mirror src/lib/reader-prefs.js. -->
-    <script id="reader-prefs-bootstrap">(function(){var d=document.documentElement,q=function(m){return matchMedia('(prefers-'+m+')')},g=function(k){try{return localStorage.getItem('ct-'+k)}catch(e){}};function a(){var t=g('theme'),c=g('contrast'),z=g('text');d.dataset.theme=t=='dark'||t=='light'?t:q('color-scheme: dark').matches?'dark':'light';if(c=='more'||c!='normal'&&q('contrast: more').matches)d.dataset.contrast='more';else delete d.dataset.contrast;if(/^[0-4]$/.test(z))d.dataset.text=z;else delete d.dataset.text}a();q('color-scheme: dark').addEventListener('change',a);q('contrast: more').addEventListener('change',a);addEventListener('storage',a);window.ctReaderPrefs=a})()</script>
+    <script id="reader-prefs-bootstrap">(d=>{let g=k=>{try{return localStorage['ct-'+k]}catch(e){}},q=m=>matchMedia('(prefers-'+m+')'),a=()=>{let t=g('theme'),c=g('contrast'),z=g('text'),D=d.dataset;D.theme=/^(light|dark)$/.test(t)?t:q('color-scheme:dark').matches?'dark':'light';c=='more'||c!='normal'&&q('contrast:more').matches?D.contrast='more':delete D.contrast;/^[0-4]$/.test(z)?D.text=z:delete D.text};a();q('color-scheme:dark').onchange=q('contrast:more').onchange=a})(document.documentElement)</script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#172b2e">
     <meta name="description" content="Church Times Nigeria: news, features, interviews and perspectives on faith and public life.">
