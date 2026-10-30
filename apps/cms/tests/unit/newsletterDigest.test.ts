@@ -37,7 +37,7 @@ describe('normaliseDigestSettings', () => {
       maxStoriesPerDigest: 6,
       includeDevotional: false,
     })
-    const odd = normaliseDigestSettings({ enabled: 'true', sendHourLagos: 24, dailySendCap: -3, maxStoriesPerDigest: 99, fromName: 'A\r\nB "<x>"' })
+    const odd = normaliseDigestSettings({ enabled: 'true', sendHourLagos: 24, dailySendCap: -3, maxStoriesPerDigest: 21, fromName: 'A\r\nB "<x>"' })
     expect(odd.enabled).toBe(false)
     expect(odd.sendHourLagos).toBe(6)
     expect(odd.dailySendCap).toBe(100)
@@ -46,8 +46,8 @@ describe('normaliseDigestSettings', () => {
   })
 
   it('keeps valid values, including a cap of 0', () => {
-    const s = normaliseDigestSettings({ enabled: true, dailyDigestEnabled: true, sendHourLagos: 0, dailySendCap: 0, maxStoriesPerDigest: 12 })
-    expect(s).toMatchObject({ enabled: true, dailyDigestEnabled: true, sendHourLagos: 0, dailySendCap: 0, maxStoriesPerDigest: 12 })
+    const s = normaliseDigestSettings({ enabled: true, dailyDigestEnabled: true, sendHourLagos: 0, dailySendCap: 0, maxStoriesPerDigest: 20 })
+    expect(s).toMatchObject({ enabled: true, dailyDigestEnabled: true, sendHourLagos: 0, dailySendCap: 0, maxStoriesPerDigest: 20 })
   })
 })
 
@@ -59,6 +59,9 @@ describe('story selection', () => {
     expect(
       normaliseDigestStory({ id: 9, slug: 'ok', title: ' T\n<b> ', excerpt: 'E', publishedAt: '2026-10-30T08:00:00+01:00', category: { title: 'Faith' }, content: { secret: 1 } }),
     ).toEqual({ id: '9', slug: 'ok', title: 'T <b>', excerpt: 'E', publishedAt: '2026-10-30T07:00:00.000Z', category: 'Faith' })
+    expect(
+      normaliseDigestStory({ id: 9, slug: 'ok', title: 'Ad', publishedAt: '2026-10-30T08:00:00Z', category: { title: 'Faith' }, contentType: 'sponsored' })?.category,
+    ).toBe('Sponsored')
   })
 
   it('is deterministic: window, newest first, id tie-break, de-duplicated, capped', () => {

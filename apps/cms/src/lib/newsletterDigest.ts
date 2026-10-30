@@ -33,7 +33,7 @@ export const DIGEST_DEFAULTS: DigestSettings = {
 }
 
 /** Hard ceilings that a settings value can never exceed, whatever is stored. */
-export const DIGEST_LIMITS = { maxStories: 12, maxDailyCap: 10_000 } as const
+export const DIGEST_LIMITS = { maxStories: 20, maxDailyCap: 10_000 } as const
 
 const intIn = (value: unknown, min: number, max: number, fallback: number): number => {
   const n = typeof value === 'number' ? value : typeof value === 'string' && value.trim() ? Number(value) : Number.NaN
@@ -83,7 +83,8 @@ export function normaliseDigestStory(record: unknown): DigestStory | null {
     title,
     excerpt: cleanCardText(r.excerpt, 600),
     publishedAt,
-    category: cleanCardText(category, 80),
+    // Paid placements stay labelled in the inbox too (schema-contract `contentType`).
+    category: r.contentType === 'sponsored' ? 'Sponsored' : cleanCardText(category, 80),
   }
 }
 
