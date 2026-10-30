@@ -25,6 +25,7 @@
     "test:quality": "node tools/run-public-quality.mjs",
     "check:redirects": "node tools/check-redirects.mjs",
     "check:reader-budget": "node tools/check-reader-budget.mjs",
+    "giving:reconcile": "npm --prefix apps/cms run giving:reconcile --",
     "whatsapp:brief": "npm --prefix apps/cms run whatsapp:brief --"
   },
   "devDependencies": {
