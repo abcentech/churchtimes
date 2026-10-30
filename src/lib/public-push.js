@@ -1,6 +1,9 @@
 // Inert unless the owner configures the public app ID AND the reader explicitly opts in.
 export const PUSH_SDK_URL = 'https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js';
 export const PUSH_WORKER_PATH = '/OneSignalSDKWorker.js';
+// OneSignal's own guidance for sites with another worker: give push a dedicated sub-scope so the
+// offline worker (src/features/pwa) keeps the site root. Push delivery does not depend on scope.
+export const PUSH_WORKER_SCOPE = '/push/onesignal/';
 export function validPushAppId(value) {
   return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value) ? value : '';
 }
@@ -45,7 +48,7 @@ export function mountPublicPush({root,appId,hasConsent,subscribeConsent,requestC
         if(settled)return; // A late provider response after failure must stay inert.
         try {
           if(!state.allowed())throw Error('consent');
-          await OneSignal.init({appId,serviceWorkerPath:PUSH_WORKER_PATH,serviceWorkerParam:{scope:'/'},autoResubscribe:false,notifyButton:{enable:false},promptOptions:{slidedown:{prompts:[]}}});
+          await OneSignal.init({appId,serviceWorkerPath:PUSH_WORKER_PATH,serviceWorkerParam:{scope:PUSH_WORKER_SCOPE},autoResubscribe:false,notifyButton:{enable:false},promptOptions:{slidedown:{prompts:[]}}});
           state.provider=OneSignal;
           if(!state.allowed()){await revoke();throw Error('consent');}
           if(settled){await revoke();return;}

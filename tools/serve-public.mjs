@@ -19,6 +19,7 @@ import {createPublicRedirects,isJunkPath,legacyHostRedirector} from './public-re
 import {createPublicFeeds} from './public-feeds.mjs';
 import {createChurchCalendarRoute} from './public-routes/church-calendar.mjs';
 import {createGivingRoutes} from './public-routes/giving.mjs';
+import {createPwaRoutes} from './public-routes/pwa.mjs';
 import {publicOrigin} from '../src/lib/public-url.js';
 import {normalizeBasePath,reportPath,articlePathTemplate as validateArticlePathTemplate,HOST_ARTICLE_PATH_TEMPLATE,reportSlug,articleCanonical,articleSchema,safeJSON} from '../src/lib/public-routes.js';
 const escape=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -32,6 +33,7 @@ export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(file
   const settings=publicSEOSettings({adsTxtLine,searchVerification});
   const publicPages=createPublicPages({dist,cmsUrl,siteUrl,basePath,indexable,fetchImpl,extraHead:settings.head,articlePathTemplate,lookupCache});
   const givingRoutes=createGivingRoutes({dist,cmsUrl,siteUrl,basePath,indexable,fetchImpl,articlePathTemplate,extraHead:settings.head});
+  const pwaRoute=createPwaRoutes({dist,basePath,articlePathTemplate});
   const publicFeeds=createPublicFeeds({cmsUrl,siteUrl,basePath,indexable,fetchImpl,articlePathTemplate});
   const redirects=createPublicRedirects({file:redirectsFile,endpoint:redirectsUrl,patterns:redirectPatterns,allowedHosts:redirectAllowedHosts,siteUrl,fetchImpl,basePath,articlePathTemplate,resolveLegacyId:cmsUrl ? legacyId=>fetchPublishedLegacyArticle({legacyId,baseUrl:cmsUrl,fetchImpl,timeoutMs:6000}) : undefined});
   async function htmlPage(article,message) {
@@ -61,6 +63,7 @@ export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(file
     if(legacyTarget)return respond(301,'text/plain','Moved',{Location:legacyTarget,'Cache-Control':'public, max-age=300'});
     try {
       const url=new URL(req.url,'http://public.invalid');
+      if(await pwaRoute(req,url,respond))return;
       // Email action links only display a neutral shell; the reader must explicitly POST.
       if(new RegExp('^'+basePath+'newsletter/(?:confirm|unsubscribe)/?$').test(url.pathname)) {
         const page=await htmlPage(null,'Newsletter preferences');

@@ -1,6 +1,9 @@
 import { normalizePublicMedia, mediaUrl } from './published-articles.js';
 export { normalizePublicMedia };
 const escape = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// The browser installs the data-saver filter (src/features/pwa/boot.js); the server leaves markup untouched.
+let imageFilter=html=>html;
+export const setCMSImageFilter=filter=>{imageFilter=filter;};
 export const CMS_CARD_SIZES='(max-width: 760px) calc(100vw - 38px), 420px';
 export const CMS_HERO_SIZES='(max-width: 760px) calc(100vw - 38px), 1000px';
 export function cmsSources(media,{card=false}={}) {
@@ -21,7 +24,7 @@ export function cmsImage(media, { eager = false, card = false, fallbackAlt = 'Ar
   if(!source)return '';
   const dimensions=source.width && source.height ? `width="${source.width}" height="${source.height}"` : '';
   const responsive=source.variants.length ? `srcset="${source.variants.map(v=>`${escape(v.url)} ${v.width}w`).join(', ')}"` : '';
-  return `<img class="cms-image" src="${escape(source.url)}" ${responsive} sizes="${source.sizes}" ${dimensions} alt="${escape(media.alt || fallbackAlt)}" loading="${eager?'eager':'lazy'}" ${eager?'fetchpriority="high"':''} decoding="async">`;
+  return imageFilter(`<img class="cms-image" src="${escape(source.url)}" ${responsive} sizes="${source.sizes}" ${dimensions} alt="${escape(media.alt || fallbackAlt)}" loading="${eager?'eager':'lazy'}" ${eager?'fetchpriority="high"':''} decoding="async">`);
 }
 export function cmsPreload(media) {
   const source=cmsSources(media);
