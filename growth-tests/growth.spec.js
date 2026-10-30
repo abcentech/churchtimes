@@ -157,3 +157,42 @@ test('WhatsApp group prompt: honest wording, plain link, dismissal remembered', 
   await page.waitForTimeout(1500);
   await expect(page.locator('#growth-wa')).toHaveCount(0);
 });
+
+test('home shows the KJV verse of the day; CMS report bodies get scripture cards that are removed on route change', async ({ page }) => {
+  await stubCMS(page);
+  const article = { ...card('scripture-story', 'Scripture story'), status: 'published', content: { root: { type: 'root', children: [{ type: 'paragraph', children: [{ type: 'text', text: 'The preacher read John 3:16 to the congregation.' }] }] } } };
+  await page.route(/\/api\/articles\?/, route => route.fulfill({ json: { docs: new URL(route.request().url()).searchParams.get('where[slug][equals]') === 'scripture-story' ? [article] : [], hasNextPage: false, totalPages: 1 } }));
+  await page.goto('/');
+  const verse = page.getByRole('region', { name: 'Verse of the day' });
+  await expect(verse).toBeVisible();
+  await expect(verse).toContainText('KJV');
+  expect((await axe(page).include('#growth-verse').analyze()).violations).toEqual([]);
+  await page.goto('/#report/scripture-story');
+  const ref = page.getByRole('button', { name: /John 3:16: show/ });
+  await expect(ref).toBeVisible();
+  await ref.click();
+  await expect(ref).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('.newsroom-article-body')).toContainText('For God so loved the world');
+  const prompt = page.locator('#growth-wa');
+  await expect(prompt).toBeVisible();
+  expect(await prompt.evaluate(el => el.nextElementSibling?.classList.contains('newsroom-article-end'))).toBe(true);
+  await page.evaluate(() => { location.hash = 'about'; });
+  await expect(page.locator('.ct-scripture-ref')).toHaveCount(0);
+});
+
+test('dark theme: growth UI keeps WCAG AA contrast (search suggestions with highlights, topic, Following, WhatsApp)', async ({ page }) => {
+  await page.addInitScript(() => { try { localStorage.setItem('ct-theme', 'dark'); } catch {} });
+  await stubCMS(page, { topics: { 'youth-ministry': youth } });
+  await page.goto('/#topic/youth-ministry');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await page.getByRole('button', { name: 'Follow Youth ministry' }).click();
+  expect((await axe(page).include('#main').analyze()).violations).toEqual([]);
+  await page.goto('/');
+  await expect(page.locator('#growth-following .story-card')).toHaveCount(2);
+  await expect(page.locator('#growth-wa')).toBeVisible();
+  expect((await axe(page).include('#growth-following').include('#growth-wa').include('#connect').analyze()).violations).toEqual([]);
+  await page.getByRole('button', { name: 'Search stories' }).click();
+  await page.locator('#search-input').fill('faith');
+  await expect(page.locator('#search-suggest-list mark.growth-mark').first()).toBeVisible();
+  expect((await axe(page).include('#search-dialog').analyze()).violations).toEqual([]);
+});

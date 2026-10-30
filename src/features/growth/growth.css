@@ -1,5 +1,5 @@
 /* Growth features (lazy: loaded with src/features/growth/hooks.js, never in the initial stylesheet). */
-mark.growth-mark{display:inline;font:inherit;letter-spacing:inherit;line-height:inherit;white-space:normal;background:#f1dfb4;color:inherit;padding:0 .08em;border-radius:2px}
+mark.growth-mark{display:inline;font:inherit;letter-spacing:inherit;line-height:inherit;white-space:normal;background:#f1dfb4;color:#172b2e;padding:0 .08em;border-radius:2px}
 .growth-suggest{list-style:none;margin:0;padding:0;border:1px solid var(--line);border-top:0;background:var(--white);max-height:min(50vh,360px);overflow:auto}
 .growth-suggest[hidden]{display:none}
 .growth-suggest [role=option]{display:flex;flex-direction:column;gap:3px;padding:12px 14px;border-top:1px solid var(--line);cursor:pointer;min-height:44px;justify-content:center}
@@ -19,7 +19,7 @@ dialog .growth-suggest-status{font-size:13px;margin:8px 0 0;color:var(--muted);m
 .growth-suggest [role=option]:focus-visible,.growth-recent button:focus-visible,.growth-search-filters :focus-visible,.growth-follow:focus-visible,.growth-wa :focus-visible,.growth-following :focus-visible{outline:3px solid var(--clay);outline-offset:3px}
 .growth-search-filters{display:flex;flex-wrap:wrap;align-items:end;gap:14px 20px;margin:0 0 24px}
 .growth-search-filters label{display:block;font:600 13px/1.5 var(--sans);margin-bottom:4px}
-.growth-search-filters select{min-height:44px;padding:8px 10px;border:1px solid #65766d;background:var(--white);color:var(--ink);font:15px var(--sans);max-width:100%}
+.growth-search-filters select{min-height:44px;padding:8px 10px;border:1px solid var(--field,#65766d);background:var(--white);color:var(--ink);font:15px var(--sans);max-width:100%}
 .growth-search-filters button{min-height:44px;font-size:14px}
 .growth-note{flex-basis:100%;font-size:14px;color:var(--muted);margin:0}
 .growth-follow{min-width:0;gap:10px;font-size:14px}
@@ -47,3 +47,4 @@ dialog .growth-suggest-status{font-size:13px;margin:8px 0 0;color:var(--muted);m
 #main>.growth-wa{margin-inline:auto;width:calc(100% - 36px)}
 @media(max-width:600px){.growth-wa{flex-direction:column;padding:18px}.growth-following-head h2{font-size:28px}}
 @media(prefers-reduced-motion:reduce){.growth-suggest [role=option]{scroll-behavior:auto;transition:none}}
+.growth-verse{padding-block:8px 24px}
