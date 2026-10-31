@@ -10,7 +10,7 @@
 .button-dark:hover{background:var(--btn-hover)}.button-light:hover{background:var(--white)}.perspective-feature{background:var(--sage)}.perspective-number,.search-input-wrap input::placeholder{color:var(--muted)}
 .reading-link span{color:var(--paper);min-width:18px;line-height:18px;border-radius:9px}
 [data-theme=dark] :is(.article-body,.advertising-slot,.reader-gallery) img{background:#fff}
-@media(max-width:430px){.wordmark{font-size:min(61px,14.5vw)}.footer-wordmark{font-size:min(45px,12.2vw)}.wordmark i{font-size:.95em}.utility-inner{flex-wrap:wrap;column-gap:12px;padding-block:6px}.utility-inner>span{flex-basis:100%}.utility-inner a{white-space:nowrap}}
+@media(max-width:430px){.utility-inner{flex-wrap:wrap;column-gap:12px;padding-block:6px}.utility-inner>span{flex-basis:100%}.utility-inner a{white-space:nowrap}}
 /* Text size: zoom the reading column only, never ads or forms inside it. */
 [data-text="0"]{--rz:.9}[data-text="2"]{--rz:1.12}[data-text="3"]{--rz:1.25}[data-text="4"]{--rz:1.4}
 :is(.article-body,.article-deck,.reader-keypoints){zoom:var(--rz)}.article-body :is(.advertising-slot,[data-reader-pending],.reader-form-section,.original-callout){zoom:calc(1/var(--rz))}
