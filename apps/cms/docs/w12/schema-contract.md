@@ -44,7 +44,9 @@ and `where[bylineAuthor][equals]=<authorId>`; `where[contentType][equals]=analys
 
 Who may edit (unchanged rules, new fields included): the new fields count as content, so a reporter can only change them
 while the story is `draft` / `changes_requested`; reporters still never publish; the archive four-eyes rule is unchanged.
-Editing them on a published story does NOT require a corrections entry (only title, excerpt and body do).
+On a published story, changing `contentType` requires a corrections entry in the same write (400 otherwise; a Sponsored
+label must never disappear silently; null and "news" count as the same). Kicker, key points, topics, byline profile and
+the Updated stamp are presentation and need none. Title, excerpt and body still require one, as before.
 
 ### 1.1 New Lexical blocks in `content`
 
@@ -80,7 +82,8 @@ Both are ordinary Payload block nodes (`type: "block"`), siblings of paragraphs 
     `url` before using a source. Existing media have no AVIF sizes (all `null`).
 - Consumers that pick variants by width (`normalizePublicMedia`) must skip `mimeType === "image/avif"` for the `<img>`
   fallback and use the AVIF sizes only as `<source type="image/avif">`.
-- AVIF originals are still refused on upload (JPEG, PNG, WebP only).
+- AVIF exists only as these generated sizes. An AVIF or HEIC original is refused on upload whatever type it is declared
+  as (image/avif, video/mp4, ...): images must be JPEG, PNG or WebP (they are re-encoded without metadata and size-checked).
 - Media visibility (unchanged rule, one addition): the photo of a PUBLIC author profile is public.
 
 ## 3. Public endpoints (new; read-only)

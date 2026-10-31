@@ -64,12 +64,33 @@ export function avMaxBytes(env: Record<string, string | undefined> = process.env
 const ascii = (buf: Uint8Array, from: number, to: number): string => String.fromCharCode(...buf.subarray(from, to))
 
 /**
+ * ISO-BMFF brands of still images and image sequences (AVIF, HEIF/HEIC, MIAF). Such a file shares the `ftyp` box with
+ * MP4 but is an IMAGE: it must never pass as audio/video (it would skip the image checks: metadata stripping, the
+ * pixel limit, the image size limit).
+ */
+export const IMAGE_FTYP_BRANDS: ReadonlySet<string> = new Set([
+  'avif', 'avis', 'avio', 'heic', 'heix', 'heim', 'heis', 'hevc', 'hevx', 'hevm', 'hevs', 'mif1', 'mif2', 'msf1', 'miaf',
+])
+
+/** The major brand and every compatible brand of an `ftyp` box (bounded to the bytes present). */
+export function ftypBrands(buf: Uint8Array): string[] {
+  if (buf.length < 12 || ascii(buf, 4, 8) !== 'ftyp') return []
+  const size = ((buf[0]! << 24) | (buf[1]! << 16) | (buf[2]! << 8) | buf[3]!) >>> 0
+  const end = Math.min(buf.length, size >= 16 && size <= 4096 ? size : 16)
+  const brands = [ascii(buf, 8, 12)]
+  for (let at = 16; at + 4 <= end; at += 4) brands.push(ascii(buf, at, at + 4))
+  return brands
+}
+
+/**
  * The audio/video types the first bytes of a file allow, in preference order; an empty list when it is none of them.
- * MP4 family: `ftyp` box (an M4A/M4B brand is audio only, anything else may be video or audio). WebM: EBML header
- * with the `webm` doctype. MP3: ID3 tag or an MPEG frame sync. Ogg: `OggS`.
+ * MP4 family: `ftyp` box (an M4A/M4B brand is audio only, anything else may be video or audio; an image brand such as
+ * avif or heic, major or compatible, is none of them). WebM: EBML header with the `webm` doctype. MP3: ID3 tag or an
+ * MPEG frame sync. Ogg: `OggS`.
  */
 export function sniffAvMimes(buf: Uint8Array): string[] {
   if (buf.length >= 12 && ascii(buf, 4, 8) === 'ftyp') {
+    if (ftypBrands(buf).some((b) => IMAGE_FTYP_BRANDS.has(b))) return []
     const brand = ascii(buf, 8, 12)
     return brand === 'M4A ' || brand === 'M4B ' || brand === 'M4P ' ? ['audio/mp4'] : ['video/mp4', 'audio/mp4']
   }

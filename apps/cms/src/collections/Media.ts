@@ -349,6 +349,21 @@ async function assertMediaNotFrozen(req: PayloadRequest, mediaId: number | strin
       403,
     )
   }
+  // Waves 1-2: the photo of a PUBLIC author profile is shown on the author page and in bylines (see readAccess).
+  const usedAuthor = await req.payload.count({
+    collection: 'authors',
+    where: { and: [{ photo: { equals: mediaId } }, { isPublic: { equals: true } }] },
+    overrideAccess: true,
+    req,
+  })
+  if (usedAuthor.totalDocs > 0) {
+    throw new APIError(
+      replacing
+        ? 'This image is the photo of a public author profile; ask an editor to replace the file.'
+        : 'This image is the photo of a public author profile; ask an editor to change its details.',
+      403,
+    )
+  }
 }
 
 /**
@@ -390,6 +405,12 @@ const guardMediaChange: CollectionBeforeChangeHook = async ({ data, originalDoc,
   const ctx = (req.context ?? {}) as MediaContext
   // lqip follows the file: recomputed on every new image (create or replacement), cleared for a non-image replacement.
   if (req.file) data.lqip = typeof ctx.lqip === 'string' ? ctx.lqip : null
+  // AVIF exists here only as GENERATED sizes (sizes.cardAvif / sizes.heroAvif). An AVIF original never passed the image
+  // checks (metadata stripping, pixel limit): checkUpload refuses it first; this is the second line of defence, for every
+  // caller including seed and import.
+  if (req.file && data.mimeType === 'image/avif') {
+    throw new APIError('Unsupported file. Use JPEG, PNG or WebP images, or MP4, WebM, MP3, M4A or OGG audio/video.', 400)
+  }
   if (ctx.seed === true) return data
   const user = asUser(req.user)
 
@@ -505,7 +526,9 @@ export const Media: CollectionConfig = {
     staticDir: process.env.MEDIA_DIR?.trim() || 'media',
     // Payload also checks the type its own sniffer reports; it reports M4A as audio/x-m4a and M4V as video/x-m4v (normalised in checkUpload).
     // image/avif is listed only because Payload validates the GENERATED size variants (cardAvif / heroAvif) against this list.
-    // An uploaded AVIF original is still refused by checkUpload (magic-byte sniffing accepts JPEG, PNG, WebP and audio/video only).
+    // An AVIF (or HEIC) original is refused whatever type it declares: checkUpload sniffs the bytes (JPEG/PNG/WebP, or
+    // audio/video whose ftyp box carries no image brand such as avif/heic/mif1, see lib/avMedia.ts), and guardMediaChange
+    // refuses any original that would be stored as image/avif.
     mimeTypes: [...ALLOWED_MIME, ...AV_MIME, ...AV_PAYLOAD_MIME_ALIASES, 'image/avif'],
     focalPoint: true,
     imageSizes: [

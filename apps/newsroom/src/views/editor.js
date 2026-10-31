@@ -542,7 +542,8 @@ async function doSave(container, { auto }) {
       const changes = computeChanges(st, vals);
       if (!Object.keys(changes).length) return { ok: true, changed: false };
 
-      const material = 'title' in changes || 'standfirst' in changes || 'bodyMd' in changes;
+      // Same rule as the CMS: the text, and the reader-facing story type (e.g. a Sponsored label), need a correction note.
+      const material = 'title' in changes || 'standfirst' in changes || 'bodyMd' in changes || 'contentType' in changes;
       if (st.currentStory.status === 'published' && material) {
         if (auto) return { ok: false };
         const note = await askText({

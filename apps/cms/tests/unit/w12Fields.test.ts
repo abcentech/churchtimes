@@ -115,3 +115,30 @@ describe('donations CSV and topic feed', () => {
     expect(xml).toContain('<pubDate>Fri, 30 Oct 2026 08:00:00 GMT</pubDate>')
   })
 })
+
+describe('audio/video sniffing never accepts ISO-BMFF images', () => {
+  const ftyp = (major: string, ...compat: string[]) => {
+    const size = 16 + compat.length * 4
+    const buf = Buffer.alloc(size + 8)
+    buf.writeUInt32BE(size, 0)
+    buf.write('ftyp', 4, 'ascii')
+    buf.write(major, 8, 'ascii')
+    compat.forEach((b, i) => buf.write(b, 16 + i * 4, 'ascii'))
+    return new Uint8Array(buf)
+  }
+  it('refuses avif / heic / mif1 brands, major or compatible', async () => {
+    const { sniffAvMimes } = await import('../../src/lib/avMedia')
+    expect(sniffAvMimes(ftyp('avif', 'mif1', 'miaf'))).toEqual([])
+    expect(sniffAvMimes(ftyp('heic', 'mif1'))).toEqual([])
+    expect(sniffAvMimes(ftyp('mif1', 'avif'))).toEqual([])
+    expect(sniffAvMimes(ftyp('isom', 'avif'))).toEqual([])
+    expect(sniffAvMimes(ftyp('isom', 'isom', 'mp41'))).toEqual(['video/mp4', 'audio/mp4'])
+    expect(sniffAvMimes(ftyp('M4A ', 'isom'))).toEqual(['audio/mp4'])
+  })
+  it('a real AVIF from sharp is not audio/video', async () => {
+    const sharp = (await import('sharp')).default
+    const { sniffAvMimes } = await import('../../src/lib/avMedia')
+    const avif = await sharp({ create: { width: 32, height: 32, channels: 3, background: { r: 1, g: 2, b: 3 } } }).avif().toBuffer()
+    expect(sniffAvMimes(new Uint8Array(avif))).toEqual([])
+  })
+})

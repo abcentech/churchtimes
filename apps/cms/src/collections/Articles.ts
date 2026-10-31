@@ -37,6 +37,7 @@ import {
   KEY_POINTS_MAX,
   KEY_POINT_MAX,
   KICKER_MAX,
+  contentTypeOf,
   TOPICS_PER_ARTICLE_MAX,
   keyPointTexts,
   keyPointsProblem,
@@ -585,6 +586,13 @@ const enforceWorkflow: CollectionBeforeChangeHook = async ({ data, originalDoc, 
     )
     if (material && correctionsAdded < 1) {
       return fail(400, 'Editing a published article requires adding a corrections entry.')
+    }
+    // Waves 1-2: the story type is a reader-facing label (a "Sponsored" label silently disappearing is a trust issue), so
+    // changing it on a published story is recorded like a content change. Legacy rows (null) count as "news". Kicker, key
+    // points, topics, byline profile and the "Updated" stamp are presentation and need no corrections entry
+    // (docs/w12/schema-contract.md section 1).
+    if ('contentType' in data && contentTypeOf(data.contentType) !== contentTypeOf(orig.contentType) && correctionsAdded < 1) {
+      return fail(400, 'Changing the story type of a published article requires adding a corrections entry.')
     }
   }
 

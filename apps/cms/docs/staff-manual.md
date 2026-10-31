@@ -309,7 +309,7 @@ Under the byline there is a box called **Story details**. Everything in it is op
 | **Key points** | The "What you need to know" box. One point per line, up to 5 points, up to 200 characters each. The counter under the box tells you when you are over. |
 | **Topics** | Tick up to 10 topics readers can follow, for example **Religious freedom**. Topics marked "(not public)" are not shown to readers. Editors create topics in the CMS admin (Newsroom > Topics). |
 
-Like the headline, a reporter can change these only while the story is a draft or sent back. Changing them on a published story does not need a correction note.
+Like the headline, a reporter can change these only while the story is a draft or sent back. On a published story, changing the **Story type** asks for a correction note (a Sponsored label must never disappear quietly). The other details can be changed without one.
 
 ### Pull quotes and photo galleries
 
