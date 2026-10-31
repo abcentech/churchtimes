@@ -140,7 +140,11 @@ test('install prompt: never on a first visit, offered from the third, dismissibl
       const box=page.getByRole('complementary',{name:'Install Church Times Nigeria'});
       if(!shown){await expect(box).toHaveCount(0);await context.close();continue;}
       await expect(box).toBeVisible();
-      expect((await new AxeBuilder({page}).include('.ct-install').withTags(['wcag2a','wcag2aa','wcag21aa','wcag22aa']).analyze()).violations).toEqual([]);
+      for(const theme of ['light','dark']) {
+        // Reader themes (W12 A) swap the ink token; the banner uses the panel tokens so it stays legible.
+        await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;},theme);
+        expect((await new AxeBuilder({page}).include('.ct-install').withTags(['wcag2a','wcag2aa','wcag21aa','wcag22aa']).analyze()).violations.map(v=>v.id),theme).toEqual([]);
+      }
       await box.getByRole('button',{name:'Not now'}).click();
       await expect(box).toHaveCount(0);
       expect(JSON.parse(await page.evaluate(()=>localStorage.getItem('ct-visits'))).dismissedAt).toBeGreaterThan(0);
