@@ -108,6 +108,7 @@ test('trust pages show published policy, hide unpublished pages and always list 
   await page.goto('/corrections/');
   await expect(page.locator('#reader-page h1')).toHaveText('Corrections');
   await expect(page.locator('#reader-page')).toContainText('We correct errors openly and promptly.');
+  await expect(page.locator('.site-footer').getByRole('link',{name:'Corrections',exact:true})).toHaveAttribute('href','corrections/');
   await expect(page.locator('.reader-log li li')).toContainText('23 October 2026');
   await expect(page.locator('.reader-log').getByRole('link',{name:'Synod agrees a rebuilding timetable'})).toHaveAttribute('href','/reports/synod-report/');
   await page.evaluate(()=>{document.documentElement.dataset.theme='dark';});
