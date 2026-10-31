@@ -108,6 +108,9 @@ The hero preload follows the AVIF set (typed preload, ignored by browsers withou
   render in the system fallback font (readable, slightly different style). No subset can fix that; a future
   change of typeface (or adding a Noto face) would, at a font-budget cost.
 - Font bytes: 183,548 of 196,608 (before: 159,536).
+- Metric-matched fallback: with `font-display: optional`, first-view text uses the fallback; Georgia is 21% wider
+  than Newsreader on the masthead (343 vs 283 px at 320 px wide), which overflowed `tests/mobile-quality` at 320/360 px
+  even on the pre-wave commit. `Newsreader FB` (Georgia at 91%, Georgia Bold at 83%) keeps the measured widths.
 
 ## Measurements
 
@@ -124,7 +127,7 @@ See the hand-back table (filled from `npm run test:quality` runs; mobile Lightho
 
 ## Budgets (gzip)
 
-Initial JS +0.9 KB of the 1.0 KB allocation; initial CSS +0.17 KB of 0.2 KB; the worker, offline page and manifest
+Initial JS +984 B of the 1,024 B allocation; initial CSS +185 B of 200 B (both measured against the same commit without C); fonts +24,012 B on disk (183,548 of 196,608; downloaded only on pages with those letters); the worker, offline page and manifest
 are served separately; lazy `enhance` chunk 2.8 KB JS + 0.5 KB CSS.
 
 ## Risks and follow-ups
