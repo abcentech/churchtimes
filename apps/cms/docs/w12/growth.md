@@ -9,6 +9,7 @@ Everything here is free to run. Nothing calls a paid per-use service, no AI is i
 | Share cards (Open Graph PNG) | off | CMS `SHARE_CARDS_ENABLED=true` + public host `PUBLIC_SHARE_CARDS` | CPU only |
 | WhatsApp daily brief | manual command | `npm run whatsapp:brief` | free |
 | Verse of the day, scripture cards, church calendar | on (static, bundled public-domain text) | none | free |
+| Homepage sign-up, search suggestions and filters, topic pages, local follows, WhatsApp prompt | on (the sign-up only when the newsletter endpoint and Turnstile key are set) | see section 6 | free |
 
 ## 1. Mail: SMTP relay (Brevo or Resend free tier)
 
@@ -108,13 +109,27 @@ Code: `lib/newsletterDigest.ts` (pure: selection and templates), `lib/newsletter
 - **`/scripture/verse-of-the-day.json[?date=YYYY-MM-DD]`** (`tools/public-routes/verse-of-the-day.mjs`): the same verse as JSON for the digest; 400 on a bad date, 503 with Retry-After if the text was not built; `public, max-age=3600`.
 - `church-calendar` must be added to the reserved slugs in `apps/cms/src/lib/reservedSlugs.ts` and `src/lib/public-routes.js` together (a test requires the two lists to match); until then an article with that slug would be shadowed by the page.
 
-## 6. Environment variables (all optional; features stay off when unset)
+## 6. Public site: sign-up, search, topics, follows, WhatsApp
+
+All of it is one lazy chunk (`src/features/growth/hooks.js` and siblings, loaded on idle after a route settles) plus one lazy stylesheet; the initial bundle carries only the hook in `src/main.js`.
+
+- **Homepage sign-up.** When `VITE_PUBLIC_NEWSLETTER_URL` and `VITE_TURNSTILE_SITE_KEY` are set, the "Connect" band holds the existing double opt-in form from `src/forms/reader-forms.js` (source `home` on the home route, `footer` elsewhere) instead of the mailto, and the separate footer form is no longer duplicated. Otherwise the honest mailto fallback stays. Same consent wording, Turnstile and confirmation e-mail as before.
+- **Search.** ARIA combobox suggestions from `GET /api/public/search` (debounced 300 ms, 3+ characters, in-flight requests aborted, 5 results; a 429 pauses suggestions for its Retry-After; offline is explained), section and year filters on the results page (the endpoint's existing `category`/`year` parameters), query terms highlighted with DOM text nodes only, recent searches kept in this browser (max 8, clearable). Typo tolerance was not added (it would have to be server-side and is not cheap in PostgreSQL).
+- **Topic pages.** `/topic/` and `/topic/{slug}/`, server-rendered by `tools/public-routes/topic-pages.mjs` from `/api/public/topics` (readable without JavaScript; canonical, Open Graph, JSON-LD CollectionPage + BreadcrumbList, robots per `PUBLIC_INDEXABLE`, 404 for unknown or private topics, 503 when the CMS is down). The app re-renders the same view from the embedded JSON and adds the Follow button.
+- **Follows (no account).** Contract for any page: `<button type="button" hidden data-follow-kind="topic|author" data-follow-slug="{slug}" data-follow-name="{name}"></button>`; the lazy binder reveals it and keeps `aria-pressed` in sync. Topic pages carry it. Author pages (Agent A, `/author/{slug}/`) need the same button to offer author follows; the Following feed already reads `/api/public/authors/:slug`. The home page shows a "Following" feed (topics and authors merged, de-duplicated, newest first) with an offline copy.
+- **WhatsApp.** "Join our WhatsApp group" prompt (it is a group invite and is worded as one) linking to `src/lib/social-links.js`: plain link, no third-party script, dismissal remembered.
+- **Scripture.** Verse of the day on the home page and scripture reference cards in CMS report bodies (section 5), disposed on route change.
+- **localStorage keys** (this browser only, never sent anywhere, every access in try/catch): `ct-following`, `ct-following-feed`, `ct-recent-searches`, `ct-whatsapp-prompt`.
+- **Bytes** (against 68ba616, the commit before the public growth work): initial JS +470 B gzip (allocation 512), initial CSS +0 B (allocation 512). Lazy, gzip: hooks 1.9 KB, search suggestions 3.3 KB, search page 1.4 KB, topic page 1.5 KB, Following feed 2.3 KB, follow 0.9 KB, WhatsApp 0.9 KB, growth CSS 1.3 KB, scripture about 9.6 KB + 1.1 KB CSS.
+- **Tests.** `npm run test:unit` (`unit-tests/growth-*.test.js`), `npx playwright test --config playwright.growth.config.js` (stubbed CMS, axe in light and dark themes), `npx playwright test --config playwright.growth-scripture.config.js`.
+
+## 7. Environment variables (all optional; features stay off when unset)
 
 CMS (`apps/cms/.env.example`): `MAIL_HTML_DAILY_CAP`, `NEWSLETTER_DIGEST_SEND`, `NEWSLETTER_DIGEST_THROTTLE_MS`, `NEWSLETTER_DIGEST_SCHEDULER`, `NEWSLETTER_ONE_CLICK_RATE_LIMIT`, `SHARE_CARDS_ENABLED`, `SHARE_CARD_RATE_LIMIT`, `SHARE_CARD_RATE_WINDOW_SECONDS`, `SHARE_CARD_MAX_CONCURRENT`, `SHARE_CARD_CACHE_MAX`, `SHARE_CARD_FONT_DIR`, `WHATSAPP_GROUP_URL`. Existing ones now also used: `SMTP_*`, `EMAIL_FROM_ADDRESS`, `PUBLIC_SITE_URL`, `NEWSLETTER_TOKEN_SECRET`, `CMS_PUBLIC_URL`, `PUBLIC_ARTICLE_PATH_TEMPLATE`.
 
-Public host (`deploy/public-host/public-host.env.example`): `PUBLIC_SHARE_CARDS`.
+Public host (`deploy/public-host/public-host.env.example`): `PUBLIC_SHARE_CARDS`. Public build: nothing new (the sign-up reuses `VITE_PUBLIC_NEWSLETTER_URL` and `VITE_TURNSTILE_SITE_KEY`).
 
-## 7. Known limits
+## 8. Known limits
 
 - Caps, rate limits and the share-card cache are per process: with several CMS processes the effective limits multiply (the advisory lock still allows only one digest issue per day).
 - Without `TRUST_PROXY` every visitor shares one rate-limit bucket (existing behaviour of all public endpoints).
