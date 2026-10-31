@@ -5,12 +5,12 @@ import { writeAuditLog } from '../lib/audit'
 import { isMailConfigured } from '../lib/mailer'
 import { createDigestDraft, sendTestDigest } from '../lib/newsletterDigestRunner'
 import { createRateLimiter } from '../lib/rateLimit'
-import { safeErrorFields } from '../lib/safeLog'
+import { safeErrorFields, safeErrorSummary } from '../lib/safeLog'
 import { isValidEmail } from '../lib/sanitize'
 
 /**
  * Staff tools for the daily digest (editors and admins only; cookie or API-key auth, Payload's CSRF origin check applies):
- * - POST /api/newsletter/digest/dry-run   writes today's issue as a `draft` newsletter-issue and sends nothing;
+ * - POST /api/newsletter/digest/dry-run   writes today's issue as a `draft` newsletter-issue and sends nothing (10 per hour per user);
  * - POST /api/newsletter/digest/test-send sends today's issue to the SIGNED-IN staff member's own address only
  *   (never to a subscriber, never to an address in the request), subject prefixed "[TEST]", 5 per hour per user.
  * Both work while the digest schedule is off, so staff can check the result before switching it on.
@@ -21,9 +21,13 @@ const json = (body: unknown, status = 200) =>
 const err = (status: number, message: string) => json({ ok: false, errors: [{ message }] }, status)
 
 let testLimiter: ReturnType<typeof createRateLimiter> | undefined
+let dryRunLimiter: ReturnType<typeof createRateLimiter> | undefined
 const getTestLimiter = () => (testLimiter ??= createRateLimiter({ limit: 5, windowMs: 3600 * 1000 }))
+/** Each dry run writes a draft issue: 10 per hour per user is plenty for checking. */
+const getDryRunLimiter = () => (dryRunLimiter ??= createRateLimiter({ limit: 10, windowMs: 3600 * 1000 }))
 export function resetDigestStaffLimiter(): void {
   testLimiter = undefined
+  dryRunLimiter = undefined
 }
 
 const staffEditor = (req: PayloadRequest): UserLike | Response => {
@@ -39,12 +43,15 @@ export const digestDryRunEndpoint: Endpoint = {
   handler: async (req: PayloadRequest) => {
     const user = staffEditor(req)
     if (user instanceof Response) return user
+    const limited = getDryRunLimiter().check(String(user.id))
+    if (!limited.allowed) return err(429, 'Too many dry runs. Try again later.')
     try {
       const result = await createDigestDraft(req.payload)
       return json({ ok: true, ...result })
     } catch (e) {
       req.payload.logger.error(safeErrorFields(e), 'newsletter digest dry run failed')
-      return err(500, 'The dry run failed. Check that the newsletter schema is migrated.')
+      // The error class and code only (e.g. ValidationError, ECONNREFUSED): never a message that could carry content.
+      return err(500, `The dry run failed (${safeErrorSummary(e)}).`)
     }
   },
 }

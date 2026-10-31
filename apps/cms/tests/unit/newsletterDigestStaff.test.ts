@@ -51,3 +51,20 @@ describe('digest staff tools', () => {
     expect((await digestTestSendEndpoint.handler(req({ ...user, id: 5 }))).status).toBe(503)
   })
 })
+
+describe('dry run guard rails (review fix)', () => {
+  it('is limited to 10 per hour per user', async () => {
+    const user = { id: 9, role: 'admin', email: 'staff@example.org' }
+    for (let i = 0; i < 10; i++) expect((await digestDryRunEndpoint.handler(req(user))).status).toBe(200)
+    expect((await digestDryRunEndpoint.handler(req(user))).status).toBe(429)
+    expect((await digestDryRunEndpoint.handler(req({ ...user, id: 10 }))).status).toBe(200)
+  })
+  it('reports the real error class and code, never the message', async () => {
+    runner.createDigestDraft.mockImplementationOnce(async () => Promise.reject(Object.assign(new Error('Subject must be plain text: reader@x.org'), { name: 'ValidationError' })))
+    const res = await digestDryRunEndpoint.handler(req({ id: 11, role: 'admin', email: 'staff@example.org' }))
+    expect(res.status).toBe(500)
+    const body = await res.json()
+    expect(body.errors[0].message).toBe('The dry run failed (ValidationError).')
+    expect(JSON.stringify(body)).not.toContain('@')
+  })
+})

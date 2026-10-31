@@ -14,10 +14,12 @@ vi.mock('../../src/lib/dbTransaction', () => ({
 
 const { DailyMailCap } = await import('../../src/lib/mailer')
 const { signUnsubscribeToken, verifyUnsubscribeToken } = await import('../../src/lib/newsletter')
-const { buildOneClickUrl, buildTodaysDigest, createDigestDraft, fetchDevotional, resetDigestMemo, resolveOneClickBase, runScheduledDigest, sendDigest } = await import(
+const { DIGEST_RECHECK_MS, buildOneClickUrl, buildTodaysDigest, createDigestDraft, fetchDevotional, resetDigestMemo, resolveOneClickBase, runScheduledDigest, sendDigest } = await import(
   '../../src/lib/newsletterDigestRunner'
 )
 const { normaliseDigestSettings } = await import('../../src/lib/newsletterDigest')
+const { plainTextProblem } = await import('../../src/lib/newsroomFields')
+const { NEWSLETTER_SUBJECT_MAX } = await import('../../src/collections/NewsletterIssues')
 
 type Row = Record<string, unknown> & { id: number }
 type Where = Record<string, unknown>
@@ -71,6 +73,11 @@ function fakePayload(init: { settings?: Record<string, unknown> | null; articles
       return { docs: rows.slice(0, limit), hasNextPage: rows.length > limit }
     }),
     create: vi.fn(async (args: { collection: string; data: Record<string, unknown> }) => {
+      // Same rule as the real newsletter-issues.subject field (plain text, maxLength in UTF-16 units).
+      if (args.collection === 'newsletter-issues') {
+        const problem = plainTextProblem(args.data.subject, 'Subject', NEWSLETTER_SUBJECT_MAX, { required: true })
+        if (problem) throw Object.assign(new Error(problem), { name: 'ValidationError' })
+      }
       const row = { id: nextId++, ...args.data }
       db[args.collection]!.push(row)
       return row
@@ -298,5 +305,62 @@ describe('staff test send and CLI arguments', () => {
     expect(() => parseDigestCliArgs(['--test-send'])).toThrow('staff account')
     expect(() => parseDigestCliArgs(['--test-send', 'a@b.org', '--dry-run'])).toThrow('either')
     expect(() => parseDigestCliArgs(['--send-all'])).toThrow('Unknown option --send-all')
+  })
+})
+
+describe('headlines that are not plain-text subjects (review fix)', () => {
+  const tricky: Row[] = [
+    { id: 21, slug: 'faith-fear', title: 'Faith > fear: <b>bishops</b> answer critics', excerpt: 'E', status: 'published', publishedAt: '2026-10-30T05:30:00.000Z', category: { title: 'Church' } },
+  ]
+  const emoji: Row[] = [
+    { id: 22, slug: 'praise', title: '🙏🔥🎉 '.repeat(40) + 'Praise night', excerpt: 'E', status: 'published', publishedAt: '2026-10-30T05:30:00.000Z' },
+  ]
+
+  it('a lead headline with < or > or many emoji still writes the draft and sends', async () => {
+    for (const rows of [tricky, emoji]) {
+      const p = fakePayload({ settings: on, articles: rows, subscribers })
+      expect((await createDigestDraft(p as never, { now: NOW, env })).outcome).toBe('draft')
+      const live = fakePayload({ settings: on, articles: rows, subscribers })
+      const r = await sendDigest(live as never, normaliseDigestSettings(on), { now: NOW, env, cap: new DailyMailCap(() => 50), sleep: noSleep })
+      expect(r).toMatchObject({ outcome: 'sent', sent: 3 })
+    }
+    const p = fakePayload({ settings: on, articles: tricky, subscribers })
+    await createDigestDraft(p as never, { now: NOW, env })
+    const issue = p.db['newsletter-issues'][0]!
+    expect(String(issue.subject)).toContain('Faith › fear: ‹b›bishops‹/b› answer critics')
+    expect(String(issue.bodyHtml)).toContain('Faith &gt; fear: &lt;b&gt;bishops&lt;/b&gt; answer critics')
+  })
+
+  it('an unexpected error is remembered for the rest of the day: no retry loop, one report', async () => {
+    const p = fakePayload({ settings: on, articles, subscribers })
+    p.find.mockImplementationOnce(async () => Promise.reject(Object.assign(new Error('connection refused to 10.0.0.5'), { code: 'ECONNREFUSED' })))
+    const first = await runScheduledDigest(p as never, { now: NOW, env })
+    expect(first).toEqual({ outcome: 'error', reason: 'Error (ECONNREFUSED)' })
+    const calls = p.find.mock.calls.length + p.findGlobal.mock.calls.length
+    for (const minutes of [1, 30, 300]) {
+      const again = await runScheduledDigest(p as never, { now: new Date(NOW.getTime() + minutes * 60_000), env })
+      expect(again).toEqual({ outcome: 'error', cached: true })
+    }
+    expect(p.find.mock.calls.length + p.findGlobal.mock.calls.length).toBe(calls)
+    // the next Lagos day tries again
+    expect((await runScheduledDigest(p as never, { now: new Date(NOW.getTime() + 24 * 3600_000), env })).cached).toBeUndefined()
+  })
+
+  it('deleting a failed issue allows a new one after the recheck interval, without a restart', async () => {
+    const live = { ...env, NEWSLETTER_DIGEST_SEND: 'true' } as NodeJS.ProcessEnv
+    const p = fakePayload({ settings: on, articles, subscribers })
+    p.sendFails = 99
+    expect((await runScheduledDigest(p as never, { now: NOW, env: live, cap: new DailyMailCap(() => 50), sleep: noSleep })).outcome).toBe('failed')
+    p.sendFails = 0
+    // within the interval: remembered, nothing checked
+    expect(await runScheduledDigest(p as never, { now: new Date(NOW.getTime() + 60_000), env: live })).toEqual({ outcome: 'failed', cached: true })
+    // still blocked by the failed issue after the interval
+    const later = new Date(NOW.getTime() + DIGEST_RECHECK_MS + 1000)
+    expect((await runScheduledDigest(p as never, { now: later, env: live, cap: new DailyMailCap(() => 50), sleep: noSleep })).outcome).toBe('already-done')
+    // staff delete the failed issue in the admin
+    p.db['newsletter-issues'].length = 0
+    const after = new Date(later.getTime() + DIGEST_RECHECK_MS + 1000)
+    const r = await runScheduledDigest(p as never, { now: after, env: live, cap: new DailyMailCap(() => 50), sleep: noSleep })
+    expect(r).toMatchObject({ outcome: 'sent', sent: 3 })
   })
 })

@@ -53,6 +53,7 @@ export type DigestRunOutcome =
   | 'draft'
   | 'sent'
   | 'failed'
+  | 'error'
 
 export type DigestRunResult = {
   outcome: DigestRunOutcome
@@ -62,6 +63,8 @@ export type DigestRunResult = {
   capApplied?: boolean
   stories?: number
   reason?: string
+  /** True when the outcome came from the in-process memo (nothing was checked). */
+  cached?: boolean
 }
 
 type IssueDoc = {
@@ -374,34 +377,50 @@ export async function sendDigest(payload: Payload, settings: DigestSettings, dep
 
 // ---- Scheduled entry point (called every scheduler tick) ----
 
-type MemoGlobal = typeof globalThis & { __ctDigestMemo?: { day: string; outcome: DigestRunOutcome } }
+/** How long a remembered outcome short-circuits the tick before the database is checked again. */
+export const DIGEST_RECHECK_MS = 10 * 60 * 1000
+
+type DigestMemo = { day: string; outcome: DigestRunOutcome; at: number; final: boolean }
+type MemoGlobal = typeof globalThis & { __ctDigestMemo?: DigestMemo }
 
 /**
  * Runs at most one digest action per Lagos day once `sendHourLagos` has passed. Dry run unless NEWSLETTER_DIGEST_SEND=true.
- * `no-stories`, `already-done` and `not-configured` are remembered for the rest of the day in this process so the tick
- * stays cheap.
+ * - Every outcome of a real attempt (`sent`, `failed`, `draft`, `already-done`, `no-stories`, `not-configured`) is remembered
+ *   in this process for DIGEST_RECHECK_MS, then the database decides again. So deleting a `failed` (or draft) issue in the
+ *   admin lets the next check create a new one, without a restart, and a story published later in the day is picked up.
+ * - An unexpected error (database down, a validation error) is remembered for the REST OF THE LAGOS DAY and reported once:
+ *   the tick never retry-loops on it. A restart (or the next day) tries again; staff can still use the dry-run and
+ *   test-send tools.
  */
 export async function runScheduledDigest(payload: Payload, deps: DigestDeps = {}): Promise<DigestRunResult> {
   const now = deps.now ?? new Date()
   const env = deps.env ?? process.env
   const g = globalThis as MemoGlobal
   const day = lagosDay(now)
-  if (g.__ctDigestMemo?.day === day) return { outcome: g.__ctDigestMemo.outcome }
-
-  const settings = await loadDigestSettings(payload)
-  if (!settings.enabled || !settings.dailyDigestEnabled) return { outcome: 'disabled' }
-  if (lagosHour(now) < settings.sendHourLagos) return { outcome: 'not-due' }
-
-  let result: DigestRunResult
-  if (sendLive(env)) {
-    result = await sendDigest(payload, settings, { ...deps, now, env })
-  } else {
-    // Dry run: one draft per day at most.
-    const today = await issuesSince(payload, lagosDayStart(now))
-    result = today.length ? { outcome: 'already-done' } : await createDigestDraft(payload, { ...deps, now, env })
+  const memo = g.__ctDigestMemo
+  if (memo?.day === day && (memo.final || now.getTime() - memo.at < DIGEST_RECHECK_MS)) {
+    return { outcome: memo.outcome, cached: true }
   }
-  g.__ctDigestMemo = { day, outcome: result.outcome }
-  return result
+
+  try {
+    const settings = await loadDigestSettings(payload)
+    if (!settings.enabled || !settings.dailyDigestEnabled) return { outcome: 'disabled' }
+    if (lagosHour(now) < settings.sendHourLagos) return { outcome: 'not-due' }
+
+    let result: DigestRunResult
+    if (sendLive(env)) {
+      result = await sendDigest(payload, settings, { ...deps, now, env })
+    } else {
+      // Dry run: one draft per day at most.
+      const today = await issuesSince(payload, lagosDayStart(now))
+      result = today.length ? { outcome: 'already-done' } : await createDigestDraft(payload, { ...deps, now, env })
+    }
+    g.__ctDigestMemo = { day, outcome: result.outcome, at: now.getTime(), final: false }
+    return result
+  } catch (err) {
+    g.__ctDigestMemo = { day, outcome: 'error', at: now.getTime(), final: true }
+    return { outcome: 'error', reason: safeErrorSummary(err) }
+  }
 }
 
 /** Test helper. */
@@ -409,14 +428,17 @@ export function resetDigestMemo(): void {
   delete (globalThis as MemoGlobal).__ctDigestMemo
 }
 
-/** Non-blocking wrapper for the scheduler: its own in-flight guard, never throws. */
+/** Non-blocking wrapper for the scheduler: its own in-flight guard, never throws. Logs real outcomes once, never cached ones. */
 let inFlight = false
 export function tickDigest(payload: Payload): void {
   if (inFlight || process.env.NEWSLETTER_DIGEST_SCHEDULER === 'false') return
   inFlight = true
   void runScheduledDigest(payload)
     .then((r) => {
-      if (r.outcome === 'sent' || r.outcome === 'failed' || r.outcome === 'draft' || r.outcome === 'not-configured') {
+      if (r.cached) return
+      if (r.outcome === 'error') {
+        payload.logger.error({ reason: r.reason }, 'newsletter digest run failed; no further attempt today in this process')
+      } else if (r.outcome === 'sent' || r.outcome === 'failed' || r.outcome === 'draft' || r.outcome === 'not-configured') {
         payload.logger.info({ outcome: r.outcome, sent: r.sent, failed: r.failed, capApplied: r.capApplied }, 'newsletter digest')
       }
     })

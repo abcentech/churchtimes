@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
+import { plainTextProblem } from '../../src/lib/newsroomFields'
 import {
+  clampUtf16,
+  DIGEST_SUBJECT_MAX,
   digestSubject,
   digestWindowStart,
   lagosHour,
@@ -143,5 +146,24 @@ describe('templates', () => {
     const out = renderDigestHtml({ ...content, siteUrl: null, devotional: null }, links)
     expect(out).not.toContain('story-1/')
     expect(out).not.toContain('Verse of the day')
+  })
+})
+
+describe('subject is always a valid plain-text issue subject (review fix)', () => {
+  const ok = (subject: string) => plainTextProblem(subject, 'Subject', DIGEST_SUBJECT_MAX, { required: true })
+  it('maps < and > to single angle quotes and keeps the meaning', () => {
+    const s = digestSubject({ date: '2026-10-30', stories: [story(1, '2026-10-30T05:00:00Z', { title: 'Faith > fear: <script>x</script>' })] })
+    expect(s).toBe('Church Times Nigeria daily briefing, 30 October 2026: Faith › fear: ‹script›x‹/script›')
+    expect(ok(s)).toBeNull()
+  })
+  it('clamps by UTF-16 length (as Payload maxLength counts) without splitting emoji', () => {
+    const s = digestSubject({ date: '2026-10-30', stories: [story(1, '2026-10-30T05:00:00Z', { title: '🙏🔥🎉'.repeat(60) })] })
+    expect(s.length).toBeLessThanOrEqual(DIGEST_SUBJECT_MAX)
+    expect(ok(s)).toBeNull()
+    expect(s).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/)
+    expect(s.endsWith('…')).toBe(true)
+    expect(clampUtf16('a'.repeat(10), 10)).toBe('a'.repeat(10))
+    expect(clampUtf16('a'.repeat(11), 10).length).toBeLessThanOrEqual(10)
+    expect(clampUtf16('😀'.repeat(6), 10)).toBe('😀😀😀😀…')
   })
 })

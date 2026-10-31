@@ -137,11 +137,35 @@ const WHY_LINE = 'You receive this because you confirmed a subscription to the C
 
 export const digestDayLabel = (date: string): string => formatLagosDate(`${date}T12:00:00+01:00`) || date
 
-/** Deterministic subject: the day plus the lead headline, clamped for inbox previews. */
+/** Same limit as `newsletter-issues.subject` (Payload counts UTF-16 code units, so this does too). */
+export const DIGEST_SUBJECT_MAX = 150
+
+/**
+ * Shortens `text` to at most `max` UTF-16 code units (String#length, as Payload's maxLength counts), at a word boundary
+ * when one is near, with an ellipsis; never splits a surrogate pair.
+ */
+export function clampUtf16(text: string, max: number): string {
+  if (text.length <= max) return text
+  let cut = ''
+  for (const ch of text) {
+    if (cut.length + ch.length > max - 1) break
+    cut += ch
+  }
+  const space = cut.lastIndexOf(' ')
+  const base = space > max * 0.6 ? cut.slice(0, space) : cut
+  return `${base.replace(/[\s,;:.\-–—]+$/u, '')}…`
+}
+
+/**
+ * Deterministic subject: the day plus the lead headline, clamped for inbox previews. Stored on the issue, whose
+ * `subject` is plain text (no `<` or `>`), so those become the single angle quotes ‹ › (meaning kept, e.g.
+ * "Faith › fear"); the HTML body keeps the headline exactly as written (escaped).
+ */
 export function digestSubject(content: Pick<DigestContent, 'date' | 'stories'>): string {
   const lead = content.stories[0]?.title
   const base = `${SITE_NAME} daily briefing, ${digestDayLabel(content.date)}`
-  return lead ? clampText(`${base}: ${lead}`, 150) : base
+  const subject = (lead ? `${base}: ${lead}` : base).replace(/</g, '‹').replace(/>/g, '›').replace(/\s+/g, ' ').trim()
+  return clampUtf16(subject, DIGEST_SUBJECT_MAX)
 }
 
 const textLine = (value: string): string => value.replace(/\s+/g, ' ').trim()
