@@ -1,5 +1,7 @@
 /* Article furniture, author and trust pages, and the article print stylesheet (W12 A). Lazy: loaded with the article
    renderer on the client and linked by the public host on the pages it server-renders. Colours are theme tokens only. */
+/* Marker the public host uses to find this hashed file (tools/public-routes/reader-pages.mjs); keep it. */
+:root{--reader-pages-sheet:1}
 .reader-type{font-weight:700}
 .reader-type:not([data-type=news]){border:1px solid currentColor;padding:1px 6px}
 .reader-type[data-type=sponsored]{background:var(--ink);border-color:var(--ink);color:var(--paper)}

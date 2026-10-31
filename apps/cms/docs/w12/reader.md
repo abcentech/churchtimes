@@ -6,7 +6,7 @@ Public site only. No schema changes: everything reads the fields and endpoints i
 
 | Feature | Where | Notes |
 |---|---|---|
-| Light, dark and high-contrast themes | every page | Follows the device (`prefers-color-scheme`, `prefers-contrast`) until the reader chooses in **Display settings** (nav button). Saved in this browser only (`ct-theme`, `ct-contrast`, `ct-text`). Applied by the inline head script `#reader-prefs-bootstrap` before first paint, so there is no flash. |
+| Light, dark and high-contrast themes | every page | Follows the device (`prefers-color-scheme`, `prefers-contrast`) until the reader chooses in **Display settings** (nav button). Saved in this browser only (`ct-theme`, `ct-contrast`, `ct-text`). Applied by the inline head script `#reader-prefs-bootstrap` before first paint, so there is no flash. With JavaScript off, a dark device still gets the dark theme (CSS fallback); high contrast then follows only the manual choice, which needs JavaScript. |
 | Article text size | article pages | Five steps (Smaller to Largest). Zooms the reading column, deck and key points only; ads, forms and the original-article call-out keep their size. |
 | 12 px type floor | every page | No interface text is below 12 px (`unit-tests/reader-prefs.test.js` guards every stylesheet). |
 | Reading progress | article pages (CMS and demo briefings) | Scroll-driven CSS (`view-timeline`); a lazy scroll listener draws it where that is unsupported. Decorative, never announced. |
@@ -52,5 +52,9 @@ Endpoints: `GET /api/public/authors` (sitemap), `GET /api/public/authors/:slug?p
 ## Budget
 
 Initial JS bundle +727 B gzip; the inline head script is a further 292 B gzip (not counted by `check:reader-budget`).
-Initial CSS +738 B gzip. Furniture, author/trust page and print styles are a lazy stylesheet (about 1.8 KB gzip), linked
-by the public host only on the pages that use it.
+Initial CSS +757 B gzip (including 19 B for the no-JavaScript dark fallback). Furniture, author/trust page and print
+styles are a lazy stylesheet (`reader-pages-*.css`, about 1.8 KB gzip). The public host links it in the head of the pages
+it server-renders (articles, author and trust pages), so they are styled and print correctly with JavaScript off and do
+not shift when the client takes over; it finds the hashed file by the `--reader-pages-sheet` marker and never picks a
+stylesheet the page already links. `unit-tests/reader-pages.test.js` checks this against a fake build and, after
+`npm run build`, against the real one.

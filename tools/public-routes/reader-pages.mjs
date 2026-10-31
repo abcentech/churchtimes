@@ -10,13 +10,17 @@ import {reportPath,articlePathTemplate as validateArticlePathTemplate,safeJSON} 
 import {loadReaderPage,renderReaderPage,readerPageKey,pageNumber,fetchPublicJSON,normalizeSiteTrust,TRUST_PAGES} from '../../src/lib/reader-pages.js';
 import {createLookupCache} from '../public-lookup-cache.mjs';
 
-// The furniture stylesheet is a hashed lazy asset; find it once by a selector only it defines.
+// The furniture stylesheet is a hashed lazy asset (src/features/reader/reader-article.css). Find it once by the
+// marker property only that file declares, never a stylesheet the page already links (the entry CSS also mentions
+// reader selectors). Exported for the real-build check in unit-tests/reader-pages.test.js.
+export const READER_SHEET_MARKER='--reader-pages-sheet';
 export function createReaderStylesheet(dist) {
   let pending;
   return ()=>pending ||= (async()=>{
+    const entry=await readFile(join(dist,'index.html'),'utf8').catch(()=>'');
     for(const [folder,href] of [[join(dist,'site','assets'),'site/assets/'],[join(dist,'assets'),'assets/']]) {
       let names;try{names=await readdir(folder);}catch{continue;}
-      for(const name of names.filter(n=>/^[\w.-]+\.css$/.test(n)).sort())if((await readFile(join(folder,name),'utf8')).includes('.reader-keypoints'))return `<link rel="stylesheet" href="${escape(href+name)}">`;
+      for(const name of names.filter(n=>/^[\w.-]+\.css$/.test(n)&&!entry.includes('/'+n)).sort())if((await readFile(join(folder,name),'utf8')).includes(READER_SHEET_MARKER))return `<link rel="stylesheet" href="${escape(href+name)}">`;
     }
     return '';
   })().catch(()=>'');

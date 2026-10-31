@@ -121,8 +121,13 @@ test('the corrections log keeps published articles with real notes, newest first
 const lexical=text=>({root:{type:'root',children:[{type:'heading',tag:'h2',children:[{type:'text',text:'Accuracy'}]},paragraph(text)]}});
 async function host(t,routes) {
   const dist=await mkdtemp(join(tmpdir(),'public-reader-'));
-  await writeFile(join(dist,'index.html'),await readFile(new URL('../src/index.template.html',import.meta.url),'utf8'));
-  await mkdir(join(dist,'assets'));await writeFile(join(dist,'assets','reader-pages-abc123.css'),'.reader-keypoints{margin:0}');await writeFile(join(dist,'assets','index-x.css'),'body{margin:0}');
+  // Shaped like a real build: the linked entry CSS (sorted first) also names .reader-keypoints (src/reader-ui.css text-size
+  // zoom), as does an unrelated lazy sheet; only the furniture sheet carries the marker.
+  await writeFile(join(dist,'index.html'),(await readFile(new URL('../src/index.template.html',import.meta.url),'utf8')).replace('</head>','<link rel="stylesheet" crossorigin href="./assets/index-x.css"></head>'));
+  await mkdir(join(dist,'assets'));
+  await writeFile(join(dist,'assets','index-x.css'),':is(.article-body,.reader-keypoints){zoom:var(--rz)}');
+  await writeFile(join(dist,'assets','article-decoy-1.css'),'.reader-keypoints{color:red}');
+  await writeFile(join(dist,'assets','reader-pages-abc123.css'),':root{--reader-pages-sheet:1}.reader-keypoints{margin:0}');
   const calls=[];
   const fetchImpl=async url=>{
     const u=new URL(url);calls.push(u.pathname+u.search);
@@ -185,4 +190,24 @@ test('the sitemap lists the corrections page, published trust pages and public a
   const xml=await (await fetch(origin+'/sitemap.xml')).text();
   for(const path of ['corrections/','about/editorial-standards/','author/ada-okafor/'])assert.match(xml,new RegExp(`<loc>https://public\\.example\\.test/${path}</loc>`),path);
   assert.doesNotMatch(xml,/about\/ownership|no-name/);
+});
+
+// Real build: after `npm run build`, the public host must link the lazy furniture sheet, not the entry CSS it already links.
+import {existsSync} from 'node:fs';
+import {fileURLToPath} from 'node:url';
+import {createReaderStylesheet,READER_SHEET_MARKER} from '../tools/public-routes/reader-pages.mjs';
+test('against the real build, server-rendered pages link the furniture stylesheet (not the entry CSS)',async t=>{
+  const dist=fileURLToPath(new URL('../dist/',import.meta.url));
+  if(!existsSync(join(dist,'index.html'))){t.skip('no build output: run npm run build first');return;}
+  const link=await createReaderStylesheet(dist)();
+  const href=link.match(/href="([^"]+)"/)?.[1];
+  assert.ok(href,'a furniture stylesheet is found in the build (rebuild if dist predates the marker)');
+  const entry=await readFile(join(dist,'index.html'),'utf8');
+  assert.equal(entry.includes(href.split('/').pop()),false,'never the stylesheet the page already links');
+  const css=await readFile(join(dist,href),'utf8');
+  for(const selector of [READER_SHEET_MARKER,'.reader-profile','.reader-pullquote','@media print'])assert.ok(css.includes(selector),selector);
+  // With scripts off there is no bootstrap: the entry CSS must still follow a dark device setting.
+  const entryCss=await Promise.all([...entry.matchAll(/rel="stylesheet"[^>]*href="\.\/([^"]+)"/g)].map(m=>readFile(join(dist,m[1]),'utf8')));
+  assert.ok(entryCss.length>0,'entry stylesheet linked');
+  assert.ok(entryCss.some(text=>/@media\s*\(prefers-color-scheme:\s*dark\)\s*\{\s*:root:not\(\[data-theme\]\)/.test(text)),'no-JavaScript dark fallback');
 });

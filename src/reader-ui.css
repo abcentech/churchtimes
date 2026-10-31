@@ -1,6 +1,8 @@
 /* Reader display preferences (W12 A). Every theme colour is a token; the head bootstrap sets data-theme/data-contrast/data-text before first paint. */
 :root{--panel:#172b2e;--on-panel:#fffefa;--btn-hover:#29474a;--sel:#d7dcca;--error:#923522;--error-bg:#fff3eb;--field:#82908b;--rz:1}
 :root[data-theme=dark]{color-scheme:dark;--paper:#111819;--white:#182224;--ink:#e8ebe4;--muted:#a9b3ae;--line:#36443f;--clay:#eb9c80;--gold:#d9b086;--sage:#1d2a2b;--panel:#0b1213;--on-panel:#f3f1ea;--btn-hover:#c9d2cc;--sel:#3c5a55;--error:#ffab91;--error-bg:#2a1712;--field:#8d9a95}
+/* No-JavaScript fallback: the head bootstrap always sets data-theme, so this applies only when scripts are off. */
+@media(prefers-color-scheme:dark){:root:not([data-theme]){color-scheme:dark;--paper:#111819;--white:#182224;--ink:#e8ebe4;--muted:#a9b3ae;--line:#36443f;--clay:#eb9c80;--gold:#d9b086;--sage:#1d2a2b;--panel:#0b1213;--on-panel:#f3f1ea;--btn-hover:#c9d2cc;--sel:#3c5a55;--error:#ffab91;--error-bg:#2a1712;--field:#8d9a95}}
 :root[data-contrast=more]{--paper:#fff;--white:#fff;--ink:#000;--muted:#2e3436;--line:#4a4a4a;--clay:#7a2810;--gold:#7a5a20;--sage:#eef0ea;--panel:#000;--on-panel:#fff;--btn-hover:#2e3436;--error:#7a1d0e;--field:#000}
 :root[data-contrast=more][data-theme=dark]{--paper:#000;--white:#0a0a0a;--ink:#fff;--muted:#e2e6e3;--line:#b8bfbb;--clay:#ffb79c;--gold:#f0cf9f;--sage:#141a1a;--btn-hover:#e2e6e3;--error:#ffc4b3;--field:#fff}
 ::selection{background:var(--sel)}
