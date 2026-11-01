@@ -59,13 +59,21 @@ prefetched or prerendered page shows the story at first paint; the app then hydr
     find their scripts after a deploy until evicted.
   - `ct-pages-v1`: the last **25** articles read (network-first; served from cache when offline or when the host
     answers 5xx). Pages over 1 MB are not stored. The title is kept in a header for the offline list.
+    When an article navigation answers 404 or 410 (unpublished, retracted, removed for legal reasons) the saved
+    copy is deleted at once, so it leaves the offline list and is never served again.
   - `ct-scripture-v1`: opened public-domain KJV book files (cache-first, capped at 12).
-- Never cached or touched (the worker does not even answer them): any non-GET, any other origin (CMS API, media,
+- Never cached (no cache read or write): any non-GET, any other origin (CMS API, media,
   third parties), `admin`, `api`, `graphql`, `newsroom`, `login`, `logout`, `account`, `preview`, `newsletter`,
   `subscribe`, `unsubscribe`, `give`, `giving`, `donate`, `donation(s)`, `comments`, feeds, sitemaps, `sw.js`,
   `OneSignalSDKWorker.js`, `push/`, range requests and file downloads. Responses marked `private`, carrying
-  `Set-Cookie`, redirected, non-200 or not HTML (for pages) are refused.
-- Offline: a read article opens from cache; anything else shows `offline.html`, which lists the saved stories
+  `Set-Cookie`, redirected, non-200 or not HTML (for pages) are refused; hashed assets are stored only with a JS,
+  CSS or font content type, statics only as manifest or images.
+- Navigation preload is enabled (saves the worker start-up time on article loads). For GET navigations the worker
+  does not handle (giving, newsletter, newsroom, feeds, downloads) it hands back the preloaded response untouched,
+  so the host receives exactly one request (tested with `/give/thanks/?reference=`); non-GET and other requests are
+  not answered at all.
+- Offline: a read article opens from cache; anything else shows `offline.html` (all links absolute to the base
+  path, because it is served in place of the failed URL; it applies the reader's saved theme and contrast), which lists the saved stories
   (newest first) and has a "Remove saved copies from this device" button. Articles saved offline show
   "Saved for offline reading on this device."; while offline, cards of saved stories show "Available offline".
 - Storage: about 25 x 30-60 KB HTML + up to 80 assets (a few MB at most) + up to 12 KJV books.
@@ -88,6 +96,17 @@ Both cases are covered by `pwa-tests`.
 - Effects: images are not downloaded (placeholder with the exact aspect ratio, LQIP blur when available; no
   layout shift when revealed); "Show images" in the page flow, or tap an image outside a link; no speculation
   rules; comments load on "Show comments"; no install prompt; the hero image preload is removed server-side.
+  The `ct-lite` key and cookie are written only when the reader uses the toggle, never automatically.
+
+## Install banner and storage (NDPA)
+
+Nothing from this work is written to storage on page load (the forms suite asserts only the consent record
+exists). There is no visit counter. The banner appears only when the browser itself offers installation
+(`beforeinstallprompt`, Chromium only), after 30 s of reading on the page, never in data-saver mode, at most once per
+page. Tapping Install or Not now stores `ct-install-dismissed` (a timestamp; reader-initiated preference) and the
+banner is not offered again for 60 days. Without storage a first visit cannot be told apart from a later one, so
+the 30-second reading gate replaces the earlier "third visit" rule. The listener is attached before the worker
+registration adds the manifest link, so the browser cannot fire the event before it is listening.
 
 ## Images: AVIF and blur-up
 
@@ -134,6 +153,7 @@ are served separately; lazy `enhance` chunk 2.8 KB JS + 0.5 KB CSS.
 
 - Article links are now document navigations in Chromium and wherever the worker is active. Back/forward is a
   real navigation (pages are `no-store`, so they do not enter the back/forward cache).
-- Prerender runs the page's network requests (CMS API) before activation; rendering, analytics and ads wait for
+- Prerender runs the page's network requests (CMS API) before activation; rendering, analytics (the GA module is not
+  even loaded until the page is shown) and ads wait for
   activation. At most 2 prerenders (lead newsroom story, moderate eagerness).
 - The static GitHub Pages export does not serve `sw.js`: registration fails quietly and no manifest is linked.
