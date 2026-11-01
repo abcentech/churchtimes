@@ -20,6 +20,8 @@ export function liteGate(root,label,run) {
 export const documentNav=()=>!!navigator.serviceWorker?.controller||!navigator.onLine||(!lite&&!!HTMLScriptElement.supports?.('speculationrules'));
 let enhance;
 const more=()=>enhance||=import('./enhance.js');
+// Resolves once the page is really shown (immediately unless it is a speculative prerender).
+export const shown=()=>new Promise(resolve=>document.prerendering?document.addEventListener('prerenderingchange',resolve,{once:true}):resolve());
 // main.js calls this once in place of its first render(): a prerendered page waits for activation
 // before it renders, counts analytics or loads ads.
 export function startPWA(render) {

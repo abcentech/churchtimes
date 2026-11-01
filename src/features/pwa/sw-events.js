@@ -25,6 +25,11 @@ async function remember(url,response,kind) {
   await (await caches.open(name)).put(pageKey(url),copy);
   if(kind==='article')await trim(PAGES_CACHE,MAX_PAGES);
 }
+// A story that is now 404/410 (unpublished, retracted, removed for legal reasons) leaves this device too,
+// including the offline list, and is never served again from cache.
+async function forget(url) {
+  await (await caches.open(PAGES_CACHE)).delete(pageKey(url));
+}
 async function cached(url,kind) {
   const name=kind==='article'?PAGES_CACHE:kind==='home'?SHELL_CACHE:null;
   return name?(await caches.open(name)).match(pageKey(url)):undefined;
@@ -38,6 +43,7 @@ async function navigate(event,kind) {
   try {
     const response=(await event.preloadResponse)||await fetch(request);
     if((kind==='article'||kind==='home')&&storable(response,kind))event.waitUntil(remember(request.url,response.clone(),kind).catch(()=>{}));
+    if(kind==='article'&&(response.status===404||response.status===410)) {await forget(request.url).catch(()=>{});return response;}
     // A temporarily unavailable newsroom still shows the copy this reader already has.
     if(response.status>=500)return (await cached(request.url,kind))||response;
     return response;
@@ -81,6 +87,12 @@ self.addEventListener('activate',event=>{
 });
 self.addEventListener('fetch',event=>{
   const kind=classify(event.request,config);
-  if(kind==='skip')return;
+  if(kind==='skip') {
+    // Navigation preload is on for the whole scope. A navigation the worker does not handle still has to
+    // consume the preloaded response, or the browser discards it and requests the page a second time
+    // (e.g. /give/thanks/?reference=...). Pure pass-through: nothing is read or stored.
+    if(event.request.mode==='navigate'&&event.request.method==='GET'&&event.preloadResponse)event.respondWith(event.preloadResponse.then(response=>response||fetch(event.request)));
+    return;
+  }
   event.respondWith(['asset','static','scripture'].includes(kind)?cacheFirst(event,kind):navigate(event,kind));
 });

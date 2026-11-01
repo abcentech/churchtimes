@@ -21,7 +21,7 @@ const readerFormConfig=()=>readerForms?.readerFormConfig()||{contact:import.meta
 const bindReaderForms=(...args)=>readerForms?.bindReaderForms(...args)||(()=>{});
 import { hasConsent, subscribeConsent, requestConsent, consentMarkup, bindConsentControls } from './lib/reader-consent.js';
 let analytics,pageSettled=false;
-if(import.meta.env.VITE_PUBLIC_GA4_ID && import.meta.env.VITE_PUBLIC_INDEXABLE==='true')import('./lib/reader-analytics.js').then(module=>{analytics=module.createAnalytics({env:import.meta.env,onReady:()=>{if(pageSettled)analytics.page();}});analytics.update(hasConsent('analytics'));}).catch(()=>{});
+if(import.meta.env.VITE_PUBLIC_GA4_ID && import.meta.env.VITE_PUBLIC_INDEXABLE==='true')shown().then(()=>import('./lib/reader-analytics.js')).then(module=>{analytics=module.createAnalytics({env:import.meta.env,onReady:()=>{if(pageSettled)analytics.page();}});analytics.update(hasConsent('analytics'));}).catch(()=>{});
 subscribeConsent(()=>analytics?.update(hasConsent('analytics')));
 import {bindSkipLink} from './lib/skip-link.js';
 import {publicPageRoute} from './lib/public-page-routes.js';
@@ -47,7 +47,7 @@ import './public-quality.css';
 import './reader-features.css';
 import './article-content.css';
 import './features/pwa/pwa.css';
-import { startPWA, documentNav, isLite, liteMarkup, liteGate } from './features/pwa/boot.js';
+import { startPWA, documentNav, isLite, liteMarkup, liteGate, shown } from './features/pwa/boot.js';
 import './reader-ui.css';
 import './features/reader/reader-boot.js';
 import edition from './data/stories.json';

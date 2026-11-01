@@ -4,7 +4,11 @@ import {LITE_KEY} from './lite.js';
 import {isLite,setLiteFlag,documentNav} from './boot.js';
 export const PAGES_CACHE='ct-pages-v1';
 const PUSH_WORKER=/\/OneSignalSDKWorker\.js$/;
-const store={get(key){try {return JSON.parse(localStorage.getItem(key)||'null');} catch {return null;}},set(key,value){try {localStorage.setItem(key,JSON.stringify(value));} catch {}}};
+// Storage policy (NDPA): nothing is written on page load. The only key this layer writes is the install-banner
+// dismissal, and only when the reader taps a banner button (a reader-initiated preference).
+export const INSTALL_DISMISSED_KEY='ct-install-dismissed';
+export const INSTALL_ENGAGED_MS=30000;
+const DISMISS_DAYS=60;
 export function revealImages(root) {
   for(const image of root.querySelectorAll('img[data-lite-src]')) {
     if(image.parentElement?.tagName==='PICTURE')for(const source of image.parentElement.querySelectorAll('source[data-lite-srcset]')){source.srcset=source.dataset.liteSrcset;source.removeAttribute('data-lite-srcset');}
@@ -57,23 +61,25 @@ function litePill() {
   const main=document.querySelector('#main');
   if(main)main.prepend(pill);else document.body.prepend(pill);
 }
-// Never on a first visit: offered from the third separate visit, once per 60 days if dismissed.
-export function installEligible(visits,now=Date.now()) {
-  return !!visits&&visits.count>=3&&!(visits.dismissedAt&&now-visits.dismissedAt<60*864e5);
+// No visit counter (it would be storage without consent). The banner appears only when the browser itself offers
+// installation (beforeinstallprompt), after 30 s of reading on the page, never in data-saver mode, once per page,
+// and not for 60 days after the reader tapped Install or Not now.
+export function installEligible(dismissedAt,now=Date.now()) {
+  return !(Number(dismissedAt)>0&&now-Number(dismissedAt)<DISMISS_DAYS*864e5);
 }
-function countVisit() {
-  const visits=store.get('ct-visits')||{count:0};
-  try {if(!sessionStorage.getItem('ct-visit')){sessionStorage.setItem('ct-visit','1');visits.count++;store.set('ct-visits',visits);}} catch {}
-  return visits;
-}
+const dismissedAt=()=>{try {return localStorage.getItem(INSTALL_DISMISSED_KEY);} catch {return null;}};
+const remember=()=>{try {localStorage.setItem(INSTALL_DISMISSED_KEY,String(Date.now()));} catch {}};
+let offered;
 function installPrompt(event) {
-  const visits=countVisit();
-  if(isLite()||!installEligible(visits)||matchMedia('(display-mode: standalone)').matches||document.querySelector('.ct-install'))return;
+  if(offered||isLite()||!installEligible(dismissedAt())||matchMedia('(display-mode: standalone)').matches)return;
+  const wait=INSTALL_ENGAGED_MS-performance.now();
+  if(wait>0)return void setTimeout(()=>installPrompt(event),wait);
+  offered=true;
   const box=document.createElement('aside');box.className='ct-install';box.setAttribute('aria-label','Install Church Times Nigeria');
   box.innerHTML='<p>Add Church Times Nigeria to your home screen for faster reading, even offline.</p><div><button type="button" data-install>Install</button> <button type="button" data-dismiss>Not now</button></div>';
   const close=()=>{box.remove();};
-  box.querySelector('[data-install]').addEventListener('click',async()=>{close();try {await event.prompt();} catch {}});
-  box.querySelector('[data-dismiss]').addEventListener('click',()=>{store.set('ct-visits',{...visits,dismissedAt:Date.now()});close();});
+  box.querySelector('[data-install]').addEventListener('click',async()=>{remember();close();try {await event.prompt();} catch {}});
+  box.querySelector('[data-dismiss]').addEventListener('click',()=>{remember();close();});
   document.body.append(box);
 }
 let rules;
@@ -105,22 +111,26 @@ let started;
 export function startEnhance() {
   if(started)return;started=true;
   speculate();
-  countVisit();
+  // Attached before registerWorker() links the manifest, so the browser cannot fire it earlier on this page.
   addEventListener('beforeinstallprompt',event=>{event.preventDefault();installPrompt(event);});
   if(import.meta.env.PROD)registerWorker().catch(()=>{});
   // Data saver: a tapped image outside a link loads on its own; everything else via "Show images".
+  const clearNames=()=>{for(const el of document.querySelectorAll('[style*="view-transition-name"]'))el.style.viewTransitionName='';};
   document.addEventListener('click',event=>{
     const image=event.target.closest?.('img[data-lite-src]');
     if(image&&!image.closest('a'))revealImages(image.parentElement);
     // Cross-document view transition: name the chosen card's headline and image for this navigation only.
+    // Names from an earlier click (cancelled, or opened in another tab) are cleared first: duplicates skip the transition.
+    clearNames();
     const link=event.target.closest?.('a[href]'),card=link?.closest('[data-story-slug]');
+    if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey||link?.target)return;
     if(card&&!event.defaultPrevented&&documentNav()&&!link.getAttribute('href').startsWith('#')&&!document.querySelector('.article-header h1')) {
       const heading=card.querySelector('h1,h2,h3'),picture=card.querySelector('img');
       if(heading)heading.style.viewTransitionName='ct-title';
       if(picture)picture.style.viewTransitionName='ct-hero';
     }
   });
-  addEventListener('pageshow',()=>{for(const el of document.querySelectorAll('[style*="view-transition-name"]'))el.style.viewTransitionName='';});
+  addEventListener('pageshow',clearNames);
   const app=document.querySelector('#app');
   let timer;
   const refresh=()=>{clearTimeout(timer);timer=setTimeout(()=>{litePill();markOffline(document).catch(()=>{});},150);};

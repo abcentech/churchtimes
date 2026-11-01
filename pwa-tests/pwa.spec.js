@@ -128,30 +128,74 @@ test('push: an existing root OneSignal worker keeps its scope; the push sub-scop
   } finally {await stop();}
 });
 
-test('install prompt: never on a first visit, offered from the third, dismissible and remembered',async({browser})=>{
+test('install prompt: only when the browser offers it, after 30 s of reading, no storage until the reader taps',async({browser})=>{
   const {origin,stop}=await host();
   try {
-    for(const [count,shown] of [[0,false],[2,true]]) {
-      const context=await browser.newContext();const page=await context.newPage();await stubCMS(page);
-      await page.addInitScript(count=>{if(!sessionStorage.getItem('seeded')){sessionStorage.setItem('seeded','1');localStorage.setItem('ct-visits',JSON.stringify({count}));}},count);
-      await page.goto(origin+'/');
-      await expect(page.locator('script[type="speculationrules"]')).toHaveCount(1,{timeout:15000});
-      await page.evaluate(()=>{const event=new Event('beforeinstallprompt',{cancelable:true});event.prompt=async()=>{window.prompted=true;};dispatchEvent(event);});
-      const box=page.getByRole('complementary',{name:'Install Church Times Nigeria'});
-      if(!shown){await expect(box).toHaveCount(0);await context.close();continue;}
-      await expect(box).toBeVisible();
-      for(const theme of ['light','dark']) {
-        // Reader themes (W12 A) swap the ink token; the banner uses the panel tokens so it stays legible.
-        await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;},theme);
-        expect((await new AxeBuilder({page}).include('.ct-install').withTags(['wcag2a','wcag2aa','wcag21aa','wcag22aa']).analyze()).violations.map(v=>v.id),theme).toEqual([]);
-      }
-      await box.getByRole('button',{name:'Not now'}).click();
-      await expect(box).toHaveCount(0);
-      expect(JSON.parse(await page.evaluate(()=>localStorage.getItem('ct-visits'))).dismissedAt).toBeGreaterThan(0);
-      await page.evaluate(()=>{const event=new Event('beforeinstallprompt');event.prompt=async()=>{};dispatchEvent(event);});
-      await expect(box).toHaveCount(0);
-      await context.close();
+    const context=await browser.newContext();const page=await context.newPage();await stubCMS(page);
+    await page.clock.install();
+    await page.goto(origin+'/');
+    await page.clock.runFor(5000);
+    await expect(page.locator('script[type="speculationrules"]')).toHaveCount(1,{timeout:15000});
+    const offer=()=>page.evaluate(()=>{const event=new Event('beforeinstallprompt',{cancelable:true});event.prompt=async()=>{window.prompted=true;};dispatchEvent(event);});
+    const box=page.getByRole('complementary',{name:'Install Church Times Nigeria'});
+    await offer();await page.clock.runFor(1000);
+    await expect(box).toHaveCount(0);
+    // Privacy contract: nothing of ours in storage on load (only consent may exist, and it is not set here).
+    expect(await page.evaluate(()=>Object.keys(localStorage).concat(Object.keys(sessionStorage)))).toEqual([]);
+    await page.clock.runFor(30000);
+    await expect(box).toBeVisible();
+    for(const theme of ['light','dark']) {
+      // Reader themes (W12 A) swap the ink token; the banner uses the panel tokens so it stays legible.
+      await page.evaluate(theme=>{document.documentElement.dataset.theme=theme;},theme);
+      expect((await new AxeBuilder({page}).include('.ct-install').withTags(['wcag2a','wcag2aa','wcag21aa','wcag22aa']).analyze()).violations.map(v=>v.id),theme).toEqual([]);
     }
+    await box.getByRole('button',{name:'Not now'}).click();
+    await expect(box).toHaveCount(0);
+    expect(await page.evaluate(()=>Object.keys(localStorage))).toEqual(['ct-install-dismissed']);
+    await page.reload();await page.clock.runFor(5000);
+    await expect(page.locator('script[type="speculationrules"]')).toHaveCount(1,{timeout:15000});
+    await offer();await page.clock.runFor(40000);
+    await expect(box).toHaveCount(0);
+    await context.close();
+  } finally {await stop();}
+});
+
+test('worker: no duplicate request for navigations it passes through; offline page links are absolute and themed',async({page})=>{
+  const {server,origin,stop}=await host();const hits=[];server.on('request',req=>hits.push(req.url));
+  try {
+    await stubCMS(page);
+    await page.goto(origin+'/');await controlled(page);
+    expect(await page.evaluate(()=>Object.keys(localStorage).concat(Object.keys(sessionStorage)))).toEqual([]);
+    hits.length=0;
+    await page.goto(origin+'/give/thanks/?reference=CT-TEST-1').catch(()=>{});
+    expect(hits.filter(url=>url.startsWith('/give/thanks/'))).toEqual(['/give/thanks/?reference=CT-TEST-1']);
+    await page.evaluate(()=>{localStorage.setItem('ct-theme','dark');});
+    await page.goto(origin+'/');await controlled(page);
+    await stop();
+    await page.goto(origin+'/search/?q=faith');
+    await expect(page.getByRole('heading',{level:1,name:'You are offline.'})).toBeVisible();
+    await expect(page.getByRole('link',{name:'Try the front page'})).toHaveAttribute('href','/');
+    await expect(page.locator('html')).toHaveAttribute('data-theme','dark');
+    expect((await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21aa','wcag22aa']).analyze()).violations.map(v=>v.id)).toEqual([]);
+  } finally {await stop().catch(()=>{});}
+});
+
+test('view transitions: a Ctrl/Cmd or middle click never leaves names behind',async({page})=>{
+  const {origin,stop}=await host();
+  try {
+    await stubCMS(page);
+    await page.goto(origin+'/');
+    await expect(page.locator('script[type="speculationrules"]')).toHaveCount(1,{timeout:15000});
+    const named=()=>page.locator('[style*="view-transition-name"]').count();
+    const card=page.locator('#newsroom-home .newsroom-card h2 a').first();
+    // Keep the test page in place: a no-op link target, so the names set for the transition stay observable.
+    await card.evaluate(a=>{a.href='javascript:void 0';});
+    await card.click();
+    expect(await named()).toBe(2);
+    await card.click({modifiers:['ControlOrMeta']});
+    expect(await named()).toBe(0);
+    await card.click({button:'middle'});
+    expect(await named()).toBe(0);
   } finally {await stop();}
 });
 

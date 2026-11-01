@@ -59,7 +59,11 @@ export function storable(response,kind) {
   const type=(response.headers.get('content-type')||'').toLowerCase();
   if(kind==='article'||kind==='home')return type.startsWith('text/html');
   if(kind==='scripture')return type.includes('json');
-  return true;
+  // Hashed assets only as scripts, styles or fonts (never an HTML fallback served under an asset name).
+  if(kind==='asset')return /^(?:text\/css|text\/javascript|application\/javascript|font\/)/.test(type);
+  // Manifest and icons.
+  if(kind==='static')return /^(?:application\/manifest\+json|application\/json|image\/)/.test(type);
+  return false;
 }
 export function pageTitle(html) {
   const match=/<title>([^<]{1,300})<\/title>/i.exec(html);

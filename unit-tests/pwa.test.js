@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {classify,articleSlug,storable,evictions,staleCaches,pageTitle,pageKey,MAX_PAGES,PAGES_CACHE,ASSETS_CACHE} from '../src/features/pwa/sw-core.js';
 import {liteHTML,liteRequest,litePlaceholder} from '../src/features/pwa/lite.js';
-import {pwaManifest,entryAssets,serviceWorkerSource,createPwaRoutes,PWA_STATICS,OFFLINE_HTML} from '../tools/public-routes/pwa.mjs';
+import {pwaManifest,entryAssets,serviceWorkerSource,createPwaRoutes,PWA_STATICS,offlineHTML} from '../tools/public-routes/pwa.mjs';
 import {RESERVED_ROOT_SLUGS} from '../src/lib/public-routes.js';
 
 const origin='https://news.example.test';
@@ -78,7 +78,10 @@ test('manifest and worker source: scoped to the base path, versioned by build, v
   assert.notEqual(JSON.parse(version(one)).version,JSON.parse(version(two)).version);
   assert.doesNotMatch(one,/^export /m);
   assert.doesNotThrow(()=>new vm.Script(one));
-  assert.match(OFFLINE_HTML,/<main id="main">/);
+  assert.match(offlineHTML('/beta/'),/<main id="main">/);
+  // Served in place of any failed URL: links must not be relative.
+  assert.ok(offlineHTML('/beta/').includes('<a href="/beta/">Try the front page</a>'));
+  assert.ok(!offlineHTML('/beta/').includes('href="./'));
 });
 
 // A minimal in-memory Cache Storage, enough to run the real generated worker under node.
@@ -106,11 +109,11 @@ async function bootWorker({network}) {
   const self={location:new URL(origin+'/sw.js'),addEventListener:(type,fn)=>{listeners[type]=fn;},skipWaiting:async()=>{},clients:{claim:async()=>{}},registration:{}};
   vm.runInNewContext(source,{self,caches,fetch:globalThis.__fetch,Response,Request,Headers,URL,Date,JSON,Number,String,Promise,encodeURIComponent,decodeURIComponent,Set,Map,Array,Object,console});
   const extend=async(type,props={})=>{const waits=[];let response;await listeners[type]({...props,waitUntil:p=>waits.push(p),respondWith:p=>{response=p;}});await Promise.all(waits);const result=await response;await Promise.all(waits);return result;};
-  const fetchEvent=async(path,{mode='navigate',method='GET'}={})=>{
+  const fetchEvent=async(path,{mode='navigate',method='GET',preload}={})=>{
     const request={url:new URL(path,origin).href,method,mode,headers:new Headers()};
-    const waits=[];let response;
-    listeners.fetch({request,preloadResponse:Promise.resolve(undefined),waitUntil:p=>waits.push(p),respondWith:p=>{response=p;}});
-    const result=await response;await Promise.all(waits);return result;
+    const waits=[];let response,responded=false;
+    listeners.fetch({request,preloadResponse:Promise.resolve(preload&&basic(preload)),waitUntil:p=>waits.push(p),respondWith:p=>{responded=true;response=p;}});
+    const result=await response;await Promise.all(waits);return responded?result:'browser';
   };
   await extend('install');await extend('activate');
   return {caches,fetchEvent};
@@ -143,7 +146,9 @@ test('generated worker: keeps the last 25 read articles, serves them offline, an
   assert.match(await (await fetchEvent('/')).text(),/<p>Home<\/p>/,'home shell offline');
   assert.match(await (await fetchEvent('/story-0/')).text(),/Offline/,'evicted article: offline page');
   assert.match(await (await fetchEvent('/latest/')).text(),/Offline/,'uncached page: offline page');
-  assert.equal(await fetchEvent('/give/'),undefined,'giving left to the browser');
+  // Skipped navigations are a pure pass-through: offline they fail like any network navigation, nothing is cached.
+  await assert.rejects(fetchEvent('/give/'));
+  assert.equal(await fetchEvent('/api/public/giving/init',{mode:'cors',method:'POST'}),'browser');
 });
 test('generated worker: a newsroom outage serves the saved copy instead of the error',async()=>{
   let down=false;
@@ -237,4 +242,39 @@ test('worker never touches giving, newsletter or CMS API routes (navigation, fet
   for(const path of ['/give/','/give/thanks/','/give/thanks/?reference=CT-1','/giving/','/api/public/giving/init','/api/public/giving/status?reference=CT-1','/api/public/giving/webhook/paystack','/api/public/giving/settings','/newsletter/','/newsletter/unsubscribe/?token=x','/api/public/newsletter/subscribe','/api/public/newsletter/unsubscribe','/api/public/articles','/api/public/search?q=x','/api/users/me','/admin/'])
     for(const mode of ['navigate','cors','no-cors'])for(const method of ['GET','POST'])
       assert.equal(classify(req(path,{mode,method}),config),'skip',`${method} ${mode} ${path}`);
+});
+test('generated worker: a 404/410 article is removed from the device and from the offline list',async()=>{
+  const status={};let online=true;
+  const {caches,fetchEvent}=await bootWorker({network:async url=>!online?new TypeError('offline'):url.pathname==='/offline.html'?page('Offline'):status[url.pathname]?new Response('gone',{status:status[url.pathname],headers:{'content-type':'text/html'}}):page(url.pathname.slice(1,-1))});
+  await fetchEvent('/retracted-story/');await fetchEvent('/removed-story/');await fetchEvent('/kept-story/');
+  const saved=async()=>(await (await caches.open(PAGES_CACHE)).keys()).map(r=>new URL(r.url).pathname).sort();
+  assert.deepEqual(await saved(),['/kept-story/','/removed-story/','/retracted-story/']);
+  status['/retracted-story/']=410;status['/removed-story/']=404;
+  assert.equal((await fetchEvent('/retracted-story/')).status,410);
+  assert.equal((await fetchEvent('/removed-story/')).status,404);
+  assert.deepEqual(await saved(),['/kept-story/']);
+  online=false;
+  assert.match(await (await fetchEvent('/retracted-story/')).text(),/Offline/,'never served again offline');
+  status['/kept-story/']=503;online=true;
+  assert.match(await (await fetchEvent('/kept-story/')).text(),/kept-story/);
+});
+test('generated worker: navigation preload is consumed once, also for navigations the worker does not handle',async()=>{
+  const calls=[];
+  const {fetchEvent}=await bootWorker({network:async url=>{calls.push(url.pathname+url.search);return url.pathname==='/offline.html'?page('Offline'):page('network');}});
+  calls.length=0;
+  for(const path of ['/give/thanks/?reference=CT-1','/newsletter/confirm/','/a-story/','/latest/']) {
+    const response=await fetchEvent(path,{preload:page('preloaded '+path)});
+    assert.match(await response.text(),/preloaded/,path);
+  }
+  assert.deepEqual(calls,[],'no second request to the host');
+  // Without a preload the pass-through makes exactly one request.
+  await fetchEvent('/give/thanks/?reference=CT-2');
+  assert.deepEqual(calls,['/give/thanks/?reference=CT-2']);
+});
+test('worker storage: hashed assets must be scripts, styles or fonts; statics must be manifest or images',()=>{
+  const res=(type,status=200)=>Object.defineProperty(new Response('x',{status,headers:{'content-type':type}}),'type',{value:'basic'});
+  for(const type of ['text/javascript; charset=utf-8','application/javascript','text/css; charset=utf-8','font/woff2'])assert.equal(storable(res(type),'asset'),true,type);
+  for(const type of ['text/html; charset=utf-8','text/plain','application/octet-stream',''])assert.equal(storable(res(type),'asset'),false,type);
+  assert.equal(storable(res('application/manifest+json'),'static'),true);assert.equal(storable(res('image/png'),'static'),true);
+  assert.equal(storable(res('text/html'),'static'),false);
 });
