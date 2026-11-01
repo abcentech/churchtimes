@@ -164,6 +164,8 @@ There are **two sources of stories**. This matters because staff control one of 
 
 ![The corrections note under a story.](frontend-manual/img/18-corrections-on-article.png)
 
+![Archived comments under an old story (read-only; the Give ask and newsletter box sit nearby).](frontend-manual/img/136-archived-comments.png)
+
 **Scripture hover cards.** When a story names a Bible passage such as "John 3:16" or "Psalm 23:1-3", the reference is underlined with dots. A reader can hover over it, tab to it and press Enter, or tap it. A small card opens with the verse text and "KJV" (King James Version, public domain, built into the site, so it works offline). The card closes with **Esc**, the **×** button or by clicking elsewhere. Unknown or impossible references (for example "John 99:1") stay plain text. Cards are not printed. There is **no staff switch**; it works on every CMS story.
 
 ![Hovering over "John 3:16" opens a card with the King James text.](frontend-manual/img/100-scripture-card.png)
@@ -223,6 +225,8 @@ There are **two sources of stories**. This matters because staff control one of 
 ![A topic page with its Follow button.](frontend-manual/img/22-topic-desktop.png)
 
 ![The topic list.](frontend-manual/img/23-topics-index.png)
+
+![After pressing Follow the button reads "Following".](frontend-manual/img/60-topic-followed.png)
 
 ![The home page "Following" section, after following one topic and one writer.](frontend-manual/img/61-following-feed.png)
 
@@ -470,6 +474,8 @@ If any one is missing, `/give/` answers "Online giving is not available" (page n
 
 ![The privacy window opened by Allow spam protection.](frontend-manual/img/133-consent-dialog.png)
 
+![The confirm page before the button is pressed.](frontend-manual/img/134-newsletter-confirm.png)
+
 ![The confirm page, with an invalid link.](frontend-manual/img/134b-newsletter-confirm-invalid.png)
 
 **How staff control it.** Two separate things:
@@ -488,6 +494,10 @@ If any one is missing, `/give/` answers "Online giving is not available" (page n
 ![The WhatsApp prompt on the home page (see also the full home page in section 2).](frontend-manual/img/01b-home-full.png)
 
 **Social links.** The footer shows a **Follow us** row: Facebook, X, Instagram, YouTube, WhatsApp, Telegram and TikTok. Links open in a new tab. The same addresses are given to search engines as the publication's official profiles.
+
+**Contact form (off by default).** The Contact page (`/#contact`) shows the newsroom email address and, when the site was built with the contact address and the spam-protection key, a "Write to the newsroom." form (Topic, Message of 20 to 5,000 characters; "Received. We will reply by email. Reference: ..." on success).
+
+![The Contact page in the rebuilt practice site.](frontend-manual/img/135-contact.png)
 
 **Sharing.** Under each story, **Share this story** has buttons for Facebook, X, WhatsApp, Telegram, LinkedIn and Email (these open the service's own sharing page; nothing is loaded until clicked), plus **Copy link** (says "Link copied.") and, on phones and other devices that support it, a button to use the device's own share menu. The three-dot button in the story header also copies the link.
 
