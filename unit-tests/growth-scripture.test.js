@@ -119,3 +119,16 @@ test('no non-public-domain translations are bundled',async()=>{
   const sources=['daily.js','hover.js','text.js','index.js'].map(f=>fileURLToPath(new URL(`../src/features/growth/scripture/${f}`,import.meta.url)));
   for(const file of sources)assert.doesNotMatch(await readFile(file,'utf8'),/\b(NIV|ESV|NLT|NKJV|https?:\/\/)/,file);
 });
+
+test('findReferences honours a limit and stops early on a huge text node (review fix)',async()=>{
+  const {findReferences,formFor}=await import('../src/features/growth/scripture/refs.js');
+  const text=Array.from({length:500},(_,i)=>`John 3:${(i%36)+1}`).join(' and ');
+  assert.equal(findReferences(text).length,500);
+  assert.equal(findReferences(text,{limit:7}).length,7);
+  assert.deepEqual(findReferences(text,{limit:0}),[]);
+  assert.deepEqual(findReferences(text,{limit:3}).map(r=>r.verse),[1,2,3]);
+  // the resolved form is cached per normalised book name: the same object comes back
+  const a=formFor('1  Cor'),b=formFor('1 Cor');
+  assert.ok(a);assert.equal(a,b);
+  assert.equal(formFor('Notabook'),undefined);
+});

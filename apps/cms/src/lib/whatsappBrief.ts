@@ -2,6 +2,7 @@ import { resolvePublicSiteUrl } from './newsletter'
 import { articlePath, resolveArticlePathTemplate, type ArticlePathTemplate, type EnvLike } from './redirectPaths'
 import { isReservedSlug } from './reservedSlugs'
 import { SLUG_RE } from './sanitize'
+import { contentTypeLabel } from './contentLabel'
 import { clampText, cleanCardText, formatLagosDate } from './shareCard'
 
 /**
@@ -9,7 +10,8 @@ import { clampText, cleanCardText, formatLagosDate } from './shareCard'
  * the published articles of one Africa/Lagos calendar day, newest first (ties by id), read from the CMS's own public API.
  */
 
-export type BriefArticle = { id: string; slug: string; title: string; excerpt: string; publishedAt: string }
+/** `label`: the content-type label for non-news stories (Sponsored, Opinion, ...), empty for news. */
+export type BriefArticle = { id: string; slug: string; title: string; excerpt: string; publishedAt: string; label: string }
 
 export const BRIEF_DEFAULT_LIMIT = 5
 export const BRIEF_MAX_LIMIT = 10
@@ -43,7 +45,7 @@ export function normaliseBriefArticle(record: unknown): BriefArticle | null {
   const title = cleanCardText(r.title, 240)
   const publishedAt = typeof r.publishedAt === 'string' && !Number.isNaN(Date.parse(r.publishedAt)) ? new Date(r.publishedAt).toISOString() : ''
   if (!SLUG_RE.test(slug) || slug.length > 160 || !title || !publishedAt) return null
-  return { id: String(r.id ?? slug), slug, title, excerpt: cleanCardText(r.excerpt, 600), publishedAt }
+  return { id: String(r.id ?? slug), slug, title, excerpt: cleanCardText(r.excerpt, 600), publishedAt, label: contentTypeLabel(r.contentType) }
 }
 
 const compareIds = (a: string, b: string): number =>
@@ -91,6 +93,10 @@ export type BriefTextOptions = {
   whatsappUrl?: string | null
 }
 
+/** Headline as it appears in the brief (text and card): non-news stories carry their label, e.g. "[Sponsored] ...". */
+export const briefHeadline = (story: Pick<BriefArticle, 'title' | 'label'>): string =>
+  `${story.label ? `[${story.label}] ` : ''}${whatsappPlain(story.title)}`
+
 /** Ready-to-paste WhatsApp text. */
 export function buildBriefText({ date, selection, siteUrl, template, whatsappUrl }: BriefTextOptions): string {
   const day = formatLagosDate(`${date}T12:00:00+01:00`) || date
@@ -98,7 +104,7 @@ export function buildBriefText({ date, selection, siteUrl, template, whatsappUrl
   if (selection.fallback) lines.push(`Fewer than three new stories were published on ${day}, so here are our latest reports.`, '')
   if (selection.stories.length === 0) lines.push('No published stories yet.', '')
   selection.stories.forEach((story, i) => {
-    lines.push(`*${i + 1}. ${whatsappPlain(story.title)}*`)
+    lines.push(`*${i + 1}. ${briefHeadline(story)}*`)
     const excerpt = whatsappPlain(clampText(story.excerpt, EXCERPT_MAX))
     if (excerpt) lines.push(excerpt)
     const url = briefArticleUrl(story.slug, siteUrl, template)

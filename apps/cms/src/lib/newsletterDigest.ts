@@ -1,3 +1,4 @@
+import { storyLabel } from './contentLabel'
 import { escapeHtml, html, renderDocument, safeHref, type TrustedEmailHtml } from './emailTemplate'
 import { lagosDay } from './mailer'
 import type { ArticlePathTemplate } from './redirectPaths'
@@ -83,8 +84,8 @@ export function normaliseDigestStory(record: unknown): DigestStory | null {
     title,
     excerpt: cleanCardText(r.excerpt, 600),
     publishedAt,
-    // Paid placements stay labelled in the inbox too (schema-contract `contentType`).
-    category: r.contentType === 'sponsored' ? 'Sponsored' : cleanCardText(category, 80),
+    // Paid placements and opinion stay labelled in the inbox too (schema-contract `contentType`).
+    category: storyLabel(r.contentType, cleanCardText(category, 80)),
   }
 }
 

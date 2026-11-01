@@ -64,7 +64,7 @@ describe('story selection', () => {
     ).toEqual({ id: '9', slug: 'ok', title: 'T <b>', excerpt: 'E', publishedAt: '2026-10-30T07:00:00.000Z', category: 'Faith' })
     expect(
       normaliseDigestStory({ id: 9, slug: 'ok', title: 'Ad', publishedAt: '2026-10-30T08:00:00Z', category: { title: 'Faith' }, contentType: 'sponsored' })?.category,
-    ).toBe('Sponsored')
+    ).toBe('Sponsored · Faith')
   })
 
   it('is deterministic: window, newest first, id tie-break, de-duplicated, capped', () => {
@@ -165,5 +165,16 @@ describe('subject is always a valid plain-text issue subject (review fix)', () =
     expect(clampUtf16('a'.repeat(10), 10)).toBe('a'.repeat(10))
     expect(clampUtf16('a'.repeat(11), 10).length).toBeLessThanOrEqual(10)
     expect(clampUtf16('😀'.repeat(6), 10)).toBe('😀😀😀😀…')
+  })
+})
+
+describe('content-type labels in the digest (review fix)', () => {
+  it('names every non-news type before the category', () => {
+    const base = { id: 9, slug: 'ok', title: 'T', publishedAt: '2026-10-30T08:00:00Z', category: { title: 'Faith' } }
+    expect(normaliseDigestStory({ ...base, contentType: 'opinion' })?.category).toBe('Opinion · Faith')
+    expect(normaliseDigestStory({ ...base, contentType: 'analysis' })?.category).toBe('Analysis · Faith')
+    expect(normaliseDigestStory({ ...base, contentType: 'sponsored', category: null })?.category).toBe('Sponsored')
+    expect(normaliseDigestStory({ ...base, contentType: 'news' })?.category).toBe('Faith')
+    expect(normaliseDigestStory({ ...base })?.category).toBe('Faith')
   })
 })

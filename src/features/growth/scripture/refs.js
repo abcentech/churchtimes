@@ -26,21 +26,31 @@ const DASH='[-–—]';
 const SOURCE=`(?<![\\p{L}\\p{N}])(${forms.map(f=>f.pattern).join('|')})(\\.?)\\s+(\\d{1,3})(?::(\\d{1,3})(?:\\s*${DASH}\\s*(\\d{1,3})(?::(\\d{1,3}))?)?((?:\\s*,\\s*\\d{1,3}(?:\\s*${DASH}\\s*\\d{1,3})?)*))?(?![\\p{L}\\p{N}:])`;
 const MAX_INPUT=100000;
 
-function formFor(matched){
+// Each form's anchored pattern is compiled once, on first use; resolved book names are remembered (bounded).
+const formCache=new Map();
+const FORM_CACHE_MAX=500;
+export function formFor(matched){
   const norm=matched.replace(/\s+/g,' ');
-  return forms.find(f=>new RegExp(`^(?:${f.pattern})$`,'u').test(norm));
+  if(formCache.has(norm))return formCache.get(norm);
+  const form=forms.find(f=>(f.re??=new RegExp(`^(?:${f.pattern})$`,'u')).test(norm));
+  if(formCache.size>=FORM_CACHE_MAX)formCache.delete(formCache.keys().next().value);
+  formCache.set(norm,form);
+  return form;
 }
 const verseCount=(bookIndex,chapter)=>VERSE_COUNTS[bookIndex]?.[chapter-1]||0;
 
+const REFERENCE_RE=new RegExp(SOURCE,'gu');
 /**
  * Every valid reference in `text`, in order: { index, length, text, book, chapter, verse, endChapter, endVerse,
  * extra: [[from,to],...] }. `verse` is null for a whole chapter. Invalid or out-of-range references are skipped.
+ * At most `limit` references (callers pass what is left of their own cap, so a huge text node stops early).
  */
-export function findReferences(text){
-  if(typeof text!=='string' || !text || text.length>MAX_INPUT)return [];
+export function findReferences(text,{limit=Infinity}={}){
+  if(typeof text!=='string' || !text || text.length>MAX_INPUT || !(limit>0))return [];
   const out=[];
-  const re=new RegExp(SOURCE,'gu');
-  for(const match of text.matchAll(re)) {
+  REFERENCE_RE.lastIndex=0;
+  for(const match of text.matchAll(REFERENCE_RE)) {
+    if(out.length>=limit)break;
     const form=formFor(match[1]);
     if(!form)continue;
     const ref=buildReference(form,match);

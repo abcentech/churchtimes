@@ -15,6 +15,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { renderBriefCard } from '../src/lib/shareCard'
 import {
+  briefHeadline,
   buildBriefText,
   fetchBriefArticles,
   parseBriefArgs,
@@ -54,7 +55,7 @@ async function main(): Promise<void> {
   const text = buildBriefText({ date: args.date, selection, siteUrl: config.siteUrl, template: config.template, whatsappUrl: await whatsappUrl() })
   const card = await renderBriefCard({
     date: args.date,
-    headlines: selection.stories.map((s) => s.title),
+    headlines: selection.stories.map(briefHeadline),
     footer: config.siteUrl ? new URL(config.siteUrl).host : '',
   })
   await mkdir(args.out, { recursive: true })

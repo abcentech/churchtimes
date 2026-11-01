@@ -22,6 +22,7 @@ const story = (id: number, publishedAt: string, extra: Partial<BriefArticle> = {
   title: `Story ${id}`,
   excerpt: `Excerpt ${id}`,
   publishedAt,
+  label: '',
   ...extra,
 })
 
@@ -85,6 +86,7 @@ describe('normaliseBriefArticle', () => {
       title: 'T',
       excerpt: 'E',
       publishedAt: '2026-10-30T09:00:00.000Z',
+      label: '',
     })
     for (const bad of [
       { slug: 'ok', title: 'T', status: 'draft', publishedAt: '2026-10-30T09:00:00Z' },
@@ -216,5 +218,30 @@ describe('parseBriefArgs', () => {
     expect(parseCmsUrl('https://user:pw@cms.example.org')).toBeNull()
     expect(parseCmsUrl('ftp://cms.example.org')).toBeNull()
     expect(parseCmsUrl(undefined)).toBeNull()
+  })
+})
+
+describe('content-type labels in the brief (review fix)', () => {
+  it('keeps the Sponsored / Opinion label from contentType; news and unknown values stay unlabelled', async () => {
+    const base = { id: 1, slug: 'ok', title: 'T', status: 'published', publishedAt: '2026-10-30T09:00:00Z' }
+    expect(normaliseBriefArticle({ ...base, contentType: 'sponsored' })?.label).toBe('Sponsored')
+    expect(normaliseBriefArticle({ ...base, contentType: 'opinion' })?.label).toBe('Opinion')
+    expect(normaliseBriefArticle({ ...base, contentType: 'analysis' })?.label).toBe('Analysis')
+    expect(normaliseBriefArticle({ ...base, contentType: 'news' })?.label).toBe('')
+    expect(normaliseBriefArticle({ ...base, contentType: '<b>' })?.label).toBe('')
+  })
+
+  it('prints the label in the text and on the card headlines', async () => {
+    const { briefHeadline } = await import('../../src/lib/whatsappBrief')
+    const stories = [
+      story(1, '2026-10-30T08:00:00.000Z', { title: 'Bank opens branch in Aba', label: 'Sponsored' }),
+      story(2, '2026-10-30T07:00:00.000Z', { title: 'Why synods matter', label: 'Opinion' }),
+      story(3, '2026-10-30T06:00:00.000Z', { title: 'Bishops meet' }),
+    ]
+    const text = buildBriefText({ date: '2026-10-30', selection: { stories, fallback: false }, siteUrl: 'https://churchtimesnigeria.net', template: '/{slug}/' })
+    expect(text).toContain('*1. [Sponsored] Bank opens branch in Aba*')
+    expect(text).toContain('*2. [Opinion] Why synods matter*')
+    expect(text).toContain('*3. Bishops meet*')
+    expect(stories.map(briefHeadline)).toEqual(['[Sponsored] Bank opens branch in Aba', '[Opinion] Why synods matter', 'Bishops meet'])
   })
 })

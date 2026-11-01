@@ -1,7 +1,8 @@
 // "Following" feed: the newest published stories from the topics and authors this reader follows (stored locally).
 // Fetches each followed item from the public API, merges, de-duplicates and sorts newest first. The last good result is
 // kept in localStorage so the section still works offline (shown with a "saved" note).
-import { fetchTaxonomy } from './taxonomy-api.js';
+import { fetchTaxonomy, validTaxonomySlug } from './taxonomy-api.js';
+import { normalizePublishedArticle } from '../../lib/published-articles.js';
 import { readFollows, readJSON, writeJSON, toggleFollow, FOLLOW_FEED_CACHE_KEY } from './storage.js';
 
 export const FEED_FOLLOW_LIMIT = 12;
@@ -25,8 +26,27 @@ export function mergeFollowedArticles(lists, limit = FEED_STORY_LIMIT) {
   return [...bySlug.values()].sort((a, b) => time(b.article.publishedAt) - time(a.article.publishedAt) || a.article.slug.localeCompare(b.article.slug)).slice(0, limit);
 }
 
-/** The cached copy keeps card text only (no images), so it stays small. */
-const slim = ({ article, via }) => ({ article: { id: article.id, slug: article.slug, title: article.title, excerpt: article.excerpt, publishedAt: article.publishedAt, category: article.category, bylineName: article.bylineName, featuredImage: null }, via });
+/** The cached copy keeps card text only (no images), so it stays small. contentType keeps the Sponsored/Opinion label. */
+export const slim = ({ article, via }) => ({ article: { id: article.id, slug: article.slug, title: article.title, excerpt: article.excerpt, publishedAt: article.publishedAt, category: article.category, contentType: article.contentType, bylineName: article.bylineName, featuredImage: null }, via });
+
+const FOLLOW_KINDS = ['topic', 'author'];
+/**
+ * The saved copy, re-validated: every entry goes through the same normaliser as live data and invalid ones are dropped,
+ * so a corrupt or hand-edited cache can never leave the section stuck or render unexpected values. Null when unusable.
+ */
+export function usableCachedEntries(cached, key) {
+  if (!cached || typeof cached !== 'object' || cached.key !== key || !Array.isArray(cached.entries)) return null;
+  const entries = [];
+  for (const entry of cached.entries.slice(0, FEED_STORY_LIMIT)) {
+    const raw = entry && typeof entry === 'object' && entry.article && typeof entry.article === 'object' ? entry.article : null;
+    let article = null;
+    try { article = raw ? normalizePublishedArticle({ ...raw, featuredImage: null, status: 'published' }) : null; } catch { article = null; }
+    if (!article) continue;
+    const via = Array.isArray(entry.via) ? entry.via.filter(v => v && FOLLOW_KINDS.includes(v.kind) && validTaxonomySlug(v.slug) && typeof v.name === 'string').map(v => ({ kind: v.kind, slug: v.slug, name: v.name.slice(0, 120) })) : [];
+    entries.push({ article, via });
+  }
+  return entries;
+}
 
 export async function loadFollowingFeed({ baseUrl, follows, signal, fetchImpl = fetch }) {
   const targets = follows.slice(0, FEED_FOLLOW_LIMIT);
@@ -84,20 +104,21 @@ export function mountFollowingFeed(api, anchor) {
   };
   const key = followsKey(follows);
   const cached = readJSON(FOLLOW_FEED_CACHE_KEY, null);
-  const cacheUsable = cached && cached.key === key && Array.isArray(cached.entries);
+  const savedEntries = usableCachedEntries(cached, key);
+  const cacheUsable = Boolean(savedEntries);
   const savedNote = at => `Showing the list saved ${at ? new Date(at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : 'earlier'}.`;
   if (!navigator.onLine) {
-    render(cacheUsable ? cached.entries : [], cacheUsable ? `You are offline. ${savedNote(cached.at)}` : 'You are offline. Stories from what you follow will appear when you reconnect.');
+    render(cacheUsable ? savedEntries : [], cacheUsable ? `You are offline. ${savedNote(cached.at)}` : 'You are offline. Stories from what you follow will appear when you reconnect.');
     addEventListener('online', () => mountFollowingFeed(api, anchor), { once: true });
     return;
   }
   section.setAttribute('aria-busy', 'true');
   section.innerHTML = '<div class="growth-following-head"><span class="eyebrow clay">FOLLOWING</span><h2 id="growth-following-title">From the topics and writers you follow.</h2></div><p role="status">Loading stories…</p>';
-  if (cacheUsable) render(cached.entries, 'Updating…');
+  if (cacheUsable) render(savedEntries, 'Updating…');
   loadFollowingFeed({ baseUrl: api.cmsUrl, follows, signal: controller.signal }).then(({ entries, failures, total, rateLimited }) => {
     section.setAttribute('aria-busy', 'false');
     if (failures === total && total) {
-      render(cacheUsable ? cached.entries : [], rateLimited ? 'The newsroom is busy. Please try again in a minute.' : cacheUsable ? `We could not reach the newsroom. ${savedNote(cached.at)}` : 'We could not reach the newsroom. Please try again later.');
+      render(cacheUsable ? savedEntries : [], rateLimited ? 'The newsroom is busy. Please try again in a minute.' : cacheUsable ? `We could not reach the newsroom. ${savedNote(cached.at)}` : 'We could not reach the newsroom. Please try again later.');
       return;
     }
     writeJSON(FOLLOW_FEED_CACHE_KEY, { key, at: Date.now(), entries: entries.map(slim) });

@@ -7,6 +7,7 @@ import { createRateLimiter, getClientIp } from '../lib/rateLimit'
 import { safeErrorFields } from '../lib/safeLog'
 import { SLUG_RE } from '../lib/sanitize'
 import { cleanCardText, renderShareCard, type ShareCardInput } from '../lib/shareCard'
+import { storyLabel } from '../lib/contentLabel'
 
 /**
  * `GET|HEAD /api/public/share-card/:slug` (also `:slug.png`): the 1200x630 Open Graph PNG of a PUBLISHED article.
@@ -94,9 +95,10 @@ function hasArticleField(payload: Payload, name: string): boolean {
   return Array.isArray(fields) && fields.some((f) => f?.name === name)
 }
 
-/** Published article -> card input (kicker first, else the primary category title). Null when not published or unknown. */
+/** Published article -> card input (content-type label for non-news, then kicker, else the primary category title). Null when not published or unknown. */
 export async function findCardArticle(payload: Payload, where: Where): Promise<CardArticle | null> {
   const withKicker = hasArticleField(payload, 'kicker')
+  const withType = hasArticleField(payload, 'contentType')
   const result = await payload.find({
     collection: 'articles',
     where: { and: [where, { status: { equals: 'published' } }] },
@@ -111,6 +113,7 @@ export async function findCardArticle(payload: Payload, where: Where): Promise<C
       publishedAt: true,
       category: true,
       ...(withKicker ? { kicker: true } : {}),
+      ...(withType ? { contentType: true } : {}),
     } as never,
   })
   const doc = result.docs[0] as unknown as Record<string, unknown> | undefined
@@ -122,7 +125,8 @@ export async function findCardArticle(payload: Payload, where: Where): Promise<C
     slug: doc.slug,
     input: {
       title: cleanCardText(doc.title, 400),
-      label: kicker || cleanCardText(category, 100) || null,
+      // Non-news types lead the label (a sponsored story always says so on its card), then the kicker or category.
+      label: storyLabel(withType ? doc.contentType : null, kicker || cleanCardText(category, 100)) || null,
       date: typeof doc.publishedAt === 'string' ? doc.publishedAt : null,
     },
   }

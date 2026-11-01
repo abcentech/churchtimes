@@ -30,7 +30,7 @@ const {
 
 type Doc = Record<string, unknown>
 
-function fakePayload(docs: Doc[], { kicker = false }: { kicker?: boolean } = {}) {
+function fakePayload(docs: Doc[], { kicker = false, contentType = false }: { kicker?: boolean; contentType?: boolean } = {}) {
   const find = vi.fn(async (args: { where: { and: Array<Record<string, { equals: unknown }>> } }) => {
     const [cond] = args.where.and
     const [field, test] = Object.entries(cond!)[0]!
@@ -41,7 +41,7 @@ function fakePayload(docs: Doc[], { kicker = false }: { kicker?: boolean } = {})
     find,
     logger: { error: vi.fn() },
     collections: {
-      articles: { config: { flattenedFields: [{ name: 'title' }, ...(kicker ? [{ name: 'kicker' }] : [])] } },
+      articles: { config: { flattenedFields: [{ name: 'title' }, ...(kicker ? [{ name: 'kicker' }] : []), ...(contentType ? [{ name: 'contentType' }] : [])] } },
     },
   }
 }
@@ -160,6 +160,23 @@ describe('GET /api/public/share-card/:slug', () => {
     await respondShareCard(fakeReq(older, 'bishops-meet'), true)
     expect(vi.mocked(renderShareCard).mock.calls.at(-1)![0].label).toBe('Church')
     expect((older.find.mock.calls[0]![0] as unknown as { select: Record<string, boolean> }).select.kicker).toBeUndefined()
+  })
+
+  it('a sponsored story always says so on its card; opinion and analysis are named too (review fix)', async () => {
+    const payload = fakePayload([{ ...published, kicker: 'Exclusive', contentType: 'sponsored' }], { kicker: true, contentType: true })
+    await respondShareCard(fakeReq(payload, 'bishops-meet'), true)
+    expect(vi.mocked(renderShareCard).mock.calls.at(-1)![0].label).toBe('Sponsored · Exclusive')
+    expect((payload.find.mock.calls[0]![0] as unknown as { select: Record<string, boolean> }).select.contentType).toBe(true)
+
+    resetShareCardState()
+    const opinion = fakePayload([{ ...published, contentType: 'opinion' }], { contentType: true })
+    await respondShareCard(fakeReq(opinion, 'bishops-meet'), true)
+    expect(vi.mocked(renderShareCard).mock.calls.at(-1)![0].label).toBe('Opinion · Church')
+
+    resetShareCardState()
+    const news = fakePayload([{ ...published, contentType: 'news' }], { contentType: true })
+    await respondShareCard(fakeReq(news, 'bishops-meet'), true)
+    expect(vi.mocked(renderShareCard).mock.calls.at(-1)![0].label).toBe('Church')
   })
 
   it('rate-limits per client with 429 and Retry-After', async () => {

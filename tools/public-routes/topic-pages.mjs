@@ -6,6 +6,7 @@ import {resolve} from 'node:path';
 import {siteCanonical,escapeAttribute as escape,replaceSocialHTML,SITE_NAME} from '../../src/lib/public-metadata.js';
 import {reportPath,articlePathTemplate as validateArticlePathTemplate,safeJSON} from '../../src/lib/public-routes.js';
 import {cmsImage} from '../../src/lib/cms-media.js';
+import {CONTENT_TYPE_LABELS} from '../../src/lib/reader-article.js';
 import {fetchTaxonomy,fetchTopicIndex,validTaxonomySlug} from '../../src/features/growth/taxonomy-api.js';
 
 export const TOPIC_KIND_LABELS={topic:'Topic',denomination:'Denomination',series:'Series',ministry:'Ministry'};
@@ -21,9 +22,11 @@ export function topicRoute(pathname,basePath='/') {
 }
 
 const dateText=value=>{try{return value?new Intl.DateTimeFormat('en-GB',{day:'numeric',month:'long',year:'numeric',timeZone:'Africa/Lagos'}).format(new Date(value)):'';}catch{return '';}};
+/** Card eyebrow: non-news types are always named (Sponsored, Opinion, Analysis…), as on the app's cards. */
+export const cardLabel=article=>{const type=article.contentType&&article.contentType!=='news'?CONTENT_TYPE_LABELS[article.contentType]:'';return [type,article.category].filter(Boolean).join(' · ');};
 export function topicCardHTML(article,{basePath,articlePathTemplate}) {
   const href=escape(reportPath(article.slug,basePath,articlePathTemplate));
-  return `<article class="story-card newsroom-card">${cmsImage(article.featuredImage,{card:true,fallbackAlt:article.title})}<div class="newsroom-card-meta">${article.category?`<span class="eyebrow clay">${escape(article.category)}</span>`:''}${article.publishedAt?`<time datetime="${escape(article.publishedAt)}">${escape(dateText(article.publishedAt))}</time>`:''}</div><h2><a href="${href}">${escape(article.title)}</a></h2>${article.excerpt?`<p>${escape(article.excerpt)}</p>`:''}</article>`;
+  return `<article class="story-card newsroom-card">${cmsImage(article.featuredImage,{card:true,fallbackAlt:article.title})}<div class="newsroom-card-meta">${cardLabel(article)?`<span class="eyebrow clay">${escape(cardLabel(article))}</span>`:''}${article.publishedAt?`<time datetime="${escape(article.publishedAt)}">${escape(dateText(article.publishedAt))}</time>`:''}</div><h2><a href="${href}">${escape(article.title)}</a></h2>${article.excerpt?`<p>${escape(article.excerpt)}</p>`:''}</article>`;
 }
 
 export function topicSchema(topic,canonical,{siteUrl,basePath}) {

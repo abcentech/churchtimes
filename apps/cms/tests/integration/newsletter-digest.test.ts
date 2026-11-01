@@ -87,7 +87,7 @@ describe('daily digest on the real schema through SMTP', () => {
     const issue = issues.docs[0] as unknown as Record<string, unknown>
     expect(issue.status).toBe('draft')
     expect(String(issue.bodyHtml)).toContain('Synod opens &lt;b&gt;in&lt;/b&gt; Ibadan')
-    expect(String(issue.bodyText)).toContain('[Sponsored]')
+    expect(String(issue.bodyText)).toContain('Sponsored notice [Sponsored · ')
     expect(String(issue.bodyText)).not.toContain('Not ready')
   })
 

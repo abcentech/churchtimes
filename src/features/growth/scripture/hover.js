@@ -29,7 +29,7 @@ export function mountScriptureRefs(root,{limit=6,...options}={}){
 
   for(const node of textNodes(root)) {
     if(wrappers.length>=MAX_REFS)break;
-    const refs=findReferences(node.nodeValue);
+    const refs=findReferences(node.nodeValue,{limit:MAX_REFS-wrappers.length});
     if(!refs.length)continue;
     const fragment=doc.createDocumentFragment();
     let cursor=0;

@@ -162,3 +162,33 @@ test('public host topic pages: 404 for unknown, hidden or invalid slugs; 503 (un
   const failed=await down.get('topic/youth/');assert.equal(failed.status,503);assert.equal(failed.headers.get('retry-after'),'60');
   await down.get('topic/youth/');assert.equal(down.calls.length,2,'failures are not cached');
 });
+
+// ---- review fixes: content-type labels outside the article page, corrupt Following cache ----
+import {topicCardHTML,cardLabel} from '../tools/public-routes/topic-pages.mjs';
+import {slim,usableCachedEntries} from '../src/features/growth/following-feed.js';
+
+test('server-rendered topic cards name Sponsored, Opinion and Analysis stories',()=>{
+  const card=type=>topicCardHTML({slug:'s',title:'T',excerpt:'',category:'Faith',contentType:type,featuredImage:null,publishedAt:''},{basePath:'/',articlePathTemplate:'/{slug}/'});
+  assert.match(card('sponsored'),/<span class="eyebrow clay">Sponsored · Faith<\/span>/);
+  assert.match(card('opinion'),/>Opinion · Faith</);
+  assert.match(card('analysis'),/>Analysis · Faith</);
+  assert.match(card('news'),/<span class="eyebrow clay">Faith<\/span>/);
+  assert.equal(cardLabel({contentType:'sponsored',category:''}),'Sponsored');
+  assert.equal(cardLabel({contentType:'news',category:''}),'');
+});
+
+test('the saved Following copy keeps contentType, and a corrupt copy is cleaned instead of trusted',()=>{
+  const article={id:'1',slug:'paid',title:'Paid story',excerpt:'E',publishedAt:'2026-10-30T08:00:00.000Z',category:'Faith',contentType:'sponsored',bylineName:'',featuredImage:{url:'x'}};
+  const saved=slim({article,via:[{kind:'topic',slug:'faith',name:'Faith'}]});
+  assert.equal(saved.article.contentType,'sponsored');assert.equal(saved.article.featuredImage,null);
+  const key='topic:faith';
+  const good=usableCachedEntries({key,entries:[saved]},key);
+  assert.equal(good.length,1);assert.equal(good[0].article.contentType,'sponsored');assert.deepEqual(good[0].via,[{kind:'topic',slug:'faith',name:'Faith'}]);
+  const corrupt=usableCachedEntries({key,entries:[null,42,'x',{},{article:null},{article:{slug:'Bad Slug',title:'x'}},{article:{slug:'ok',title:''}},{article:{slug:'ok-2',title:'<b>Fine</b>',contentType:'<script>'},via:[{kind:'evil',slug:'x',name:'y'},'z']},saved]},key);
+  assert.deepEqual(corrupt.map(e=>e.article.slug),['ok-2','paid']);
+  assert.equal(corrupt[0].article.contentType,'news');
+  assert.deepEqual(corrupt[0].via,[]);
+  assert.equal(usableCachedEntries({key:'other',entries:[saved]},key),null);
+  assert.equal(usableCachedEntries({key,entries:'nope'},key),null);
+  assert.equal(usableCachedEntries(null,key),null);
+});
