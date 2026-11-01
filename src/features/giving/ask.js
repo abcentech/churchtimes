@@ -1,5 +1,5 @@
 // "Support our journalism" ask (lazy, loaded when the browser is idle). Shown only when the CMS reports giving as
-// enabled; one small settings request per 10 minutes per tab, none at all with Save-Data. It never blocks reading:
+// enabled; one small settings request per page load (kept in memory, never in browser storage), none at all with Save-Data. It never blocks reading:
 // it adds a link to the footer and a short note after the article body once that body exists.
 import { givingEnabled } from './settings-cache.js';
 import './ask.css';

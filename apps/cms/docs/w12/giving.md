@@ -222,6 +222,10 @@ tests `tests/unit/giving*.test.ts`, `tests/integration/giving.test.ts`. Public: 
 `entry`, `give-page` + `give.css`, `ask` + `ask.css`), `tools/public-routes/giving.mjs`, one route line each in
 `src/main.js`, `src/lib/public-page-routes.js`, `tools/serve-public.mjs`; reserved root slugs `give`, `giving`, `donate`.
 
+Browser storage: nothing giving-related is stored on page load. The ask keeps the "is giving on" answer in memory
+for the page load only. The only stored item is the payment reference (sessionStorage `ct-give-reference`), written when
+the reader starts a gift and removed by the thanks page once it shows a final answer; the thanks page itself never writes.
+
 Checkout URLs: the browser opens only `https://checkout.paystack.com/...`. Loopback checkout pages (the offline
 fake) are accepted only by a development build with `VITE_GIVING_TEST_CHECKOUT=true` (the browser harness); a
 production build ignores that flag.

@@ -34,6 +34,7 @@ test('the form: presets in naira first, accessible, no horizontal scroll, sends 
   await page.getByRole('checkbox',{name:/I agree/}).check();
   await page.getByRole('button',{name:'Continue to secure payment'}).click();
   await expect(page).toHaveURL(/fake-checkout\/abc$/);
+  expect(await page.evaluate(()=>sessionStorage.getItem('ct-give-reference'))).toBe(REF); // stored only because the reader started a gift
   const sent=stub.requests.find(r=>r.path.endsWith('/init'));
   expect(sent.body).toEqual({amountMinor:500000,currency:'NGN',cause:'relief',email:'reader@example.test',anonymous:false,consent:true,website:'',name:'Ada',turnstileToken:'synthetic-single-use-token'});
   expect(await page.evaluate(()=>window.stubAction)).toBeUndefined(); // new document: the checkout
@@ -102,6 +103,8 @@ test('return page: polls the CMS until confirmed, then strips the reference from
   await expect(page.getByRole('heading',{level:1})).toHaveText('Thank you. Your gift was received.',{timeout:10000});
   await expect(page.getByText(/₦5,000 — Your payment is confirmed/)).toBeVisible();
   await expect(page).not.toHaveURL(/reference=/);
+  expect(await page.evaluate(()=>Object.keys(sessionStorage))).toEqual([]); // the return page writes nothing
+  expect(await page.evaluate(()=>Object.keys(localStorage))).toEqual(['ct-optional-consent-v1']); // only the pre-set consent record
   expect(stub.requests.filter(r=>r.path.endsWith('/status')).length).toBeGreaterThanOrEqual(2);
   const axe=await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21aa','wcag22aa','best-practice']).analyze();expect(axe.violations).toEqual([]);
 });
@@ -110,20 +113,28 @@ test('return page: failed and unknown references are explained; a forged referen
   const stub=await setup(page,{statuses:[{ok:true,reference:REF,status:'failed',amountMinor:500000,currency:'NGN',expired:false}]});
   await page.goto(`/giving-tests/harness.html?thanks=1&reference=${REF}`);
   await expect(page.getByRole('heading',{level:1})).toHaveText('The payment did not go through.');
-  await page.evaluate(()=>sessionStorage.clear());
+  expect(await page.evaluate(()=>sessionStorage.length)).toBe(0);
+  // A reference this tab stored when the reader started a gift is cleared once a final answer is shown.
+  await page.evaluate(r=>sessionStorage.setItem('ct-give-reference',r),REF);
+  await page.goto('/giving-tests/harness.html?thanks=1');
+  await expect(page.getByRole('heading',{level:1})).toHaveText('The payment did not go through.');
+  expect(await page.evaluate(()=>sessionStorage.getItem('ct-give-reference'))).toBeNull();
   await page.goto('/giving-tests/harness.html?thanks=1&reference=%3Cscript%3E');
   await expect(page.getByRole('heading',{level:1})).toHaveText('We could not find your payment.');
   expect(stub.requests.filter(r=>r.path.endsWith('/status')&&r.search.includes('script'))).toHaveLength(0);
 });
 
-test('the ask: footer link and a note after the article once it renders; one settings request; nothing when off (STUB)',async({page})=>{
-  const stub=await setup(page);await page.goto('/giving-tests/ask.html');
+test('the ask: footer link and a note after the article once it renders; one settings request per load; writes no storage (STUB)',async({page})=>{
+  const stub=await setup(page,{consent:false});await page.goto('/giving-tests/ask.html');
   await expect(page.locator('.site-footer a[data-give-link]')).toHaveText('Support our journalism');
   const aside=page.locator('article .share-bar + aside.give-ask');await expect(aside).toBeVisible();
   await expect(aside.getByRole('link',{name:'Give to Church Times'})).toHaveAttribute('href','give/');
   const axe=await new AxeBuilder({page}).include('.give-ask').withTags(['wcag2a','wcag2aa','wcag21aa','wcag22aa']).analyze();expect(axe.violations).toEqual([]);
+  expect(stub.requests.filter(r=>r.path.endsWith('/settings'))).toHaveLength(1);
+  // The privacy contract: nothing is written to local or session storage before the reader acts.
+  expect(await page.evaluate(()=>Object.keys(localStorage).concat(Object.keys(sessionStorage)))).toEqual([]);
   await page.reload();await expect(page.locator('aside.give-ask')).toBeVisible();
-  expect(stub.requests.filter(r=>r.path.endsWith('/settings'))).toHaveLength(1); // cached for the tab
+  expect(await page.evaluate(()=>Object.keys(localStorage).concat(Object.keys(sessionStorage)))).toEqual([]);
 });
 test('the ask stays away when giving is off (STUB)',async({page})=>{
   await setup(page,{settings:{enabled:false}});await page.goto('/giving-tests/ask.html');

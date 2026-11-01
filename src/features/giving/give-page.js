@@ -159,10 +159,12 @@ async function showResult(root, { endpoint, settings, signal }) {
   let stored = null;
   try { stored = sessionStorage.getItem(STORE_KEY); } catch {}
   const reference = returnReference(location.search, stored);
-  // Keep the reference out of history, bookmarks and shared links once read; this tab still has it.
-  if (reference) { try { sessionStorage.setItem(STORE_KEY, reference); } catch {} if (location.search) history.replaceState(history.state, '', location.pathname + location.hash); }
+  // Keep the reference out of history, bookmarks and shared links once read. Nothing is written to storage here: the
+  // only stored reference is the one this tab saved when the reader started the gift, and it is cleared below.
+  if (reference && location.search) history.replaceState(history.state, '', location.pathname + location.hash);
+  const forget = () => { try { sessionStorage.removeItem(STORE_KEY); } catch {} };
   root.innerHTML = `<section class="give-result" aria-live="polite"><span class="eyebrow">SUPPORT OUR JOURNALISM</span><h1 tabindex="-1" data-give-heading>${reference ? RESULT.pending[0] : 'We could not find your payment.'}</h1><p data-give-detail>${reference ? RESULT.pending[1] : 'If you were charged, email the newsroom and we will help.'}</p>${reference ? `<p class="give-ref">Reference: <code>${esc(reference)}</code></p>` : ''}<p><a class="button button-dark" href="give/">Back to the Give page</a></p></section>`;
-  if (!reference) return;
+  if (!reference) { if (stored !== null) forget(); return; }
   const heading = root.querySelector('[data-give-heading]');
   const detail = root.querySelector('[data-give-detail]');
   const delays = [0, 2000, 3000, 5000, 8000, 13000, 21000];
@@ -172,11 +174,11 @@ async function showResult(root, { endpoint, settings, signal }) {
     let result;
     try { result = await getJSON(`${endpoint}/status?reference=${encodeURIComponent(reference)}`, signal); } catch { continue; }
     const { response, data } = result;
-    if (response.status === 404 || response.status === 400) { heading.textContent = 'We could not find this payment.'; detail.textContent = 'If you were charged, email the newsroom with the reference above.'; return; }
+    if (response.status === 404 || response.status === 400) { forget(); heading.textContent = 'We could not find this payment.'; detail.textContent = 'If you were charged, email the newsroom with the reference above.'; return; }
     if (!response.ok || data?.ok !== true || data.reference !== reference) continue;
     const state = RESULT[data.status] ? data.status : 'pending';
     if (state === 'pending' && !data.expired) continue;
-    if (state === 'succeeded') { try { sessionStorage.removeItem(STORE_KEY); } catch {} }
+    forget(); // a final answer (or an expired one) is on screen: the tab no longer needs the reference
     heading.textContent = state === 'pending' ? 'We have not received confirmation yet.' : RESULT[state][0];
     detail.textContent = state === 'pending' ? 'If you completed the payment, your receipt will arrive by email once it is confirmed. If not, contact the newsroom with the reference above.' : state === 'succeeded' && Number.isSafeInteger(data.amountMinor) ? `${formatMinor(data.amountMinor, data.currency)} — ${RESULT.succeeded[1]}${settings?.thankYouNote ? ' ' + settings.thankYouNote : ''}` : RESULT[state][1];
     heading.focus();
