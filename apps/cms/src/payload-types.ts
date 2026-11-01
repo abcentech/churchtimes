@@ -794,6 +794,10 @@ export interface Donation {
    * When the giver accepted the privacy notice (NDPA).
    */
   consentAt?: string | null;
+  /**
+   * Which privacy-notice wording the giver accepted (see docs/w12/giving.md).
+   */
+  consentVersion?: string | null;
   receiptSentAt?: string | null;
   providerRef?: string | null;
   paidAt?: string | null;
@@ -1391,6 +1395,7 @@ export interface DonationsSelect<T extends boolean = true> {
   name?: T;
   anonymous?: T;
   consentAt?: T;
+  consentVersion?: T;
   receiptSentAt?: T;
   providerRef?: T;
   paidAt?: T;

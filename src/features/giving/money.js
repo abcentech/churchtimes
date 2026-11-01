@@ -20,13 +20,17 @@ export function formatMinor(minor, currency) {
   return `${SYMBOL[currency] || currency + ' '}${whole.toLocaleString('en-GB')}${cents ? '.' + String(cents).padStart(2, '0') : ''}`;
 }
 
-/** The hosted checkout must be Paystack's own page (loopback is allowed for the offline test server only). */
-export function safeCheckoutUrl(value) {
+// Loopback checkout pages exist only for the offline browser harness: a development build with this flag. A production
+// build never accepts anything but https://checkout.paystack.com, whatever the flag says.
+const TEST_CHECKOUT = import.meta.env?.VITE_GIVING_TEST_CHECKOUT === 'true' && !import.meta.env?.PROD;
+
+/** The hosted checkout must be Paystack's own page. */
+export function safeCheckoutUrl(value, { allowLoopback = TEST_CHECKOUT } = {}) {
   try {
     const url = new URL(value);
     if (url.username || url.password) return null;
     if (url.protocol === 'https:' && url.hostname === 'checkout.paystack.com') return url.href;
-    if (url.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(url.hostname)) return url.href;
+    if (allowLoopback && url.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(url.hostname)) return url.href;
   } catch {}
   return null;
 }

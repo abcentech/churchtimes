@@ -4,6 +4,7 @@ import { adminOnly, isAdmin, isEditorInChief, type UserLike } from '../access/ro
 import { auditDeleteHook } from '../lib/audit'
 import { clampLimit } from '../lib/clampLimit'
 import { donationsExportEndpoint } from '../endpoints/donationsExport'
+import { donationsRedactEndpoint } from '../endpoints/donationsRedact'
 
 const asUser = (u: unknown): UserLike | null => (u ? (u as UserLike) : null)
 
@@ -34,7 +35,7 @@ export const Donations: CollectionConfig = {
     description: 'Read-only ledger of giving attempts. Amounts are in minor units (kobo, pence, cents).',
     components: { beforeListTable: ['/components/DonationsExportLink#DonationsExportLink'] },
   },
-  endpoints: [donationsExportEndpoint],
+  endpoints: [donationsExportEndpoint, donationsRedactEndpoint],
   access: {
     read: ledgerRead,
     create: () => false,
@@ -65,6 +66,7 @@ export const Donations: CollectionConfig = {
     { name: 'name', type: 'text', maxLength: 120, access: { read: adminField, create: never, update: never } },
     { name: 'anonymous', type: 'checkbox', defaultValue: false, access: { create: never, update: never } },
     { name: 'consentAt', type: 'date', access: { create: never, update: never }, admin: { description: 'When the giver accepted the privacy notice (NDPA).' } },
+    { name: 'consentVersion', type: 'text', maxLength: 40, access: { create: never, update: never }, admin: { readOnly: true, description: 'Which privacy-notice wording the giver accepted (see docs/w12/giving.md).' } },
     { name: 'receiptSentAt', type: 'date', access: { create: never, update: never } },
     { name: 'providerRef', type: 'text', maxLength: 120, index: true, access: { read: adminField, create: never, update: never } },
     { name: 'paidAt', type: 'date', access: { create: never, update: never } },

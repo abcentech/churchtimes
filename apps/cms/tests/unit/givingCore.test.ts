@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { signPaystack, startFakePaystack } from '../../scripts/fake-paystack.mjs'
-import { formatMinor, isMinorAmount } from '../../src/lib/giving/currency'
+import { formatMinor, isMinorAmount, minorToMajorText } from '../../src/lib/giving/currency'
+import { majorAmount } from '../../src/endpoints/donationsExport'
 import { normalisePaystackTransaction, PAYSTACK_API_BASE, PaystackProvider, resolvePaystackConfig } from '../../src/lib/giving/paystack'
 import { ProviderError } from '../../src/lib/giving/provider'
 import { generateDonationReference, isDonationReference } from '../../src/lib/giving/reference'
@@ -44,6 +45,11 @@ describe('money and references', () => {
     for (const v of [0, -1, 1.5, '500', NaN, Infinity, 2 ** 53, null]) expect(isMinorAmount(v)).toBe(false)
     expect(formatMinor(500_050, 'NGN')).toBe('NGN 5,000.50')
     expect(formatMinor(7, 'USD')).toBe('USD 0.07')
+    // CSV amounts: integer arithmetic, exact even where float division is not.
+    expect(minorToMajorText(500_050)).toBe('5000.50')
+    expect(majorAmount(9_007_199_254_740_990)).toBe('90071992547409.90')
+    expect((9_007_199_254_740_990 / 100).toFixed(2)).toBe('90071992547409.91') // what the old float version printed
+    for (const bad of [1.5, -1, NaN, '100', null]) expect(majorAmount(bad)).toBe('')
   })
   it('references are CTG- + 32 hex, unique, and only Paystack-safe characters', () => {
     const seen = new Set<string>()

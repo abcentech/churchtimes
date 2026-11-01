@@ -3,6 +3,7 @@ import type { Endpoint, PayloadRequest, Where } from 'payload'
 import { isAdmin, isEditorInChief, type UserLike } from '../access/roles'
 import { writeAuditLog } from '../lib/audit'
 import { csvRow } from '../lib/csvSafe'
+import { minorToMajorText } from '../lib/giving/currency'
 import { safeErrorFields } from '../lib/safeLog'
 
 const err = (status: number, message: string) =>
@@ -14,14 +15,13 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 /** Columns everyone allowed to export gets (no personal data). */
 export const DONATION_EXPORT_COLUMNS = [
-  'reference', 'createdAt', 'paidAt', 'status', 'provider', 'currency', 'amountMinor', 'amount', 'cause', 'channel', 'anonymous', 'consentAt', 'receiptSentAt',
+  'reference', 'createdAt', 'paidAt', 'status', 'provider', 'currency', 'amountMinor', 'amount', 'cause', 'channel', 'anonymous', 'consentAt', 'consentVersion', 'receiptSentAt',
 ] as const
 /** Added for admins only. */
 export const DONATION_EXPORT_PERSONAL_COLUMNS = ['name', 'email', 'providerRef'] as const
 
-/** Major-unit amount as text (two decimals for every supported currency: NGN kobo, USD cents, GBP pence, EUR cents). */
-export const majorAmount = (minor: unknown): string =>
-  typeof minor === 'number' && Number.isFinite(minor) ? (minor / 100).toFixed(2) : ''
+/** Major-unit amount as text (two decimals for every supported currency), by integer arithmetic only: never a float. */
+export const majorAmount = (minor: unknown): string => minorToMajorText(minor)
 
 /** The CSV for these rows; personal columns only when `withPersonal`. Cells are formula-injection safe (csvSafe). */
 export function donationsCsv(rows: Array<Record<string, unknown>>, withPersonal: boolean): string {

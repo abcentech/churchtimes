@@ -54,7 +54,9 @@ Security invariants (each has tests):
    `reference` are refused. A row becomes `succeeded` only after our own server-to-server verify call returns `success`
    for that exact reference **and** the provider's currency equals the row's **and** the amount equals the row's (or,
    when the payer bore the fee, `requested_amount` equals ours and at least that much was charged). Otherwise the row
-   stays as it was and the log says `amount-or-currency-mismatch`.
+   stays as it was and the log says `amount-or-currency-mismatch`. Deliberate: such a row stays `pending` (never
+   `succeeded`, never `failed`, because money may have moved), no receipt is sent, and `npm run giving:reconcile` lists it
+   as `amount-or-currency-mismatch` until a person settles it in the Paystack dashboard (refund, or accept and note it).
 2. **Webhook authentication:** HMAC-SHA512 over the **raw bytes** (read capped at 64 KB before any parsing), compared
    with `crypto.timingSafeEqual` on the decoded digests after a strict 128-hex check. Bad signatures: 401 (throttled per
    source to 429). Optional `PAYSTACK_WEBHOOK_IPS` allow-list on top.
@@ -64,9 +66,12 @@ Security invariants (each has tests):
    without work. A replay after a restart still changes nothing and sends nothing.
 4. **Retries when unsure:** if the provider cannot be reached, or the body says success but verify does not (yet), the
    webhook answers 503 so Paystack retries; nothing is recorded.
-5. **One receipt**, plain text, only after confirmed success, claimed atomically (`receiptSentAt`); a failed send is
-   released and retried on the next confirmation. Contains reference, amount, date, cause, payment method type. Never
-   card details.
+5. **One receipt**, plain text, only after confirmed success, claimed atomically (`receiptSentAt`). A receipt that could
+   not go out (SMTP error, or SMTP not configured at the time) stays owed and is retried, still at most once, by: the
+   reader's status check on the thanks page (same 5 s per-reference cooldown as the verify call), a redelivery of the
+   webhook (deliveries that leave a receipt owed are not put in the replay cache), and a scheduler sweep every 10 minutes
+   for gifts paid in the last 48 hours (lib/giving/receiptRetry.ts; only with a provider key and SMTP). Contains
+   reference, amount, date, cause, payment method type. Never card details.
 6. **Logs** carry the reference, an outcome code and error class only: never e-mail, name, key or payload. The key is
    sent only in the `Authorization` header to the API origin; redirects are refused; `PAYSTACK_API_BASE` (the local fake)
    is ignored in production and for anything but loopback.
@@ -97,7 +102,8 @@ All under the CMS `/api`. Error shape `{ ok: false, errors: [{ field?, message }
 | email | Paystack requires it to open a checkout; we send the receipt to it | admin-only in the CMS |
 | name | Optional, for the receipt greeting | **not stored** when "Give anonymously" is ticked |
 | anonymous | The reader's choice | |
-| consentAt | When the reader ticked the consent box (NDPA lawful basis record) | consent wording version `giving-v1` (lib/giving/validate.ts) |
+| consentAt | When the reader ticked the consent box (NDPA lawful basis record) | |
+| consentVersion | Which consent wording they accepted (`giving-v1` today; `GIVING_CONSENT_VERSION` in lib/giving/validate.ts, bump it whenever the notice text changes) | shown read-only in CMS Admin > Giving > Donations and in the CSV export; rows from before migration `20261031_120000_giving_consent_version` are backfilled to `giving-v1` |
 | receiptSentAt | One receipt only | |
 
 Never stored: card numbers, CVV, bank details, provider payloads, IP addresses. The consent notice on the Give page
@@ -108,8 +114,19 @@ delete the personal details."* The reader must tick "I agree ..." (server requir
 
 **Retention** (owner to confirm with the accountant): keep succeeded rows for the statutory book-keeping period
 (commonly 6-7 years); an admin may delete `pending`/`abandoned`/`failed` rows older than 90 days; blank `email`/`name`
-earlier on a data-subject request (the amount, reference and dates are enough for the books). Erasure: an admin deletes
-the personal fields or the row in CMS Admin > Giving > Donations (deletes are audited).
+earlier on a data-subject request (the amount, reference and dates are enough for the books).
+
+**Erasure (data-subject request).** Donation rows cannot be edited through the admin or REST (every field is
+server-owned). The only way to remove a giver's details is the redaction path, which blanks `email` and `name` and
+nothing else (reference, amount, currency, status, dates, cause, channel, provider reference and consent record stay for
+the books). It is idempotent (a second call reports `changed: false`) and every real change writes an audit row naming
+the reference only:
+- with server access: `npm run giving:redact -- CTG-<reference>` (in apps/cms; audited as `cli`);
+- as a signed-in admin: `POST /api/donations/<id>/redact` (e.g. from the browser console on the admin site:
+  `fetch('/api/donations/123/redact', { method: 'POST', credentials: 'include' }).then(r => r.json())`). Editors-in-chief
+  and everyone else get 403.
+Deleting a whole row is admin-only in CMS Admin > Giving > Donations (deletes are audited); prefer redaction for
+succeeded gifts so the books stay complete.
 
 The privacy dialog on the public site now says gifts are paid on Paystack's page and card details never reach us.
 
@@ -199,10 +216,15 @@ cancels and then sends a signed webhook).
 ## 10. Files
 
 CMS: `src/lib/giving/*` (currency, reference, signature, provider, paystack, settings, validate, store, service,
-receipt, runtime, reconcile), `src/endpoints/publicGiving.ts`, `src/scripts/givingReconcile.ts`, `scripts/fake-paystack.mjs`,
+receipt, receiptRetry, redact, runtime, reconcile), `src/endpoints/publicGiving.ts`, `src/endpoints/donationsRedact.ts`,
+`src/scripts/givingReconcile.ts`, `src/scripts/givingRedact.ts`, migration `20261031_120000_giving_consent_version`, `scripts/fake-paystack.mjs`,
 tests `tests/unit/giving*.test.ts`, `tests/integration/giving.test.ts`. Public: `src/features/giving/*` (lazy chunks:
 `entry`, `give-page` + `give.css`, `ask` + `ask.css`), `tools/public-routes/giving.mjs`, one route line each in
 `src/main.js`, `src/lib/public-page-routes.js`, `tools/serve-public.mjs`; reserved root slugs `give`, `giving`, `donate`.
+
+Checkout URLs: the browser opens only `https://checkout.paystack.com/...`. Loopback checkout pages (the offline
+fake) are accepted only by a development build with `VITE_GIVING_TEST_CHECKOUT=true` (the browser harness); a
+production build ignores that flag.
 
 Budget: with `VITE_PUBLIC_GIVING_URL` set, +175 B gzip initial JS (allocation 200 B); without it +77 B (route, reserved
 slugs, privacy sentence). Initial CSS +0 B (all giving CSS is in the lazy chunks).

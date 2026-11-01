@@ -169,6 +169,7 @@ export const endpointMatrix: Record<string, EndpointEntry> = {
   'GET /api/public/giving/settings': { anon: [200], public: true, note: 'public-safe fields only' },
   'OPTIONS /api/public/giving/settings': { anon: [204], public: true },
   'GET /api/giving/stats': { anon: [401], note: 'admin / editor-in-chief' },
+  'POST /api/donations/:id/redact': { anon: [401], note: 'admin only: NDPA erasure of email and name' },
   // growth (docs/w12/growth.md)
   'POST /api/public/newsletter/one-click': { anon: [400], public: true, note: 'RFC 8058; the signed token in the query is the only credential' },
   'GET /api/public/newsletter/one-click': { anon: [400, 303], public: true, note: 'never changes state: redirects to the public page' },

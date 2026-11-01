@@ -23,11 +23,18 @@ let store: MemoryDonationStore
 let logger: ReturnType<typeof captureLogger>
 let runtime: GivingRuntime
 const sent: { to: string[]; text: string }[] = []
+let failMail = 0
 
 const payloadStub = () =>
   ({
     logger,
-    sendEmail: async (m: { to: string; text: string }) => void sent.push({ to: [m.to], text: m.text }),
+    sendEmail: async (m: { to: string; text: string }) => {
+      if (failMail > 0) {
+        failMail--
+        throw new Error('stub SMTP failure')
+      }
+      sent.push({ to: [m.to], text: m.text })
+    },
     findGlobal: vi.fn(async () => RAW_SETTINGS),
   }) as unknown as PayloadRequest['payload']
 
@@ -84,6 +91,7 @@ beforeEach(() => {
   store = new MemoryDonationStore()
   logger = captureLogger()
   sent.length = 0
+  failMail = 0
   const provider = new PaystackProvider({ secret: TEST_SECRET, baseUrl: fake.origin, mode: 'test' }, { timeoutMs: 2000 })
   runtime = { provider, reason: null, settings: normaliseGivingSettings(RAW_SETTINGS, provider), returnUrl: 'http://localhost:5373/give/thanks/', accepting: true }
   setGivingRuntimeForTests(async () => runtime)
@@ -229,6 +237,19 @@ describe('POST /api/public/giving/webhook/paystack', () => {
     expect(sent).toHaveLength(0)
   })
 
+  it('a redelivery after a failed receipt is not swallowed by the replay cache: it sends the receipt', async () => {
+    const { reference } = await startOne()
+    fake.complete(reference, 'success')
+    const body = fake.webhookBodyFor(reference)
+    failMail = 1
+    expect((await call(givingWebhookEndpoint, webhookReq(body))).status).toBe(200)
+    expect(sent).toHaveLength(0)
+    expect((await call(givingWebhookEndpoint, webhookReq(body))).status).toBe(200)
+    expect(sent).toHaveLength(1)
+    expect((await call(givingWebhookEndpoint, webhookReq(body))).status).toBe(200)
+    expect(sent).toHaveLength(1)
+  })
+
   it('duplicate delivery and replay: one transition, one receipt, the replay does no provider call', async () => {
     const { reference } = await startOne()
     fake.complete(reference, 'success')
@@ -309,6 +330,44 @@ describe('POST /api/public/giving/webhook/paystack', () => {
 
 describe('GET /api/public/giving/status', () => {
   const status = (reference: string) => call(givingStatusEndpoint, makeReq('GET', `/api/public/giving/status?reference=${encodeURIComponent(reference)}`))
+
+  it('receipt owed after an SMTP failure at webhook time: the next status check sends exactly one', async () => {
+    const { reference } = await startOne()
+    fake.complete(reference, 'success')
+    failMail = 1
+    expect((await call(givingWebhookEndpoint, webhookReq(fake.webhookBodyFor(reference)))).status).toBe(200)
+    expect(await store.findByReference(reference)).toMatchObject({ status: 'succeeded', receiptSentAt: null })
+    expect(sent).toHaveLength(0)
+    const calls = verifyCount(reference)
+    expect((await (await status(reference)).json()).status).toBe('succeeded')
+    expect(sent).toHaveLength(1)
+    expect(verifyCount(reference)).toBe(calls) // a succeeded row is never re-verified
+    resetGivingState()
+    await status(reference)
+    expect(sent).toHaveLength(1)
+  })
+
+  it('receipt owed because SMTP was unset at confirmation: sent once SMTP is configured', async () => {
+    const { reference } = await startOne()
+    fake.complete(reference, 'success')
+    delete process.env.SMTP_HOST
+    expect((await call(givingWebhookEndpoint, webhookReq(fake.webhookBodyFor(reference)))).status).toBe(200)
+    expect(sent).toHaveLength(0)
+    process.env.SMTP_HOST = 'smtp.test'
+    await status(reference)
+    expect(sent).toHaveLength(1)
+  })
+
+  it('the receipt retry from status respects the per-reference cooldown', async () => {
+    const { reference } = await startOne()
+    fake.complete(reference, 'success')
+    failMail = 3
+    await call(givingWebhookEndpoint, webhookReq(fake.webhookBodyFor(reference)))
+    resetGivingState()
+    for (let i = 0; i < 4; i++) await status(reference)
+    expect(failMail).toBe(1) // webhook used one failure, the polls only one more (cooldown), no hammering
+    expect(sent).toHaveLength(0)
+  })
 
   it('reports pending, then succeeded once the provider confirms; no personal data in the answer', async () => {
     const { reference } = await startOne()

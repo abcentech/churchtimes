@@ -29,13 +29,15 @@ export type DonationRow = {
   anonymous: boolean
   channel: string | null
   consentAt: string | null
+  /** Which consent wording the giver accepted (validate.ts GIVING_CONSENT_VERSION). */
+  consentVersion: string | null
   receiptSentAt: string | null
   providerRef: string | null
   paidAt: string | null
   createdAt: string
 }
 
-export type NewDonation = Pick<DonationRow, 'reference' | 'provider' | 'amountMinor' | 'currency' | 'cause' | 'email' | 'name' | 'anonymous' | 'consentAt'>
+export type NewDonation = Pick<DonationRow, 'reference' | 'provider' | 'amountMinor' | 'currency' | 'cause' | 'email' | 'name' | 'anonymous' | 'consentAt' | 'consentVersion'>
 
 export type TransitionFields = { paidAt?: string; channel?: string; providerRef?: string }
 
@@ -74,6 +76,7 @@ export function toDonationRow(doc: Record<string, unknown>): DonationRow {
     anonymous: doc.anonymous === true,
     channel: typeof doc.channel === 'string' && doc.channel ? doc.channel : null,
     consentAt: iso(doc.consentAt),
+    consentVersion: typeof doc.consentVersion === 'string' && doc.consentVersion ? doc.consentVersion : null,
     receiptSentAt: iso(doc.receiptSentAt),
     providerRef: typeof doc.providerRef === 'string' && doc.providerRef ? doc.providerRef : null,
     paidAt: iso(doc.paidAt),

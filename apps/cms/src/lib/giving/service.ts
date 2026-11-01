@@ -4,7 +4,7 @@ import { buildDonationReceipt } from './receipt'
 import { ProviderError, type GivingProvider, type VerifiedTransaction } from './provider'
 import type { EffectiveGivingSettings } from './settings'
 import type { DonationRow, DonationStore } from './store'
-import type { ValidGivingInit } from './validate'
+import { GIVING_CONSENT_VERSION, type ValidGivingInit } from './validate'
 
 /**
  * The money logic, independent of HTTP and of Payload so it is tested offline against a fake provider.
@@ -61,6 +61,7 @@ export async function startDonation(deps: GivingDeps, data: ValidGivingInit): Pr
       name: data.anonymous ? null : data.name,
       anonymous: data.anonymous,
       consentAt: now().toISOString(),
+      consentVersion: GIVING_CONSENT_VERSION,
     })
   } catch (err) {
     deps.logger.error(safeErrorFields(err), '[giving] could not store a new donation')
@@ -109,14 +110,19 @@ export function amountMatches(tx: VerifiedTransaction, row: Pick<DonationRow, 'a
  * Bring one donation in line with the provider. Throws ProviderError when the provider cannot be asked (the webhook then
  * answers 503 so the provider retries). Never trusts anything but the verify response.
  */
-export async function confirmDonation(deps: GivingDeps, reference: string): Promise<{ outcome: ConfirmOutcome; row: DonationRow | null }> {
+export type ReceiptResult = 'sent' | 'skipped' | 'failed' | 'not-configured'
+
+export async function confirmDonation(
+  deps: GivingDeps,
+  reference: string,
+): Promise<{ outcome: ConfirmOutcome; row: DonationRow | null; receipt?: ReceiptResult }> {
   if (!isDonationReference(reference)) return { outcome: 'unknown-reference', row: null }
   const row = await deps.store.findByReference(reference)
   if (!row) return { outcome: 'unknown-reference', row: null }
   if (row.provider !== deps.provider.name) return { outcome: 'no-change', row }
   if (row.status === 'succeeded') {
-    await sendReceiptOnce(deps, row)
-    return { outcome: 'already-succeeded', row }
+    const receipt = await sendReceiptOnce(deps, row)
+    return { outcome: 'already-succeeded', row, receipt }
   }
 
   const tx = await deps.provider.verify(reference)
@@ -142,8 +148,8 @@ export async function confirmDonation(deps: GivingDeps, reference: string): Prom
     })
     const fresh = (await deps.store.findByReference(reference)) ?? row
     if (won) deps.logger.info({ reference, outcome: 'succeeded', currency: fresh.currency }, '[giving] donation confirmed')
-    if (fresh.status === 'succeeded') await sendReceiptOnce(deps, fresh)
-    return { outcome: won ? 'succeeded' : 'already-succeeded', row: fresh }
+    const receipt = fresh.status === 'succeeded' ? await sendReceiptOnce(deps, fresh) : undefined
+    return { outcome: won ? 'succeeded' : 'already-succeeded', row: fresh, receipt }
   }
 
   // Paystack reports an initialised transaction the reader has not paid YET as `abandoned`; only believe it once the
@@ -163,11 +169,18 @@ export async function confirmDonation(deps: GivingDeps, reference: string): Prom
   return { outcome: 'still-pending', row }
 }
 
-export async function sendReceiptOnce(deps: GivingDeps, row: DonationRow): Promise<'sent' | 'skipped' | 'failed'> {
-  if (row.status !== 'succeeded' || row.receiptSentAt || !row.email) return 'skipped'
+/** A confirmed gift whose receipt has not gone out yet (and that still has an address to send it to). */
+export const receiptOwed = (row: DonationRow): boolean => row.status === 'succeeded' && !row.receiptSentAt && Boolean(row.email)
+
+/**
+ * Send the receipt if it is owed, at most once (atomic claim). Callers that find a receipt still owed retry it: the next
+ * webhook delivery, the reader's status check (thanks page) and the scheduler's retry sweep (lib/giving/receiptRetry.ts).
+ */
+export async function sendReceiptOnce(deps: GivingDeps, row: DonationRow): Promise<ReceiptResult> {
+  if (!receiptOwed(row)) return 'skipped'
   if (!deps.mailer.configured) {
-    deps.logger.warn({ reference: row.reference }, '[giving] receipt not sent: SMTP is not configured')
-    return 'skipped'
+    deps.logger.warn({ reference: row.reference }, '[giving] receipt not sent yet: SMTP is not configured')
+    return 'not-configured'
   }
   if (!(await deps.store.claimReceipt(row.reference))) return 'skipped'
   const cause = deps.settings?.causes.find((c) => c.key === row.cause)
@@ -177,12 +190,12 @@ export async function sendReceiptOnce(deps: GivingDeps, row: DonationRow): Promi
     testMode: deps.provider.mode === 'test',
   })
   try {
-    await deps.mailer.send(row.email, mail.subject, mail.text)
+    await deps.mailer.send(row.email as string, mail.subject, mail.text)
     deps.logger.info({ reference: row.reference }, '[giving] receipt sent')
     return 'sent'
   } catch (err) {
     await deps.store.releaseReceipt(row.reference).catch(() => undefined)
-    deps.logger.error({ reference: row.reference, ...safeErrorFields(err) }, '[giving] receipt e-mail failed; will retry on the next confirmation')
+    deps.logger.error({ reference: row.reference, ...safeErrorFields(err) }, '[giving] receipt e-mail failed; it will be retried')
     return 'failed'
   }
 }

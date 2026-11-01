@@ -79,6 +79,9 @@ describe('migration 20261030 (waves 1-2) is reversible and keeps existing articl
     expect(await tableExists('donations')).toBe(false)
     await entry!.down(args) // idempotent (IF EXISTS)
     await entry!.up(args)
+    // Later migrations touch tables this one recreates (e.g. donations.consent_version): re-apply them, as a real
+    // down/up of the whole chain would. Each is idempotent (IF NOT EXISTS).
+    for (const later of migrations.slice(migrations.indexOf(entry!) + 1)) await later.up(args)
     expect(await tableExists('authors')).toBe(true)
     expect(await tableExists('site_trust')).toBe(true)
     const row = (await drizzle().execute(sql`select content_type, kicker, byline_author_id from articles where id = ${legacy.id}`)).rows[0]
@@ -459,7 +462,7 @@ describe('donations, newsletter issues and settings: never public, server-owned'
     expect(eic.headers.get('content-type')).toMatch(/text\/csv/)
     expect(eic.headers.get('cache-control')).toBe('no-store')
     const [header, ...lines] = eic.text.trim().split('\r\n')
-    expect(header).toBe('reference,createdAt,paidAt,status,provider,currency,amountMinor,amount,cause,channel,anonymous,consentAt,receiptSentAt')
+    expect(header).toBe('reference,createdAt,paidAt,status,provider,currency,amountMinor,amount,cause,channel,anonymous,consentAt,consentVersion,receiptSentAt')
     expect(eic.text).not.toContain('csv@example.org')
     expect(eic.text).not.toContain('HYPERLINK')
     const row = lines.find((l) => l.startsWith(`${runId}-ref-csv,`))

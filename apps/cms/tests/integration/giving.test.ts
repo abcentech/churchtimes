@@ -9,6 +9,9 @@ import { resetGivingState } from '../../src/endpoints/publicGiving'
 import { resetGivingSettingsCache } from '../../src/lib/giving/runtime'
 import { generateDonationReference } from '../../src/lib/giving/reference'
 import { payloadDonationStore } from '../../src/lib/giving/store'
+import { redactDonation } from '../../src/lib/giving/redact'
+import { resetReceiptRetry, retryOwedReceipts } from '../../src/lib/giving/receiptRetry'
+import type { PayloadRequest } from 'payload'
 import { TEST_SECRET } from '../unit/givingHelpers'
 import { api, newRunId, setupFixtures, type Fixtures } from './helpers'
 import { installActionTurnstileStub, installMailCapture, removeActionTurnstileStub, tsToken, type MailCapture } from './publicStubs'
@@ -105,6 +108,7 @@ describe('giving end to end (real schema, fake Paystack)', () => {
     const doc = await row(reference)
     expect(doc).toMatchObject({ reference, status: 'pending', provider: 'paystack', amountMinor: 500_000, currency: 'NGN', cause: 'general', anonymous: false })
     expect(doc.consentAt).toBeTruthy()
+    expect(doc.consentVersion).toBe('giving-v1')
     expect(doc.receiptSentAt ?? null).toBeNull()
     const call = fake.calls.find((c: { op: string; body?: { reference?: string } }) => c.op === 'initialize' && c.body?.reference === reference)
     expect(call.body.amount).toBe(500_000)
@@ -199,6 +203,79 @@ describe('giving end to end (real schema, fake Paystack)', () => {
     } finally {
       await f.payload.updateGlobal({ slug: 'giving-settings' as never, data: { enabled: true } as never, overrideAccess: true })
     }
+  })
+
+  it('receipt: SMTP fails at webhook time, the next status poll sends exactly one (real webhook, real status endpoint)', async () => {
+    const { reference } = await started()
+    fake.complete(reference, 'success')
+    mail.failNext()
+    expect((await webhook(fake.webhookBodyFor(reference))).status).toBe(200)
+    expect(await row(reference)).toMatchObject({ status: 'succeeded' })
+    expect((await row(reference)).receiptSentAt ?? null).toBeNull()
+    expect(mail.sent).toHaveLength(0)
+    expect((await api('GET', `/api/public/giving/status?reference=${reference}`)).json.status).toBe('succeeded')
+    expect(mail.sent).toHaveLength(1)
+    expect((await row(reference)).receiptSentAt).toBeTruthy()
+    resetGivingState()
+    await api('GET', `/api/public/giving/status?reference=${reference}`)
+    await webhook(fake.webhookBodyFor(reference))
+    expect(mail.sent).toHaveLength(1)
+  })
+
+  it('receipt: SMTP unset at confirmation; the scheduler sweep sends it once SMTP is back, exactly once', async () => {
+    const { reference } = await started()
+    fake.complete(reference, 'success')
+    delete process.env.SMTP_HOST
+    try {
+      expect((await webhook(fake.webhookBodyFor(reference))).status).toBe(200)
+      expect(mail.sent).toHaveLength(0)
+      resetReceiptRetry()
+      expect(await retryOwedReceipts(f.payload, new Date(), { force: true })).toBeNull() // no SMTP: the sweep does nothing
+    } finally {
+      process.env.SMTP_HOST = 'smtp.stub.example.test'
+    }
+    const first = await retryOwedReceipts(f.payload, new Date(), { force: true })
+    expect(first?.sent).toBeGreaterThanOrEqual(1)
+    expect(mail.sent.filter((m) => String(m.text).includes(reference))).toHaveLength(1)
+    await retryOwedReceipts(f.payload, new Date(), { force: true })
+    expect(mail.sent.filter((m) => String(m.text).includes(reference))).toHaveLength(1)
+  })
+
+  it('NDPA redaction: admin only, blanks email and name only, idempotent, audited without the removed details', async () => {
+    const { reference } = await started({ currency: 'USD', amountMinor: 1_000 })
+    fake.complete(reference, 'success')
+    await webhook(fake.webhookBodyFor(reference))
+    const before = await row(reference)
+    const id = before.id as number
+    expect(String(before.email)).toContain(runId)
+    expect((await api('POST', `/api/donations/${id}/redact`)).status).toBe(401)
+    expect((await api('POST', `/api/donations/${id}/redact`, { token: f.tokens.eic })).status).toBe(403)
+    expect((await api('POST', '/api/donations/abc/redact', { token: f.tokens.admin })).status).toBe(400)
+    expect((await api('POST', '/api/donations/999999999/redact', { token: f.tokens.admin })).status).toBe(404)
+    const res = await api('POST', `/api/donations/${id}/redact`, { token: f.tokens.admin })
+    expect(res.status).toBe(200)
+    expect(res.json).toEqual({ ok: true, reference, changed: true })
+    const after = await row(reference)
+    expect(after.email ?? null).toBeNull()
+    expect(after.name ?? null).toBeNull()
+    for (const k of ['reference', 'amountMinor', 'currency', 'status', 'paidAt', 'providerRef', 'cause', 'consentAt', 'consentVersion', 'receiptSentAt']) expect(after[k]).toEqual(before[k])
+    const again = await api('POST', `/api/donations/${id}/redact`, { token: f.tokens.admin })
+    expect(again.json).toEqual({ ok: true, reference, changed: false })
+    const audits = await f.payload.find({ collection: 'audit-logs', where: { and: [{ action: { equals: 'donation.redact' } }, { docId: { equals: String(id) } }] }, overrideAccess: true })
+    expect(audits.docs).toHaveLength(1)
+    expect(JSON.stringify(audits.docs[0])).not.toContain('@example.test')
+    // REST updates stay impossible even for an admin: the redact path is the only one.
+    expect([401, 403]).toContain((await api('PATCH', `/api/donations/${id}`, { token: f.tokens.admin, body: { email: 'x@example.test' } })).status)
+    expect((await row(reference)).email ?? null).toBeNull()
+  })
+
+  it('NDPA redaction from the CLI path (no user): same effect, audited as cli', async () => {
+    const { reference } = await started()
+    const result = await redactDonation({ payload: f.payload, user: null, context: {} } as unknown as PayloadRequest, { reference }, 'cli')
+    expect(result).toEqual({ found: true, reference, changed: true })
+    expect((await row(reference)).email ?? null).toBeNull()
+    const audits = await f.payload.find({ collection: 'audit-logs', where: { and: [{ action: { equals: 'donation.redact' } }, { actorRole: { equals: 'cli' } }] }, overrideAccess: true })
+    expect(audits.docs.some((d) => String((d as { summary?: string }).summary).includes(reference))).toBe(true)
   })
 
   it('no key: every giving endpoint is off', async () => {

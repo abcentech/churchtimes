@@ -23,9 +23,10 @@ test('typed amounts become exact integer minor units (no floats)',()=>{
   assert.equal(formatMinor(1000,'USD'),'$10');
 });
 
-test('only Paystack checkout (or the loopback test server) is ever opened',()=>{
+test('only Paystack checkout is ever opened; loopback only for the flagged test harness',()=>{
   assert.equal(safeCheckoutUrl('https://checkout.paystack.com/abc'),'https://checkout.paystack.com/abc');
-  assert.equal(safeCheckoutUrl('http://127.0.0.1:3291/checkout/x'),'http://127.0.0.1:3291/checkout/x');
+  for(const local of ['http://127.0.0.1:3291/checkout/x','http://localhost/checkout/x'])assert.equal(safeCheckoutUrl(local),null,local);
+  assert.equal(safeCheckoutUrl('http://127.0.0.1:3291/checkout/x',{allowLoopback:true}),'http://127.0.0.1:3291/checkout/x');
   for(const bad of ['http://checkout.paystack.com/abc','https://checkout.paystack.com.evil.test/','https://evil.test/','javascript:alert(1)','https://u:p@checkout.paystack.com/x','//checkout.paystack.com/x',null])assert.equal(safeCheckoutUrl(bad),null,String(bad));
 });
 

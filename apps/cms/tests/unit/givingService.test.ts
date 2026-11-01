@@ -28,6 +28,7 @@ describe('startDonation', () => {
     const row = await store.findByReference(reference)
     expect(row).toMatchObject({ status: 'pending', amountMinor: 500_000, currency: 'NGN', provider: 'paystack', email: 'reader@example.test', name: 'Ada Obi' })
     expect(row?.consentAt).toMatch(/Z$/)
+    expect(row?.consentVersion).toBe('giving-v1')
     expect(checkoutUrl).toContain('/checkout/')
   })
 

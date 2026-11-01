@@ -1,5 +1,6 @@
 import type { Payload } from 'payload'
 
+import { retryOwedReceipts } from './giving/receiptRetry'
 import { tickDigest } from './newsletterDigestRunner'
 
 /** Publish every `scheduled` article whose `scheduledFor <= now`. Returns the number published. */
@@ -47,6 +48,7 @@ export function startScheduler(payload: Payload): void {
   let running = false
   const tick = async () => {
     tickDigest(payload) // daily newsletter digest: own in-flight guard, never blocks publishing (docs/w12/growth.md)
+    void retryOwedReceipts(payload) // giving receipts still owed: every 10 min at most, own guard (docs/w12/giving.md)
     if (running) return
     running = true
     try {

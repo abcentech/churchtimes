@@ -7,7 +7,7 @@ import { isEditorInChief, type UserLike } from '../access/roles'
 import { isDonationReference } from '../lib/giving/reference'
 import { ProviderError } from '../lib/giving/provider'
 import { givingDeps, loadGivingRuntime, type GivingRuntime } from '../lib/giving/runtime'
-import { confirmDonation, PENDING_STATUS_TTL_MS, startDonation, statusMayVerify } from '../lib/giving/service'
+import { confirmDonation, PENDING_STATUS_TTL_MS, receiptOwed, sendReceiptOnce, startDonation, statusMayVerify } from '../lib/giving/service'
 import { publicGivingSettings } from '../lib/giving/settings'
 import { GIVING_INIT_MAX_BODY_BYTES, GIVING_TURNSTILE_ACTION, validateGivingInit } from '../lib/giving/validate'
 import {
@@ -211,11 +211,13 @@ export const givingWebhookEndpoint: Endpoint = {
     }
 
     try {
-      const { outcome } = await confirmDonation(givingDeps(req.payload, { ...runtime, provider }), event.reference)
-      req.payload.logger.info({ event: event.event, reference: event.reference, outcome }, '[giving] webhook handled')
+      const { outcome, receipt } = await confirmDonation(givingDeps(req.payload, { ...runtime, provider }), event.reference)
+      req.payload.logger.info({ event: event.event, reference: event.reference, outcome, receipt }, '[giving] webhook handled')
       // The provider said "success" but verify does not agree yet: answer non-200 so it retries later.
       if (outcome === 'still-pending' || outcome === 'not-found-at-provider') return reply(503, { ok: false })
-      rememberDelivery(digest, now)
+      // The gift is recorded, so answer 200. Only remember the delivery once nothing is owed: if the receipt could not be
+      // sent, a redelivery (or a resend from the Paystack dashboard) must reach confirmDonation again and retry it.
+      if (receipt !== 'failed' && receipt !== 'not-configured') rememberDelivery(digest, now)
       return reply(200, { ok: true })
     } catch (err) {
       const fields = err instanceof ProviderError ? { kind: err.kind, status: err.status } : safeErrorFields(err)
@@ -269,6 +271,14 @@ export const givingStatusEndpoint: Endpoint = {
         // The provider is unreachable: report what we know; the webhook (or the next check) will settle it.
         const fields = err instanceof ProviderError ? { kind: err.kind, status: err.status } : safeErrorFields(err)
         req.payload.logger.warn({ reference, ...fields }, '[giving] status verify failed')
+      }
+    } else if (receiptOwed(row) && verifyAllowed(reference, now.getTime())) {
+      // Confirmed, but the receipt failed or SMTP was missing at the time: the reader's check retries it (same per-reference
+      // cooldown as the verify call; the atomic claim keeps it to one e-mail).
+      try {
+        await sendReceiptOnce(deps, row)
+      } catch (err) {
+        req.payload.logger.warn({ reference, ...safeErrorFields(err) }, '[giving] status receipt retry failed')
       }
     }
     const expired = row.status === 'pending' && now.getTime() - new Date(row.createdAt).getTime() >= PENDING_STATUS_TTL_MS

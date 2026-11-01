@@ -30,6 +30,12 @@ export const CURRENCY_INFO: Record<DonationCurrency, CurrencyInfo> = {
 export const isMinorAmount = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value > 0
 
+/** `500050` -> `5000.50` (integer arithmetic only; '' for anything that is not a non-negative safe integer). */
+export function minorToMajorText(minor: unknown): string {
+  if (typeof minor !== 'number' || !Number.isSafeInteger(minor) || minor < 0) return ''
+  return `${Math.floor(minor / 100)}.${String(minor % 100).padStart(2, '0')}`
+}
+
 /** `NGN 5,000.00` (integer arithmetic only). */
 export function formatMinor(amountMinor: number, currency: DonationCurrency): string {
   const major = Math.floor(amountMinor / 100)
