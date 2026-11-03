@@ -156,3 +156,22 @@ test('reserved localhost CMS URL enables real anonymous submissions without an e
  await expect(page.getByRole('heading',{name:'Your story is awaiting review.'})).toBeVisible();
  if(process.env.CAPTURE_PUBLIC_STAGING==='1')await page.screenshot({path:`docs/public-staging/localhost-receipt-${testInfo.project.name}.png`,fullPage:true});
 });
+
+
+test('real CMS newsletter switch controls visible signup and disabled POSTs (Turnstile transport STUB)',async({page,request})=>{
+ const fixture=await (await request.get(cms+'/__test/fixtures')).json();
+ await request.post(cms+'/__test/newsletter?enabled=false');
+ try {
+  const off=await request.get(cms+'/api/public/newsletter/settings');expect(await off.json()).toEqual({enabled:false,siteKey:null});
+  expect((await request.post(cms+'/api/public/newsletter/subscribe',{data:{email:'synthetic@example.test',consent:true}})).status()).toBe(503);
+  await page.goto('/');await expect(page.locator('#connect a[href^="mailto:"]')).toBeVisible();
+  await request.post(cms+'/__test/newsletter?enabled=true');
+  const on=await request.get(cms+'/api/public/newsletter/settings');expect(await on.json()).toEqual({enabled:true,siteKey:'1x00000000000000000000AA'});
+  let scripts=0;await page.route('https://challenges.cloudflare.com/**',route=>{scripts++;return route.fulfill({contentType:'application/javascript',body:`window.turnstile={render(el,opt){opt.callback('public-integration-newsletter');return 'fixture';},remove(){},reset(){}}`});});
+  await page.goto('/#report/'+fixture.publishedSlug);const form=page.locator('#cms-report [data-reader-form="newsletter"]');await expect(form).toBeVisible();expect(scripts).toBe(0);
+  await form.getByLabel('Email address').fill(fixture.runId+'@test.invalid');await form.getByRole('checkbox').check();await form.getByRole('button',{name:'Allow spam protection'}).click();
+  await page.getByLabel('Allow Cloudflare spam protection for online forms').check();await page.getByRole('button',{name:'Close privacy notice'}).click();
+  await expect(form.getByText('Verification complete.')).toBeVisible();await form.getByRole('button',{name:'Sign up'}).click();
+  await expect(form.locator('[data-reader-status]')).toContainText('may be sent when email is available');
+ } finally {await request.post(cms+'/__test/newsletter?enabled=false');}
+});

@@ -23,8 +23,8 @@ let siteverifyCalls = 0
 setTurnstileFetchForTests(async (_url: string, options: RequestInit) => {
   siteverifyCalls++
   const token = new URLSearchParams(String(options.body)).get('response')
-  return Response.json(token === 'public-integration-valid'
-    ? { success:true, hostname:'127.0.0.1', action:'submit-story' }
+  return Response.json(['public-integration-valid','public-integration-newsletter'].includes(token || '')
+    ? { success:true, hostname:'127.0.0.1', action:token === 'public-integration-newsletter' ? 'newsletter-subscribe' : 'submit-story' }
     : { success:false, 'error-codes':['timeout-or-duplicate'] })
 })
 // Synthetic geometric PNG: no editorial photograph or real personal data.
@@ -80,6 +80,11 @@ const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url || '/', 'http://127.0.0.1:'+port)
     if (url.pathname === '/__test/fixtures') return reply(res,{runId,legacySamples,publishedSlug:published.slug,seoFallbackSlug:seoFallback.slug,draftSlug:reporterDraft.json.doc.slug,siteverifyCalls,liveSlug:live.slug,liveTitle:live.title,draftLiveSlug:draftLive.slug,endedLiveSlug:endedLive.slug})
+    // STUB administrative control exists only on this disposable loopback test host.
+    if(url.pathname==='/__test/newsletter' && req.method==='POST') {
+      await f.payload.updateGlobal({slug:'newsletter-settings',overrideAccess:true,data:{enabled:url.searchParams.get('enabled')==='true'}})
+      return reply(res,{ok:true})
+    }
     if(url.pathname==='/__test/live-stage' && req.method==='POST') {
       if(url.searchParams.get('stage')==='start'){await f.payload.update({collection:'live-events',id:live.id,overrideAccess:true,data:{status:'live'}});await f.payload.update({collection:'live-updates',id:delayed.id,overrideAccess:true,data:{status:'pending',publishSequence:null,approvedAt:null}})}
       else if(url.searchParams.get('stage')==='approve'){const result=await api('PATCH',`/api/live-updates/${delayed.id}`,{token:f.tokens.eic,body:{status:'approved'}});if(result.status!==200)return reply(res,{status:result.status},500)}

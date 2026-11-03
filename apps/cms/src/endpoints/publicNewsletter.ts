@@ -26,13 +26,15 @@ import {
 } from '../lib/newsletter'
 import {
   checkTurnstileForAction,
+  corsHeaders,
   guardPublicRequest,
   makeMethodNotAllowedEndpoints,
   makePreflightEndpoint,
   positiveInt,
   readJsonBody,
 } from '../lib/publicEndpoint'
-import { createRateLimiter, hashIp } from '../lib/rateLimit'
+import { createRateLimiter, getClientIp, hashIp } from '../lib/rateLimit'
+import { isOriginAllowed } from './publicSubmissions'
 import { safeErrorFields } from '../lib/safeLog'
 
 /**
@@ -54,6 +56,7 @@ type SubscriberDoc = {
 let ipLimiter: ReturnType<typeof createRateLimiter> | undefined
 let addressLimiter: ReturnType<typeof createRateLimiter> | undefined
 let tokenLimiter: ReturnType<typeof createRateLimiter> | undefined
+let settingsLimiter: ReturnType<typeof createRateLimiter> | undefined
 
 const windowMs = () => positiveInt(process.env.NEWSLETTER_RATE_WINDOW_SECONDS, 900) * 1000
 const getIpLimiter = () =>
@@ -72,6 +75,7 @@ export function resetNewsletterLimiters(): void {
   ipLimiter = undefined
   addressLimiter = undefined
   tokenLimiter = undefined
+  settingsLimiter = undefined
 }
 
 // Confirmation e-mails are sent after the answer is built (not awaited), so the response time does not reveal
@@ -188,6 +192,44 @@ async function subscribe(req: PayloadRequest, data: ValidSubscribe, ipHash: stri
   queueConfirmationMail(payload, data.email, token)
 }
 
+/** Only the signup switch and public widget key cross this boundary; never the global or SMTP settings. */
+async function newsletterEnabled(req: PayloadRequest): Promise<boolean> {
+  try {
+    const settings = await req.payload.findGlobal({ slug: 'newsletter-settings', depth: 0, overrideAccess: true })
+    return settings.enabled === true
+  } catch (err) {
+    req.payload.logger.error(safeErrorFields(err), 'newsletter settings unavailable')
+    return false
+  }
+}
+
+export const publicNewsletterSettingsEndpoint: Endpoint = {
+  path: '/public/newsletter/settings',
+  method: 'get',
+  handler: async (req: PayloadRequest) => {
+    const origin = req.headers.get('origin')
+    const allowed = isOriginAllowed(origin)
+    const headers = { ...corsHeaders(origin && allowed ? origin : null, 'GET, OPTIONS'), 'Cache-Control': 'no-store', Vary: 'Origin' }
+    if (!allowed) return Response.json({ ok: false }, { status: 403, headers })
+    const limiter = (settingsLimiter ??= createRateLimiter({ limit: 120, windowMs: 60_000 }))
+    const limited = limiter.check(getClientIp(req))
+    if (!limited.allowed) return Response.json({ ok: false }, { status: 429, headers: { ...headers, 'Retry-After': String(limited.retryAfterSeconds) } })
+    const enabled = await newsletterEnabled(req)
+    const key = process.env.TURNSTILE_SITE_KEY?.trim() || ''
+    return Response.json({ enabled, siteKey: enabled && /^[A-Za-z0-9_-]{1,255}$/.test(key) ? key : null }, { headers })
+  },
+}
+
+const newsletterSettingsPreflight: Endpoint = {
+  path: '/public/newsletter/settings',
+  method: 'options',
+  handler: async (req: PayloadRequest) => {
+    const origin = req.headers.get('origin')
+    if (origin && !isOriginAllowed(origin)) return new Response(null, { status: 403 })
+    return new Response(null, { status: 204, headers: corsHeaders(origin, 'GET, OPTIONS') })
+  },
+}
+
 export const publicNewsletterSubscribeEndpoint: Endpoint = {
   path: '/public/newsletter/subscribe',
   method: 'post',
@@ -203,6 +245,7 @@ export const publicNewsletterSubscribeEndpoint: Endpoint = {
 
     const limited = ctx.limit(getIpLimiter().check(ctx.ip), 'Too many attempts. Try again later.')
     if (limited) return limited
+    if (!await newsletterEnabled(req)) return ctx.fail(503, 'Sign-up is unavailable.')
 
     const body = await readJsonBody(req, ctx, SUBSCRIBE_MAX_BODY_BYTES)
     if ('response' in body) return body.response
@@ -376,6 +419,8 @@ export async function unsubscribeByToken(req: PayloadRequest, token: string): Pr
 }
 
 export const newsletterEndpoints: Endpoint[] = [
+  publicNewsletterSettingsEndpoint,
+  newsletterSettingsPreflight,
   publicNewsletterSubscribeEndpoint,
   publicNewsletterConfirmEndpoint,
   publicNewsletterUnsubscribeEndpoint,

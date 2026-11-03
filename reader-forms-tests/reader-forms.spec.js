@@ -20,7 +20,7 @@ for(const kind of ['newsletter','contact']) {
     const accessibility=await new AxeBuilder({page}).withTags(['wcag2a','wcag2aa','wcag21aa','best-practice']).analyze();expect(accessibility.violations).toEqual([]);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
     await page.getByRole('button',{name:kind==='newsletter'?'Sign up':'Send message',exact:true}).click();
-    await expect(page.locator('[data-reader-status]')).toContainText(kind==='newsletter'?'If this address can be subscribed, we sent a confirmation email.':'MSG-7KQ2M9XA');
+    await expect(page.locator('[data-reader-status]')).toContainText(kind==='newsletter'?'If this address can be subscribed, a confirmation email may be sent when email is available.':'MSG-7KQ2M9XA');
     expect(stub.requests).toHaveLength(1);expect(stub.requests[0].method).toBe('POST');expect(stub.requests[0].body.turnstileToken).toBe('synthetic-single-use-token');expect(stub.requests[0].body.phone).toBeUndefined();expect(stub.requests[0].body.subject).toBeUndefined();expect(errors).toEqual([]);
   });
   for(const [status,text] of [[400,'Please check the form'],[403,'cannot accept requests'],[409,'matching message'],[413,'too large'],[415,'Online sending is unavailable'],[429,'Try again in 86400 seconds'],[503,kind==='newsletter'?'Sign-up is unavailable':'Online sending is unavailable'],[500,'temporarily unavailable']]) {

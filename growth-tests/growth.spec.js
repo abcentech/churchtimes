@@ -7,6 +7,7 @@ async function stubCMS(page, { search, topics = {}, offlineTopics = false } = {}
   await page.route('https://challenges.cloudflare.com/**', route => route.abort());
   await page.route(/\/api\//, async route => {
     const url = new URL(route.request().url());
+    if (url.pathname === '/api/public/newsletter/settings') return route.fulfill({ json: { enabled: true, siteKey: '1x00000000000000000000AA' } });
     if (url.pathname === '/api/public/search') { calls.search.push(url); return search ? search(url, route) : route.fulfill({ json: { docs: [card('faith-in-lagos', 'Faith in Lagos'), card('church-growth', 'Church growth report', '19')], totalDocs: 2, hasNextPage: false } }); }
     if (url.pathname === '/api/categories') return route.fulfill({ json: { docs: [{ id: 1, slug: 'news', title: 'News' }, { id: 2, slug: 'faith', title: 'Faith' }] } });
     if (url.pathname === '/api/public/topics') return route.fulfill({ json: { docs: Object.values(topics).map(t => t.topic) } });
@@ -26,7 +27,7 @@ test('connect band carries the existing newsletter sign-up (source home) instead
   const band = page.locator('#connect');
   await expect(band.locator('form[data-reader-form="newsletter"]')).toHaveAttribute('data-source', 'home');
   await expect(band.getByRole('link', { name: 'Request updates' })).toHaveCount(0);
-  await expect(band).toContainText('confirm by email, unsubscribe at any time');
+  await expect(band).toContainText('Confirm your email before your subscription begins.');
   await expect(page.locator('form[data-reader-form="newsletter"]')).toHaveCount(1);
   await expect(band.getByRole('checkbox')).toBeVisible();
   await page.goto('/#about');

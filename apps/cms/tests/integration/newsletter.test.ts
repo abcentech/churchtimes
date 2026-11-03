@@ -25,7 +25,7 @@ const runId = newRunId()
 const ALLOWED = 'http://allowed.test'
 const SITE = 'https://www.example.test'
 const TOKEN_SECRET = 'newsletter-test-only-secret-0123456789abcdef'
-const NEUTRAL = { ok: true, message: 'If this address can be subscribed, we sent a confirmation email.' }
+const NEUTRAL = { ok: true, message: 'If this address can be subscribed, a confirmation email may be sent when email is available.' }
 let f: Fixtures
 let mail: MailCapture
 let ipCounter = 0
@@ -45,12 +45,14 @@ beforeAll(async () => {
   resetNewsletterLimiters()
   installActionTurnstileStub()
   f = await setupFixtures(runId)
+  await f.payload.updateGlobal({ slug: 'newsletter-settings', data: { enabled: true }, overrideAccess: true })
   mail = installMailCapture(f.payload)
 })
 
 afterAll(async () => {
   removeActionTurnstileStub()
   mail?.restore()
+  await f?.payload.updateGlobal({ slug: 'newsletter-settings', data: { enabled: false }, overrideAccess: true }).catch(() => undefined)
   await f?.payload.delete({ collection: 'subscribers', where: { id: { exists: true } }, overrideAccess: true }).catch(() => undefined)
   await f?.payload
     .delete({ collection: 'audit-logs', where: { collection: { equals: 'subscribers' } }, overrideAccess: true })
@@ -115,6 +117,27 @@ const seed = async (status: string, extra: Record<string, unknown> = {}) => {
   })) as { id: number }
   return { email, id: doc.id }
 }
+
+describe('public newsletter settings', () => {
+  it('publishes only safe runtime configuration and rejects signup while disabled', async () => {
+    await f.payload.updateGlobal({ slug: 'newsletter-settings', data: { enabled: false }, overrideAccess: true })
+    try {
+      const off = await api('GET', '/api/public/newsletter/settings', { headers: { origin: ALLOWED } })
+      expect(off.status).toBe(200)
+      expect(off.json).toEqual({ enabled: false, siteKey: null })
+      expect(off.headers.get('cache-control')).toBe('no-store')
+      const disabled = await subscribe(body())
+      expect(disabled.status).toBe(503)
+      expect((await api('GET', '/api/public/newsletter/settings', { headers: { origin: 'https://untrusted.example.test' } })).status).toBe(403)
+    } finally {
+      await f.payload.updateGlobal({ slug: 'newsletter-settings', data: { enabled: true }, overrideAccess: true })
+    }
+    const on = await api('GET', '/api/public/newsletter/settings', { headers: { origin: ALLOWED } })
+    expect(on.status).toBe(200)
+    expect(on.json.enabled).toBe(true)
+    expect(Object.keys(on.json).sort()).toEqual(['enabled', 'siteKey'])
+  })
+})
 
 describe('double opt-in happy path', () => {
   it('stores pending with a hashed token, mails a PUBLIC SITE link, confirms once, and refuses GET', async () => {

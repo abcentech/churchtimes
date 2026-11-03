@@ -1,6 +1,6 @@
 import { submissionEndpoint } from './public-submissions.js';
 
-export const NEWSLETTER_SUCCESS = 'If this address can be subscribed, we sent a confirmation email.';
+export const NEWSLETTER_SUCCESS = 'If this address can be subscribed, a confirmation email may be sent when email is available.';
 export const CONTACT_TOPICS = ['general', 'advertising', 'corrections', 'tips', 'other'];
 export class ReaderFormError extends Error {
   constructor(type, { fields = {}, retryAfter = 0 } = {}) { super(type); Object.assign(this, { type, fields, retryAfter }); }

@@ -100,3 +100,35 @@ test('the original-publication callout remains on bundled briefings (STUB)',asyn
  await stubCMS(page,{fail:true});await page.goto('/');await expect(page.getByText('Showing the saved edition.')).toBeVisible();
  await page.locator('.lead-story h1 a').click();await expect(page.locator('.original-callout')).toContainText('The full story');
 });
+
+
+test('runtime newsletter switch controls homepage and article signup with consent (CMS and Turnstile STUBS)',async({page})=>{
+ await stubCMS(page);let enabled=false,thirdParty=0;const posts=[];
+ await page.route('**/api/public/newsletter/settings',route=>route.fulfill({json:{enabled,siteKey:'1x00000000000000000000AA'}}));
+ await page.route('**/api/public/newsletter/subscribe',route=>{posts.push(route.request().postDataJSON());return route.fulfill({status:202,json:{ok:true}});});
+ await page.route('https://challenges.cloudflare.com/**',route=>{thirdParty++;return route.fulfill({contentType:'application/javascript',body:`window.turnstile={render(el,opt){opt.callback('synthetic-token');return 'test';},reset(){},remove(){}}`});});
+ await page.goto('/');await expect(page.locator('.lead-story h1')).toBeVisible();
+ await expect(page.locator('#connect a[href^="mailto:"]')).toBeVisible();await expect(page.locator('#connect [data-reader-form]')).toHaveCount(0);
+ enabled=true;await page.goto('/#report/synthetic-1');
+ const article=page.locator('#cms-report [data-reader-form="newsletter"]');await expect(article).toBeVisible();
+ await expect(page.locator('#connect [data-reader-form="newsletter"]')).toBeVisible();expect(thirdParty).toBe(0);
+ expect(await page.evaluate(()=>localStorage.length)).toBe(0);
+ await article.getByLabel('Email address').fill('reader@example.test');await article.getByRole('checkbox').check();
+ await article.getByRole('button',{name:'Allow spam protection'}).click();
+ await page.getByLabel('Allow Cloudflare spam protection for online forms').check();await page.getByRole('button',{name:'Close privacy notice'}).click();
+ await expect(article.getByText('Verification complete.')).toBeVisible();await article.getByRole('button',{name:'Sign up'}).click();
+ await expect(article.locator('[data-reader-status]')).toContainText('may be sent when email is available');
+ expect(posts).toHaveLength(1);expect(posts[0].source).toBe('article');expect(thirdParty).toBe(1);
+ enabled=false;await page.goto('/');await expect(page.locator('#connect a[href^="mailto:"]')).toBeVisible();await expect(page.locator('#connect [data-reader-form]')).toHaveCount(0);
+});
+
+
+test('unsubscribe remains available while signup is disabled without a build endpoint (CMS STUB)',async({page})=>{
+ await stubCMS(page);const posts=[];
+ await page.route('**/api/public/newsletter/settings',route=>route.fulfill({json:{enabled:false,siteKey:null}}));
+ await page.route('**/api/public/newsletter/unsubscribe',route=>{posts.push(route.request().postDataJSON());return route.fulfill({json:{ok:true}});});
+ await page.goto('/newsletter/unsubscribe?token=synthetic-token');
+ await expect(page.getByRole('button',{name:'Unsubscribe',exact:true})).toBeVisible();expect(posts).toHaveLength(0);
+ await page.getByRole('button',{name:'Unsubscribe',exact:true}).click();
+ await expect(page.locator('[data-reader-status]')).toHaveText('You have been unsubscribed.');expect(posts).toEqual([{token:'synthetic-token'}]);
+});
