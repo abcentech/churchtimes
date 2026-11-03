@@ -22,6 +22,20 @@ test('category listing matches primary OR additional category (nested under and)
   await assert.rejects(()=>fetchPublishedPage({baseUrl:'https://cms.example.test',categoryId:'news',fetchImpl}),/numeric IDs/);
 });
 
+test('grouped sections query every primary and additional category without accepting invalid IDs',async()=>{
+  let url;
+  const fetchImpl=async value=>{url=new URL(value);return {ok:true,json:async()=>({docs:[]})};};
+  await fetchPublishedPage({baseUrl:'https://cms.example.test',categoryIds:['7','12','7'],fetchImpl});
+  const query=url.searchParams;
+  assert.equal(query.get('where[status][equals]'),'published');
+  assert.equal(query.get('sort'),'-publishedAt');
+  assert.equal(query.get('where[and][0][or][0][category][equals]'),'7');
+  assert.equal(query.get('where[and][0][or][1][categories][equals]'),'7');
+  assert.equal(query.get('where[and][0][or][2][category][equals]'),'12');
+  assert.equal(query.get('where[and][0][or][3][categories][equals]'),'12');
+  for(const ids of [[],['bad'],['1','no'],Array.from({length:21},(_,i)=>String(i+1)),'7'])await assert.rejects(()=>fetchPublishedPage({baseUrl:'https://cms.example.test',categoryIds:ids,fetchImpl}),/numeric IDs/);
+});
+
 test('lookup cache: positive and negative TTLs, no error caching, bounded, de-duplicated',async()=>{
   let time=0,calls=0;
   const cache=createLookupCache({ttlMs:30000,negativeTtlMs:10000,max:2,now:()=>time});

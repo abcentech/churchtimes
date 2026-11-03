@@ -42,6 +42,7 @@ jobs:
         run: npm run check:pages
       - run: npx playwright install --with-deps chromium
       - run: npm test -- --workers=2 --reporter=list,github
+      - run: npx playwright test --config playwright.cms-home.config.js --workers=2 --reporter=list,github
       - run: npm run test:newsroom -- --workers=2 --reporter=list,github
       - run: npm run test:forms -- --workers=2 --reporter=list,github
       - run: npm run test:advertising -- --workers=2 --reporter=list,github

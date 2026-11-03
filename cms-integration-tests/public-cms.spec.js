@@ -16,6 +16,17 @@ async function fill(page,data){
   if(await permission.isVisible())await permission.click();
 }
 const send=page=>page.getByRole('button',{name:'Submit for editorial review',exact:true});
+test('the real published CMS feed supplies the homepage lead without draft or duplicate cards',async({page,request})=>{
+  const fixture=await (await request.get(cms+'/__test/fixtures')).json();
+  const result=await request.get(cms+'/api/articles?where[status][equals]=published&sort=-publishedAt&limit=12&depth=1');
+  expect(result.status()).toBe(200);
+  const docs=(await result.json()).docs;
+  expect(docs.length).toBeGreaterThan(0);expect(docs.every(doc=>doc.status==='published')).toBe(true);
+  await page.goto('/');await expect(page.locator('.lead-story h1')).toHaveText(docs[0].title);
+  await expect(page.locator('main')).not.toContainText(fixture.draftSlug);
+  const slugs=await page.locator('#newsroom-home article[data-story-slug]').evaluateAll(nodes=>nodes.map(node=>node.dataset.storySlug));
+  expect(new Set(slugs).size).toBe(slugs.length);
+});
 test('real published API shows populated media, byline, correction and no draft/staff fields',async({page,request})=>{
   const fixture=await (await request.get(cms+'/__test/fixtures')).json();
   const response=await request.get(cms+'/api/articles?limit=100&depth=1');expect(response.status()).toBe(200);

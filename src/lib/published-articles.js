@@ -122,6 +122,7 @@ async function requestPublishedArticles({
   slug,
   signal,
   categoryId,
+  categoryIds,
   collection = 'articles',
   categorySlug,
   legacyId,
@@ -144,11 +145,15 @@ async function requestPublishedArticles({
     if(!/^[1-9]\d{0,14}$/.test(String(legacyId)))throw new CMSReadError('configuration','Legacy IDs must be positive integers');
     url.searchParams.set('where[legacyId][equals]',String(legacyId));
   }
-  if (categoryId !== undefined) {
-    if (!/^\d{1,15}$/.test(String(categoryId))) throw new CMSReadError('configuration','Category filters require numeric IDs');
+  if (categoryId !== undefined || categoryIds !== undefined) {
+    if (categoryIds !== undefined && !Array.isArray(categoryIds)) throw new CMSReadError('configuration','Category filters require numeric IDs');
+    const ids = [...new Set((categoryIds === undefined ? [categoryId] : categoryIds).map(String))];
+    if (!ids.length || ids.length > 20 || ids.some(id => !/^\d{1,15}$/.test(String(id)))) throw new CMSReadError('configuration','Category filters require numeric IDs');
     // v1.27: primary OR additional category. Nested under `and` so it cannot collide with the top-level `or` used by text search.
-    url.searchParams.set('where[and][0][or][0][category][equals]',String(categoryId));
-    url.searchParams.set('where[and][0][or][1][categories][equals]',String(categoryId));
+    ids.forEach((id,index)=>{
+      url.searchParams.set(`where[and][0][or][${index*2}][category][equals]`,String(id));
+      url.searchParams.set(`where[and][0][or][${index*2+1}][categories][equals]`,String(id));
+    });
   }
 
   const controller = new AbortController();

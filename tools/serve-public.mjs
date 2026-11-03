@@ -48,7 +48,7 @@ export function createPublicServer({dist=process.env.PUBLIC_DIST || resolve(file
     const canonical=article ? articleCanonical(article.slug,{siteUrl,basePath,articlePathTemplate}) : message ? '' : siteCanonical(basePath,{siteUrl});
     html=replaceSocialHTML(html,article,canonical);
     if(article)html=applyShareCardMeta(html,article,{cmsUrl});
-    if(!article && !message)html=html.replace('</head>',()=>homeImageMetadata({siteUrl,basePath})+'</head>');
+    if(!article && !message)html=html.replace('</head>',()=>homeImageMetadata({siteUrl,basePath,cmsConfigured:Boolean(cmsUrl)})+'</head>');
     const robots=indexable && canonical ? 'index,follow' : 'noindex,nofollow';
     let metadata=`<meta name="robots" content="${robots}"><meta name="public-article-path-template" content="${escape(articlePathTemplate)}">${settings.head}`;
     if(canonical)metadata+=`<link rel="canonical" href="${escape(canonical)}">`;

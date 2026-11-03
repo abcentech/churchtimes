@@ -85,11 +85,16 @@ export function mountFollowingFeed(api, anchor) {
   const abortOnLeave = () => controller.abort();
   addEventListener('hashchange', abortOnLeave, { once: true });
   addEventListener('popstate', abortOnLeave, { once: true });
+  api.signal?.addEventListener('abort',abortOnLeave,{once:true});
 
   const manage = () => `<details class="growth-following-manage"><summary>Manage what you follow (${follows.length})</summary><ul>${follows.map(f => `<li><span>${escape(f.name)}</span> <small>${f.kind === 'author' ? 'Writer' : 'Topic'}</small> <button type="button" class="text-button" data-unfollow-kind="${escape(f.kind)}" data-unfollow-slug="${escape(f.slug)}">Unfollow<span class="sr-only"> ${escape(f.name)}</span></button></li>`).join('')}</ul><p class="muted small">Stored only in this browser. Clearing your browser data removes it.</p></details>`;
+  let lastEntries=[],lastNote='';
   const render = (entries, note) => {
     if (!section.isConnected) return;
-    section.innerHTML = `<div class="growth-following-head"><span class="eyebrow clay">FOLLOWING</span><h2 id="growth-following-title">From the topics and writers you follow.</h2></div>${note ? `<p class="growth-note" role="status">${escape(note)}</p>` : ''}${entries.length ? `<div class="story-grid">${entries.map(e => api.reportCard(e.article)).join('')}</div>` : '<p>No published stories yet from what you follow.</p>'}${manage()}`;
+    lastEntries=entries;lastNote=note;
+    const displayed=new Set([...document.querySelectorAll('#newsroom-home article[data-story-slug]')].map(article=>article.dataset.storySlug));
+    entries=entries.filter(entry=>!displayed.has(entry.article.slug));
+    section.innerHTML = `<div class="growth-following-head"><span class="eyebrow clay">FOLLOWING</span><h2 id="growth-following-title">From the topics and writers you follow.</h2></div>${note ? `<p class="growth-note" role="status">${escape(note)}</p>` : ''}${entries.length ? `<div class="story-grid">${entries.map(e => api.reportCard(e.article)).join('')}</div>` : lastEntries.length?'<p>Stories from your follows are already shown above.</p>':'<p>No published stories yet from what you follow.</p>'}${manage()}`;
     api.bindCMSImages?.(section);
     for (const button of section.querySelectorAll('[data-unfollow-kind]')) {
       button.addEventListener('click', () => {
@@ -102,6 +107,7 @@ export function mountFollowingFeed(api, anchor) {
       });
     }
   };
+  document.addEventListener('ct:home-stories-changed',()=>render(lastEntries,lastNote),{signal:controller.signal});
   const key = followsKey(follows);
   const cached = readJSON(FOLLOW_FEED_CACHE_KEY, null);
   const savedEntries = usableCachedEntries(cached, key);
