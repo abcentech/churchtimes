@@ -137,3 +137,10 @@ test('search 429 carries Retry-After into the reader message and other failures 
   await assert.rejects(searchArticles({baseUrl:'https://cms.example.test',query:'faith',fetchImpl:async()=>({ok:true,json:async()=>({nope:1})})}),error=>error.type==='response');
   await assert.rejects(searchArticles({baseUrl:'not a url',query:'faith'}),error=>error.type==='configuration');
 });
+
+
+test('public category relationship IDs are validated for related-story queries',()=>{
+  assert.equal(normalizePublishedArticle({...report,category:{id:42,title:'News'}}).categoryId,'42');
+  assert.equal(normalizePublishedArticle({...report,category:'17'}).categoryId,'17');
+  assert.equal(normalizePublishedArticle({...report,category:{id:'../../private',title:'News'}}).categoryId,null);
+});

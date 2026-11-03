@@ -97,6 +97,7 @@ export function normalizePublishedArticle(record, {baseUrl} = {}) {
     publishedAt: publicationDate(record.publishedAt),
     updatedAt: publicationDate(record.updatedAt),
     category: plainText(typeof record.category === 'object' ? record.category?.title : record.category, 100),
+    categoryId: /^\d{1,15}$/.test(String(record.category?.id ?? record.category ?? '')) ? String(record.category?.id ?? record.category) : null,
     bylineName: plainText(record.bylineName,200),
     // W12 reader fields (apps/cms/docs/w12/schema-contract.md section 1); a non-public byline profile stays an id and is dropped.
     kicker: plainText(record.kicker,60),

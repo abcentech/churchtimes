@@ -14,7 +14,8 @@ async function stubCMS(page,{fail=false}={}) {
   }
   if(url.pathname==='/api/articles') {
    const ids=[...url.searchParams].filter(([k])=>/\[category\]\[equals\]$/.test(k)).map(([,v])=>v);
-   const docs=ids.length?articles.filter(a=>ids.includes(String(a.category?.id))):articles;
+   const slug=url.searchParams.get('where[slug][equals]');
+   const docs=(ids.length?articles.filter(a=>ids.includes(String(a.category?.id))):articles).filter(a=>!slug||a.slug===slug);
    const limit=Number(url.searchParams.get('limit')||12),pageNum=Number(url.searchParams.get('page')||1),slice=docs.slice((pageNum-1)*limit,pageNum*limit);
    return route.fulfill({json:{docs:slice,hasNextPage:pageNum*limit<docs.length,nextPage:pageNum*limit<docs.length?pageNum+1:null}});
   }
@@ -75,4 +76,27 @@ test('following and verse features stay available without duplicating newly page
  await page.getByRole('button',{name:'More stories',exact:true}).click();await expect(page.locator('#latest-grid')).toContainText('Published story 15');
  await expect(following).toContainText('already shown above');await unique(page);
  await expect(page.locator('#growth-verse')).toBeAttached();
+});
+
+
+test('CMS articles can be saved, restored, removed and show related published stories (STUB)',async({page})=>{
+ await stubCMS(page);await page.goto('/');
+ await expect(page.locator('.lead-story h1')).toHaveText('Published story 1');
+ expect(await page.evaluate(()=>localStorage.getItem('ct-reading-list'))).toBeNull();
+ await page.locator('.lead-story [data-cms-save]').click();
+ await expect(page.locator('.lead-story [data-cms-save]')).toHaveAttribute('aria-pressed','true');
+ await page.locator('.lead-story h1 a').click();
+ await expect(page.locator('#cms-report h1')).toHaveText('Published story 1');
+ await expect(page.locator('#cms-report [data-cms-save]').first()).toHaveAttribute('aria-pressed','true');
+ await expect(page.locator('#cms-report [data-related-reports]')).toContainText('Published story 6');
+ await expect(page.locator('#cms-report [data-related-reports]')).not.toContainText('Private draft');
+ await expect(page.locator('.original-callout')).toHaveCount(0);
+ await page.locator('.reading-link').click();await expect(page.locator('#saved-grid')).toContainText('Published story 1');
+ await page.reload();await expect(page.locator('#saved-grid')).toContainText('Published story 1');
+ await page.locator('#saved-grid [data-cms-save]').click();await expect(page.locator('#saved-grid')).toContainText('A little room for good reading.');
+});
+
+test('the original-publication callout remains on bundled briefings (STUB)',async({page})=>{
+ await stubCMS(page,{fail:true});await page.goto('/');await expect(page.getByText('Showing the saved edition.')).toBeVisible();
+ await page.locator('.lead-story h1 a').click();await expect(page.locator('.original-callout')).toContainText('The full story');
 });

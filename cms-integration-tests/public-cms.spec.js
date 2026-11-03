@@ -36,6 +36,11 @@ test('real published API shows populated media, byline, correction and no draft/
   await page.goto('/#report/'+fixture.publishedSlug);
   await expect(page.locator('.article-header')).toContainText('CMS integration byline');
   await expect(page.locator('.article-corrections')).toContainText('A verified fixture correction.');
+  await expect(page.locator('.original-callout')).toHaveCount(0);
+  await page.locator('.article-header [data-cms-save]').click();
+  await expect(page.locator('.article-header [data-cms-save]')).toHaveAttribute('aria-pressed','true');
+  await page.locator('.reading-link').click();await expect(page.locator('#saved-grid')).toContainText('CMS integration');
+  await page.goto('/#report/'+fixture.publishedSlug);await expect(page.locator('.article-header [data-cms-save]')).toHaveAttribute('aria-pressed','true');
   const image=page.locator('.newsroom-figure img').first();await expect(image).toHaveJSProperty('complete',true);
   expect(await image.evaluate(img=>img.naturalWidth)).toBeGreaterThan(0);
   await expect(image).toHaveAttribute('src',new RegExp('^'+cms.replaceAll('.','\\.')+'/api/media/file/'));

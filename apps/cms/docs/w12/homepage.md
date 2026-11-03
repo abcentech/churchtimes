@@ -19,3 +19,11 @@ initial reader budget. The public host uses the site icon for the CMS homepage's
 social image, avoiding a stale bundled-story preview. No advertising, analytics
 or third-party service is enabled by this change. Existing public origin and CMS
 CORS settings still apply; no new environment variable or schema is needed.
+
+CMS articles can be saved locally in the same reading list as bundled briefings.
+Only article slugs are stored after a reader chooses Save; saved details are
+retrieved again from the public, published-only API. Related stories use the
+article's primary category, excluding the article itself and duplicates. If the
+CMS is unavailable, readers can still remove saved entries; recommendations
+simply collapse. The original-publication briefing callout remains exclusive
+to the bundled edition.

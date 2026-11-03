@@ -16,7 +16,7 @@ export function uniqueVisible(articles, seen, href) {
 }
 function leadArticle(article,ctx) {
   const href=esc(ctx.href(article)),image=article.featuredImage?ctx.image(article.featuredImage,{eager:true,fallbackAlt:article.title}):'';
-  return `<article class="lead-story" data-story-slug="${esc(article.slug)}"><a class="lead-photo" href="${href}" tabindex="-1" aria-hidden="true">${image}</a><div class="lead-content"><span class="eyebrow light-eyebrow">${meta(article)}</span><h1><a href="${href}">${esc(article.title)}</a></h1><p>${esc(article.excerpt)}</p><div class="lead-bottom"><span>${article.bylineName?'By '+esc(article.bylineName)+' · ':''}${date(article)}</span><a href="${href}" class="circle-link" aria-label="Read the lead story">${ctx.icon('arrow',21)}</a></div></div></article>`;
+  return `<article class="lead-story" data-story-slug="${esc(article.slug)}"><a class="lead-photo" href="${href}" tabindex="-1" aria-hidden="true">${image}</a><div class="lead-content"><span class="eyebrow light-eyebrow">${meta(article)}</span><h1><a href="${href}">${esc(article.title)}</a></h1><p>${esc(article.excerpt)}</p><div class="lead-bottom"><span>${article.bylineName?'By '+esc(article.bylineName)+' · ':''}${date(article)}</span><a href="${href}" class="circle-link" aria-label="Read the lead story">${ctx.icon('arrow',21)}</a></div></div>${ctx.markCMS(article,'lead-save')}</article>`;
 }
 function railArticle(article,ctx) {
   const href=esc(ctx.href(article)),image=article.featuredImage?ctx.image(article.featuredImage,{card:true,fallbackAlt:article.title}):'';
