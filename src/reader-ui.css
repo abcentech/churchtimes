@@ -22,5 +22,5 @@
 @supports(animation-timeline:view()){:is(.article-page,.newsroom-report article)::before{animation:reader-progress linear both;animation-timeline:--reader-article;animation-range:contain}}
 @keyframes reader-progress{to{transform:scaleX(1)}}
 
-/* Keep text and background contrast stable while the pointer rests on the push control. */
-#privacy-dialog [data-public-push] .outline-button{transition:none}
+/* Avoid low-contrast intermediate colours when the theme changes or a button is hovered. */
+.button{transition:transform .2s}.outline-button{transition:none}
