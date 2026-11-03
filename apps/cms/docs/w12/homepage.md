@@ -27,3 +27,10 @@ article's primary category, excluding the article itself and duplicates. If the
 CMS is unavailable, readers can still remove saved entries; recommendations
 simply collapse. The original-publication briefing callout remains exclusive
 to the bundled edition.
+
+The production quality audit prefers Playwright's installed Chromium and falls
+back to available system browsers. An explicit `CHROMIUM_PATH` remains
+authoritative. If no browser starts, the audit closes its local host and fails
+promptly rather than leaving the CI job running until its timeout. The quality
+runner also requires a completed passing report, even if a child process exits
+without an error status.

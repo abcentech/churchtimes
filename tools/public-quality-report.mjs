@@ -53,3 +53,6 @@ export async function writePublicQualityReport({output,dist}) {
   await writeFile(join(output,'quality.json'),JSON.stringify(report,null,2)+'\n');
   return report;
 }
+
+// A successful child exit is insufficient if the report was never completed.
+export const qualityRunExitCode=(childCode,report)=>childCode===0 && report?.passed===true ? 0 : 1;
