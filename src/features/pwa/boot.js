@@ -26,6 +26,15 @@ export const shown=()=>new Promise(resolve=>document.prerendering?document.addEv
 // before it renders, counts analytics or loads ads.
 export function startPWA(render) {
   const run=()=>{
+    // Errors can occur before the lazy enhancement chunk is available offline.
+    document.addEventListener('error',event=>{
+      const image=event.target;
+      if(!image.matches?.('img[data-bundled-image]') || image.dataset.liteSrc)return;
+      const fallback=document.createElement('span');fallback.className='photo-fallback';
+      const alt=image.alt.trim();
+      if(alt){fallback.setAttribute('role','img');fallback.setAttribute('aria-label',`${alt} — image unavailable`);}else fallback.setAttribute('aria-hidden','true');
+      fallback.textContent='Image unavailable';image.replaceWith(fallback);
+    },true);
     render();
     document.addEventListener('click',event=>{if(event.target.closest?.('[data-lite-toggle]'))more().then(m=>m.toggleLite()).catch(()=>{});});
     const load=()=>more().then(m=>m.startEnhance()).catch(()=>{});

@@ -68,7 +68,7 @@ Code: `lib/newsletterDigest.ts` (pure: selection and templates), `lib/newsletter
 - `POST /api/newsletter/digest/dry-run`: writes today's issue as a draft, sends nothing. 10 per hour per user. A failure answers with the error class and code only (for example `ValidationError`).
 - `POST /api/newsletter/digest/test-send`: sends today's issue, subject `[TEST] …`, to the signed-in staff member's own address only (an address in the request is ignored), without list headers or a subscriber token. 5 per hour per user. Needs SMTP.
 - Command line on the server: `npm run newsletter:digest` (dry run) and `npm run newsletter:digest -- --test-send <address of a staff account>` (refused for any address that is not a staff account).
-- The issues are listed in the CMS admin (`newsletter-issues`, Agent B): subject, status, counts, `capApplied`, `lastError`, the stored text and HTML (with a generic unsubscribe link, no token).
+- The issues are listed in the CMS admin (`newsletter-issues`, Agent B): subject, status, counts, `capApplied`, `lastError`, the stored text and HTML (with a generic unsubscribe link, no token). Only an admin or editor in chief can delete a draft or failed issue; section editors should ask them to clean up dry-run drafts.
 
 **Going live checklist.** Relay account and verified domain (section 1) → `SMTP_*`, `EMAIL_FROM_ADDRESS`, `PUBLIC_SITE_URL`, `NEWSLETTER_TOKEN_SECRET`, `CMS_PUBLIC_URL` → `npm run newsletter:digest -- --test-send you@…` and read it on a phone → in the CMS set `dailySendCap` and `MAIL_HTML_DAILY_CAP` within the free limit, `sendHourLagos`, `fromName`, `replyTo`, then switch on `enabled` and `dailyDigestEnabled` → leave it a day in dry-run and read the draft → set `NEWSLETTER_DIGEST_SEND=true`.
 

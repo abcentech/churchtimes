@@ -2,6 +2,7 @@
 // enabled; one small settings request per page load (kept in memory, never in browser storage), none at all with Save-Data. It never blocks reading:
 // it adds a link to the footer and a short note after the article body once that body exists.
 import { givingEnabled } from './settings-cache.js';
+import { isLite } from '../pwa/boot.js';
 import './ask.css';
 
 const ASK = '<aside class="give-ask" aria-labelledby="give-ask-title"><h2 id="give-ask-title">Support our journalism</h2><p>Church Times Nigeria is free to read. If this reporting helped you, a one-time gift keeps it independent.</p><a class="button button-dark" href="give/">Give to Church Times</a></aside>';
@@ -17,10 +18,13 @@ function place(root) {
 }
 
 export async function mountGivingAsk(doc = document) {
-  if (navigator.connection?.saveData) return;
+  if (isLite()) return;
   if (!(await givingEnabled())) return;
   const footer = doc.querySelector('.site-footer .footer-main > div:last-child');
-  if (footer && !footer.querySelector('[data-give-link]')) footer.insertAdjacentHTML('beforeend', '<a href="give/" data-give-link>Support our journalism</a>');
+  if (footer && !footer.querySelector('[data-give-link]')) {
+    const heading=footer.querySelector('.eyebrow');
+    (heading || footer).insertAdjacentHTML(heading?'afterend':'beforeend', '<a href="give/" data-give-link>Support our journalism</a>');
+  }
   const main = doc.querySelector('#main');
   if (!main || place(main)) return;
   // Report pages fill in after their fetch: watch briefly, then stop.

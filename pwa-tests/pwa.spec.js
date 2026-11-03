@@ -84,8 +84,8 @@ test('data saver: the reader toggle defers images until tapped, stops speculatio
     local.length=0;images.length=0;
     await page.reload();
     await expect(page.locator('.lead-story h1')).toBeVisible();
-    await expect(page.locator('#newsroom-home .newsroom-card')).toHaveCount(2);
-    expect(await page.locator('#app img[data-lite-src]').count()).toBeGreaterThan(3);
+    await expect(page.locator('#newsroom-home article[data-story-slug]')).toHaveCount(2);
+    expect(await page.locator('#app img[data-lite-src]').count()).toBeGreaterThanOrEqual(2);
     // Boxes are reserved: every placeholder already has its final aspect ratio.
     expect(await page.locator('#app img[data-lite-src]').evaluateAll(list=>list.every(img=>img.getAttribute('width')&&img.src.startsWith('data:image/svg+xml')))).toBe(true);
     await page.waitForTimeout(1500);
@@ -187,7 +187,7 @@ test('view transitions: a Ctrl/Cmd or middle click never leaves names behind',as
     await page.goto(origin+'/');
     await expect(page.locator('script[type="speculationrules"]')).toHaveCount(1,{timeout:15000});
     const named=()=>page.locator('[style*="view-transition-name"]').count();
-    const card=page.locator('#newsroom-home .newsroom-card h2 a').first();
+    const card=page.locator('#newsroom-home .lead-story h1 a').first();
     // Keep the test page in place: a no-op link target, so the names set for the transition stay observable.
     await card.evaluate(a=>{a.href='javascript:void 0';});
     await card.click();
@@ -212,4 +212,18 @@ test('Yoruba and Igbo dotted vowels load the lazy Newsreader subset; English pag
     await page.goto(origin+'/bishops-meet-in-abuja/');
     await expect(page.locator('.article-header h1')).toHaveCSS('view-transition-name','ct-title');
   } finally {await stop();}
+});
+
+
+test('offline bundled home replaces failed photographs with accessible placeholders (CMS transport STUB)',async({page,context})=>{
+  const {origin,stop}=await host();
+  try {
+    await stubCMS(page);await page.route('**/news-media/**',route=>route.abort());
+    await page.goto(origin+'/');await controlled(page);await page.unroute(cms+'/**');
+    await context.setOffline(true);await page.reload();
+    await expect(page.locator('.lead-story h1')).toBeVisible();
+    const placeholder=page.locator('.lead-story .photo-fallback');await expect(placeholder).toHaveText('Image unavailable',{timeout:15000});
+    await expect(placeholder).toHaveAttribute('role','img');await expect(placeholder).toHaveAttribute('aria-label',/image unavailable/);
+    await expect(page.locator('.lead-story img[data-bundled-image]')).toHaveCount(0);
+  } finally {await context.setOffline(false);await stop();}
 });

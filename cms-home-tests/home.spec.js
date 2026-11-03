@@ -132,3 +132,21 @@ test('unsubscribe remains available while signup is disabled without a build end
  await page.getByRole('button',{name:'Unsubscribe',exact:true}).click();
  await expect(page.locator('[data-reader-status]')).toHaveText('You have been unsubscribed.');expect(posts).toEqual([{token:'synthetic-token'}]);
 });
+
+
+test('masthead and footer use today in Lagos and navigation links to topics and calendar (STUB)',async({page})=>{
+ await stubCMS(page);await page.clock.install({time:new Date('2026-12-31T23:30:00Z')});await page.goto('/');
+ await expect(page.locator('.masthead-left')).toContainText('1 January 2027');await expect(page.locator('.footer-bottom')).toContainText('Today · 1 January 2027');
+ for(const location of ['.utility-bar','.mobile-sections','.site-footer']){
+  await expect(page.locator(location).getByRole('link',{name:'Topics',exact:true,includeHidden:true})).toHaveAttribute('href','/topic/');
+  await expect(page.locator(location).getByRole('link',{name:'Church calendar',exact:true,includeHidden:true})).toHaveAttribute('href','/church-calendar/');
+ }
+});
+
+test('the enabled giving link stays separate from the data saver control (CMS STUB)',async({page})=>{
+ await stubCMS(page);await page.route('**/api/public/giving/settings',route=>route.fulfill({json:{enabled:true}}));await page.goto('/');
+ const link=page.locator('.site-footer [data-give-link]'),toggle=page.locator('.site-footer [data-lite-toggle]');
+ await expect(link).toBeVisible({timeout:10000});await expect(toggle).toBeVisible();
+ const a=await link.boundingBox(),b=await toggle.boundingBox();expect(a.y+a.height).toBeLessThanOrEqual(b.y);
+ await expect(link).toHaveAttribute('href','give/');
+});

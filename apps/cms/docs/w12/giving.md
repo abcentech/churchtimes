@@ -112,7 +112,7 @@ optional and is not stored if you give anonymously. Paystack processes the payme
 see or store your card details. We keep donation records for as long as the law requires for financial records, then
 delete the personal details."* The reader must tick "I agree ..." (server requires `consent: true`).
 
-**Retention** (owner to confirm with the accountant): keep succeeded rows for the statutory book-keeping period
+**Retention** (manual, not scheduled; owner to confirm with the accountant): keep succeeded rows for the statutory book-keeping period
 (commonly 6-7 years); an admin may delete `pending`/`abandoned`/`failed` rows older than 90 days; blank `email`/`name`
 earlier on a data-subject request (the amount, reference and dates are enough for the books).
 
@@ -168,7 +168,7 @@ pending over 24 h; and per-currency totals. Exit 0 clean, 2 issues, 1 could not 
 
 **Refunds and chargebacks** are done in the Paystack dashboard (Transactions > Refund; Disputes). We do not process
 `refund.*`/`charge.dispute.*` webhooks: they are acknowledged and ignored, a refunded gift stays `succeeded` here and
-the reconcile report flags it as reversed. Note the refund in the row's admin record if needed. Respond to disputes
+the reconcile report flags it as reversed. Record the adjustment in the private accounting ledger: the Donations list and its totals otherwise overstate income. Respond to disputes
 within Paystack's deadline with the receipt and the reference.
 
 **Troubleshooting**: Give page says unavailable -> check `GET /api/giving/stats` (`offReason`). Webhook 401s -> the

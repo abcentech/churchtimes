@@ -292,7 +292,7 @@ Startup validation (`NODE_ENV=production`) refuses to start when a "required" ro
 | `TRUST_PROXY`, `TRUST_PROXY_HOPS`, `CLIENT_IP_HEADER` | `TRUST_PROXY=true` | see 4.4 |
 | `TURNSTILE_SECRET_KEY` | yes | real secret, not a Cloudflare dummy key |
 | `TURNSTILE_ALLOWED_HOSTNAMES` | yes | public hostname(s) of the widget |
-| `TURNSTILE_EXPECTED_ACTION` | yes | `submit-story,contact-message,newsletter-subscribe` |
+| `TURNSTILE_EXPECTED_ACTION` | yes | `submit-story,contact-message,newsletter-subscribe,giving-init` |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `EMAIL_FROM_ADDRESS` | yes | staff password reset needs mail. Explicit opt-out: `CMS_ALLOW_NO_SMTP=true` (startup then only warns; use the break-glass procedure, 4.3) |
 | `PUBLIC_SITE_URL` | for the newsletter | https origin of the public site (sign-up answers 503 while unset) |
 | `SCHEDULER_ENABLED` | `true` on exactly one instance | `false` on `migrate` |
@@ -316,7 +316,7 @@ message listing every problem (missing secrets, http or wildcard origins, dummy 
 | `IP_HASH_SALT` | yes | 32 hex chars | Salt for hashing client IPs on submissions, at least 16 characters. |
 | `TURNSTILE_SECRET_KEY` | **yes (production)** | `0x4AAAA…` (secret) | Cloudflare Turnstile secret key. Startup fails in production without it, or with a Cloudflare dummy test secret. Dev fallback: always-pass test secret + warning. |
 | `TURNSTILE_ALLOWED_HOSTNAMES` | **yes (production)**, startup fails when unset | `www.churchtimesnigeria.net` | Comma list. Siteverify's `hostname` must match (case-insensitive), otherwise 403. Do not set it with dummy/test keys (they return a fixed hostname). |
-| `TURNSTILE_EXPECTED_ACTION` | **yes (production)**, startup fails when unset | `submit-story,contact-message,newsletter-subscribe` | Comma list. If set, the widget's `action` must be exactly one of the entries (case-sensitive); a token without an action is rejected (403). Must include every action the public site sends: `VITE_TURNSTILE_ACTION` (default `submit-story`) plus `contact-message` and `newsletter-subscribe` for the contact and newsletter forms. Each new endpoint also pins its own action, so a token for one form is refused by another. |
+| `TURNSTILE_EXPECTED_ACTION` | **yes (production)**, startup fails when unset | `submit-story,contact-message,newsletter-subscribe,giving-init` | Comma list. If set, the widget's `action` must be exactly one of the entries (case-sensitive); a token without an action is rejected (403). Must include every action the public site sends: `VITE_TURNSTILE_ACTION` (default `submit-story`) plus `contact-message`, `newsletter-subscribe` and `giving-init` for the contact, newsletter and giving forms. Each new endpoint also pins its own action, so a token for one form is refused by another. |
 | `CMS_PUBLIC_URL` | **yes (production)** | `https://cms.example.org` | Public origin of the CMS: https, no trailing slash. Used as Payload `serverURL` (also added to the CSRF allowlist), reset links, absolute media URLs. |
 | `CMS_CORS_ORIGINS` | yes | `https://www.example.org,https://newsroom.example.org` | Browser origins allowed to call the API (CORS). Explicit origins only. |
 | `CMS_CSRF_ORIGINS` | yes | `https://newsroom.example.org` | Extra origins allowed to make cookie-authenticated requests (the CMS origin is always included). |
@@ -354,7 +354,7 @@ message listing every problem (missing secrets, http or wildcard origins, dummy 
 | `NODE_ENV` | set by the platform | `production` | Use `production` on the server (enables Secure cookies, the HSTS header and startup validation). |
 | `LOCAL_PG_PORT` | no | `54329` | Local development only (`npm run db:local`). |
 
-Frontends need only the **public** Turnstile site key (`TURNSTILE_SITE_KEY` in this repo's naming); the CMS does not read it.
+Frontends need only the **public** Turnstile site key. The CMS reads `TURNSTILE_SITE_KEY` solely to expose it in the public newsletter settings response; the separate secret key stays server-only.
 
 ### 4.1 Cloudflare Turnstile setup (free)
 
@@ -363,13 +363,13 @@ Frontends need only the **public** Turnstile site key (`TURNSTILE_SITE_KEY` in t
 2. Name it "Church Times submissions". **Hostnames**: add the public website hostname(s) that will show the widget
    (for example `www.churchtimesnigeria.net`; use a separate development widget for `localhost`).
 3. Widget mode: *Managed* (recommended). Create, then copy the two keys:
-   - **Site key** (public): put it in the public website's build configuration and pass it to the widget
+   - **Site key** (public): set `TURNSTILE_SITE_KEY` in the CMS for runtime newsletter signup and the public website build key for other forms; pass it to the widget
      (`data-sitekey`). Safe to expose.
    - **Secret key**: put it **only** in the CMS server's `.env` as `TURNSTILE_SECRET_KEY`. Never in git, frontend code or chat.
-4. Pin the widget action and hostnames (recommended; the server logs a warning at startup while either is unset). The public
-   site sends the action from its build variable `VITE_TURNSTILE_ACTION` on both forms when it is set; only if it is
-   unset do the forms fall back to `submit-story` (story) and `submit-contact` (contact), so set `TURNSTILE_EXPECTED_ACTION` to that exact value (for example `submit-story`),
-   and set `TURNSTILE_ALLOWED_HOSTNAMES` to the same hostnames as step 2.
+4. Pin the widget actions and hostnames. Set `TURNSTILE_EXPECTED_ACTION` to the public build's story action
+   (`VITE_TURNSTILE_ACTION`, default `submit-story`) and the fixed actions `contact-message`, `newsletter-subscribe`
+   and `giving-init` when those forms are enabled. The older contact fallback uses `submit-contact` when no build action
+   is set; include it if that fallback is in use. Set `TURNSTILE_ALLOWED_HOSTNAMES` to the hostnames from step 2.
 5. The frontend sends the token in the JSON body as `turnstileToken`. Tokens are single use and expire after 5 minutes;
    after any error call `turnstile.reset()` and let the visitor retry.
 6. Verify after deploying:
@@ -387,7 +387,7 @@ Frontends need only the **public** Turnstile site key (`TURNSTILE_SITE_KEY` in t
 
 ### 4.2 SMTP / password-reset e-mail (zero-cost options)
 
-Any SMTP server works; the CMS only needs host, port, credentials and a from address.
+Any SMTP server works; the CMS only needs host, port, credentials and a from address. `MAIL_HTML_DAILY_CAP` defaults to 300 per process; it is not automatically matched to your provider. For Resend free, set it to at most 100 and account for all other mail, including confirmations, within the provider’s current total daily limit. Confirm current limits before enabling sending.
 
 - An existing mailbox on your domain host (cPanel, Zoho, Google Workspace, Microsoft 365): use its SMTP host, port `587`
   (STARTTLS, `SMTP_SECURE=false`) or `465` (`SMTP_SECURE=true`), and the mailbox address as `SMTP_USER` and `EMAIL_FROM_ADDRESS`.
@@ -815,7 +815,7 @@ scale restore time by backup size from `results.json`):
 
 ## 9. Monitoring and logs
 
-- Application logs: `journalctl -u churchtimes-cms -f` (systemd).
+- Application logs on the Docker host: `sudo docker compose -f /srv/churchtimes/app/apps/cms/docker-compose.production.yml logs -f cms`; on the separate systemd installation use `journalctl -u churchtimes-cms -f`.
 - Reverse proxy access and error logs: Caddy or Nginx default locations. Keep at least 14 days.
 - PostgreSQL logs: `/var/log/postgresql/`. Watch for repeated authentication failures.
 - Disk: alert at 80% usage. The media directory and the backup directory both grow.
@@ -874,7 +874,7 @@ Confirm each item before go-live and again after any change to the server:
 - [ ] `NODE_ENV=production` and the service starts (startup validation passes: https `CMS_PUBLIC_URL`, no `*`/http origins).
 - [ ] `TURNSTILE_SECRET_KEY` is the real secret from the Cloudflare dashboard (not a dummy key); the widget's hostnames match the public site;
       `TURNSTILE_ALLOWED_HOSTNAMES` is set to the widget's public hostname(s), and `TURNSTILE_EXPECTED_ACTION` to the public build's
-      `VITE_TURNSTILE_ACTION` (default `submit-story`). The server cannot see the public build, so confirm the two values match by hand;
+      `VITE_TURNSTILE_ACTION` (default `submit-story`) plus `contact-message`, `newsletter-subscribe` and `giving-init` for enabled forms. The server cannot see the public build, so confirm the values match by hand;
       both are required: the app refuses to start without them. The secret exists only in the server `.env`.
 - [ ] The public site embeds only the Turnstile **site** key and sends `turnstileToken` with every submission.
 - [ ] `PAYLOAD_SECRET`, `PREVIEW_SECRET`, `IP_HASH_SALT` are each unique 32+ char random values; `.env` is mode 600.
@@ -898,7 +898,7 @@ Confirm each item before go-live and again after any change to the server:
       still stored (`notifyStatus: failed`) and the sender still sees the normal `201`.
 - [ ] Newsletter (C4): `NEWSLETTER_TOKEN_SECRET` and `PUBLIC_SITE_URL` are set; a sign-up from the real site form answers `202`, the confirmation e-mail
       arrives with a link on the public site, the public confirm page POSTs the token and the row becomes `confirmed` in CMS > Subscribers
-      (admin and editor-in-chief only). With SMTP stopped the form answers `503` and stores nothing. `GET /api/subscribers/export?status=confirmed`
+      (admin only). With SMTP stopped the form answers `503` and stores nothing. `GET /api/subscribers/export?status=confirmed`
       works for an `admin` (CSV, audited) and is refused for everyone else.
 - [ ] Mailchimp import (only if the owner supplies an export): keep the CSV **outside** the repository (the command refuses a path inside it), run
       `npm run import:subscribers -- --file <path>` first (dry run, counts only), check the counts, then add `--apply`. Expected columns, any order:
@@ -908,8 +908,7 @@ Confirm each item before go-live and again after any change to the server:
       hand); rotating `IP_HASH_SALT` changes every erase hash, so earlier erasures stop suppressing re-imports (keep the salt stable); `PUBLIC_SITE_URL` is a
       bare origin, so the public site must be served at the root of its domain (confirmation links are `<origin>/newsletter/confirm`). Logs for these
       endpoints carry only error class and code, never an address, name or message; SMTP timeouts are 10 s connect, 10 s greeting, 20 s socket.
-- [ ] `TURNSTILE_EXPECTED_ACTION`, when set, lists `contact-message` and `newsletter-subscribe`; startup prints a `[security]` warning if either is missing
-      (that form would answer 403 to everyone).
+- [ ] `TURNSTILE_EXPECTED_ACTION`, when set, lists `contact-message`, `newsletter-subscribe` and `giving-init`; startup warns when the first two are missing. Check `giving-init` manually as a missing action makes giving return 403.
 - [ ] Article editor (go-live C1): open an article in the admin, insert a table and a **YouTube video** block (11-character id), save, reload. The
       editor features (blocks, table) are registered on `articles.content` only, so `npx payload generate:importmap` must be re-run and
       committed when they change. Any embed other than a valid YouTube block is refused by the API (`400`). Deploying this change runs
@@ -918,7 +917,7 @@ Confirm each item before go-live and again after any change to the server:
 
 ### Newsletter subscriber data: retention (suggestions, owner to decide)
 
-Nothing here runs on a schedule; the only deletion implemented is the purge command.
+Retention periods are owner decisions. There is no automatic retention schedule for donations, story submissions or contact messages; use the documented admin deletion or donation redaction procedures. Newsletter purge is an explicit command, not a scheduled job.
 - Imported rows without proof of opt-in: `npm run newsletter:reconfirm -- --apply --deadline <date>`, then `npm run newsletter:purge-unconfirmed -- --deadline <date> --apply` after the date (dry run both first).
 - Suggested: unsubscribed and bounced rows keep only what is needed to honour the opt-out (address or its hash, status, time); review yearly. Erase on request (`POST /api/subscribers/:id/erase`).
 - Suggested: confirmed subscribers with no engagement for 24 months get a re-permission mail, then the purge flow; audit-log rows hold counts and ids only and can be kept.
@@ -927,7 +926,7 @@ Nothing here runs on a schedule; the only deletion implemented is the purge comm
 ## 12. Status
 
 - Production deployment: **not performed**. Requires explicit approval.
-- Restore test: **not yet performed**.
+- Restore: the synthetic automated drill is implemented (§6); this does not prove a real production backup has been restored. Record the first real restore and subsequent monthly drills in the operations log.
 - Security hardening (Turnstile, sessions, password policy, rate limits): implemented and covered by `tests/integration/security.test.ts`; see `docs/security.md`.
 - Security-review fixes (media ownership, version access, live feed order, client IP, request limits, corrections, current password):
   implemented and covered by `tests/integration/review-fixes.test.ts` and the unit tests listed in `docs/security.md` §5.

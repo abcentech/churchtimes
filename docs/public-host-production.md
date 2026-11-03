@@ -60,7 +60,7 @@ read-only to the runtime account.
 | `PUBLIC_CMS_URL` | Approved anonymous CMS API origin; HTTPS or loopback HTTP, no credentials. Unset means genuine unavailable states, not sample success. Media URLs are accepted only from this exact origin, so with an `https` `PUBLIC_SITE_URL` a loopback CMS origin is **refused at startup** (readers cannot reach it and every image would silently vanish). Loopback CMS is for local rehearsals with a loopback `PUBLIC_SITE_URL` only. There is deliberately no separate media-origin setting. Disposable smoke tests (like the ephemeral-port one) can set `PUBLIC_HOST_ALLOW_LOOPBACK_CMS=true`; never set it in production. |
 | `PUBLIC_BASE_PATH` | `/`; a mount prefix is supported, but newsletter email-link hosting requires the public root per C4. |
 | `PUBLIC_INDEXABLE` | Only exact `true` permits indexing; everything else remains staging/noindex. Owner approval is required before setting it. |
-| `PUBLIC_ARTICLE_PATH_TEMPLATE` | `/reports/{slug}/`; `/{slug}/` is available only after the owner settles D1. |
+| `PUBLIC_ARTICLE_PATH_TEMPLATE` | `/{slug}/` by default (D1); `/reports/{slug}/` is also supported. Match the CMS and public build configuration. |
 | `PUBLIC_REDIRECTS_FILE` | Optional absolute private C7 map path. The file takes precedence over a configured endpoint. |
 | `PUBLIC_REDIRECTS_URL` | Optional reviewed `/api/public/redirects` endpoint. No inferred network endpoint. |
 | `PUBLIC_REDIRECT_ALLOWED_HOSTS`, `REDIRECT_ALLOWED_HOSTS` | Must agree when both exist, and match the CMS allowlist. No external target is inferred. |
