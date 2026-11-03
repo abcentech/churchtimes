@@ -203,12 +203,20 @@ async function newsletterEnabled(req: PayloadRequest): Promise<boolean> {
   }
 }
 
+// Anonymous settings are safe to read from any configured public CMS origin, even when that
+// origin is deliberately not permitted to submit forms. POSTs still use the stricter form allowlist.
+function settingsOriginAllowed(origin: string | null): boolean {
+  if (isOriginAllowed(origin)) return true
+  const normalized = origin?.replace(/\/$/, '').toLowerCase()
+  return Boolean(normalized && (process.env.CMS_CORS_ORIGINS ?? '').split(',').some(value => value.trim().replace(/\/$/, '').toLowerCase() === normalized))
+}
+
 export const publicNewsletterSettingsEndpoint: Endpoint = {
   path: '/public/newsletter/settings',
   method: 'get',
   handler: async (req: PayloadRequest) => {
     const origin = req.headers.get('origin')
-    const allowed = isOriginAllowed(origin)
+    const allowed = settingsOriginAllowed(origin)
     const headers = { ...corsHeaders(origin && allowed ? origin : null, 'GET, OPTIONS'), 'Cache-Control': 'no-store', Vary: 'Origin' }
     if (!allowed) return Response.json({ ok: false }, { status: 403, headers })
     const limiter = (settingsLimiter ??= createRateLimiter({ limit: 120, windowMs: 60_000 }))
@@ -225,7 +233,7 @@ const newsletterSettingsPreflight: Endpoint = {
   method: 'options',
   handler: async (req: PayloadRequest) => {
     const origin = req.headers.get('origin')
-    if (origin && !isOriginAllowed(origin)) return new Response(null, { status: 403 })
+    if (origin && !settingsOriginAllowed(origin)) return new Response(null, { status: 403 })
     return new Response(null, { status: 204, headers: corsHeaders(origin, 'GET, OPTIONS') })
   },
 }

@@ -55,13 +55,13 @@ test('live photos render safely above text and same-id edits replace, reorder an
  await page.route('**/api/live-events/*/updates?**',r=>r.fulfill({json:{event,...responses[Math.min(batch++,2)]}}));
  await page.goto('/#live');const first=page.locator('#live-timeline li[data-id="1"]');
  await expect(first.locator('img')).toHaveAttribute('alt','Synthetic first photograph');
- await expect(first.locator('img')).toHaveAttribute('src','http://127.0.0.1:5174/api/media/file/first.png');
+ await expect(first.locator('img')).toHaveAttribute('src',new URL('/api/media/file/first.png',page.url()).href);
  await expect(first.locator('img')).toHaveAttribute('loading','lazy');await expect(first.locator('img')).toHaveAttribute('width','32');await expect(first.locator('img')).toHaveAttribute('height','18');
  expect(await first.evaluate(el=>el.querySelector('figure').compareDocumentPosition(el.querySelector('.live-update-body'))&Node.DOCUMENT_POSITION_FOLLOWING)).toBeTruthy();
  await first.locator('img').scrollIntoViewIfNeeded();await expect.poll(()=>first.locator('img').evaluate(img=>img.naturalWidth)).toBe(32);
  await page.getByRole('button',{name:'Refresh updates',exact:true}).click();
  await expect(first).toContainText('Revised approved text');await expect(page.locator('#live-timeline li')).toHaveCount(2);
- await expect(first.locator('img')).toHaveAttribute('src','http://127.0.0.1:5174/api/media/file/replacement.png');
+ await expect(first.locator('img')).toHaveAttribute('src',new URL('/api/media/file/replacement.png',page.url()).href);
  await expect(first.locator('img')).toHaveAttribute('alt','<img src=x onerror="window.compromised=true">');
  expect(await page.locator('#live-timeline li').evaluateAll(els=>els.map(el=>el.dataset.id))).toEqual(['2','1']);
  await expect(page.locator('#live-announcement')).toContainText('1 update revised');

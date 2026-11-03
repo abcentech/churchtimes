@@ -1317,7 +1317,7 @@ Security-review fixes (details and tests in `docs/security.md` §5). Consumer-vi
 `GET /api/public/newsletter/settings` returns only `{ "enabled": boolean,
 "siteKey": string | null }`, with `Cache-Control: no-store`. The key is the
 public `TURNSTILE_SITE_KEY`, and is null when signup is disabled or the key is
-unset. The CMS applies its public origin allowlist and a per-IP read limit.
+unset. The CMS applies its public CMS CORS and submission origin allowlists and a per-IP read limit; signup POSTs still require a submission-allowed origin.
 `POST /api/public/newsletter/subscribe` returns 503 when the global switch is
 off or unreadable. Confirmation and unsubscribe remain available while signup
 is off. In a development environment without SMTP, the neutral response does

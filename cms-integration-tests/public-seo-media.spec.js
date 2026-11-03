@@ -31,7 +31,10 @@ test('SSR social metadata, responsive hero and inline captions survive hydration
  const hero=page.locator('.newsroom-figure').first();await expect(hero.locator('img')).toHaveAttribute('srcset',/\d+w/);await expect(hero.locator('img')).toHaveAttribute('sizes',/100vw/);await expect(hero.locator('img')).toHaveAttribute('width',/\d+/);await expect(hero.locator('img')).toHaveAttribute('height',/\d+/);await expect(hero.locator('figcaption')).toContainText('CMS integration caption');
  await expect(page.locator('.newsroom-article-body .cms-figure img')).toHaveAttribute('srcset',/\d+w/);
  await expect(page.locator('.newsroom-article-body figcaption')).toContainText('Credit: CMS integration credit');
- expect(calls).toHaveLength(0);
+ // Hydration reuses the server article; a separate category query now supplies related stories.
+ await expect.poll(()=>calls.length).toBeGreaterThan(0);
+ expect(calls.filter(url=>new URL(url).searchParams.has('where[slug][equals]'))).toHaveLength(0);
+ expect(calls.some(url=>new URL(url).searchParams.get('where[status][equals]')==='published' && new URL(url).searchParams.has('where[and][0][or][0][category][equals]'))).toBe(true);
  const metadata=await page.evaluate(()=>{
   const schema=JSON.parse(document.querySelector('#article-schema').textContent);
   return {image:document.querySelector('meta[property="og:image"]').content,width:document.querySelector('meta[property="og:image:width"]').content,canonical:document.querySelector('link[rel="canonical"]').href,schema};

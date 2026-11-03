@@ -129,6 +129,10 @@ describe('public newsletter settings', () => {
       const disabled = await subscribe(body())
       expect(disabled.status).toBe(503)
       expect((await api('GET', '/api/public/newsletter/settings', { headers: { origin: 'https://untrusted.example.test' } })).status).toBe(403)
+      const readOnly = await api('GET', '/api/public/newsletter/settings', { headers: { origin: 'http://cors-allowed.test' } })
+      expect(readOnly.status).toBe(200)
+      expect(readOnly.headers.get('access-control-allow-origin')).toBe('http://cors-allowed.test')
+      expect((await subscribe(body(), { origin: 'http://cors-allowed.test' })).status).toBe(403)
     } finally {
       await f.payload.updateGlobal({ slug: 'newsletter-settings', data: { enabled: true }, overrideAccess: true })
     }
