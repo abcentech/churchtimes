@@ -4,7 +4,9 @@ export { captureNewsletterLink } from '../lib/reader-form-contracts.js';
 import './reader-forms.css';
 
 export function readerFormConfig(env = import.meta.env) {
-  return { newsletter: readerEndpoint(env.VITE_PUBLIC_NEWSLETTER_URL), contact: readerEndpoint(env.VITE_PUBLIC_CONTACT_URL), siteKey: env.VITE_TURNSTILE_SITE_KEY || '' };
+  let derived='';
+  try { if(env.VITE_PUBLIC_CMS_URL)derived=new URL('/api/public/newsletter/subscribe',env.VITE_PUBLIC_CMS_URL).href; } catch {}
+  return { newsletter: readerEndpoint(env.VITE_PUBLIC_NEWSLETTER_URL || derived), contact: readerEndpoint(env.VITE_PUBLIC_CONTACT_URL), siteKey: env.VITE_TURNSTILE_SITE_KEY || '' };
 }
 const escape = value => String(value).replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 function field(id, name, label, { type = 'text', max = 120, min, optional = false } = {}) {
@@ -35,10 +37,11 @@ const messages = {
   'invalid-token':'This link is no longer valid. Please request a new link.', server:'The service is temporarily unavailable. Please try again later.',
   network:'We could not confirm receipt. Your text remains here. Contact the newsroom before resending.', timeout:'The service took too long. Your text remains here. Contact the newsroom before resending.', unconfirmed:'The service did not confirm receipt. Please contact the newsroom before resending.',
 };
-export function bindReaderForms(root = document, { hasConsent = () => false, requestConsent = () => {}, onConsentChange = () => () => {}, tokenLink = null, config = readerFormConfig() } = {}) {
+export function bindReaderForms(root = document, { hasConsent = () => false, requestConsent = () => {}, onConsentChange = () => () => {}, tokenLink = null, config = readerFormConfig(), skipNewsletter = false } = {}) {
   const disposers = [];
   for (const form of root.querySelectorAll('[data-reader-form], [data-reader-token]')) {
     const kind = form.dataset.readerForm || form.dataset.readerToken;
+    if(skipNewsletter && kind==='newsletter')continue;
     const isToken = Boolean(form.dataset.readerToken);
     const controller = new AbortController();
     const status = form.querySelector('[data-reader-status]');

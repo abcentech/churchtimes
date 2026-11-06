@@ -6,3 +6,4 @@ playwright-report/
 .env.local
 
 public-quality-results/
+private-reports/

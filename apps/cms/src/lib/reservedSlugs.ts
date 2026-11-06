@@ -49,6 +49,10 @@ export const RESERVED_ROOT_SLUGS: ReadonlySet<string> = new Set([
   "corrections",
   "subscribe",
   "unsubscribe",
+  "give",
+  "giving",
+  "donate",
+  "church-calendar",
   // feeds and crawler files
   "feed",
   "feeds",

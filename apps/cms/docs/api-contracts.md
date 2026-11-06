@@ -497,7 +497,7 @@ The CMS stores consent and subscribers; it does **not** send newsletters. Three 
   CMS e-mails `${PUBLIC_SITE_URL}/newsletter/confirm?token=...` (a public-site page, never an API URL; `PUBLIC_SITE_URL` is https-only in production).
   The mail is queued after the answer is built, so response time does not reveal whether the address existed.
 - **Neutral answer.** A new, an already-pending and an already-confirmed address all get the byte-identical
-  `202 { "ok": true, "message": "If this address can be subscribed, we sent a confirmation email." }`. Pending: a fresh link replaces the old one.
+  `202 { "ok": true, "message": "If this address can be subscribed, a confirmation email may be sent when email is available." }`. Pending: a fresh link replaces the old one.
   Confirmed: nothing is sent or changed. An **imported row with no proven opt-in** (stored `pending`, `importedFrom = mailchimp-import-no-optin-time`) is
   treated like any pending row (a fresh link; confirming records fresh consent now, under the wording version the person was shown). **Unsubscribed or bounced: not re-added**; the row keeps its status, the same answer is returned, and a
   fresh confirmation link is mailed. Opening it is the only way back (it also records fresh consent). A mail failure is logged and still answers `202`.
@@ -1311,3 +1311,16 @@ Security-review fixes (details and tests in `docs/security.md` §5). Consumer-vi
 
 ### v1.0
 - Initial contract: roles, article workflow, data model, public submissions, live polling, preview tokens.
+
+### Public newsletter runtime settings
+
+`GET /api/public/newsletter/settings` returns only `{ "enabled": boolean,
+"siteKey": string | null }`, with `Cache-Control: no-store`. The key is the
+public `TURNSTILE_SITE_KEY`, and is null when signup is disabled or the key is
+unset. The CMS applies its public CMS CORS and submission origin allowlists and a per-IP read limit; signup POSTs still require a submission-allowed origin.
+`POST /api/public/newsletter/subscribe` returns 503 when the global switch is
+off or unreadable. Confirmation and unsubscribe remain available while signup
+is off. In a development environment without SMTP, the neutral response does
+not assert that a message was sent; production still rejects signup if mail
+or the public-site URL is unavailable. Never put the Turnstile secret in this
+endpoint or in frontend configuration.

@@ -19,6 +19,7 @@ import { clampLimit } from '../lib/clampLimit'
 import { liveCampaignClauses, requirePayment } from '../lib/advertising'
 import { ALLOWED_MIME, MAX_IMAGE_BYTES } from '../lib/mediaLimits'
 import { LEGACY_PATH_MAX, isValidLegacyPath } from '../lib/legacyMediaPath'
+import { LQIP_MAX, isValidLqip } from '../lib/newsroomFields'
 import { verifyPreviewToken } from '../lib/previewToken'
 import { nextCounter } from './LiveUpdates'
 
@@ -137,6 +138,23 @@ export async function stripImageMetadata(data: Uint8Array, mime: (typeof ALLOWED
   return img.webp({ quality: 90 }).toBuffer()
 }
 
+/**
+ * Waves 1-2: a tiny blurred placeholder of the image (`lqip`), shown while the real picture loads. 16 px on the long side,
+ * WebP, base64 data URI, well under LQIP_MAX characters. Null when the image cannot be decoded (never blocks the upload).
+ */
+export async function makeLqip(data: Uint8Array): Promise<string | null> {
+  try {
+    const buf = await sharp(data, { limitInputPixels: MAX_INPUT_PIXELS, animated: false })
+      .resize(16, 16, { fit: 'inside' })
+      .webp({ quality: 40 })
+      .toBuffer()
+    const uri = `data:image/webp;base64,${buf.toString('base64')}`
+    return uri.length <= LQIP_MAX ? uri : null
+  } catch {
+    return null
+  }
+}
+
 const checkUpload: CollectionBeforeOperationHook = async ({ args, operation }) => {
   if (operation !== 'create' && operation !== 'update') return args
   const file = (args.req as { file?: { name: string; data?: Uint8Array; mimetype?: string } }).file
@@ -182,6 +200,8 @@ const checkUpload: CollectionBeforeOperationHook = async ({ args, operation }) =
       const clean = await stripImageMetadata(file.data, sniffed)
       file.data = clean
       ;(file as { size?: number }).size = clean.length
+      // Server-owned blur placeholder, handed to guardMediaChange through the server-only request context.
+      ;(args.req.context as MediaContext).lqip = await makeLqip(clean)
     } catch {
       throw new APIError('Unsupported or corrupt image, or larger than 40 megapixels. Use JPEG, PNG or WebP.', 400)
     }
@@ -246,6 +266,8 @@ const readAccess: Access = ({ req }) => {
           ]),
       { 'publishedAsFeatured.status': { equals: 'published' } },
       { 'publishedInBody.status': { equals: 'published' } },
+      // Waves 1-2: the photo of a PUBLIC author profile (author pages and bylines).
+      { 'authorPhotos.isPublic': { equals: true } },
       {
         and: [
           { 'liveUpdateImages.status': { equals: 'approved' } },
@@ -272,7 +294,7 @@ const updateAccess: Access = ({ req }) => {
   return { uploadedBy: { equals: user!.id as number } } as Where
 }
 
-type MediaContext = { seed?: boolean; mediaFileReplaced?: boolean }
+type MediaContext = { seed?: boolean; mediaFileReplaced?: boolean; lqip?: string | null }
 
 /**
  * "Frozen" media is shown to readers: it is the featured image or a body image of a published or scheduled
@@ -327,6 +349,21 @@ async function assertMediaNotFrozen(req: PayloadRequest, mediaId: number | strin
       403,
     )
   }
+  // Waves 1-2: the photo of a PUBLIC author profile is shown on the author page and in bylines (see readAccess).
+  const usedAuthor = await req.payload.count({
+    collection: 'authors',
+    where: { and: [{ photo: { equals: mediaId } }, { isPublic: { equals: true } }] },
+    overrideAccess: true,
+    req,
+  })
+  if (usedAuthor.totalDocs > 0) {
+    throw new APIError(
+      replacing
+        ? 'This image is the photo of a public author profile; ask an editor to replace the file.'
+        : 'This image is the photo of a public author profile; ask an editor to change its details.',
+      403,
+    )
+  }
 }
 
 /**
@@ -366,6 +403,14 @@ const guardFrozenMediaBeforeFiles: CollectionBeforeOperationHook = async ({ args
  */
 const guardMediaChange: CollectionBeforeChangeHook = async ({ data, originalDoc, operation, req }) => {
   const ctx = (req.context ?? {}) as MediaContext
+  // lqip follows the file: recomputed on every new image (create or replacement), cleared for a non-image replacement.
+  if (req.file) data.lqip = typeof ctx.lqip === 'string' ? ctx.lqip : null
+  // AVIF exists here only as GENERATED sizes (sizes.cardAvif / sizes.heroAvif). An AVIF original never passed the image
+  // checks (metadata stripping, pixel limit): checkUpload refuses it first; this is the second line of defence, for every
+  // caller including seed and import.
+  if (req.file && data.mimeType === 'image/avif') {
+    throw new APIError('Unsupported file. Use JPEG, PNG or WebP images, or MP4, WebM, MP3, M4A or OGG audio/video.', 400)
+  }
   if (ctx.seed === true) return data
   const user = asUser(req.user)
 
@@ -480,18 +525,36 @@ export const Media: CollectionConfig = {
     // MEDIA_DIR is for the local demo (npm run demo) only; every real deployment keeps the default folder.
     staticDir: process.env.MEDIA_DIR?.trim() || 'media',
     // Payload also checks the type its own sniffer reports; it reports M4A as audio/x-m4a and M4V as video/x-m4v (normalised in checkUpload).
-    mimeTypes: [...ALLOWED_MIME, ...AV_MIME, ...AV_PAYLOAD_MIME_ALIASES],
+    // image/avif is listed only because Payload validates the GENERATED size variants (cardAvif / heroAvif) against this list.
+    // An AVIF (or HEIC) original is refused whatever type it declares: checkUpload sniffs the bytes (JPEG/PNG/WebP, or
+    // audio/video whose ftyp box carries no image brand such as avif/heic/mif1, see lib/avMedia.ts), and guardMediaChange
+    // refuses any original that would be stored as image/avif.
+    mimeTypes: [...ALLOWED_MIME, ...AV_MIME, ...AV_PAYLOAD_MIME_ALIASES, 'image/avif'],
     focalPoint: true,
     imageSizes: [
       { name: 'thumbnail', width: 400 },
       { name: 'card', width: 800 },
       { name: 'hero', width: 1600, formatOptions: { format: 'webp' } },
+      // Waves 1-2: AVIF next to the WebP/original sizes (<picture> sources). Listed last so consumers that pick a size by
+      // width keep choosing the webp/jpeg ones first. effort 2 keeps the encode quick on upload and import.
+      { name: 'cardAvif', width: 800, formatOptions: { format: 'avif', options: { quality: 55, effort: 2 } } },
+      { name: 'heroAvif', width: 1600, formatOptions: { format: 'avif', options: { quality: 55, effort: 2 } } },
     ],
   },
   fields: [
     { name: 'alt', type: 'text', required: true, maxLength: 300 },
     { name: 'caption', type: 'text', maxLength: 1000 },
     { name: 'credit', type: 'text', maxLength: 300 },
+    {
+      // Waves 1-2: tiny blurred placeholder (base64 data URI). Generated by the server from the uploaded image; never
+      // client-writable. Public read like the rest of the media record.
+      name: 'lqip',
+      type: 'text',
+      maxLength: LQIP_MAX,
+      validate: (v: unknown) => (v === null || v === undefined || v === '' || isValidLqip(v) ? true : 'Invalid placeholder.'),
+      access: { create: never, update: never },
+      admin: { readOnly: true, hidden: true },
+    },
     {
       // Server-set on create; see guardMediaChange / updateAccess. Null for rows that predate the field.
       name: 'uploadedBy',
@@ -548,6 +611,14 @@ export const Media: CollectionConfig = {
       type: 'join',
       collection: 'live-updates',
       on: 'image',
+      access: { read: never },
+      admin: { hidden: true },
+    },
+    {
+      name: 'authorPhotos',
+      type: 'join',
+      collection: 'authors',
+      on: 'photo',
       access: { read: never },
       admin: { hidden: true },
     },

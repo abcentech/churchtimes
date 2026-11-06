@@ -10,16 +10,16 @@
 .public-field{margin-bottom:24px;min-width:0}
 .public-field label{display:block;font-size:14px;font-weight:600;margin-bottom:9px;line-height:1.6}
 .public-field label>span{font-weight:400}
-.public-field input:not([type=checkbox]),.public-field select,.public-field textarea{display:block;width:100%;min-width:0;border:1px solid #82908b;border-radius:0;background:var(--white);padding:12px;color:var(--ink);font:16px/1.5 var(--sans);min-height:48px}
+.public-field input:not([type=checkbox]),.public-field select,.public-field textarea{display:block;width:100%;min-width:0;border:1px solid var(--field,#82908b);border-radius:0;background:var(--white);padding:12px;color:var(--ink);font:16px/1.5 var(--sans);min-height:48px}
 .public-field textarea{resize:vertical;min-height:180px}
 .public-field input:focus-visible,.public-field textarea:focus-visible,.public-field select:focus-visible{outline:3px solid var(--clay);outline-offset:3px}
-.public-field [aria-invalid=true]{border-color:#923522!important}
+.public-field [aria-invalid=true]{border-color:var(--error,#923522)!important}
 .public-field .field-hint{font-size:12px;color:var(--muted);line-height:1.7;margin-bottom:12px}
-.public-field .field-error{font-size:13px;color:#923522;margin-top:8px;line-height:1.6}
+.public-field .field-error{font-size:13px;color:var(--error,#923522);margin-top:8px;line-height:1.6}
 .consent-field label{display:flex;align-items:flex-start;gap:12px;font-size:13px;font-weight:400}
 .consent-field input{width:20px;height:20px;flex:0 0 20px;margin:2px 0 0;accent-color:var(--ink)}
 .public-form-panel button:disabled{opacity:.6;cursor:default;transform:none}
-.form-error-summary{padding:22px;background:#fff3eb;border:1px solid #923522;margin-bottom:24px;color:#752d20}
+.form-error-summary{padding:22px;background:var(--error-bg,#fff3eb);border:1px solid var(--error,#923522);margin-bottom:24px;color:var(--error,#752d20)}
 .form-error-summary h3{font-size:25px;line-height:1.2;margin-bottom:14px}
 .form-error-summary ul{padding-left:20px;margin:0;font-size:13px;line-height:1.7}
 .form-error-summary li+li{margin-top:8px}
@@ -33,7 +33,7 @@
 #retry-challenge{font-size:13px;min-height:44px}
 .submission-status{font-size:13px;margin-bottom:16px}
 .submission-status:empty{display:none}
-.form-fine-print{font-size:11px;color:var(--muted);margin-top:18px;line-height:1.8}
+.form-fine-print{font-size:12px;color:var(--muted);margin-top:18px;line-height:1.8}
 .form-fine-print a{text-decoration:underline;text-underline-offset:3px}
 #form-result h2{font-size:36px;line-height:1.15;margin-bottom:20px}
 #form-result p{font-size:15px;line-height:1.7;margin-bottom:20px;overflow-wrap:anywhere}

@@ -20,7 +20,7 @@ test('real CMS-shaped article renders public byline, resolved media and correcti
  await expect(page.locator('.article-header')).toContainText(article.bylineName);
  await expect(page.locator('main')).not.toContainText('PRIVATE STAFF ACCOUNT');
  const image=page.locator('.cms-figure').first().locator('img');
- await expect(image).toHaveAttribute('src',/http:\/\/127.0.0.1:5174\/api\/media\/file/);
+ await expect(image).toHaveAttribute('src',new URL('/api/media/file/community.png',page.url()).href);
  await expect(image).toHaveJSProperty('complete',true);
  expect(await image.evaluate(img=>img.naturalWidth)).toBeGreaterThan(0);
  await expect(page.locator('.cms-figure').first()).toContainText('Credit: Church Times Nigeria');

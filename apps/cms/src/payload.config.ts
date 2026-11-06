@@ -21,12 +21,14 @@ import { Redirects } from './collections/Redirects'
 import { Submissions } from './collections/Submissions'
 import { Subscribers } from './collections/Subscribers'
 import { Users } from './collections/Users'
+import { w12Collections, w12Endpoints, w12Globals } from './w12'
 import { previewArticleEndpoint } from './endpoints/previewArticle'
 import { publicSearchEndpoints } from './endpoints/publicSearch'
 import { staffRelatedArticlesEndpoints } from './endpoints/staffRelatedArticles'
 import { startupSelfCheck } from './lib/health'
 import { publicContactEndpoint, publicContactPreflightEndpoint } from './endpoints/publicContact'
 import { newsletterEndpoints } from './endpoints/publicNewsletter'
+import { givingEndpoints } from './endpoints/publicGiving'
 import {
   publicAdvertisingEndpoint,
   publicAdvertisingHeadEndpoint,
@@ -44,6 +46,7 @@ import {
 import { avMaxBytes } from './lib/avMedia'
 import { parseAllowedHosts, parseLegacyHosts, resolveArticlePathTemplate } from './lib/redirectPaths'
 import { startScheduler } from './lib/scheduler'
+import { growthEndpoints } from './endpoints/growth'
 import {
   checkOriginList,
   csv,
@@ -160,7 +163,9 @@ export default buildConfig({
     AdCampaigns,
     LegacyComments,
     AuditLogs,
+    ...w12Collections,
   ],
+  globals: [...w12Globals],
   endpoints: [
     publicSubmissionsEndpoint,
     publicSubmissionsPreflightEndpoint,
@@ -176,6 +181,9 @@ export default buildConfig({
     previewArticleEndpoint,
     ...publicSearchEndpoints,
     ...staffRelatedArticlesEndpoints,
+    ...w12Endpoints,
+    ...givingEndpoints,
+    ...growthEndpoints,
   ],
   editor: lexicalEditor(),
   db: postgresAdapter({

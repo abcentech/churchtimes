@@ -55,17 +55,19 @@ test('report sharing offers a selectable URL when clipboard access fails', async
   await expect(page.getByRole('button', { name: 'Copy article link' })).toBeFocused();
 });
 
-test('homepage avoids CMS duplicates of displayed edition stories, including after filtering',async({page})=>{
+test('homepage avoids repeated CMS stories, including after filtering',async({page})=>{
   const {default:edition}=await import('../src/data/stories.json',{with:{type:'json'}});
   await page.route('**/api/articles?**',route=>route.fulfill({json:{docs:[
     {...report,slug:edition.stories[3].slug,title:edition.stories[3].title},
     {...report,slug:'new-report',title:'A newly published report'},
     {...report,slug:'new-report',title:'A newly published report'},
   ]}}));
+  await page.route('**/api/categories?**',route=>route.fulfill({json:{docs:[{id:1,title:'Opinion',slug:'opinion'}],hasNextPage:false}}));
   await page.goto('/');
-  await expect(page.locator('#newsroom-home .newsroom-card')).toHaveCount(1);
+  await expect(page.locator('#newsroom-home .lead-story h1')).toHaveText(edition.stories[3].title);
+  await expect(page.locator('#newsroom-home .rail-story h2')).toHaveText('A newly published report');
   await page.getByRole('button',{name:'Opinion',exact:true}).click();
   const slugs=await page.locator('main article[data-story-slug]').evaluateAll(els=>els.map(el=>el.dataset.storySlug));
   expect(new Set(slugs).size).toBe(slugs.length);
-  await expect(page.locator('#newsroom-home .newsroom-card')).toHaveCount(1);
+  await expect(page.locator('#newsroom-home article[data-story-slug]')).toHaveCount(2);
 });

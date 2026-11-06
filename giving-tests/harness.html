@@ -1,0 +1,7 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>STUB Give page harness</title>
+<style>:root{--paper:#f7f5ef;--white:#fffefa;--ink:#172b2e;--muted:#596465;--line:#dcded6;--clay:#9c4d35;--sans:Arial,sans-serif;--serif:Georgia,serif}body{margin:0;font-family:var(--sans);color:var(--ink);background:var(--paper)}.container{width:calc(100% - 32px);margin-inline:auto}.button{display:inline-flex;align-items:center;justify-content:center;padding:12px 18px}.button-dark{background:var(--ink);color:var(--white);border:0}.text-button{background:none;border:0;padding:0;text-decoration:underline;color:inherit}</style>
+</head><body><main id="main"><div class="container give-page" data-give><h1>Support our journalism</h1></div></main><script type="module">
+import { mountGive } from '/src/features/giving/give-page.js';
+const query = new URLSearchParams(location.search);
+mountGive(document.querySelector('[data-give]'), { thanks: query.has('thanks') });
+</script></body></html>

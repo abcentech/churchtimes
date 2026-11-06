@@ -1532,6 +1532,40 @@ body[data-auth="out"] .session-chip:empty {
   border: 1px dashed var(--color-rule);
   border-radius: var(--radius-sm);
 }
+/* Waves 1-2 story details and body blocks (editor preview only; the public site has its own styles). */
+.preview-kicker:empty, .preview-key-points:empty { display: none; }
+/* Grid items default to min-width:auto: a date input could push the editor wider than a 320px screen. */
+.editor-workspace > .editor-pane, .editor-workspace > .preview-pane { min-width: 0; }
+.preview-kicker {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-forest);
+  margin: 0 0 0.35rem;
+}
+.preview-key-points {
+  border-left: 4px solid var(--color-forest);
+  padding: 0.5rem 0.75rem;
+  margin: 0 0 1rem;
+  background: var(--color-sage-soft);
+  border-radius: var(--radius-sm);
+}
+.preview-key-points-title { font-size: 0.9375rem; margin: 0 0 0.35rem; }
+.preview-key-points ul { margin: 0 0 0 1.1rem; }
+.preview-pull-quote {
+  margin: 1.5rem 0;
+  padding: 0.5rem 0 0.5rem 1rem;
+  border-left: 4px solid var(--color-forest);
+  font-size: 1.25rem;
+  font-style: italic;
+}
+.preview-pull-quote p { margin: 0; }
+.preview-pull-quote footer { font-size: 0.875rem; font-style: normal; color: var(--color-muted); margin-top: 0.35rem; }
+.preview-gallery { margin: 1.25rem 0; }
+.preview-gallery ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 0.5rem; }
+.preview-gallery-img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: var(--radius-sm); }
+.preview-gallery figcaption, .preview-gallery-note { font-size: 0.8125rem; color: var(--color-muted); margin-top: 0.35rem; }
 .live-photo-thumb {
   display: block;
   max-width: 220px;

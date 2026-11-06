@@ -44,6 +44,8 @@ export function mediaUrl(value, baseUrl) {
     return url.pathname.startsWith('/api/media/file/') ? url.href : '';
   } catch { return ''; }
 }
+// Server-generated 16 px blur (schema contract section 2): a short base64 image data URI or nothing.
+export const validLqip=value=>typeof value==='string' && value.length<=1500 && /^data:image\/(?:webp|jpeg|png);base64,[A-Za-z0-9+/]+={0,2}$/.test(value) ? value : null;
 export function normalizePublicMedia(record, baseUrl) {
   if (!record || typeof record !== 'object') return null;
   if (!['image/jpeg','image/png','image/webp'].includes(record.mimeType)) return null;
@@ -51,14 +53,20 @@ export function normalizePublicMedia(record, baseUrl) {
   if (!url) return null;
   const dimension = value => Number.isSafeInteger(value) && value > 0 && value <= 20000 ? value : null;
   const original={url,width:dimension(record.width),height:dimension(record.height)};
-  const variants=[original,...Object.values(record.sizes || {}).slice(0,32).map(size=>({
-    url:mediaUrl(size?.url,baseUrl),width:dimension(size?.width),height:dimension(size?.height),
-  }))].filter(v=>v.url && v.width && v.height).sort((a,b)=>a.width-b.width)
+  const sizes=Object.entries(record.sizes || {}).slice(0,32).filter(([,size])=>size && typeof size==='object');
+  const pick=([,size])=>({url:mediaUrl(size.url,baseUrl),width:dimension(size.width),height:dimension(size.height)});
+  const unique=list=>list.filter(v=>v.url && v.width && v.height).sort((a,b)=>a.width-b.width)
     .filter((v,i,all)=>all.findIndex(other=>other.width===v.width)===i);
+  // AVIF sizes are only ever offered as <source type="image/avif">; the <img> fallback stays JPEG/PNG/WebP.
+  // Recognised by mimeType, size name or file extension: the stored mimeType comes from content sniffing,
+  // which may report AVIF as image/heif, and an AVIF <img> candidate would break older browsers.
+  const isAvif=([name,size])=>/^image\/(?:avif|heif|heic)$/.test(size.mimeType) || /avif$/i.test(name) || /\.avif(?:$|\?)/i.test(String(size.url));
+  const variants=unique([original,...sizes.filter(size=>!isAvif(size)).map(pick)]);
+  const avif=unique(sizes.filter(isAvif).map(pick));
   const choose = minimum => variants.find(v=>v.width>=minimum) || variants.at(-1) || original;
   const card=choose(420),hero=choose(800);
   return {
-    ...original,variants,mimeType:record.mimeType,
+    ...original,variants,avif,lqip:validLqip(record.lqip),mimeType:record.mimeType,
     fileSize:Number.isSafeInteger(record.filesize) && record.filesize>0 ? record.filesize : null,
     cardUrl:mediaUrl(record.sizes?.card?.url,baseUrl) || card.url,
     cardWidth:mediaUrl(record.sizes?.card?.url,baseUrl) ? dimension(record.sizes.card.width) : card.width,
@@ -73,6 +81,7 @@ function legacyUrl(value) {
     return url.protocol === 'https:' && ['churchtimesnigeria.net','www.churchtimesnigeria.net'].includes(url.hostname) && !url.username && !url.password ? url.href : '';
   } catch { return ''; }
 }
+const publicRef = value => value && value.isPublic === true && validSlug(value.slug) && plainText(value.name,120) ? {name:plainText(value.name,120),slug:value.slug} : null;
 export function normalizePublishedArticle(record, {baseUrl} = {}) {
   if (!record || record.status !== 'published') return null;
   const slug = plainText(record.slug, 160);
@@ -88,7 +97,14 @@ export function normalizePublishedArticle(record, {baseUrl} = {}) {
     publishedAt: publicationDate(record.publishedAt),
     updatedAt: publicationDate(record.updatedAt),
     category: plainText(typeof record.category === 'object' ? record.category?.title : record.category, 100),
+    categoryId: /^\d{1,15}$/.test(String(record.category?.id ?? record.category ?? '')) ? String(record.category?.id ?? record.category) : null,
     bylineName: plainText(record.bylineName,200),
+    // W12 reader fields (apps/cms/docs/w12/schema-contract.md section 1); a non-public byline profile stays an id and is dropped.
+    kicker: plainText(record.kicker,60),
+    contentType: ['news','analysis','opinion','sponsored','explainer','factcheck'].includes(record.contentType) ? record.contentType : 'news',
+    keyPoints: Array.isArray(record.keyPoints) ? record.keyPoints.slice(0,5).map(point=>plainText(point?.text,200)).filter(Boolean) : [],
+    lastSubstantiveUpdate: publicationDate(record.lastSubstantiveUpdate),
+    bylineProfile: publicRef(record.bylineAuthor),
     featuredImage: normalizePublicMedia(record.featuredImage,baseUrl),
     legacyUrl:legacyUrl(record.legacyUrl),
     legacyId:Number.isSafeInteger(record.legacyId) && record.legacyId>0 ? record.legacyId : null,
@@ -107,6 +123,7 @@ async function requestPublishedArticles({
   slug,
   signal,
   categoryId,
+  categoryIds,
   collection = 'articles',
   categorySlug,
   legacyId,
@@ -129,11 +146,15 @@ async function requestPublishedArticles({
     if(!/^[1-9]\d{0,14}$/.test(String(legacyId)))throw new CMSReadError('configuration','Legacy IDs must be positive integers');
     url.searchParams.set('where[legacyId][equals]',String(legacyId));
   }
-  if (categoryId !== undefined) {
-    if (!/^\d{1,15}$/.test(String(categoryId))) throw new CMSReadError('configuration','Category filters require numeric IDs');
+  if (categoryId !== undefined || categoryIds !== undefined) {
+    if (categoryIds !== undefined && !Array.isArray(categoryIds)) throw new CMSReadError('configuration','Category filters require numeric IDs');
+    const ids = [...new Set((categoryIds === undefined ? [categoryId] : categoryIds).map(String))];
+    if (!ids.length || ids.length > 20 || ids.some(id => !/^\d{1,15}$/.test(String(id)))) throw new CMSReadError('configuration','Category filters require numeric IDs');
     // v1.27: primary OR additional category. Nested under `and` so it cannot collide with the top-level `or` used by text search.
-    url.searchParams.set('where[and][0][or][0][category][equals]',String(categoryId));
-    url.searchParams.set('where[and][0][or][1][categories][equals]',String(categoryId));
+    ids.forEach((id,index)=>{
+      url.searchParams.set(`where[and][0][or][${index*2}][category][equals]`,String(id));
+      url.searchParams.set(`where[and][0][or][${index*2+1}][categories][equals]`,String(id));
+    });
   }
 
   const controller = new AbortController();

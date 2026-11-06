@@ -230,10 +230,6 @@ async function main(): Promise<void> {
 
   const hasBuild = fs.existsSync(path.join(cmsRoot, '.next', 'BUILD_ID'))
   const useBuild = hasBuild && !args.build
-  if (args.build) {
-    log('building the CMS (next build), this takes several minutes the first time')
-    runNode([path.join(cmsRoot, 'node_modules/next/dist/bin/next'), 'build'], { ...process.env, NODE_ENV: 'production', NODE_OPTIONS: '--no-deprecation' }, 'next build', cmsRoot, 1_800_000)
-  }
   const runBuild = useBuild || args.build
   const passwords = generatePasswords()
   const env: NodeJS.ProcessEnv = {
@@ -276,6 +272,12 @@ async function main(): Promise<void> {
   const payloadBin = path.join(cmsRoot, 'node_modules/payload/bin.js')
   log('preparing the database tables')
   runNode([payloadBin, 'migrate'], env, 'payload migrate')
+  if (args.build) {
+    // Payload configuration is also imported while building. Use the disposable
+    // demo database and runtime configuration after its migrations have run.
+    log('building the CMS (next build), this takes several minutes the first time')
+    runNode([path.join(cmsRoot, 'node_modules/next/dist/bin/next'), 'build'], { ...env, NODE_ENV: 'production' }, 'next build', cmsRoot, 1_800_000)
+  }
   log('adding demo data (first run takes 1 to 3 minutes)')
   const seedOut = runNode([payloadBin, 'run', 'scripts/demo-seed.ts'], { ...env, DEMO_WORK_DIR: workDir, DEMO_PASSWORDS_JSON: JSON.stringify(passwords) }, 'demo seed')
   for (const l of seedOut.split(/\r?\n/)) if (l.startsWith('[demo-seed]')) console.log(l)

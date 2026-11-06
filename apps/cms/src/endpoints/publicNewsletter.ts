@@ -26,13 +26,15 @@ import {
 } from '../lib/newsletter'
 import {
   checkTurnstileForAction,
+  corsHeaders,
   guardPublicRequest,
   makeMethodNotAllowedEndpoints,
   makePreflightEndpoint,
   positiveInt,
   readJsonBody,
 } from '../lib/publicEndpoint'
-import { createRateLimiter, hashIp } from '../lib/rateLimit'
+import { createRateLimiter, getClientIp, hashIp } from '../lib/rateLimit'
+import { isOriginAllowed } from './publicSubmissions'
 import { safeErrorFields } from '../lib/safeLog'
 
 /**
@@ -54,6 +56,7 @@ type SubscriberDoc = {
 let ipLimiter: ReturnType<typeof createRateLimiter> | undefined
 let addressLimiter: ReturnType<typeof createRateLimiter> | undefined
 let tokenLimiter: ReturnType<typeof createRateLimiter> | undefined
+let settingsLimiter: ReturnType<typeof createRateLimiter> | undefined
 
 const windowMs = () => positiveInt(process.env.NEWSLETTER_RATE_WINDOW_SECONDS, 900) * 1000
 const getIpLimiter = () =>
@@ -72,6 +75,7 @@ export function resetNewsletterLimiters(): void {
   ipLimiter = undefined
   addressLimiter = undefined
   tokenLimiter = undefined
+  settingsLimiter = undefined
 }
 
 // Confirmation e-mails are sent after the answer is built (not awaited), so the response time does not reveal
@@ -188,6 +192,52 @@ async function subscribe(req: PayloadRequest, data: ValidSubscribe, ipHash: stri
   queueConfirmationMail(payload, data.email, token)
 }
 
+/** Only the signup switch and public widget key cross this boundary; never the global or SMTP settings. */
+async function newsletterEnabled(req: PayloadRequest): Promise<boolean> {
+  try {
+    const settings = await req.payload.findGlobal({ slug: 'newsletter-settings', depth: 0, overrideAccess: true })
+    return settings.enabled === true
+  } catch (err) {
+    req.payload.logger.error(safeErrorFields(err), 'newsletter settings unavailable')
+    return false
+  }
+}
+
+// Anonymous settings are safe to read from any configured public CMS origin, even when that
+// origin is deliberately not permitted to submit forms. POSTs still use the stricter form allowlist.
+function settingsOriginAllowed(origin: string | null): boolean {
+  if (isOriginAllowed(origin)) return true
+  const normalized = origin?.replace(/\/$/, '').toLowerCase()
+  return Boolean(normalized && (process.env.CMS_CORS_ORIGINS ?? '').split(',').some(value => value.trim().replace(/\/$/, '').toLowerCase() === normalized))
+}
+
+export const publicNewsletterSettingsEndpoint: Endpoint = {
+  path: '/public/newsletter/settings',
+  method: 'get',
+  handler: async (req: PayloadRequest) => {
+    const origin = req.headers.get('origin')
+    const allowed = settingsOriginAllowed(origin)
+    const headers = { ...corsHeaders(origin && allowed ? origin : null, 'GET, OPTIONS'), 'Cache-Control': 'no-store', Vary: 'Origin' }
+    if (!allowed) return Response.json({ ok: false }, { status: 403, headers })
+    const limiter = (settingsLimiter ??= createRateLimiter({ limit: 120, windowMs: 60_000 }))
+    const limited = limiter.check(getClientIp(req))
+    if (!limited.allowed) return Response.json({ ok: false }, { status: 429, headers: { ...headers, 'Retry-After': String(limited.retryAfterSeconds) } })
+    const enabled = await newsletterEnabled(req)
+    const key = process.env.TURNSTILE_SITE_KEY?.trim() || ''
+    return Response.json({ enabled, siteKey: enabled && /^[A-Za-z0-9_-]{1,255}$/.test(key) ? key : null }, { headers })
+  },
+}
+
+const newsletterSettingsPreflight: Endpoint = {
+  path: '/public/newsletter/settings',
+  method: 'options',
+  handler: async (req: PayloadRequest) => {
+    const origin = req.headers.get('origin')
+    if (origin && !settingsOriginAllowed(origin)) return new Response(null, { status: 403 })
+    return new Response(null, { status: 204, headers: corsHeaders(origin, 'GET, OPTIONS') })
+  },
+}
+
 export const publicNewsletterSubscribeEndpoint: Endpoint = {
   path: '/public/newsletter/subscribe',
   method: 'post',
@@ -203,6 +253,7 @@ export const publicNewsletterSubscribeEndpoint: Endpoint = {
 
     const limited = ctx.limit(getIpLimiter().check(ctx.ip), 'Too many attempts. Try again later.')
     if (limited) return limited
+    if (!await newsletterEnabled(req)) return ctx.fail(503, 'Sign-up is unavailable.')
 
     const body = await readJsonBody(req, ctx, SUBSCRIBE_MAX_BODY_BYTES)
     if ('response' in body) return body.response
@@ -324,48 +375,60 @@ export const publicNewsletterUnsubscribeEndpoint: Endpoint = {
     const read = await readToken(req, ctx)
     if ('response' in read) return read.response
 
-    const id = verifyUnsubscribeToken(read.token, resolveNewsletterTokenSecret())
-    if (!id) return ctx.fail(400, INVALID_LINK_MESSAGE)
-
-    const doc = (await req.payload
-      .findByID({ collection: 'subscribers', id, depth: 0, overrideAccess: true })
-      .catch(() => null)) as unknown as SubscriberDoc | null
-    if (!doc) return ctx.fail(400, INVALID_LINK_MESSAGE)
-
-    // Idempotent: already unsubscribed (or erased, which stays erased) is a success and changes nothing.
-    if (doc.status !== 'unsubscribed' && doc.status !== 'erased') {
-      try {
-        await req.payload.update({
-          collection: 'subscribers',
-          id: doc.id,
-          data: {
-            status: 'unsubscribed',
-            unsubscribedAt: new Date().toISOString(),
-            confirmTokenHash: null,
-            confirmTokenExpiresAt: null,
-          } as never,
-          overrideAccess: true,
-          context: internal,
-        })
-        await writeAuditLog(req, {
-          action: 'subscriber.unsubscribe',
-          collection: 'subscribers',
-          docId: doc.id,
-          actor: null,
-          fromStatus: doc.status,
-          toStatus: 'unsubscribed',
-          summary: `Subscriber ${doc.id} unsubscribed`,
-        })
-      } catch (err) {
-        req.payload.logger.error(safeErrorFields(err), 'newsletter unsubscribe failed')
-        return ctx.fail(500, 'Could not unsubscribe. Please try again.')
-      }
-    }
+    const result = await unsubscribeByToken(req, read.token)
+    if (result === 'invalid') return ctx.fail(400, INVALID_LINK_MESSAGE)
+    if (result === 'error') return ctx.fail(500, 'Could not unsubscribe. Please try again.')
     return ctx.ok({ ok: true }, 200)
   },
 }
 
+/**
+ * Shared by the reader's unsubscribe page and the RFC 8058 one-click endpoint (endpoints/newsletterOneClick.ts).
+ * Verifies the signed token, then flips the row to `unsubscribed` at once. Idempotent: already unsubscribed (or erased,
+ * which stays erased) is a success and changes nothing. Writes the same single audit row as before, nothing more.
+ */
+export async function unsubscribeByToken(req: PayloadRequest, token: string): Promise<'ok' | 'invalid' | 'error'> {
+  const id = verifyUnsubscribeToken(token, resolveNewsletterTokenSecret())
+  if (!id) return 'invalid'
+
+  const doc = (await req.payload
+    .findByID({ collection: 'subscribers', id, depth: 0, overrideAccess: true })
+    .catch(() => null)) as unknown as SubscriberDoc | null
+  if (!doc) return 'invalid'
+
+  if (doc.status === 'unsubscribed' || doc.status === 'erased') return 'ok'
+  try {
+    await req.payload.update({
+      collection: 'subscribers',
+      id: doc.id,
+      data: {
+        status: 'unsubscribed',
+        unsubscribedAt: new Date().toISOString(),
+        confirmTokenHash: null,
+        confirmTokenExpiresAt: null,
+      } as never,
+      overrideAccess: true,
+      context: internal,
+    })
+    await writeAuditLog(req, {
+      action: 'subscriber.unsubscribe',
+      collection: 'subscribers',
+      docId: doc.id,
+      actor: null,
+      fromStatus: doc.status,
+      toStatus: 'unsubscribed',
+      summary: `Subscriber ${doc.id} unsubscribed`,
+    })
+  } catch (err) {
+    req.payload.logger.error(safeErrorFields(err), 'newsletter unsubscribe failed')
+    return 'error'
+  }
+  return 'ok'
+}
+
 export const newsletterEndpoints: Endpoint[] = [
+  publicNewsletterSettingsEndpoint,
+  newsletterSettingsPreflight,
   publicNewsletterSubscribeEndpoint,
   publicNewsletterConfirmEndpoint,
   publicNewsletterUnsubscribeEndpoint,

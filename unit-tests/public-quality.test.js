@@ -1,8 +1,9 @@
+import {publicAuditChromePaths} from '../tools/audit-public.mjs';
 import {publicSkipHTML} from '../tools/public-skip-link.mjs';
 // Synthetic Lighthouse report STUBS validate the checker; not browser evidence.
 import test from 'node:test';import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';import {join} from 'node:path';import {tmpdir} from 'node:os';
-import {checkPublicLighthouse,publicAssetSizes,writePublicQualityReport} from '../tools/public-quality-report.mjs';
+import {checkPublicLighthouse,publicAssetSizes,writePublicQualityReport,qualityRunExitCode} from '../tools/public-quality-report.mjs';
 const stub=()=>({categories:{performance:{score:.9},accessibility:{score:1},'best-practices':{score:1}},audits:{'largest-contentful-paint':{numericValue:3000},'cumulative-layout-shift':{numericValue:.02},'errors-in-console':{score:1},'label-content-name-mismatch':{score:1}}});
 const reports=()=>Object.fromEntries(['home','latest','article','live'].map(name=>[name,stub()]));
 test('report stubs must contain all real gate metrics; missing or failed reports cannot pass',()=>{
@@ -36,4 +37,19 @@ test('SSR skip links stay local, focusable and idempotent',()=>{
  const rendered=publicSkipHTML(html,'/reports/synthetic/?private=unused');
  assert.match(rendered,/href="\/reports\/synthetic\/#main"/);assert.match(rendered,/<main id="main" tabindex="-1"/);assert.equal(publicSkipHTML(rendered,'/reports/synthetic/'),rendered);
  assert.doesNotMatch(publicSkipHTML(html,'http://public.invalid//outside.example.test/'),/href="\/\/outside/);
+});
+
+
+test('audit browser selection prefers the installed Playwright browser and honours an explicit override',()=>{
+ const exists=path=>['/bundled/chrome','/usr/bin/chromium'].includes(path);
+ assert.deepEqual(publicAuditChromePaths({bundled:'/bundled/chrome',exists}),['/bundled/chrome','/usr/bin/chromium']);
+ assert.deepEqual(publicAuditChromePaths({bundled:'/missing/chrome',exists}),['/usr/bin/chromium']);
+ assert.deepEqual(publicAuditChromePaths({override:'/custom/chrome',bundled:'/bundled/chrome',exists}),['/custom/chrome']);
+ assert.deepEqual(publicAuditChromePaths({bundled:'/missing/chrome',exists:()=>false}),[]);
+});
+
+
+test('quality runner fails closed if its child exits early or its report is missing or unsuccessful',()=>{
+ assert.equal(qualityRunExitCode(0,{passed:true}),0);
+ for(const [code,report] of [[1,{passed:true}],[null,{passed:true}],[0,{passed:false}],[0,null],[0,{}]])assert.equal(qualityRunExitCode(code,report),1);
 });

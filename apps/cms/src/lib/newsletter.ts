@@ -24,7 +24,7 @@ export const SUBSCRIBE_TURNSTILE_ACTION = 'newsletter-subscribe'
 export const SUBSCRIBE_MAX_BODY_BYTES = 8 * 1024
 export const TOKEN_MAX_BODY_BYTES = 2 * 1024
 
-export const NEUTRAL_SUBSCRIBE_MESSAGE = 'If this address can be subscribed, we sent a confirmation email.'
+export const NEUTRAL_SUBSCRIBE_MESSAGE = 'If this address can be subscribed, a confirmation email may be sent when email is available.'
 export const INVALID_LINK_MESSAGE = 'This link is no longer valid.'
 
 export const CONFIRM_TOKEN_TTL_MS = 72 * 3600 * 1000

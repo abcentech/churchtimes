@@ -16,6 +16,17 @@ async function fill(page,data){
   if(await permission.isVisible())await permission.click();
 }
 const send=page=>page.getByRole('button',{name:'Submit for editorial review',exact:true});
+test('the real published CMS feed supplies the homepage lead without draft or duplicate cards',async({page,request})=>{
+  const fixture=await (await request.get(cms+'/__test/fixtures')).json();
+  const result=await request.get(cms+'/api/articles?where[status][equals]=published&sort=-publishedAt&limit=12&depth=1');
+  expect(result.status()).toBe(200);
+  const docs=(await result.json()).docs;
+  expect(docs.length).toBeGreaterThan(0);expect(docs.every(doc=>doc.status==='published')).toBe(true);
+  await page.goto('/');await expect(page.locator('.lead-story h1')).toHaveText(docs[0].title);
+  await expect(page.locator('main')).not.toContainText(fixture.draftSlug);
+  const slugs=await page.locator('#newsroom-home article[data-story-slug]').evaluateAll(nodes=>nodes.map(node=>node.dataset.storySlug));
+  expect(new Set(slugs).size).toBe(slugs.length);
+});
 test('real published API shows populated media, byline, correction and no draft/staff fields',async({page,request})=>{
   const fixture=await (await request.get(cms+'/__test/fixtures')).json();
   const response=await request.get(cms+'/api/articles?limit=100&depth=1');expect(response.status()).toBe(200);
@@ -25,6 +36,11 @@ test('real published API shows populated media, byline, correction and no draft/
   await page.goto('/#report/'+fixture.publishedSlug);
   await expect(page.locator('.article-header')).toContainText('CMS integration byline');
   await expect(page.locator('.article-corrections')).toContainText('A verified fixture correction.');
+  await expect(page.locator('.original-callout')).toHaveCount(0);
+  await page.locator('.article-header [data-cms-save]').click();
+  await expect(page.locator('.article-header [data-cms-save]')).toHaveAttribute('aria-pressed','true');
+  await page.locator('.reading-link').click();await expect(page.locator('#saved-grid')).toContainText('CMS integration');
+  await page.goto('/#report/'+fixture.publishedSlug);await expect(page.locator('.article-header [data-cms-save]')).toHaveAttribute('aria-pressed','true');
   const image=page.locator('.newsroom-figure img').first();await expect(image).toHaveJSProperty('complete',true);
   expect(await image.evaluate(img=>img.naturalWidth)).toBeGreaterThan(0);
   await expect(image).toHaveAttribute('src',new RegExp('^'+cms.replaceAll('.','\\.')+'/api/media/file/'));
@@ -139,4 +155,23 @@ test('reserved localhost CMS URL enables real anonymous submissions without an e
  const response=page.waitForResponse(r=>r.url().includes('cms.churchtimes.localhost') && r.request().method()==='POST');await send(page).click();expect((await response).status()).toBe(201);
  await expect(page.getByRole('heading',{name:'Your story is awaiting review.'})).toBeVisible();
  if(process.env.CAPTURE_PUBLIC_STAGING==='1')await page.screenshot({path:`docs/public-staging/localhost-receipt-${testInfo.project.name}.png`,fullPage:true});
+});
+
+
+test('real CMS newsletter switch controls visible signup and disabled POSTs (Turnstile transport STUB)',async({page,request})=>{
+ const fixture=await (await request.get(cms+'/__test/fixtures')).json();
+ await request.post(cms+'/__test/newsletter?enabled=false');
+ try {
+  const off=await request.get(cms+'/api/public/newsletter/settings');expect(await off.json()).toEqual({enabled:false,siteKey:null});
+  expect((await request.post(cms+'/api/public/newsletter/subscribe',{data:{email:'synthetic@example.test',consent:true}})).status()).toBe(503);
+  await page.goto('/');await expect(page.locator('#connect a[href^="mailto:"]')).toBeVisible();
+  await request.post(cms+'/__test/newsletter?enabled=true');
+  const on=await request.get(cms+'/api/public/newsletter/settings');expect(await on.json()).toEqual({enabled:true,siteKey:'1x00000000000000000000AA'});
+  let scripts=0;await page.route('https://challenges.cloudflare.com/**',route=>{scripts++;return route.fulfill({contentType:'application/javascript',body:`window.turnstile={render(el,opt){opt.callback('public-integration-newsletter');return 'fixture';},remove(){},reset(){}}`});});
+  await page.goto('/#report/'+fixture.publishedSlug);const form=page.locator('#cms-report [data-reader-form="newsletter"]');await expect(form).toBeVisible();expect(scripts).toBe(0);
+  await form.getByLabel('Email address').fill(fixture.runId+'@test.invalid');await form.getByRole('checkbox').check();await form.getByRole('button',{name:'Allow spam protection'}).click();
+  await page.getByLabel('Allow Cloudflare spam protection for online forms').check();await page.getByRole('button',{name:'Close privacy notice'}).click();
+  await expect(form.getByText('Verification complete.')).toBeVisible();await form.getByRole('button',{name:'Sign up'}).click();
+  await expect(form.locator('[data-reader-status]')).toContainText('may be sent when email is available');
+ } finally {await request.post(cms+'/__test/newsletter?enabled=false');}
 });

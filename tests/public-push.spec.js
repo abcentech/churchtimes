@@ -36,7 +36,7 @@ test('keyboard push activation uses one STUB SDK, withdrawal opts out and unregi
   await expect(page.locator('#push-test-panel [role="status"]')).toContainText('Notifications are enabled');
   expect(requests).toEqual(['https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js']);
   const trace=await page.evaluate(()=>window.pushTrace);expect(trace.filter(value=>Array.isArray(value)&&value[0]==='init')).toHaveLength(1);expect(trace).toContain('permission');
-  expect(trace[0][1]).toMatchObject({appId,serviceWorkerPath:'/OneSignalSDKWorker.js',serviceWorkerParam:{scope:'/'},autoResubscribe:false});
+  expect(trace[0][1]).toMatchObject({appId,serviceWorkerPath:'/OneSignalSDKWorker.js',serviceWorkerParam:{scope:'/push/onesignal/'},autoResubscribe:false});
   await page.evaluate(()=>window.pushSet(false));await expect.poll(()=>page.evaluate(()=>window.pushTrace.includes('unregister-own'))).toBe(true);
   const revoked=await page.evaluate(()=>window.pushTrace);expect(revoked).toContain('opt-out');expect(revoked).not.toContain('unregister-other');
   const results=await new AxeBuilder({page}).include('#push-test-panel').analyze();expect(results.violations).toEqual([]);

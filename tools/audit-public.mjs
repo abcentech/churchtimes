@@ -4,10 +4,17 @@ import {reportPath} from '../src/lib/public-routes.js';
 import {mkdir,writeFile,readdir,rename,readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import lighthouse from 'lighthouse';
-import {launch} from 'chrome-launcher';
+import {launch,killAll} from 'chrome-launcher';
 import {chromium,devices} from '@playwright/test';
 import {pathToFileURL} from 'node:url';
 import {existsSync} from 'node:fs';
+// Prefer the browser installed by Playwright in CI; system Chromium may be a nonfunctional snap shim.
+// An explicit override is authoritative so an operator gets a clear failure instead of an unexpected binary.
+export function publicAuditChromePaths({override,bundled,exists=existsSync}={}) {
+  if(override)return [override];
+  return [...new Set([bundled,'/usr/bin/chromium','/usr/bin/google-chrome-stable'].filter(path=>path && exists(path)))];
+}
+
 export async function auditPublic({cmsUrl,dist,output,port,sourceRoot}) {
   await mkdir(output,{recursive:true});
   const fixture=await (await fetch(cmsUrl+'/__test/fixtures')).json();
@@ -20,11 +27,17 @@ export async function auditPublic({cmsUrl,dist,output,port,sourceRoot}) {
   const server=createPublicServer({cmsUrl,dist,siteUrl:'https://staging-public.example.test',articlePathTemplate:'/reports/{slug}/'});
   await new Promise(resolve=>server.listen(port,'127.0.0.1',resolve));
   const origin='http://127.0.0.1:'+server.address().port;
-  const chromePath=process.env.CHROMIUM_PATH || (existsSync('/usr/bin/chromium')?'/usr/bin/chromium':chromium.executablePath());
-  const chrome=await launch({chromePath,chromeFlags:['--headless','--no-sandbox','--disable-dev-shm-usage']});
+  const candidates=publicAuditChromePaths({override:process.env.CHROMIUM_PATH,bundled:chromium.executablePath()});
+  let chrome,chromePath,launchError;
   const results=[];
   const pages=[['home','/'],['latest','/#latest'],['article',reportPath(fixture.publishedSlug,'/',process.env.PUBLIC_ARTICLE_PATH_TEMPLATE)],['live','/#live']];
   try {
+    for(const candidate of candidates) {
+      try {chrome=await launch({chromePath:candidate,chromeFlags:['--headless','--no-sandbox','--disable-dev-shm-usage']});chromePath=candidate;break;}
+      catch(error) {launchError=error;killAll();}
+    }
+    if(!chrome)throw new Error('Could not start an audit browser: '+(launchError?.message || 'no Chromium executable found'));
+    console.log('Audit browser started: '+(chromePath===chromium.executablePath()?'Playwright Chromium':'configured or system Chromium'));
     if(process.env.PUBLIC_QUALITY_GATE==='true') {
       const {checkPublicJourneys}=await import('./public-quality-journeys.mjs');
       const journeys=await checkPublicJourneys({origin,fixture,output,chromePath,cmsUrl});
@@ -40,6 +53,8 @@ export async function auditPublic({cmsUrl,dist,output,port,sourceRoot}) {
       results.push(row);console.log(name,JSON.stringify({...row,failures:row.failures.map(f=>f.id)}));
     }
     await writeFile(join(output,'summary.json'),JSON.stringify(results,null,2));
+    // Report only (never a gate): INP proxy from real taps on a throttled mobile profile.
+    if(process.env.PUBLIC_AUDIT_ONLY_SCREENSHOTS!=='true')try {const {reportResponsiveness}=await import('./public-responsiveness.mjs');console.log('responsiveness',JSON.stringify((await reportResponsiveness({origin,output,chromePath,articlePath:pages[2][1]})).rows));} catch(error){console.error('Responsiveness report unavailable (non-failing): '+error.message);}
     if(process.env.PUBLIC_QUALITY_GATE==='true') {
       const {writePublicQualityReport}=await import('./public-quality-report.mjs');
       const report=await writePublicQualityReport({output,dist});
@@ -65,5 +80,8 @@ export async function auditPublic({cmsUrl,dist,output,port,sourceRoot}) {
         }
       } finally {await browser.close();}
     }
-  } finally {await chrome.kill();await new Promise(resolve=>server.close(resolve));}
+  } finally {
+    if(chrome)chrome.kill();else killAll();
+    await new Promise(resolve=>{server.close(resolve);server.closeAllConnections?.();});
+  }
 }

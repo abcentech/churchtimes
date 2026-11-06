@@ -12,6 +12,15 @@ import {
   isSafeAvUrl,
 } from '../lib/avMedia'
 import { YOUTUBE_BLOCK_SLUG, YOUTUBE_TITLE_MAX, validateVideoId, validateYoutubeTitle } from '../lib/lexicalEmbeds'
+import {
+  GALLERY_BLOCK_SLUG,
+  GALLERY_CAPTION_MAX,
+  GALLERY_IMAGES_MAX,
+  PULL_QUOTE_ATTRIBUTION_MAX,
+  PULL_QUOTE_BLOCK_SLUG,
+  PULL_QUOTE_MAX,
+  plainTextValidator,
+} from '../lib/newsroomFields'
 
 /**
  * The one embed an article body may hold (go-live contract C1.1). It stores an 11-character video id and an
@@ -105,13 +114,76 @@ export const audioVideoBlock: Block = {
 }
 
 /**
+ * Pull quote (waves 1-2): a short plain-text quotation from the story and who said it. Rendered as an aside by the public
+ * site (never as HTML). `validateEmbeds` (collections/Articles.ts) enforces the same rules on the API.
+ */
+export const pullQuoteBlock: Block = {
+  slug: PULL_QUOTE_BLOCK_SLUG,
+  labels: { singular: 'Pull quote', plural: 'Pull quotes' },
+  fields: [
+    {
+      name: 'quote',
+      type: 'textarea',
+      required: true,
+      maxLength: PULL_QUOTE_MAX,
+      validate: plainTextValidator('The pull quote', PULL_QUOTE_MAX, { required: true }),
+      admin: { description: `Plain text, up to ${PULL_QUOTE_MAX} characters. Quote exactly what was said in the story.` },
+    },
+    {
+      name: 'attribution',
+      type: 'text',
+      maxLength: PULL_QUOTE_ATTRIBUTION_MAX,
+      validate: plainTextValidator('The pull quote attribution', PULL_QUOTE_ATTRIBUTION_MAX),
+      admin: { description: 'Who said it, for example "Archbishop Henry Ndukuba".' },
+    },
+  ],
+}
+
+/**
+ * Photo gallery (waves 1-2): 1 to 12 images from the media library, each with its alt text (from the media) and an optional
+ * caption for this story. Gallery images count as body images (`bodyMedia`), so they become public with the article and are
+ * frozen while it is published, exactly like inline images.
+ */
+export const galleryBlock: Block = {
+  slug: GALLERY_BLOCK_SLUG,
+  labels: { singular: 'Photo gallery', plural: 'Photo galleries' },
+  fields: [
+    {
+      name: 'images',
+      type: 'array',
+      required: true,
+      minRows: 1,
+      maxRows: GALLERY_IMAGES_MAX,
+      labels: { singular: 'Image', plural: 'Images' },
+      fields: [
+        {
+          name: 'image',
+          type: 'upload',
+          relationTo: 'media',
+          required: true,
+          filterOptions: { mimeType: { in: ['image/jpeg', 'image/png', 'image/webp'] } },
+          admin: { description: 'The image must have alt text in the media library.' },
+        },
+        {
+          name: 'caption',
+          type: 'text',
+          maxLength: GALLERY_CAPTION_MAX,
+          validate: plainTextValidator('A gallery caption', GALLERY_CAPTION_MAX),
+          admin: { description: 'Optional caption for this story; the media caption is used when empty.' },
+        },
+      ],
+    },
+  ],
+}
+
+/**
  * Editor for `articles.content`: Payload's default features plus the YouTube and audio/video blocks and tables (standard
  * `table` > `tablerow` > `tablecell` nodes, the shape the public renderer reads).
  */
 export const articleContentEditor = lexicalEditor({
   features: ({ defaultFeatures }) => [
     ...defaultFeatures,
-    BlocksFeature({ blocks: [youtubeEmbedBlock, audioVideoBlock] }),
+    BlocksFeature({ blocks: [youtubeEmbedBlock, audioVideoBlock, pullQuoteBlock, galleryBlock] }),
     EXPERIMENTAL_TableFeature(),
   ],
 })

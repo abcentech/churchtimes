@@ -6,12 +6,15 @@
 
 const PREFIX = 'ctn_draft_';
 const FIELDS = ['title', 'slug', 'standfirst', 'bylineName', 'bodyMd', 'categoryId', 'extraCategoryIds'];
+// Waves 1-2 story details: kept only when the copy has them (copies written before they existed stay valid).
+const OPTIONAL_FIELDS = ['kicker', 'contentType', 'keyPointsText', 'lastUpdate', 'topicIds', 'bylineAuthorId'];
 
 export const draftKey = storyId => `${PREFIX}${storyId ? String(storyId) : 'new'}`;
 
 function pick(values) {
   const out = {};
   for (const f of FIELDS) out[f] = String(values?.[f] ?? '');
+  for (const f of OPTIONAL_FIELDS) if (values && typeof values === 'object' && f in values) out[f] = String(values[f] ?? '');
   return out;
 }
 
@@ -55,5 +58,6 @@ export function clearAllLocalCopies(storage) {
 
 /** True when the copy holds text that differs from the given baseline fields. */
 export function copyDiffers(copyValues, baseline) {
-  return FIELDS.some(f => String(copyValues?.[f] ?? '').trim() !== String(baseline?.[f] ?? '').trim());
+  const differs = f => String(copyValues?.[f] ?? '').trim() !== String(baseline?.[f] ?? '').trim();
+  return FIELDS.some(differs) || OPTIONAL_FIELDS.some(f => copyValues && typeof copyValues === 'object' && f in copyValues && differs(f));
 }

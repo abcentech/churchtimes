@@ -115,3 +115,10 @@ test('responsive candidates keep one aspect ratio when Payload crops differ from
  const originalOnly=normalizePublicMedia({...rawMedia,sizes:{}},origin);
  assert.equal(cmsSources(originalOnly).url,origin+'/api/media/file/original.jpg');
 });
+
+test('a configured CMS homepage uses the brand preview instead of preloading a bundled story',async()=>{
+ const {homeImageMetadata}=await import('../tools/public-home.mjs');
+ const html=homeImageMetadata({siteUrl:'https://public.example.test',basePath:'/',cmsConfigured:true});
+ assert.match(html,/property="og:image" content="https:\/\/public\.example\.test\/site\/pwa\/icon-512\.png"/);
+ assert.doesNotMatch(html,/rel="preload"|news-media/);
+});

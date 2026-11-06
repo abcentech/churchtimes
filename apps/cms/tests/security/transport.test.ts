@@ -194,6 +194,9 @@ describe('CORS, Origin and Vary', () => {
       ['POST', '/api/public/contact'],
       ['POST', '/api/public/submissions'],
       ['POST', '/api/public/newsletter/subscribe'],
+      ['GET', '/api/public/giving/settings'],
+      ['GET', '/api/public/giving/status?reference=CTG-0123456789abcdef0123456789abcdef'],
+      ['POST', '/api/public/giving/init'],
     ]
     for (const [m, u] of targets) {
       for (const origin of ['http://evil.test', 'http://allowed.test.evil.test', 'http://evilallowed.test', 'null', 'http://allowed.test@evil.test']) {
@@ -210,7 +213,7 @@ describe('CORS, Origin and Vary', () => {
   })
 
   it('public preflights are refused for foreign origins and never carry credentials', async () => {
-    for (const u of ['/api/public/search', '/api/public/contact', '/api/public/submissions', '/api/public/newsletter/subscribe', '/api/public/redirects', '/api/public/advertising']) {
+    for (const u of ['/api/public/search', '/api/public/contact', '/api/public/submissions', '/api/public/newsletter/subscribe', '/api/public/redirects', '/api/public/advertising', '/api/public/giving/init', '/api/public/giving/status', '/api/public/giving/settings']) {
       const bad = await send('OPTIONS', u, { headers: from(ip(), { origin: 'http://evil.test', 'access-control-request-method': 'POST' }) })
       expect(bad.headers.get('access-control-allow-origin'), u).toBeNull()
       const good = await send('OPTIONS', u, { headers: from(ip(), { origin: ALLOWED, 'access-control-request-method': 'POST' }) })
