@@ -404,7 +404,7 @@ Two caps must both be at or below the provider's daily free limit: **Daily Send 
 
 1. **Dry run.** `POST /api/newsletter/digest/dry-run` (editors and admins, 10 per hour; this is an API call, no button in the admin was found), or on the server `npm run newsletter:digest`. It writes today's issue as a **draft** in Newsletter issues and sends **nothing**. Read the draft.
 2. **Test send.** `POST /api/newsletter/digest/test-send` (5 per hour) or on the server `npm run newsletter:digest -- --test-send <your staff e-mail>`. Sends today's issue, subject starting `[TEST]`, to **your own address only**. Read it on a phone.
-3. **Schedule.** Tick **Enabled** and **Daily Digest Enabled** in Newsletter settings. Until the server variable `NEWSLETTER_DIGEST_SEND=true` is set, every scheduled run is a **dry run**.
+3. **Schedule.** Tick **Enabled** and **Daily Digest Enabled** in Newsletter settings. Until the server variable `NEWSLETTER_DIGEST_SEND=true` is set, every scheduled run is a **dry run**. **Enabled** also gates the public newsletter sign-up: the public site reads it at run time and the server answers 503 "Sign-up is unavailable." while it is off.
 4. **Go live.** Leave it a day in dry-run mode, read the draft, then set `NEWSLETTER_DIGEST_SEND=true` and restart. Live sending also needs `SMTP_HOST`, `PUBLIC_SITE_URL`, `NEWSLETTER_TOKEN_SECRET` and an https `CMS_PUBLIC_URL`.
 
 What the digest does: top published stories since the last sent issue (never more than 7 days back), at most **Max Stories Per Digest**, newest first, no AI. Only **confirmed** subscribers are mailed, one message each, paged 50 at a time. One issue per Lagos day (a database lock stops two processes both sending). A `sending` or `failed` issue is **never resumed automatically** (it could mail people twice): the editor in chief or admin deletes a failed draft or failed issue in the admin and a new one can go within about 10 minutes. Five relay errors in a row stop a run. A killed run leaves its issue `sending`, and that day gets no further issue.
@@ -836,6 +836,8 @@ This is a plain-language summary, **not legal advice**. The Nigeria Data Protect
 
 ## 14. Not verified
 
+Refreshed after waves 1 and 2: every item below is still unverified (none of them concerns the fixed items in section 15); the sign-up and homepage fixes were read from source only.
+
 These were **not** confirmed against the running system or a primary source. Please check them on your real system.
 
 1. **Paystack facts** (currencies, minimums, fees, webhook retry timing, USD approval rules). Checked against open-source specifications and support pages on 30 Oct 2026 because Paystack's own site blocks automated reading; no live Paystack account was used. Re-check before going live.
@@ -851,28 +853,36 @@ These were **not** confirmed against the running system or a primary source. Ple
 11. **Who the "technical helper" is,** and the contact details in the runbooks, are placeholders in the existing documents.
 12. **The state of the Truehost rebuild** and the rotation of old passwords: no access to those systems.
 13. **Legal points** in section 11 (72 hours, retention periods): a summary of the documents, not legal advice.
-14. **Newsroom screens** were not re-photographed: pictures are the existing ones from the Staff and Front-End manuals.
+14. **Newsroom screens** were not re-photographed: pictures are the existing ones from the Staff and Front-End manuals. The public-site pictures of the home page, footer and offline home pre-date the later homepage, date, link and image-alt fixes.
 
 ---
 
 ## 15. Things that look like faults or contradictions (for the developers)
 
-No code was changed. These are for someone to decide.
+No code was changed by this manual. The list was refreshed after waves 1 and 2 by checking each item against the current source and documents.
 
-1. **Default article path in the public host doc.** `docs/public-host-production.md` says `PUBLIC_ARTICLE_PATH_TEMPLATE` defaults to `/reports/{slug}/`, but `tools/public-host.mjs` and `deploy/public-host/public-host.env.example` default to `/{slug}/` (decision D1, commit "Default the public host to /{slug}/").
-2. **Who can read Subscribers.** The code (`collections/Subscribers.ts`, `endpoints/subscriberStaff.ts`) is admin only. `operations.md` section 11 says the subscriber list and `GET /api/subscribers/export` are for "admin and editor-in-chief" (and "refused for everyone else"). The Staff Manual says admin only.
-3. **Turnstile action list in the go-live table.** `operations.md` section 3.2 lists `TURNSTILE_EXPECTED_ACTION` as `submit-story,contact-message,newsletter-subscribe`, which would make **every gift fail with 403**, because giving needs `giving-init` too (the `.env.example` says so).
-4. **`MAIL_HTML_DAILY_CAP` default 300 is above Resend's free 100 per day.** The documents tell you to lower it, but nothing warns at startup if the cap exceeds the plan.
-5. **Stale status text.** `operations.md` section 12 still says the restore test was "not yet performed" and production "not performed", while a nightly automated restore drill workflow now exists.
-6. **Logs.** `operations.md` section 9 gives `journalctl -u churchtimes-cms` while the production setup is Docker (`docker compose logs`).
-7. **Refunds are not reflected.** A refunded Paystack gift stays `succeeded` in the CMS (by design); only the reconcile report flags it. Anyone using the Donations list for income totals will overstate income until refunds are noted by hand.
-8. **No retention automation** for donations, story tips and contact messages; the documents only suggest periods.
-9. **Newsletter issue deletion** is limited to the editor in chief and admin and only for draft or failed issues, so a section editor who runs a dry run cannot clean up the draft.
-10. **Required checks gap** (documented): newsroom-only and workflow-only pull requests are blocked until a CMS file changes.
-11. **A stray `C:\c\...` folder** created by an earlier mistyped path still exists on this machine (outside the repository). Worth deleting.
-12. **Webhook retry timing** for Paystack test mode is inconsistent between Paystack's own pages (the giving document notes this).
+### Still true or unclear
+
+1. **`MAIL_HTML_DAILY_CAP` default 300 is above Resend's free 100 per day.** *Still true.* `htmlDailyCapFromEnv()` in `apps/cms/src/lib/mailer.ts` still defaults to 300 and nothing warns at startup. `operations.md` (the SMTP section) now tells you to set it to at most 100 for Resend free (the documentation half is fixed; the missing startup warning is not).
+2. **Refunds are not reflected.** *Still true.* A refunded Paystack gift stays `succeeded` in the CMS (by design, `lib/giving/service.ts`); only the reconcile report (`lib/giving/reconcile.ts`) flags it. Anyone using the Donations list for income totals will overstate income until refunds are noted by hand.
+3. **No retention automation** for donations, story tips and contact messages. *Still true.* `operations.md` says there is no automatic retention schedule; the documents only suggest periods.
+4. **Newsletter issue deletion** is limited to the editor in chief and admin and only for draft or failed issues. *Still true* (`eicDelete` in `collections/NewsletterIssues.ts`), so a section editor who runs a dry run cannot clean up the draft.
+5. **Required checks gap** (documented in `operations.md`). *Still true:* newsroom-only and workflow-only pull requests are blocked until a CMS file changes. The workflow path filters were not re-read in detail.
+6. **A stray `C:\c\...` folder** created by an earlier mistyped path. *Still true* on the author's machine when checked (it exists outside the repository). Worth deleting.
+7. **Webhook retry timing** for Paystack test mode is inconsistent between Paystack's own pages. *Unclear:* this is a statement about Paystack's pages that was not re-checked.
+
+### Fixed since this manual was written
+
+1. **Default article path in the public host doc.** `docs/public-host-production.md` now says `/{slug}/` by default (D1), with `/reports/{slug}/` also supported, matching `tools/public-host.mjs`.
+2. **Who can read Subscribers.** `operations.md` now says "Subscriber data is admin only" and "CMS > Subscribers (admin only)", matching the code and the Staff Manual.
+3. **Turnstile action list in the go-live table.** `operations.md` section 3.2 now lists `submit-story,contact-message,newsletter-subscribe,giving-init`.
+4. **Stale status text.** `operations.md` section 12 now describes the automated synthetic restore drill and says it does not prove a real production backup has been restored. Production deployment still "not performed" is accurate.
+5. **Logs.** `operations.md` now gives the Docker `docker compose ... logs -f cms` command and keeps `journalctl -u churchtimes-cms` only for the separate systemd installation.
+
+*Screenshots.* This manual re-uses pictures from the Staff and Front-End manuals. Those of the public home page, footer and offline home pre-date the homepage-from-CMS, date, link and image-alt fixes and were not re-taken (see the front-end manual, section 25).
 
 ---
+
 
 ## 16. Owner go-live checklist
 

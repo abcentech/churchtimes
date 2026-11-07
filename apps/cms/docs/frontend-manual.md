@@ -48,10 +48,10 @@ There are **two sources of stories**. This matters because staff control one of 
 
 | Source | What it is | Where readers see it | Who controls it |
 | --- | --- | --- | --- |
-| **The CMS newsroom** | Every story staff write and publish in the [newsroom app](staff-manual.md). A **CMS** (content management system) is the back office that stores all stories. | "From the newsroom" strip on the home page, the **Latest** page, search results, topic pages, author pages, the "Following" feed, and every story page. | Editors, through publishing. |
-| **The bundled edition** | A fixed set of 21 stories (dated up to 5 October 2026) that is built into the website program itself. | The big lead story, "In the headlines", "Latest news" cards, "Ideas & public life", and the section pages (News, Features, Interviews, Business, Health & education, Opinion, Publisher's note). | Developers only. Editors cannot change it from the CMS. |
+| **The CMS newsroom** | Every story staff write and publish in the [newsroom app](staff-manual.md). A **CMS** (content management system) is the back office that stores all stories. | The lead, "In the headlines", "Latest news" and the section pages on the home page, the **Latest** page, search results, topic pages, author pages, the "Following" feed, and every story page. | Editors, through publishing. |
+| **The bundled edition** | A fixed set of 21 stories (dated up to 5 October 2026) built into the website program itself. | Only as a **fallback**: when the newsroom cannot be reached (the page then says "The newsroom is unavailable. Showing the saved edition."), and for its own 21 story briefings, which keep their "original publication" box. | Developers only. |
 
-> **Important for editors.** Publishing a story makes it appear in the "From the newsroom" strip (the three newest), the **Latest** page, search and the other places above. It does **not** put it into the big lead slot, and it does **not** add it to the section pages. Those parts are fixed in the website code (see section 25, item 2). The lead story is one chosen story of the bundled edition.
+> **Important for editors.** Publishing a story is enough: the home page lead, "In the headlines", "Latest news" and the section pages (News, Features and so on) now read published CMS stories, newest first. The bundled edition appears only if the newsroom is unreachable. (Fixed since this manual was written; see the end of section 25.)
 
 **Web addresses readers can use**
 
@@ -71,6 +71,8 @@ There are **two sources of stories**. This matters because staff control one of 
 
 ![The top of the home page on a computer.](frontend-manual/img/01-home-desktop.png)
 
+*Screenshot note: taken before the home page read published CMS stories; it shows the old bundled edition and header (see section 25).*
+
 ### Trying it on your own computer (practice copy)
 
 > **Practice box.** Ask your technical helper to follow `apps/cms/docs/local-demo.md` (in short: `npm run demo` in the `apps\cms` folder). It prints the web addresses and keeps the passwords in a private file that is never shown on screen. The practice copy has about 320 invented stories plus the sample stories used in this manual.
@@ -87,13 +89,13 @@ There are **two sources of stories**. This matters because staff control one of 
 
 **What a reader sees, top to bottom.**
 
-1. **Utility bar** (dark strip): the line "INDEPENDENT JOURNALISM. A CHRISTIAN PERSPECTIVE." and the links **Latest news**, **About us**, **Advertise**, **Contact**.
+1. **Utility bar** (dark strip): the line "INDEPENDENT JOURNALISM. A CHRISTIAN PERSPECTIVE." and the links **Latest news**, **Topics**, **Church calendar**, **About us**, **Advertise**, **Contact**.
 2. **Masthead:** the Church Times Nigeria name, a **Stay connected** button (it scrolls to the connect band at the bottom) and the line "Reporting with purpose since 2007".
 3. **Menu bar:** a home icon, **Latest**, **Live coverage**, **News**, **Features**, **Interviews**, **Business**, **Health & education**, **Opinion**, **Publisher's note**, and at the right three icon buttons: the **bookmark** (reading list, with a number when something is saved), the **half-moon** (Display settings, section 8) and the **magnifying glass** (search, section 7). On a phone the menu collapses into a button that opens the "Explore Church Times." window.
-4. **Lead and "In the headlines".** The large lead story, and three smaller stories beside it.
+4. **Lead and "In the headlines".** The large lead story (the newest published CMS story) and three smaller stories beside it.
 5. **Latest news.** A grid of story cards with filter buttons **All**, **News**, **Business**, **Features**, **Opinion**, **Interviews**, and a **More stories** button that adds six cards at a time. When there is nothing more it says "You're up to date with this selection."
 6. **Ideas & public life.** Three opinion, column or Publisher's note stories.
-7. **From the newsroom.** The three newest published CMS stories (a small "just published" strip). It only shows stories not already shown above.
+7. **From the newsroom** and **Ideas & public life.** These two blocks belong to the bundled-edition fallback page only. On the normal page, with the newsroom connected, the lead, headlines and Latest news already come from published CMS stories, so there is no separate strip.
 8. **Following** (only for readers who follow something; section 5).
 9. **Verse of the day** (section 16).
 10. **Join our WhatsApp group** prompt (section 15).
@@ -108,14 +110,16 @@ There are **two sources of stories**. This matters because staff control one of 
 
 ![The footer: social icons, link columns, Privacy & reading list and Data saver.](frontend-manual/img/04-footer.png)
 
+*Screenshot note: taken before the footer date and Topics and Church calendar links were added.*
+
 **How staff control it.**
 
-- To get a story into "From the newsroom", **publish** it (the three newest published stories appear).
-- The lead, "In the headlines", "Latest news" and "Ideas & public life" come from the bundled edition. A developer must change the edition and rebuild the site.
-- The newsletter box appears only when the site was built with the newsletter address and the spam-protection key (section 14).
+- To get a story onto the home page, **publish** it. The newest published story becomes the lead, the next three fill "In the headlines", and the rest fill "Latest news" and the section pages.
+- Only if the newsroom is unreachable does the site show the bundled edition. A developer must change that edition and rebuild the site.
+- The newsletter box appears only when the site was built with the newsletter address and the spam-protection key (section 14) **and** the CMS setting **Newsletter settings > Enabled** is on (checked each time a page loads).
 - The **Following** row, **Verse of the day** and **WhatsApp** prompt have no staff switch.
 
-*Good to know.* The date in the masthead ("Monday, 5 October 2026") and the footer line "Selected coverage · updated 5 October 2026" are fixed text. They do not follow today's date (section 25, item 1).
+*Good to know.* The masthead date and the footer line now show today's date.
 
 ---
 
@@ -170,7 +174,7 @@ There are **two sources of stories**. This matters because staff control one of 
 
 ![Hovering over "John 3:16" opens a card with the King James text.](frontend-manual/img/100-scripture-card.png)
 
-**Related stories.** Stories from the CMS end with **More from the newsroom** (a link to the Latest page). The "More to consider" row of related cards appears only on pages of the bundled edition, not on CMS stories (section 25, item 4).
+**Related stories.** Stories from the CMS now load a related-stories block after the article, followed by **More from the newsroom** (a link to the Latest page). The bundled edition keeps its "More to consider" row.
 
 **How staff control it.** All of the labels above are filled in on the story in the CMS admin, in the story's sidebar and body. In the practice copy:
 
@@ -236,7 +240,7 @@ There are **two sources of stories**. This matters because staff control one of 
 
 **How staff control it.** Topics: **Newsroom > Topics**; tick **Is Public**. A topic that is not public is never shown, also when a story carries it. A story can carry up to 10 topics (**Topics** in the story's sidebar).
 
-*Not obvious.* Readers cannot find the topic list from the menu or footer, and a story page does not show its topics. Topic pages are reached by a direct link, which you can put in a story, a post or a newsletter (section 25, item 3).
+*Not obvious.* The topic list (`/topic/`) is linked from the utility bar, the footer and the mobile menu. Whether a story page shows its own topics was not found in the source, so do not promise readers that.
 
 ---
 
@@ -337,7 +341,7 @@ The window says "Saved on this device only. Text size applies to article pages."
 
 ![A reading list with two saved stories.](frontend-manual/img/64-saved-list.png)
 
-> **Limit.** The bookmark appears only on cards of the bundled edition (the home page grid, section pages and search results of the edition). It does not appear on newsroom (CMS) story cards or story pages (section 25, item 5). To keep a CMS story for offline use see section 11.
+> **Note.** The bookmark now appears on newsroom (CMS) story cards and story pages as well as on the bundled edition. Offline copies (section 11) are still automatic.
 
 **Printing.** Printing a story, author page or trust page prints the headline, label, key points, text and corrections, hides the menu, ads, sharing and forms, and writes out link addresses.
 
@@ -384,6 +388,8 @@ If the reader never chooses, the site follows the browser's own "Lite mode / Sav
 ![A page that was never opened shows the offline page and the list of saved stories.](frontend-manual/img/91-offline-page.png)
 
 ![The home page offline: stored text appears, some photos show their description instead.](frontend-manual/img/92-offline-home.png)
+
+*Screenshot note: taken before the offline image-description fix (section 25).*
 
 **Install prompt.** On supporting browsers (Chrome and Edge on Android and computers) the site can be installed like an app, named "Church Times Nigeria" (shown as "Church Times" under its icon; full screen, no browser bars). The site shows its own banner only when **all** of these are true: the browser itself offers installation, the reader has been on the page about 30 seconds, data saver is off, the app is not already installed, and the reader has not tapped **Install** or **Not now** in the last 60 days. The banner says "Add Church Times Nigeria to your home screen for faster reading, even offline." with **Install** and **Not now**. Tapping either is remembered in the browser (`ct-install-dismissed`). It appears at most once per page.
 
@@ -454,14 +460,14 @@ If any one is missing, `/give/` answers "Online giving is not available" (page n
 
 ## 14. Newsletter: sign-up, confirm, unsubscribe
 
-**Sign-up box: off by default.** The box appears (in the connect band on the home page and at the foot of stories) only when the website was built with the newsletter address (`VITE_PUBLIC_NEWSLETTER_URL`) **and** the spam-protection key. Otherwise the connect band shows **Request updates** (an email to the newsroom).
+**Sign-up box: off by default.** The box appears (in the connect band on the home page and at the foot of stories) only when the website was built with the newsletter address (`VITE_PUBLIC_NEWSLETTER_URL`) **and** the spam-protection key. Otherwise the connect band shows **Request updates** (an email to the newsroom). It also needs **Newsletter settings > Enabled** in the CMS; the public site checks that at run time.
 
 **How a reader signs up.**
 
 1. Type **Email address** (a **Name** is optional).
 2. Tick "I agree to receive the newsletter. I can unsubscribe at any time."
 3. Press **Allow spam protection**. The privacy window opens; tick "Allow Cloudflare spam protection for online forms" and close it. A small check runs by itself.
-4. Press **Sign up**. The box says: "If this address can be subscribed, we sent a confirmation email." The wording is deliberately the same whether or not the address was already known, so nobody can use the form to find out who is subscribed.
+4. Press **Sign up**. The box says: "If this address can be subscribed, a confirmation email may be sent when email is available." It no longer claims an email was sent, and the wording is the same whether or not the address was already known, so nobody can use the form to find out who is subscribed.
 5. The reader opens the email and presses the link. The page `/newsletter/confirm/` shows **Confirm your newsletter subscription** and "Nothing changes until you press the button below." They press **Confirm subscription**, and see "Your newsletter subscription is confirmed." Only then is the reader on the list.
 6. Every newsletter email has an unsubscribe link to `/newsletter/unsubscribe/`. The page says **Unsubscribe from the newsletter**; one press of **Unsubscribe** says "You have been unsubscribed."
 7. If a link is old or wrong the page says "This link is no longer valid. Please request a new link." Links need pressing a button, so mail programs that pre-open links cannot confirm or unsubscribe anyone by accident.
@@ -481,9 +487,9 @@ If any one is missing, `/give/` answers "Online giving is not available" (page n
 **How staff control it.** Two separate things:
 
 - **Whether the box exists on the site**: a build setting (section 20). Editors cannot toggle it in the CMS.
-- **Whether e-mails are sent**: CMS admin, **Newsletter > Newsletter settings** (editor-in-chief and admin): **Enabled** (the master switch for sending; off by default), **Daily digest enabled**, **Send hour (Lagos)**, **Daily send cap** (a hard limit per day, default 100), **From name**, **Reply-to**, **Max stories per digest**, **Include devotional** (adds the verse of the day). Ticking or unticking these does **not** hide or show the sign-up box. Subscribers appear to the admin under **Newsletter > Subscribers** (see the [Staff Manual](staff-manual.md)).
+- **Whether sign-up is open and e-mails are sent**: CMS admin, **Newsletter > Newsletter settings** (editor-in-chief and admin): **Enabled** (off by default) now controls both the sign-up box (the public site reads it when a page loads, and the server refuses sign-ups when it is off) and sending; then **Daily digest enabled**, **Send hour (Lagos)**, **Daily send cap** (a hard limit per day, default 100), **From name**, **Reply-to**, **Max stories per digest**, **Include devotional** (adds the verse of the day). Subscribers appear to the admin under **Newsletter > Subscribers** (see the [Staff Manual](staff-manual.md)).
 
-> **Warning.** For sign-up emails and newsletters to reach readers, the server must have e-mail (SMTP) set up. If it does not, readers still see "we sent a confirmation email" but nothing arrives (section 25, item 6).
+> **Warning.** For sign-up emails and newsletters to reach readers, the server must have e-mail (SMTP) set up. If it does not, the sign-up form answers that sign-up is unavailable and stores nothing, and a confirmation link is never produced.
 
 ---
 
@@ -519,7 +525,7 @@ If any one is missing, `/give/` answers "Online giving is not available" (page n
 
 ![The church calendar page.](frontend-manual/img/27-church-calendar.png)
 
-> **Note.** No menu, footer or story links to the church calendar yet. Readers reach it only by the address, or from a link you place (section 25, item 7).
+> **Note.** The church calendar is linked from the utility bar, the footer and the mobile menu.
 
 **How staff control it.** No settings. To change the verses or the calendar rules, a developer edits the program.
 
@@ -619,7 +625,7 @@ The site is built to the web accessibility standard **WCAG 2.2 level AA** and wa
 
 | Public feature | On by default? | Switch (CMS setting or environment variable) | Verified in |
 | --- | --- | --- | --- |
-| Home page lead, "In the headlines", "Latest news", "Ideas & public life", section pages | Always | The bundled edition `src/data/stories.json` (developer); lead is story id 29259 | Code, demo |
+| Home page lead, "In the headlines", "Latest news", section pages | Always | Publish stories (CMS). The bundled edition `src/data/stories.json` is only the fallback when the newsroom is unreachable | Code |
 | "From the newsroom" strip, Latest page, search, topic and author lists | Always | Publish the story (CMS). Needs `VITE_PUBLIC_CMS_URL` at build time and `PUBLIC_CMS_URL` on the public host | Demo |
 | Content-type label, kicker, key points, Updated stamp, corrections, pull quote, gallery | Always (each only if filled in) | Story fields: **Content type**, **Kicker**, **Key points**, **Last substantive update**, **Corrections**, body blocks | Demo |
 | Byline link and author page | Off per author | Author profile **Is Public** (CMS), and **Byline author** set on the story | Code, demo |
@@ -627,9 +633,9 @@ The site is built to the web accessibility standard **WCAG 2.2 level AA** and wa
 | Editorial standards, Ownership pages | Off | **Site trust pages > published** (CMS) plus text in that page | Code, demo |
 | Corrections page and log | Always on | Log is automatic; policy text shows only when Site trust is **published** | Code, demo |
 | Give page, "Support our journalism" ask and footer link | **Off** | **Giving settings > Enabled** (CMS) **and** `PAYSTACK_SECRET_KEY` on the CMS **and** a currency **and** `PUBLIC_SITE_URL` (https) or `GIVING_RETURN_URL` on the CMS **and** `VITE_PUBLIC_GIVING_URL` + `VITE_TURNSTILE_SITE_KEY` in the site build | Demo (with a pretend provider) |
-| Newsletter sign-up box | **Off** | `VITE_PUBLIC_NEWSLETTER_URL` + `VITE_TURNSTILE_SITE_KEY` in the site build | Demo |
+| Newsletter sign-up box | **Off** | `VITE_PUBLIC_NEWSLETTER_URL` + `VITE_TURNSTILE_SITE_KEY` in the site build, **and** CMS **Newsletter settings > Enabled** (read at run time; the server also refuses sign-ups when it is off) | Code |
 | Newsletter confirm and unsubscribe pages | Always served | Addresses `/newsletter/confirm/` and `/newsletter/unsubscribe/`; links need the CMS to send e-mail (SMTP) | Demo (invalid-link state) |
-| Newsletter e-mails (digest) | **Off** | **Newsletter settings > Enabled** (and Daily digest enabled), cap, hour (CMS). Does **not** control the sign-up box | Code |
+| Newsletter e-mails (digest) | **Off** | **Newsletter settings > Enabled** (and Daily digest enabled), cap, hour (CMS). **Enabled** also gates the sign-up box | Code |
 | Contact form | **Off** | `VITE_PUBLIC_CONTACT_URL` + `VITE_TURNSTILE_SITE_KEY` in the build | Code, demo |
 | "Share a story" form | **Off** | `VITE_PUBLIC_SUBMISSIONS_URL` + `VITE_TURNSTILE_SITE_KEY` in the build | Code |
 | Share cards (picture for social media) | **Off** | `SHARE_CARDS_ENABLED=true` on the CMS **and** `PUBLIC_SHARE_CARDS=fallback` (or `always`) on the public host. Both must match | Demo |
@@ -675,7 +681,7 @@ The site is built to the web accessibility standard **WCAG 2.2 level AA** and wa
 ## 22. Troubleshooting
 
 **A story is published but not on the home page.**
-Only the three newest appear in "From the newsroom", and only if not already shown. Open **Latest** (`/latest/`) to see all of them. The lead and "Latest news" cards are the bundled edition (section 1).
+Open **Latest** (`/latest/`) to see every published story. The home page lead, headlines and Latest news show the newest published stories; the bundled edition is only a fallback when the newsroom cannot be reached.
 
 **The Updated date does not show.**
 The **Last substantive update** field is empty, or it is not later than the publication date.
@@ -689,8 +695,8 @@ Site trust pages is not **published**, or that page's text is empty.
 **The newsletter box is missing.**
 The site was built without `VITE_PUBLIC_NEWSLETTER_URL` and `VITE_TURNSTILE_SITE_KEY`. Newsletter settings > Enabled does not add it.
 
-**"Sign up" says "we sent a confirmation email" but nothing arrives.**
-E-mail (SMTP) is not set up on the server, or the message went to spam. Ask your technical helper to check the server's e-mail settings.
+**"Sign up" says a confirmation email may be sent, but nothing arrives.**
+E-mail (SMTP) is not set up on the server (the form should then say sign-up is unavailable), or the message went to spam. Ask your technical helper to check the server's e-mail settings.
 
 **A form will not send; it says "Allow spam protection before sending."**
 The reader has not ticked "Allow Cloudflare spam protection for online forms" in the privacy window. Ask them to press **Allow spam protection** and tick the box.
@@ -752,7 +758,7 @@ It is not a valid passage (for example a chapter that does not exist), or it is 
 
 ## 24. Not verified
 
-These could not be checked in the practice copy. Please check them on your real system.
+These could not be checked in the practice copy. Please check them on your real system. The list was refreshed against the integration branch after waves 1 and 2; items are still unverified unless marked.
 
 1. **Install banner.** It needs a real browser installation event and 30 seconds of reading. Described from the code only.
 2. **Successful newsletter confirm and unsubscribe.** The practice copy cannot send e-mail, so we never held a genuine link. The invalid-link state was checked; the success messages are from the code.
@@ -765,26 +771,36 @@ These could not be checked in the practice copy. Please check them on your real 
 9. **Printing.** The print rules were read from the code, a printed page was not produced.
 10. **Screen readers (NVDA, VoiceOver, TalkBack), Safari and Firefox.** Only desktop and phone-sized Chromium was used.
 11. **Share cards on real social networks**, and how Facebook or WhatsApp cache them.
-12. **Church calendar and verse of the day accuracy.** The pages were viewed; the dates and verse choices were not checked against a church calendar.
+12. **Church calendar and verse of the day accuracy.** The pages were viewed; the dates and verse choices were not checked against a church calendar. The calendar is now linked from the utility bar, footer and mobile menu (read from the code, not re-photographed).
 13. **Social handles.** The Facebook page and the WhatsApp group link are from the owner's current site; the X, Instagram, YouTube, Telegram and TikTok handles are marked unverified in `src/lib/social-links.js`.
 14. **Follows, reading list and offline copies on a second device.** They are single-browser by design; not tested across devices.
 15. **The "Newsletter settings" screen.** Its fields were read from the code; the screen itself was not captured.
+16. **Changes made after the first draft, read from code only.** The home page and section pages reading published CMS stories, the bookmark and related stories on CMS articles, and the newsletter sign-up reading the CMS setting at run time were confirmed in the source, not in a running copy or new screenshots.
 
 ---
 
 ## 25. Things that look like faults (for the developers)
 
-Nothing was changed. These are for the team to decide.
+This manual changed no code. The list was rewritten after waves 1 and 2 by checking each item in the current source (`src/main.js`, `src/features/`, `src/forms/`, `apps/cms/scripts/demo.ts`).
 
-1. **Fixed dates.** The masthead date "Monday, 5 October 2026" and the footer line "Selected coverage · updated 5 October 2026" are fixed text in `src/main.js`; they show on the home, author, topic, trust, give and confirm pages instead of today's date.
-2. **Home page and section pages are not editor-controlled.** The lead is hard-coded (story id 29259, `selectHomepage()` in `src/lib/homepage.js`) from a 21-story bundled file, and section pages such as News list only that bundle, not CMS stories. A newly published CMS story reaches the home page only in the three-card "From the newsroom" strip.
-3. **Topic list is not linked.** `/topic/` is not in the menu, footer or search, and story pages do not show their topics, so topic pages and the Follow button can be reached only by a direct link or from an author page.
-4. **"More to consider" related stories** exist only for the bundled edition; CMS stories have no related-stories block.
-5. **Reading-list bookmark** is not on CMS story cards or story pages (`reportCard()` has no save button), so a reader cannot save a published newsroom story to their list. Offline copies are automatic instead.
-6. **Newsletter wording with no e-mail.** Sign-up always says "we sent a confirmation email", even on a server with SMTP off. In the practice copy the confirmation link is only written to the CMS developer log.
-7. **Church calendar is not linked** from anywhere on the site.
-8. **Newsletter settings > Enabled** only controls sending. The sign-up box and the subscribe endpoint do not read it, so people can subscribe while sending is off.
-9. **Support ask and Save-Data.** The Give ask is hidden when the browser's own Save-Data flag is on, but not when the reader presses the footer **Data saver** button.
-10. **Offline home page** shows broken-image alt text ("Featured image from the original Church Times") for edition photos that were not cached.
-11. **Search suggestion titles** of the invented demo stories show a literal `&#8217;` in the text (the demo data itself contains the entity). Real titles were not affected in the practice copy.
-12. **Demo script ports (local only).** `apps/cms/scripts/demo.ts` picks the public-site port before the newsroom server has bound its own, so when 5174 is busy both choose 5175 and the public site fails to start ("EADDRINUSE"). The probe also reports a port free when an older demo holds it on 127.0.0.1 only. A local, uncommitted edit was used to work around both.
+### Still true or unclear
+
+1. **Search suggestion titles show a literal `&#8217;`.** *Unclear.* The entity no longer appears in `src/data/stories.json` or elsewhere in the source, and the invented demo stories that showed it were not found, so this could not be reproduced. Real titles were not affected in the practice copy.
+2. **Demo script ports (local only).** *Still true.* `apps/cms/scripts/demo.ts` still picks the public-site port with `freePort()` before the newsroom server has bound its own, so when 5173 is busy both can choose 5174 and the public site fails to start ("EADDRINUSE"). The second half of the original note (the probe reporting a port free when an older demo holds it on 127.0.0.1 only) was not re-checked.
+
+### Fixed since this manual was written
+
+Each was checked in the current source. Evidence is the file named; the changes arrived in the "source homepage and sections from published CMS" (e54cc8b), "save CMS articles and show related stories" (2415a4e), "honor CMS signup settings at runtime" (0cc55ff) and "polish navigation, offline images and operations guidance" (b89d401) commits.
+
+1. **Fixed dates.** `editionDate()` in `src/main.js` now uses `Date.now()`; the footer shows "Today" plus that date.
+2. **Home and section pages not editor-controlled.** `src/features/home/cms-home.js` (`mountHome`, `mountSection`) builds the lead, headlines, Latest news and sections from published CMS stories; the bundled edition (`selectHomepage()`) is only the fallback on failure. The "original publication" box (`original-callout`) is only in the bundled-briefing page `storyPage()` in `src/main.js`.
+3. **Topic list not linked.** `/topic/` is linked from the utility bar, footer and mobile menu in `src/main.js`. Whether story pages show their own topics was not found in the source and is not claimed.
+4. **No related stories on CMS stories.** `loadRelated()` in `src/features/reader/cms-reading-list.js` is called from the CMS article page.
+5. **No bookmark on CMS stories.** `markCMS()` renders a save button on CMS cards and article pages (`src/main.js`, `src/features/reader/cms-reading-list.js`).
+6. **Newsletter wording with no e-mail.** `NEWSLETTER_SUCCESS` in `src/lib/reader-form-contracts.js` now reads "a confirmation email may be sent when email is available".
+7. **Church calendar not linked.** Linked from the utility bar, footer and mobile menu in `src/main.js`.
+8. **Newsletter settings Enabled ignored by sign-up.** `src/forms/newsletter-runtime.js` reads `/api/public/newsletter/settings` and shows the box only when `enabled === true`; `apps/cms/src/endpoints/publicNewsletter.ts` answers 503 "Sign-up is unavailable." when it is off.
+9. **Give ask vs Data saver.** `src/features/giving/ask.js` skips the ask when `isLite()` is true, and the footer button sets the same flag through `toggleLite()` in `src/features/pwa/enhance.js`.
+10. **Offline home broken-image alt text.** The image error handler in `src/features/pwa/boot.js` replaces a failed edition photo with an "Image unavailable" box labelled with its description.
+
+*Screenshots.* Pictures in this manual of the home page, footer and offline home (for example `01-home-desktop.png`, `01b-home-full.png`, `02-home-mobile.png`, `04-footer.png`, `92-offline-home.png`) were taken before these fixes and show the old bundled edition and old footer. They were not re-taken.
