@@ -1,5 +1,8 @@
 # Codex Wave 3: next work for the two sessions
 
+> **Historical (as of 2026-11-07).** Written during the October 2026 build waves. Much of it has since merged into
+> `feat/newsroom-mvp`; D1 is settled as `/{slug}/`. For current state use [go-live-plan.md](go-live-plan.md) and the docs it links to.
+
 Status: proposal for the owner. Same rules as `codex-wave2-briefs.md` section "Rules for both sessions" (base `feat/newsroom-mvp`, small PRs,
 no `main`, no deploy, no third-party script without consent and configuration, no secrets, no real personal data, stubs labelled,
 no edit under `apps/cms` or `apps/newsroom`). First finish every MUST in `codex-wave2-review.md`; Wave 3 starts after those PRs are fixed.

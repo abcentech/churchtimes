@@ -1,5 +1,8 @@
 # Codex Wave 4: spec for the remaining public-site work
 
+> **Historical (as of 2026-11-07).** Written during the October 2026 build waves. Much of it has since merged into
+> `feat/newsroom-mvp`; D1 is settled as `/{slug}/`. For current state use [go-live-plan.md](go-live-plan.md) and the docs it links to.
+
 Status: spec for Codex (public lane: `src/`, `index.html`, `tools/`, `docs/public-*`). Date: 2026-10-21.
 Base: `feat/newsroom-mvp`. Same rules as `codex-wave2-briefs.md` ("Rules for both sessions"): small PRs, no `main`, no deploy,
 no third-party script without consent and configuration, no secrets, no real personal data, no edit under `apps/cms` or `apps/newsroom`.

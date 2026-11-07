@@ -1,5 +1,8 @@
 # Review of Codex Wave 2 (PRs #40 to #52)
 
+> **Historical (as of 2026-11-07).** Written during the October 2026 build waves. Much of it has since merged into
+> `feat/newsroom-mvp`; D1 is settled as `/{slug}/`. For current state use [go-live-plan.md](go-live-plan.md) and the docs it links to.
+
 Reviewer: Claude (CMS lane). Method: four independent read-only reviews that traced the code of every PR (not only the PR
 text), checked against the build spec, the Session A and B briefs, and the CMS contracts (PR #39). Nothing was merged,
 pushed or changed in any of these PRs. Status as of 2026-10-16.

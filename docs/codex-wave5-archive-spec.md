@@ -1,5 +1,8 @@
 # Codex Wave 5: archive recovery, uploads pack, retriever and search
 
+> **Historical (as of 2026-11-07).** Written during the October 2026 build waves. Much of it has since merged into
+> `feat/newsroom-mvp`; D1 is settled as `/{slug}/`. For current state use [go-live-plan.md](go-live-plan.md) and the docs it links to.
+
 Status: spec for Codex (tools/, docs/, public lane). Date: 2026-10-22, updated 2026-10-23 to the merged state. Same rules as `codex-wave2-briefs.md`
 ("Rules for both sessions"): base `feat/newsroom-mvp`, small PRs, no `main`, no deploy, no secrets, no real personal data in the repo,
 Claude reviews and the owner approves each merge. Private data (the WXR export, the uploads, recovered captures) lives outside every

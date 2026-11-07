@@ -1,5 +1,11 @@
 # Go-live build spec: what the new site still needs before launch
 
+> **Refreshed 2026-11-07.** Sections 1 and 2 are the 2026-10-15 audit and have partly aged. Decision **D1 is settled**: article
+> URLs stay `/{slug}/` (see [public-article-paths.md](public-article-paths.md)). The decisions D1 to D8 and their defaults now live in
+> [owner-migration-runbook.md section 1.2](../apps/cms/docs/owner-migration-runbook.md#12-decisions-d1-to-d8-and-their-defaults).
+> The CMS contracts C1 to C7 are in [go-live-contracts.md](../apps/cms/docs/go-live-contracts.md). The old server named below was
+> later compromised (see [go-live-plan.md](go-live-plan.md)). Item status (done, open) is tracked in the PRs, not in this file.
+
 Status: **a proposal for the owner to approve.** Nothing here has been built or deployed. It extends
 [go-live-plan.md](go-live-plan.md) (phases and gates) with the concrete build work found by auditing the live WordPress site
 on 2026-10-15. Every item that touches production needs the owner's explicit approval first.

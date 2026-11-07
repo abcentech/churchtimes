@@ -1,5 +1,8 @@
 # Codex Wave 2: briefs for two parallel sessions
 
+> **Historical (as of 2026-11-07).** Written during the October 2026 build waves. Much of it has since merged into
+> `feat/newsroom-mvp`; D1 is settled as `/{slug}/`. For current state use [go-live-plan.md](go-live-plan.md) and the docs it links to.
+
 Status: **proposal for the owner.** Two Codex sessions can work at the same time without touching the same files. Claude
 reviews every PR and implements the CMS side. Read [go-live-build-spec.md](go-live-build-spec.md) sections 0 and 3 first, and
 the CMS contracts in `apps/cms/docs/go-live-contracts.md` (PR #39). Wave 1 (#30, #36, #37, #38) is merged.

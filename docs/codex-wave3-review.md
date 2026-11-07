@@ -1,5 +1,8 @@
 # Review of Codex Wave 3 (PRs #57 to #65)
 
+> **Historical (as of 2026-11-07).** Written during the October 2026 build waves. Much of it has since merged into
+> `feat/newsroom-mvp`; D1 is settled as `/{slug}/`. For current state use [go-live-plan.md](go-live-plan.md) and the docs it links to.
+
 Reviewer: Claude (CMS lane), read-only reviews that traced the code, checked against `codex-wave3-briefs.md` and the CMS contracts.
 CI is green on all nine PRs. No secret, no edit under `apps/cms` or `apps/newsroom`, no committed `site/` or `index.html` hash, and no
 third-party request without configuration and consent was found. Items marked **MUST** block the merge; **SHOULD** can follow.

@@ -1,5 +1,8 @@
 # Message to relay to Codex (paste as is)
 
+> **Historical (as of 2026-11-07).** Written during the October 2026 build waves. Much of it has since merged into
+> `feat/newsroom-mvp`; D1 is settled as `/{slug}/`. For current state use [go-live-plan.md](go-live-plan.md) and the docs it links to.
+
 Written for: the Codex session that owns the public site (`src/`, `index.html`, `tools/`). Date: 2026-10-22, updated 2026-10-23.
 
 ---
