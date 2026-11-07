@@ -43,3 +43,10 @@ export function versionMatches(currentUpdatedAt, expectedUpdatedAt) {
   const current = Date.parse(currentUpdatedAt || '');
   return !Number.isNaN(current) && current === Date.parse(expected);
 }
+
+/** Content-save (PATCH) body: the allowlisted CMS fields plus the version the editor loaded, so a concurrent edit answers 409. */
+export function contentPatchBody(cmsFields, expectedUpdatedAt) {
+  return withExpectedUpdatedAt({ ...cmsFields }, expectedUpdatedAt);
+}
+
+export const CONTENT_CONFLICT_MESSAGE = 'This story was changed by someone else after you opened it. Your text is still here and has not been saved. Copy it, then reload the story to see the latest version.';

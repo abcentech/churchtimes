@@ -17,6 +17,11 @@ export default defineConfig({
           name: 'unit',
           environment: 'node',
           include: ['tests/unit/**/*.test.ts'],
+          // Unit files run in parallel workers (one per file); some do real PBKDF2 at production cost
+          // (600k iterations) or cold-import Payload. Under load the 5 s default flaked. Assertions are
+          // unchanged, only the ceiling is raised.
+          testTimeout: 30000,
+          hookTimeout: 30000,
         },
       },
       {
@@ -27,6 +32,21 @@ export default defineConfig({
           name: 'integration',
           environment: 'node',
           include: ['tests/integration/**/*.test.ts'],
+          globalSetup: ['tests/integration/global-setup.ts'],
+          pool: 'forks',
+          fileParallelism: false,
+          maxWorkers: 1,
+          testTimeout: 60000,
+          hookTimeout: 180000,
+        },
+      },
+      {
+        // Black-box security regression suite (docs/security.md). Same database bootstrap as integration.
+        resolve: { alias },
+        test: {
+          name: 'security',
+          environment: 'node',
+          include: ['tests/security/**/*.test.ts'],
           globalSetup: ['tests/integration/global-setup.ts'],
           pool: 'forks',
           fileParallelism: false,

@@ -12,8 +12,21 @@ async function fill(page,data){
   await page.getByLabel('Section (required)',{exact:true}).selectOption('News');
   await page.getByLabel('Your story or tip').fill(data.body);
   await page.getByLabel('I agree that the newsroom').check();
+  const permission=page.getByRole('button',{name:'Allow spam protection',exact:true});
+  if(await permission.isVisible())await permission.click();
 }
 const send=page=>page.getByRole('button',{name:'Submit for editorial review',exact:true});
+test('the real published CMS feed supplies the homepage lead without draft or duplicate cards',async({page,request})=>{
+  const fixture=await (await request.get(cms+'/__test/fixtures')).json();
+  const result=await request.get(cms+'/api/articles?where[status][equals]=published&sort=-publishedAt&limit=12&depth=1');
+  expect(result.status()).toBe(200);
+  const docs=(await result.json()).docs;
+  expect(docs.length).toBeGreaterThan(0);expect(docs.every(doc=>doc.status==='published')).toBe(true);
+  await page.goto('/');await expect(page.locator('.lead-story h1')).toHaveText(docs[0].title);
+  await expect(page.locator('main')).not.toContainText(fixture.draftSlug);
+  const slugs=await page.locator('#newsroom-home article[data-story-slug]').evaluateAll(nodes=>nodes.map(node=>node.dataset.storySlug));
+  expect(new Set(slugs).size).toBe(slugs.length);
+});
 test('real published API shows populated media, byline, correction and no draft/staff fields',async({page,request})=>{
   const fixture=await (await request.get(cms+'/__test/fixtures')).json();
   const response=await request.get(cms+'/api/articles?limit=100&depth=1');expect(response.status()).toBe(200);
@@ -23,7 +36,12 @@ test('real published API shows populated media, byline, correction and no draft/
   await page.goto('/#report/'+fixture.publishedSlug);
   await expect(page.locator('.article-header')).toContainText('CMS integration byline');
   await expect(page.locator('.article-corrections')).toContainText('A verified fixture correction.');
-  const image=page.locator('.newsroom-figure img');await expect(image).toHaveJSProperty('complete',true);
+  await expect(page.locator('.original-callout')).toHaveCount(0);
+  await page.locator('.article-header [data-cms-save]').click();
+  await expect(page.locator('.article-header [data-cms-save]')).toHaveAttribute('aria-pressed','true');
+  await page.locator('.reading-link').click();await expect(page.locator('#saved-grid')).toContainText('CMS integration');
+  await page.goto('/#report/'+fixture.publishedSlug);await expect(page.locator('.article-header [data-cms-save]')).toHaveAttribute('aria-pressed','true');
+  const image=page.locator('.newsroom-figure img').first();await expect(image).toHaveJSProperty('complete',true);
   expect(await image.evaluate(img=>img.naturalWidth)).toBeGreaterThan(0);
   await expect(image).toHaveAttribute('src',new RegExp('^'+cms.replaceAll('.','\\.')+'/api/media/file/'));
   await page.goto('/#report/'+fixture.draftSlug);
@@ -64,20 +82,21 @@ test('real rejected/spent Turnstile response cannot show success and preserves t
   await expect(page.locator('#form-result')).toBeHidden();await expect(page.locator('#public-message')).toHaveValue(/must be rejected/);
 });
 
-test('real CMS category selection resolves a numeric relationship and search includes public bylines',async({page,request})=>{
+test('real CMS category selection resolves a numeric relationship and public search finds a published title',async({page,request})=>{
  const fixture=await (await request.get(cms+'/__test/fixtures')).json();
  const response=await request.get(cms+'/api/articles?depth=1&where[slug][equals]='+fixture.publishedSlug);
  const article=(await response.json()).docs[0];expect(article.category.id).toBeTruthy();
- const requests=[];page.on('request',r=>{if(r.url().includes('/api/articles?'))requests.push(new URL(r.url()));});
+ const requests=[];page.on('request',r=>{if(r.url().includes('/api/articles?')||r.url().includes('/api/public/search?'))requests.push(new URL(r.url()));});
  await page.goto('/#latest');await expect(page.locator('#cms-category')).toBeVisible();
  await page.locator('#cms-category').selectOption(article.category.slug);
  await expect(page.locator('#cms-latest')).toContainText(article.title);
- expect(requests.some(u=>u.searchParams.get('where[category][equals]')===String(article.category.id))).toBe(true);
- await page.goto('/#search/'+encodeURIComponent(article.bylineName));
+ expect(requests.some(u=>u.searchParams.get('where[and][0][or][0][category][equals]')===String(article.category.id))).toBe(true);
+ await page.goto('/#search/'+encodeURIComponent(article.title));
  await expect(page.locator('#cms-search')).toContainText(article.title);
- expect(requests.some(u=>u.searchParams.get('where[or][2][bylineName][like]')===article.bylineName)).toBe(true);
+ expect(requests.some(u=>u.pathname==='/api/public/search'&&u.searchParams.get('q')===article.title)).toBe(true);
  await page.goto('/#search/does-not-exist-'+fixture.runId);
  await expect(page.locator('#cms-search')).toContainText('No matching published reports.');
+ await expect(page.getByRole('heading',{name:'No matching stories.'})).toHaveCount(0);
 });
 
 test('clean direct article URLs reload, preserve navigation and expose canonical metadata',async({page,request},testInfo)=>{
@@ -136,4 +155,23 @@ test('reserved localhost CMS URL enables real anonymous submissions without an e
  const response=page.waitForResponse(r=>r.url().includes('cms.churchtimes.localhost') && r.request().method()==='POST');await send(page).click();expect((await response).status()).toBe(201);
  await expect(page.getByRole('heading',{name:'Your story is awaiting review.'})).toBeVisible();
  if(process.env.CAPTURE_PUBLIC_STAGING==='1')await page.screenshot({path:`docs/public-staging/localhost-receipt-${testInfo.project.name}.png`,fullPage:true});
+});
+
+
+test('real CMS newsletter switch controls visible signup and disabled POSTs (Turnstile transport STUB)',async({page,request})=>{
+ const fixture=await (await request.get(cms+'/__test/fixtures')).json();
+ await request.post(cms+'/__test/newsletter?enabled=false');
+ try {
+  const off=await request.get(cms+'/api/public/newsletter/settings');expect(await off.json()).toEqual({enabled:false,siteKey:null});
+  expect((await request.post(cms+'/api/public/newsletter/subscribe',{data:{email:'synthetic@example.test',consent:true}})).status()).toBe(503);
+  await page.goto('/');await expect(page.locator('#connect a[href^="mailto:"]')).toBeVisible();
+  await request.post(cms+'/__test/newsletter?enabled=true');
+  const on=await request.get(cms+'/api/public/newsletter/settings');expect(await on.json()).toEqual({enabled:true,siteKey:'1x00000000000000000000AA'});
+  let scripts=0;await page.route('https://challenges.cloudflare.com/**',route=>{scripts++;return route.fulfill({contentType:'application/javascript',body:`window.turnstile={render(el,opt){opt.callback('public-integration-newsletter');return 'fixture';},remove(){},reset(){}}`});});
+  await page.goto('/#report/'+fixture.publishedSlug);const form=page.locator('#cms-report [data-reader-form="newsletter"]');await expect(form).toBeVisible();expect(scripts).toBe(0);
+  await form.getByLabel('Email address').fill(fixture.runId+'@test.invalid');await form.getByRole('checkbox').check();await form.getByRole('button',{name:'Allow spam protection'}).click();
+  await page.getByLabel('Allow Cloudflare spam protection for online forms').check();await page.getByRole('button',{name:'Close privacy notice'}).click();
+  await expect(form.getByText('Verification complete.')).toBeVisible();await form.getByRole('button',{name:'Sign up'}).click();
+  await expect(form.locator('[data-reader-status]')).toContainText('may be sent when email is available');
+ } finally {await request.post(cms+'/__test/newsletter?enabled=false');}
 });

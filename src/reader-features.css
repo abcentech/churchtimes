@@ -1,0 +1,4 @@
+#privacy-dialog fieldset { border: 1px solid #b7c0bb; padding: 16px; }
+#privacy-dialog fieldset label { display: flex; align-items: flex-start; gap: 12px; min-height: 44px; margin: 12px 0; line-height: 1.5; }
+#privacy-dialog fieldset input[type="checkbox"] { flex: 0 0 auto; width: 20px; height: 20px; margin-top: 4px; }
+[data-public-push] { margin-top: 20px; }

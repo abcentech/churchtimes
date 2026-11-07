@@ -1,0 +1,42 @@
+[
+  {
+    "page": "home",
+    "device": "desktop",
+    "passed": true
+  },
+  {
+    "page": "latest",
+    "device": "desktop",
+    "passed": true
+  },
+  {
+    "page": "article",
+    "device": "desktop",
+    "passed": true
+  },
+  {
+    "page": "live",
+    "device": "desktop",
+    "passed": true
+  },
+  {
+    "page": "home",
+    "device": "mobile",
+    "passed": true
+  },
+  {
+    "page": "latest",
+    "device": "mobile",
+    "passed": true
+  },
+  {
+    "page": "article",
+    "device": "mobile",
+    "passed": true
+  },
+  {
+    "page": "live",
+    "device": "mobile",
+    "passed": true
+  }
+]

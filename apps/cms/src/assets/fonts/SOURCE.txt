@@ -1,0 +1,7 @@
+Newsreader-opsz-wght.ttf
+  Newsreader variable font (opsz, wght axes), Copyright 2020 The Newsreader Project Authors.
+  Licence: SIL Open Font License 1.1, see OFL-Newsreader.txt in this folder.
+  Source: https://github.com/google/fonts/blob/991ce1de6075188e6b8977a5aa9fcd3610a4e946/ofl/newsreader/Newsreader%5Bopsz,wght%5D.ttf
+  SHA-256: 8a08d13f8a6c0d51be379a60af84f945f65369a67e509ee3c3bdcc421254d7c1
+  Unmodified. Used only server-side by src/lib/shareCard.ts (share cards and the WhatsApp brief card); never sent to browsers.
+  Why a TTF and not the site's woff2 files: the font loader inside sharp's prebuilt libvips does not read woff2.

@@ -1,0 +1,5 @@
+.article-table{max-width:100%;overflow-x:auto;margin:24px 0;overscroll-behavior-x:contain}
+.article-table:focus-visible{outline:3px solid var(--clay);outline-offset:3px}
+.article-table table{width:100%;min-width:480px;border-collapse:collapse;font:14px/1.6 var(--sans)}
+.article-table th,.article-table td{border:1px solid var(--line);padding:12px;text-align:start;vertical-align:top;overflow-wrap:anywhere}
+.article-table th{background:var(--sage);font-weight:650;color:var(--ink)}

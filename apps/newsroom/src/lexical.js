@@ -6,6 +6,10 @@
  * Images inside the body: a line of its own `![alt](media:<id>)` <-> Payload upload node
  * `{ type: 'upload', relationTo: 'media', value: <numeric id>, fields: null, format: '', id, version: 3 }`.
  * The alt in the token is only a label for the writer; the real alt text lives on the media record.
+ * Waves 1-2 blocks (a line of their own):
+ *   `>> Quote text -- Attribution`  <-> `pullQuote` block `{ quote, attribution }` (plain text, no inline formatting)
+ *   `[gallery](media:12,13,14)`     <-> `gallery` block `{ images: [{ image: 12 }, ...] }` (captions are edited in the CMS
+ *                                       admin: a gallery with captions makes the body read-only here)
  * Anything else found in an existing Lexical document (embeds, nested lists, underline, uploads with extra data, ...) sets
  * `lossy: true` so the editor can refuse to rewrite a body it cannot represent faithfully.
  *
@@ -59,6 +63,62 @@ export function imageToken(id, alt = '') {
   const s = String(id ?? '');
   if (!validMediaId(s)) return '';
   return `![${tokenAlt(alt)}](media:${s})`;
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Pull quote `>> quote -- attribution` and gallery `[gallery](media:1,2,3)`, each alone on a line
+// ---------------------------------------------------------------------------------------------------------
+
+export const PULL_QUOTE_MAX = 400;
+export const PULL_QUOTE_ATTRIBUTION_MAX = 120;
+export const GALLERY_MAX = 12;
+const PULL_QUOTE_LINE_RE = /^>>\s+(.*\S)$/;
+const GALLERY_LINE_RE = /^\[gallery\]\(media:([1-9]\d{0,9}(?:\s*,\s*[1-9]\d{0,9})*)\)$/;
+
+/** `{ quote, attribution }` of a pull-quote line, or null. The attribution follows the LAST ` --`. */
+export function matchPullQuoteLine(line) {
+  const m = PULL_QUOTE_LINE_RE.exec(String(line).trim());
+  if (!m) return null;
+  const body = m[1];
+  const at = body.lastIndexOf(' --');
+  if (at >= 0 && (body.length === at + 3 || body[at + 3] === ' ')) {
+    const quote = body.slice(0, at).trim();
+    if (quote) return { quote, attribution: body.slice(at + 3).trim() };
+  }
+  return { quote: body.trim(), attribution: '' };
+}
+
+/** The line for a pull quote ('' when the quote is empty). Round-trips through `matchPullQuoteLine`. */
+export function pullQuoteToken(quote, attribution = '') {
+  const q = String(quote ?? '').replace(/\s+/g, ' ').trim();
+  const a = String(attribution ?? '').replace(/\s+/g, ' ').trim();
+  if (!q) return '';
+  if (a) return `>> ${q} -- ${a}`;
+  return q.includes(' --') ? `>> ${q} --` : `>> ${q}`;
+}
+
+/** Media ids (strings) of a gallery line, or null. */
+export function matchGalleryLine(line) {
+  const m = GALLERY_LINE_RE.exec(String(line).trim());
+  if (!m) return null;
+  const ids = m[1].split(',').map(s => String(Number(s.trim())));
+  return ids.every(validMediaId) ? ids : null;
+}
+
+/** The line for a gallery of media ids ('' when there is no valid id). */
+export function galleryToken(ids) {
+  const list = (Array.isArray(ids) ? ids : []).map(String).filter(validMediaId);
+  return list.length ? `[gallery](media:${list.join(',')})` : '';
+}
+
+/** Every gallery line in a markdown body, in order: [['12','13'], ...]. */
+export function listGalleries(markdown) {
+  const out = [];
+  for (const raw of String(markdown || '').replace(/\r\n?/g, '\n').split('\n')) {
+    const ids = matchGalleryLine(raw);
+    if (ids) out.push(ids);
+  }
+  return out;
 }
 
 /**
@@ -205,6 +265,12 @@ export function parseMarkdown(markdown) {
     if ((m = matchImageLine(line))) {
       flushAll();
       blocks.push({ type: 'image', id: m.missing ? null : Number(m.id), alt: m.alt, missing: m.missing });
+    } else if ((m = matchGalleryLine(line))) {
+      flushAll();
+      blocks.push({ type: 'gallery', ids: m.map(Number) });
+    } else if ((m = matchPullQuoteLine(line))) {
+      flushAll();
+      blocks.push({ type: 'pullquote', quote: m.quote, attribution: m.attribution });
     } else if ((m = RE_H.exec(line))) {
       flushAll();
       blocks.push({ type: m[1].length >= 3 ? 'h3' : 'h2', inline: parseInline(m[2]) });
@@ -261,10 +327,14 @@ function inlineToLexical(nodes) {
 
 /** 24-hex node id (Payload uses ObjectId-style strings): stable per (media, occurrence) so re-saving never churns ids. */
 function uploadNodeId(mediaId, occurrence) {
+  return stableId(`${mediaId}:${occurrence}`);
+}
+
+function stableId(key) {
   let out = '';
   for (let seed = 1; seed <= 3; seed++) {
     let h = 0x811c9dc5 ^ (seed * 0x9e3779b1);
-    for (const ch of `${mediaId}:${occurrence}:${seed}`) {
+    for (const ch of `${key}:${seed}`) {
       h ^= ch.charCodeAt(0);
       h = Math.imul(h, 0x01000193) >>> 0;
     }
@@ -285,15 +355,31 @@ function uploadNode(mediaId, occurrence) {
   };
 }
 
+/** A Payload Lexical block node (the shape the CMS admin writes). */
+function blockNode(key, fields) {
+  return { type: 'block', version: 2, format: '', fields: { id: stableId(key), blockName: '', ...fields } };
+}
+
 export function markdownToLexical(markdown) {
   const blocks = parseMarkdown(markdown);
   const seen = new Map();
+  let quotes = 0;
+  let galleries = 0;
   const children = blocks.map(b => {
     switch (b.type) {
       case 'image': {
         const n = seen.get(b.id) || 0;
         seen.set(b.id, n + 1);
         return uploadNode(b.id, n);
+      }
+      case 'pullquote':
+        return blockNode(`pullQuote:${quotes++}`, { blockType: 'pullQuote', quote: b.quote, attribution: b.attribution });
+      case 'gallery': {
+        const g = galleries++;
+        return blockNode(`gallery:${g}`, {
+          blockType: 'gallery',
+          images: b.ids.map((id, i) => ({ id: stableId(`gallery:${g}:${id}:${i}`), image: id }))
+        });
       }
       case 'h2':
       case 'h3':
@@ -426,6 +512,8 @@ function blockToMarkdown(node, state, { onlyBlock = false } = {}) {
         return marker + singleLine(inlineToMarkdown(inlineKids, state), state);
       }).filter(Boolean).join('\n');
     }
+    case 'block':
+      return blockNodeToMarkdown(node, state);
     case 'upload': {
       const info = uploadInfo(node);
       if (!info) {
@@ -443,6 +531,45 @@ function blockToMarkdown(node, state, { onlyBlock = false } = {}) {
       state.lossy = true;
       return '';
   }
+}
+
+const PULL_QUOTE_KEYS = new Set(['id', 'blockName', 'blockType', 'quote', 'attribution']);
+const GALLERY_KEYS = new Set(['id', 'blockName', 'blockType', 'images']);
+const GALLERY_ROW_KEYS = new Set(['id', 'image', 'caption']);
+
+/**
+ * Pull quote and gallery blocks become their line; anything the line cannot carry (another block type, a block name,
+ * a gallery caption, extra fields, an attribution containing ` --`) makes the body lossy (read-only here).
+ */
+function blockNodeToMarkdown(node, state) {
+  const f = node.fields && typeof node.fields === 'object' && !Array.isArray(node.fields) ? node.fields : {};
+  if (f.blockName) state.lossy = true;
+  if (f.blockType === 'pullQuote') {
+    if (Object.keys(f).some(k => !PULL_QUOTE_KEYS.has(k))) state.lossy = true;
+    const quote = typeof f.quote === 'string' ? f.quote : '';
+    const attribution = typeof f.attribution === 'string' ? f.attribution : '';
+    const line = pullQuoteToken(quote, attribution);
+    const back = line ? matchPullQuoteLine(line) : null;
+    if (!back || back.quote !== quote.trim() || back.attribution !== attribution.trim() || /\s{2,}|\n/.test(quote + attribution)) state.lossy = true;
+    return line;
+  }
+  if (f.blockType === 'gallery') {
+    if (Object.keys(f).some(k => !GALLERY_KEYS.has(k))) state.lossy = true;
+    const rows = Array.isArray(f.images) ? f.images : [];
+    const ids = [];
+    for (const row of rows) {
+      if (!row || typeof row !== 'object') { state.lossy = true; continue; }
+      if (Object.keys(row).some(k => !GALLERY_ROW_KEYS.has(k)) || (row.caption !== undefined && row.caption !== null && row.caption !== '')) state.lossy = true;
+      const populated = row.image && typeof row.image === 'object' ? row.image : null;
+      const id = String(populated ? populated.id : row.image ?? '');
+      if (!validMediaId(id)) { state.lossy = true; continue; }
+      ids.push(id);
+    }
+    if (!ids.length) { state.lossy = true; return ''; }
+    return galleryToken(ids);
+  }
+  state.lossy = true;
+  return '';
 }
 
 /**
@@ -525,6 +652,20 @@ export function markdownToHtml(markdown, { media } = {}) {
           ? `<figure class="preview-inline-figure" data-testid="preview-inline-image" data-media-id="${b.id}"><img src="${escapeHtmlLocal(src)}" alt="${escapeHtmlLocal(label)}" class="preview-inline-img"><figcaption>${escapeHtmlLocal(label)}</figcaption></figure>`
           : `<figure class="preview-inline-figure preview-inline-missing" data-testid="preview-inline-image" data-media-id="${b.id}"><figcaption>Image #${b.id}${label ? `: ${escapeHtmlLocal(label)}` : ''}</figcaption></figure>`;
       }
+      case 'pullquote':
+        return `<aside class="preview-pull-quote" data-testid="preview-pull-quote"><p>${escapeHtmlLocal(b.quote)}</p>${b.attribution ? `<footer>${escapeHtmlLocal(b.attribution)}</footer>` : ''}</aside>`;
+      case 'gallery': {
+        const items = b.ids.map(id => {
+          const m = media ? media(String(id)) : null;
+          const src = m && (m.thumbUrl || m.url);
+          const label = (m && m.alt) || `Image #${id}`;
+          return src
+            ? `<li><img src="${escapeHtmlLocal(src)}" alt="${escapeHtmlLocal(label)}" class="preview-gallery-img"></li>`
+            : `<li class="preview-inline-missing">${escapeHtmlLocal(label)}</li>`;
+        }).join('');
+        const note = b.ids.length > GALLERY_MAX ? `<p class="preview-gallery-note">A gallery holds at most ${GALLERY_MAX} images; the CMS will refuse this one.</p>` : '';
+        return `<figure class="preview-gallery" data-testid="preview-gallery"><ul>${items}</ul><figcaption>Photo gallery (${b.ids.length})</figcaption>${note}</figure>`;
+      }
       case 'h2': return `<h2>${inlineToHtml(b.inline)}</h2>`;
       case 'h3': return `<h3>${inlineToHtml(b.inline)}</h3>`;
       case 'quote': return `<blockquote>${inlineToHtml(b.inline)}</blockquote>`;
@@ -535,9 +676,23 @@ export function markdownToHtml(markdown, { media } = {}) {
   }).join('');
 }
 
+/** Populated media documents of the gallery blocks in a Lexical body (for editor previews), in order, distinct by id. */
+export function galleryMediaOf(content) {
+  const out = [];
+  for (const node of Array.isArray(content?.root?.children) ? content.root.children : []) {
+    if (node?.type !== 'block' || node.fields?.blockType !== 'gallery' || !Array.isArray(node.fields.images)) continue;
+    for (const row of node.fields.images) {
+      const m = row && typeof row.image === 'object' ? row.image : null;
+      if (m && validMediaId(String(m.id)) && !out.some(x => String(x.id) === String(m.id))) out.push(m);
+    }
+  }
+  return out;
+}
+
 export function countWords(markdown) {
   const plain = String(markdown || '')
     .replace(/^[ \t]*!\[(?:\\.|[^\]\\\n])*\]\(media:(?:[1-9]\d{0,9}|missing)\)[ \t]*$/gm, ' ')
+    .replace(/^[ \t]*\[gallery\]\(media:[\d,\s]+\)[ \t]*$/gm, ' ')
     .replace(/[*#>\[\]()\\]/g, ' ').trim();
   return plain ? plain.split(/\s+/).length : 0;
 }

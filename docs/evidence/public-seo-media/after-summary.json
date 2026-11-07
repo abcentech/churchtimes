@@ -1,0 +1,114 @@
+[
+  {
+    "page": "home",
+    "lighthouseVersion": "12.8.2",
+    "fetchTime": "2026-10-14T22:25:42.755Z",
+    "url": "http://127.0.0.1:43419/",
+    "scores": {
+      "performance": 91,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 66
+    },
+    "lcpMs": 3454.6857,
+    "cls": 0,
+    "failedAuditIds": [
+      "largest-contentful-paint",
+      "max-potential-fid",
+      "interactive",
+      "largest-contentful-paint-element",
+      "uses-long-cache-ttl",
+      "render-blocking-resources",
+      "modern-image-formats",
+      "uses-text-compression",
+      "uses-responsive-images",
+      "is-crawlable",
+      "cache-insight",
+      "image-delivery-insight",
+      "network-dependency-tree-insight",
+      "render-blocking-insight"
+    ]
+  },
+  {
+    "page": "latest",
+    "lighthouseVersion": "12.8.2",
+    "fetchTime": "2026-10-14T22:25:50.102Z",
+    "url": "http://127.0.0.1:43419/#latest",
+    "scores": {
+      "performance": 93,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 63
+    },
+    "lcpMs": 3156.3858999999998,
+    "cls": 0.04003760516375523,
+    "failedAuditIds": [
+      "largest-contentful-paint",
+      "cumulative-layout-shift",
+      "interactive",
+      "largest-contentful-paint-element",
+      "uses-long-cache-ttl",
+      "render-blocking-resources",
+      "modern-image-formats",
+      "uses-text-compression",
+      "uses-responsive-images",
+      "is-crawlable",
+      "cache-insight",
+      "image-delivery-insight",
+      "lcp-discovery-insight",
+      "network-dependency-tree-insight",
+      "render-blocking-insight"
+    ]
+  },
+  {
+    "page": "article",
+    "lighthouseVersion": "12.8.2",
+    "fetchTime": "2026-10-14T22:25:56.413Z",
+    "url": "http://127.0.0.1:43419/reports/t0e4df1d1-seed-1/",
+    "scores": {
+      "performance": 99,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 69
+    },
+    "lcpMs": 2259.76155,
+    "cls": 0,
+    "failedAuditIds": [
+      "largest-contentful-paint",
+      "interactive",
+      "uses-long-cache-ttl",
+      "render-blocking-resources",
+      "modern-image-formats",
+      "uses-responsive-images",
+      "is-crawlable",
+      "cache-insight",
+      "image-delivery-insight",
+      "network-dependency-tree-insight",
+      "render-blocking-insight"
+    ]
+  },
+  {
+    "page": "live",
+    "lighthouseVersion": "12.8.2",
+    "fetchTime": "2026-10-14T22:26:02.641Z",
+    "url": "http://127.0.0.1:43419/#live",
+    "scores": {
+      "performance": 96,
+      "accessibility": 100,
+      "best-practices": 100,
+      "seo": 63
+    },
+    "lcpMs": 2704.2128,
+    "cls": 0.04149492225938817,
+    "failedAuditIds": [
+      "largest-contentful-paint",
+      "cumulative-layout-shift",
+      "interactive",
+      "largest-contentful-paint-element",
+      "render-blocking-resources",
+      "is-crawlable",
+      "network-dependency-tree-insight",
+      "render-blocking-insight"
+    ]
+  }
+]

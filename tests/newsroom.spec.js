@@ -127,6 +127,106 @@ test.describe('Newsroom UI (dev mock mode)', () => {
     await expect(page.locator('.modal-overlay')).toHaveCount(0);
   });
 
+  test('archive review: a reporter has no access; an editor filters, reads provenance, approves and rejects', async ({ page }) => {
+    // Reporter (the mock default): no nav entry, and the screen refuses.
+    await expect(page.locator('[data-archive-nav]')).toHaveJSProperty('hidden', true);
+    await page.goto('./#archive');
+    await expect(page.getByTestId('archive-not-permitted')).toBeVisible();
+
+    await page.locator('#user-role-select').selectOption({ label: 'Derin Adeogun (Section Editor)' });
+    await page.goto('./#archive');
+    await expect(page.locator('[data-archive-nav]')).toHaveJSProperty('hidden', false);
+    await expect(page.locator('.view-title')).toHaveText('Archive review');
+    // Default view: pending drafts, with counts.
+    await expect(page.getByTestId('archive-row')).toHaveCount(3);
+    await expect(page.getByTestId('archive-count-pending')).toContainText('3');
+    await expect(page.getByTestId('archive-count-reviewed')).toContainText('1');
+    const first = page.getByTestId('archive-row').first();
+    await expect(first.getByTestId('archive-source-host')).toHaveText('old-site.test');
+    await expect(first.getByTestId('archive-confidence')).toBeVisible();
+
+    await page.getByLabel('Recovery confidence').selectOption('missing');
+    await page.getByTestId('archive-apply').click();
+    await expect(page.getByTestId('archive-row')).toHaveCount(1);
+    await page.getByTestId('archive-clear').click();
+    await expect(page.getByTestId('archive-row')).toHaveCount(4);
+
+    // Review screen: provenance beside the body; the source opens only on click, safely.
+    await page.getByTestId('archive-row').first().getByTestId('archive-open').click();
+    await expect(page.getByTestId('archive-publish-blocked')).toContainText('has not been reviewed');
+    await expect(page.getByTestId('archive-body')).toBeVisible();
+    await expect(page.getByTestId('archive-sha')).toContainText('11111111');
+    const link = page.getByTestId('archive-source-link');
+    await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    await expect(link).toHaveAttribute('target', '_blank');
+    await expect(page.locator('iframe, img[src*="old-site"]')).toHaveCount(0);
+    await expect(page.getByTestId('archive-open-editor')).toBeVisible();
+
+    await page.getByTestId('archive-approve').click();
+    await page.getByTestId('archive-approve-confirm-ok').click();
+    await expect(page.getByTestId('archive-publish-clear')).toBeVisible();
+    await expect(page.getByTestId('archive-approved-by')).toContainText('Approved by');
+    await expect(page.getByTestId('archive-four-eyes')).toContainText('different editor must publish');
+    await expect(page.getByTestId('archive-approve')).toHaveCount(0);
+
+    await page.getByTestId('archive-reject').click();
+    await page.getByTestId('archive-reject-confirm-ok').click();
+    await expect(page.getByTestId('archive-publish-blocked')).toContainText('rejected');
+  });
+
+  test('archive review: outbound links are listed as text, flagged, and must be acknowledged before Approve', async ({ page }) => {
+    await page.locator('#user-role-select').selectOption({ label: 'Derin Adeogun (Section Editor)' });
+    await page.goto('./#archive');
+    await page.getByTestId('archive-row').filter({ hasText: 'Invented synod headline only' }).getByTestId('archive-open').click();
+
+    const panel = page.getByTestId('archive-links');
+    await expect(page.getByTestId('archive-links-summary')).toHaveText('Links in this article (3)');
+    await expect(page.getByTestId('archive-links-counts')).toContainText('3 of 3 point to a host not on the known list');
+    await expect(panel.getByTestId('archive-link-item')).toHaveCount(3);
+    await expect(panel.getByTestId('archive-link-host').first()).toHaveText('spam-casino.test');
+    await expect(panel.getByTestId('archive-link-href').first()).toHaveText('https://spam-casino.test/win');
+    await expect(panel.getByTestId('archive-link-unknown').first()).toBeVisible();
+    // The list is text only: nothing in it can be clicked through.
+    await expect(panel.locator('a')).toHaveCount(0);
+
+    const approve = page.getByTestId('archive-approve');
+    await expect(approve).toBeDisabled();
+    await page.getByTestId('archive-links-ack').check();
+    await expect(approve).toBeEnabled();
+    await page.getByTestId('archive-links-ack').uncheck();
+    await expect(approve).toBeDisabled();
+    await page.getByTestId('archive-links-ack').check();
+    await approve.click();
+    await page.getByTestId('archive-approve-confirm-ok').click();
+    await expect(page.getByTestId('archive-publish-clear')).toBeVisible();
+
+    // A story without links needs no acknowledgement.
+    await page.goto('./#archive');
+    await page.getByLabel('Review status').selectOption('pending');
+    await page.getByTestId('archive-apply').click();
+    await page.getByTestId('archive-row').filter({ hasText: 'harvest festival' }).getByTestId('archive-open').click();
+    await expect(page.getByTestId('archive-links')).toHaveCount(0);
+    await expect(page.getByTestId('archive-approve')).toBeEnabled();
+  });
+
+  test('the app loads under its Content-Security-Policy with no violations', async ({ page }) => {
+    await page.addInitScript(() => {
+      window.__cspViolations = [];
+      document.addEventListener('securitypolicyviolation', e => window.__cspViolations.push(`${e.violatedDirective} ${e.blockedURI}`));
+    });
+    await page.reload(); // hash-only goto would not start a new document, so the init script must run via a reload
+    const csp = await page.locator('meta[http-equiv="Content-Security-Policy"]').getAttribute('content');
+    expect(csp).toContain("script-src 'self'");
+    expect(csp).toContain("object-src 'none'");
+    expect(csp).toContain("base-uri 'none'");
+    expect(csp).not.toContain('__NEWSROOM_CSP__');
+    await expect(page.getByTestId('session-user')).toBeVisible();
+    await expect(page.locator('#dash-metrics-container')).toBeVisible();
+    await page.goto('./#review');
+    await expect(page.locator('.view-title')).toHaveText('Editorial Review Queue');
+    expect(await page.evaluate(() => window.__cspViolations)).toEqual([]);
+  });
+
   test('keyboard shortcuts navigate between views; dev role switcher changes permissions', async ({ page }) => {
     await page.keyboard.press('Alt+2');
     await expect(page.getByTestId('editor-title')).toBeVisible();

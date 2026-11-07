@@ -8,6 +8,7 @@
  *   Empty string means "same origin" (the CMS is reverse-proxied under /api).
  */
 import { resolveAssetUrl } from './asset-url.js';
+import { parseKnownHosts } from './archive-review.js';
 
 export const MOCK = import.meta.env.DEV && import.meta.env.VITE_NEWSROOM_MOCK === '1';
 
@@ -16,6 +17,16 @@ export const CMS_URL = String(rawCmsUrl).replace(/\/+$/, '');
 
 // Optional link target for the public tip form (the form itself lives on the public site).
 export const PUBLIC_SITE_URL = String(import.meta.env.VITE_PUBLIC_SITE_URL || '').replace(/\/+$/, '');
+
+/**
+ * Hosts the archive link review treats as known (comma separated, build time: VITE_KNOWN_LINK_HOSTS). The public site host is
+ * always known. Any other host is flagged for the reviewer.
+ */
+export const KNOWN_LINK_HOSTS = (() => {
+  const hosts = parseKnownHosts(import.meta.env.VITE_KNOWN_LINK_HOSTS);
+  try { if (PUBLIC_SITE_URL) hosts.push(new URL(PUBLIC_SITE_URL).hostname); } catch { /* ignore */ }
+  return hosts;
+})();
 
 export const CMS_HOST_LABEL = (() => {
   if (!CMS_URL) return 'same origin';

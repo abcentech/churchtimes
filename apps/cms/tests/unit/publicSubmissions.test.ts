@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { textToLexical } from '../../src/endpoints/convertSubmission'
 import {
   generateReference,
+  isConsentRequired,
   isOriginAllowed,
   validateSubmissionInput,
 } from '../../src/endpoints/publicSubmissions'
@@ -102,5 +103,38 @@ describe('textToLexical', () => {
     expect(s.root.type).toBe('root')
     expect(s.root.children).toHaveLength(3)
     expect((s.root.children[1] as { children: unknown[] }).children).toHaveLength(3)
+  })
+})
+
+describe('validateSubmissionInput consent', () => {
+  it('ignores consent by default and keeps it out of data when absent', () => {
+    const r = validateSubmissionInput(valid, { requireConsent: false })
+    expect(r.ok && !r.honeypot && 'consent' in r.data).toBe(false)
+  })
+  it('keeps consent true and a cleaned text version', () => {
+    const r = validateSubmissionInput({ ...valid, consent: true, consentTextVersion: ' 2026-10 ' }, { requireConsent: false })
+    expect(r.ok && !r.honeypot && r.data.consent).toBe(true)
+    expect(r.ok && !r.honeypot && r.data.consentTextVersion).toBe('2026-10')
+  })
+  it('does not keep a version without consent', () => {
+    const r = validateSubmissionInput({ ...valid, consent: false, consentTextVersion: 'x' }, { requireConsent: false })
+    expect(r.ok && !r.honeypot && r.data.consentTextVersion).toBeFalsy()
+  })
+  it('rejects a non-boolean consent', () => {
+    const r = validateSubmissionInput({ ...valid, consent: 'yes' }, { requireConsent: false })
+    expect(!r.ok && r.errors.map((e) => e.field)).toContain('consent')
+  })
+  it('requires consent true when required', () => {
+    for (const body of [valid, { ...valid, consent: false }]) {
+      const r = validateSubmissionInput(body, { requireConsent: true })
+      expect(!r.ok && r.errors.map((e) => e.field)).toEqual(['consent'])
+    }
+    expect(validateSubmissionInput({ ...valid, consent: true }, { requireConsent: true }).ok).toBe(true)
+  })
+  it('reads SUBMISSIONS_REQUIRE_CONSENT from the environment', () => {
+    expect(isConsentRequired({})).toBe(false)
+    expect(isConsentRequired({ SUBMISSIONS_REQUIRE_CONSENT: 'true' })).toBe(true)
+    expect(isConsentRequired({ SUBMISSIONS_REQUIRE_CONSENT: '1' })).toBe(true)
+    expect(isConsentRequired({ SUBMISSIONS_REQUIRE_CONSENT: 'false' })).toBe(false)
   })
 })

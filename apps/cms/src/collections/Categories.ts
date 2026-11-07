@@ -1,6 +1,7 @@
 import type { CollectionConfig } from 'payload'
 
 import { anyone, editorInChiefOnly } from '../access/roles'
+import { auditDeleteHook } from '../lib/audit'
 import { clampLimit } from '../lib/clampLimit'
 
 export const Categories: CollectionConfig = {
@@ -12,7 +13,7 @@ export const Categories: CollectionConfig = {
     update: editorInChiefOnly,
     delete: editorInChiefOnly,
   },
-  hooks: { beforeOperation: [clampLimit] },
+  hooks: { beforeOperation: [clampLimit], afterDelete: [auditDeleteHook('categories', (d) => (d.slug ? `slug ${d.slug}` : undefined))] },
   fields: [
     { name: 'title', type: 'text', required: true },
     {
@@ -26,6 +27,6 @@ export const Categories: CollectionConfig = {
           ? true
           : 'Slug must be lowercase letters, numbers and hyphens.',
     },
-    { name: 'description', type: 'textarea' },
+    { name: 'description', type: 'textarea', maxLength: 1000 },
   ],
 }

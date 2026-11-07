@@ -1,0 +1,71 @@
+# Opt-in override for the FIRST WordPress archive import on the production VPS (docs/import.md, "Importing on the server").
+# Used ON TOP of docker-compose.production.yml; never part of a normal release. Nothing here starts with `up`.
+#
+#   export CMS_IMPORTER_IMAGE=ghcr.io/abcentech/churchtimes-cms-importer@sha256:<digest, same commit as CMS_IMAGE>
+#   export IMPORT_EXPORT_FILE=/srv/churchtimes-private/export.xml        # file, mounted read-only at /import/export.xml
+#   export IMPORT_UPLOADS_DIR=/srv/churchtimes-private/uploads           # verified uploads, mounted read-only at /import/uploads
+#   export IMPORT_PRIVATE_DIR=/srv/churchtimes-private/import-private    # manifests and reports, writable, at /import/private
+#   C="sudo -E docker compose -f docker-compose.production.yml -f docker-compose.import.yml"
+#   $C --profile import run --rm importer npm run import:wxr -- --file /import/export.xml --uploads /import/uploads
+#
+# All three IMPORT_* variables are required and have no default. Keep every path OUTSIDE the repository checkout (the commands
+# refuse a path inside a git work tree). IMPORT_PRIVATE_DIR must exist and be owned by 1000:1000 (mode 700): it holds real
+# file names and the rollback manifests. The export and uploads stay read-only: the importer copies images into the media
+# volume (CMS_MEDIA_DIR, the same writable mount `cms` uses, because Payload stores ingested images there).
+#
+# Same hardening as `migrate`: digest-pinned image, uid 1000, read-only root, tmpfs scratch, cap_drop ALL, no-new-privileges,
+# only the internal `db` network (no route out, no published ports), memory limited. Run it while `cms` is stopped or
+# idle if memory is tight (docs/operations.md, "Memory and OOM behaviour").
+services:
+  importer:
+    profiles: ["import"]
+    image: ${CMS_IMPORTER_IMAGE:?set CMS_IMPORTER_IMAGE to the digest-pinned importer image}
+    user: "1000:1000"
+    init: true
+    env_file: ${CMS_ENV_FILE:-/etc/churchtimes/cms.env}
+    environment:
+      SCHEDULER_ENABLED: "false"
+      NODE_OPTIONS: "--no-deprecation --max-old-space-size=768"
+    # Default = the read-only uploads check on the mounted folders (counts only, no database, writes nothing). Override with
+    # `run --rm importer npm run import:...`. Never imports by itself.
+    command: ["npm", "run", "import:uploads-check", "--", "--uploads", "/import/uploads", "--wxr", "/import/export.xml"]
+    volumes:
+      - type: bind
+        source: ${IMPORT_EXPORT_FILE:?set IMPORT_EXPORT_FILE to the WordPress export file, outside the repository}
+        target: /import/export.xml
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${IMPORT_UPLOADS_DIR:?set IMPORT_UPLOADS_DIR to the verified uploads directory, outside the repository}
+        target: /import/uploads
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${IMPORT_PRIVATE_DIR:?set IMPORT_PRIVATE_DIR to a private writable directory for manifests and reports, outside the repository}
+        target: /import/private
+        bind:
+          create_host_path: false
+      - ${CMS_MEDIA_DIR:-/srv/churchtimes/media}:/app/media
+    networks:
+      - db
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+      - /app/.next/cache:size=64m,uid=1000,gid=1000,mode=0755
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1g
+    memswap_limit: 1g
+    oom_score_adj: 0
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "5"

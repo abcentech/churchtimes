@@ -1,0 +1,3 @@
+@media (prefers-reduced-motion:no-preference){@view-transition{navigation:auto}}
+.article-header h1{view-transition-name:ct-title}.article-header+figure img{view-transition-name:ct-hero}
+

@@ -230,7 +230,8 @@ async function stubCms(page, {
   const liveUpdates = [...updates];
   const gates = new Map();
   let patchGate = null;
-  const log = { patches: [], gets: [], logouts: 0, updatePosts: [], updatePatches: [] };
+  const log = { patches: [], gets: [], logouts: 0, updatePosts: [], updatePatches: [], refreshes: 0 };
+  const flags = { sessionGone: false, forbidPatches: false, failLive: false };
   const json = (route, status, body) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
 
   await page.route('**/api/**', async route => {
@@ -239,7 +240,12 @@ async function stubCms(page, {
     const p = url.pathname.replace(/^\/api/, '');
     const method = req.method();
     let m;
+    if (p === '/users/refresh' && method === 'POST') {
+      log.refreshes++;
+      return json(route, 200, { message: 'Token refresh successful.', exp: 9999999999 });
+    }
     if (p === '/users/me') {
+      if (flags.sessionGone) return json(route, 200, { user: null });
       return json(route, 200, { user: { id: 7, name: 'Stub Editor', email: 'stub@example.org', role: 'editor-in-chief', sections: [] } });
     }
     if (p === '/users/logout' && method === 'POST') {
@@ -251,6 +257,7 @@ async function stubCms(page, {
     if (p === '/media' && method === 'GET') return json(route, 200, { docs: media, totalDocs: media.length });
     if (p === '/live-events' && method === 'GET') return json(route, 200, { docs: events, totalDocs: events.length });
     if (p === '/live-updates' && method === 'GET') {
+      if (flags.failLive) return route.abort('failed');
       const ev = url.searchParams.get('where[event][equals]');
       return json(route, 200, { docs: liveUpdates.filter(u => !ev || String(u.event) === ev), totalDocs: liveUpdates.length });
     }
@@ -289,6 +296,7 @@ async function stubCms(page, {
       if (method === 'PATCH' && doc) {
         const body = req.postDataJSON();
         log.patches.push({ id, body });
+        if (flags.forbidPatches) return json(route, 403, { errors: [{ message: 'You are not allowed to perform this action.' }] });
         if (body.expectedUpdatedAt !== undefined && body.expectedUpdatedAt !== doc.updatedAt) {
           return json(route, 409, { errors: [{ message: STALE_CMS_MESSAGE }] });
         }
@@ -298,6 +306,7 @@ async function stubCms(page, {
         const next = { ...doc, updatedAt: new Date().toISOString() };
         if (body.title !== undefined) next.title = body.title;
         if (body.excerpt !== undefined) next.excerpt = body.excerpt;
+        if (body.bylineName !== undefined) next.bylineName = body.bylineName;
         if (body.status !== undefined) next.status = body.status;
         if (body.reviewNotes !== undefined) next.reviewNotes = body.reviewNotes;
         if (body.content !== undefined) next.content = body.content;
@@ -324,6 +333,7 @@ async function stubCms(page, {
   const gate = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
   return {
     log,
+    flags,
     /** Someone else changes the story / update on the server (new updatedAt) after the newsroom loaded it. */
     touchArticle(id, over = {}) { docs.set(String(id), { ...docs.get(String(id)), ...over, updatedAt: '2026-10-14T21:00:00.000Z' }); },
     touchUpdate(id, over = {}) { Object.assign(liveUpdates.find(u => String(u.id) === String(id)), over, { updatedAt: '2026-10-14T21:00:00.000Z' }); },
@@ -337,6 +347,22 @@ async function stubCms(page, {
 test.describe('Production build against a stubbed CMS', () => {
   test.beforeEach(({}, testInfo) => { test.skip(testInfo.project.name !== 'desktop', 'stubbed-CMS suite runs once, on desktop'); });
   test.setTimeout(60_000);
+
+  test('the production page carries a CSP naming the CMS origin and loads under it without violations', async ({ page }) => {
+    await page.addInitScript(() => {
+      window.__cspViolations = [];
+      document.addEventListener('securitypolicyviolation', e => window.__cspViolations.push(`${e.violatedDirective} ${e.blockedURI}`));
+    });
+    await stubCms(page, { articles: [stubArticle(1)] });
+    await page.goto(`${STUB_BASE}#editor?id=1`);
+    await expect(page.getByTestId('editor-title')).toHaveValue('Stub story 1');
+    const csp = await page.locator('meta[http-equiv="Content-Security-Policy"]').getAttribute('content');
+    expect(csp).toContain("default-src 'self'");
+    expect(csp).toContain("connect-src 'self'");
+    expect(csp).not.toContain('ws:');
+    expect(csp).not.toContain('__NEWSROOM_CSP__');
+    expect(await page.evaluate(() => window.__cspViolations)).toEqual([]);
+  });
 
   test('a slow load of story 1 can never take over after navigating to story 2: PATCH goes to story 2 only', async ({ page }) => {
     const cms = await stubCms(page, { articles: [stubArticle(1), stubArticle(2)] });
@@ -357,8 +383,13 @@ test.describe('Production build against a stubbed CMS', () => {
     await page.getByTestId('editor-standfirst').fill('Edited standfirst'); // autosave path
     await expect.poll(() => cms.log.patches.length, { timeout: 8000 }).toBe(2);
     expect(cms.log.patches.map(p => p.id)).toEqual(['2', '2']);
-    expect(cms.log.patches[0].body).toEqual({ title: 'Story two, edited' });
-    expect(cms.log.patches[1].body).toEqual({ excerpt: 'Edited standfirst' });
+    const { expectedUpdatedAt: v1, ...first } = cms.log.patches[0].body;
+    const { expectedUpdatedAt: v2, ...second } = cms.log.patches[1].body;
+    expect(first).toEqual({ title: 'Story two, edited' });
+    expect(second).toEqual({ excerpt: 'Edited standfirst' });
+    expect(v1).toBe('2026-01-01T00:00:00.000Z'); // every content save names the version it was based on
+    expect(v2).toBeTruthy();
+    expect(v2).not.toBe(v1); // the second save is based on the first save's response
   });
 
   test('leaving story 1 with an unsaved edit flushes it to story 1 only; story 2 is not touched', async ({ page }) => {
@@ -369,7 +400,7 @@ test.describe('Production build against a stubbed CMS', () => {
     await page.evaluate(() => { window.location.hash = '#editor?id=2'; }); // autosave timer still pending
     await expect(page.getByTestId('editor-title')).toHaveValue('Stub story 2');
     await page.waitForTimeout(2200); // longer than the autosave delay
-    expect(cms.log.patches).toEqual([{ id: '1', body: { title: 'Story one, edited' } }]);
+    expect(cms.log.patches).toEqual([{ id: '1', body: { title: 'Story one, edited', expectedUpdatedAt: '2026-01-01T00:00:00.000Z' } }]);
     await expect(page.getByTestId('editor-title')).toHaveValue('Stub story 2');
   });
 
@@ -386,7 +417,7 @@ test.describe('Production build against a stubbed CMS', () => {
     expect(cms.log.patches).toHaveLength(1); // the manual save is waiting, not racing
     cms.releasePatches();
     await expect(page.locator('.toast').filter({ hasText: 'Draft saved successfully' })).toHaveCount(1);
-    expect(cms.log.patches.map(p => p.body)).toEqual([{ title: 'Autosaved title' }, { excerpt: 'Typed during the autosave' }]);
+    expect(cms.log.patches.map(p => { const { expectedUpdatedAt, ...rest } = p.body; return rest; })).toEqual([{ title: 'Autosaved title' }, { excerpt: 'Typed during the autosave' }]);
   });
 
   test('Save Draft with nothing changed makes no CMS call and says so', async ({ page }) => {
@@ -446,7 +477,7 @@ test.describe('Production build against a stubbed CMS', () => {
     await page.getByTestId('editor-save-draft').click();
     await expect(page.locator('.toast').filter({ hasText: 'Draft saved successfully' })).toHaveCount(1);
     expect(cms.log.patches).toHaveLength(1);
-    expect(Object.keys(cms.log.patches[0].body)).toEqual(['title']);
+    expect(Object.keys(cms.log.patches[0].body)).toEqual(['title', 'expectedUpdatedAt']);
     expect(JSON.stringify(cms.log.patches)).not.toContain('"content"');
   });
 
@@ -477,7 +508,7 @@ test.describe('Production build against a stubbed CMS', () => {
     await page.getByTestId('editor-title').fill('Only the headline changed');
     await page.getByTestId('editor-save-draft').click();
     await expect(page.locator('.toast').filter({ hasText: 'Draft saved successfully' })).toHaveCount(1);
-    expect(cms.log.patches.map(p => Object.keys(p.body))).toEqual([['title']]);
+    expect(cms.log.patches.map(p => Object.keys(p.body))).toEqual([['title', 'expectedUpdatedAt']]);
 
     // a body edit writes both images back as upload nodes carrying the id (never the populated document)
     await page.getByTestId('editor-body').fill('Before.\n\n![x](media:11)\n\nBetween, edited.\n\n![](media:12)\n\nAfter.');
@@ -556,7 +587,7 @@ test.describe('Production build against a stubbed CMS', () => {
     await page.getByTestId('editor-title').fill('Only the headline changed');
     await page.getByTestId('editor-save-draft').click();
     await expect(page.locator('.toast').filter({ hasText: 'Draft saved successfully' })).toHaveCount(1);
-    expect(cms.log.patches.map(p => Object.keys(p.body))).toEqual([['title']]);
+    expect(cms.log.patches.map(p => Object.keys(p.body))).toEqual([['title', 'expectedUpdatedAt']]);
 
     // editing text while the missing line is still there: the CMS refuses and its message is shown
     await page.getByTestId('editor-body').fill('Before, edited.\n\n![missing image](media:missing)\n\nAfter.\n\n![](media:12)');
@@ -792,6 +823,235 @@ test.describe('Production build against a stubbed CMS', () => {
 });
 
 // -------------------------------------------------------------------------------------------------------------
+// 2c. Data-loss guards, session expiry and network behaviour (stubbed CMS, production bundle)
+// -------------------------------------------------------------------------------------------------------------
+
+test.describe('Editor data-loss guards (stubbed CMS)', () => {
+  test.beforeEach(({}, testInfo) => { test.skip(testInfo.project.name !== 'desktop', 'stubbed-CMS suite runs once, on desktop'); });
+  test.setTimeout(60_000);
+
+  const localKeys = page => page.evaluate(() => Object.keys(sessionStorage).filter(k => k.startsWith('ctn_draft_')));
+
+  test('leaving the editor with unsaved changes asks first; staying keeps the text and the address', async ({ page }) => {
+    await stubCms(page, { articles: [] });
+    await page.goto(`${STUB_BASE}#editor`);
+    await page.getByTestId('editor-title').fill('A headline I have not saved');
+    await page.locator('#btn-back-dashboard').click();
+    const ask = page.getByTestId('leave-editor-ok');
+    await expect(ask).toBeVisible();
+    await page.locator('#ask-confirm-cancel').click();
+    await expect(page.getByTestId('editor-title')).toHaveValue('A headline I have not saved');
+    expect(page.url()).toMatch(/#editor$/);
+    await page.locator('#btn-back-dashboard').click();
+    await page.getByTestId('leave-editor-ok').click();
+    await expect(page.getByTestId('story-list')).toBeVisible();
+  });
+
+  test('closing the tab with unsaved changes raises the browser beforeunload prompt', async ({ page }) => {
+    await stubCms(page, { articles: [] });
+    await page.goto(`${STUB_BASE}#editor`);
+    await page.getByTestId('editor-title').click();
+    await page.keyboard.type('Unsaved words');
+    const prevented = () => page.evaluate(() => {
+      const e = new Event('beforeunload', { cancelable: true });
+      window.dispatchEvent(e);
+      return e.defaultPrevented;
+    });
+    expect(await prevented()).toBe(true);
+    await page.getByTestId('editor-title').fill('');
+    expect(await prevented()).toBe(false); // nothing unsaved any more
+  });
+
+  test('a clean editor does not prompt on leave', async ({ page }) => {
+    await stubCms(page, { articles: [stubArticle(1)] });
+    await page.goto(`${STUB_BASE}#editor?id=1`);
+    await expect(page.getByTestId('editor-title')).toHaveValue('Stub story 1');
+    await page.locator('#btn-back-dashboard').click();
+    await expect(page.getByTestId('story-list')).toBeVisible();
+    await expect(page.getByTestId('leave-editor-ok')).toHaveCount(0);
+  });
+
+  test('unsaved text survives a reload as a local copy that can be restored, and is cleared once saved', async ({ page }) => {
+    const cms = await stubCms(page, { articles: [stubArticle(1)] });
+    page.on('dialog', d => d.accept()); // the beforeunload prompt
+    await page.goto(`${STUB_BASE}#editor?id=1`);
+    await expect(page.getByTestId('editor-title')).toHaveValue('Stub story 1');
+    await page.getByTestId('editor-title').click();
+    await page.keyboard.type(' plus unsaved words');
+    expect(await localKeys(page)).toEqual(['ctn_draft_1']);
+    expect(await page.evaluate(() => sessionStorage.getItem('ctn_draft_1'))).toContain('plus unsaved words');
+    await page.reload(); // before the 1.5 s autosave could run
+    expect(cms.log.patches).toEqual([]);
+    await expect(page.getByTestId('editor-restore')).toBeVisible();
+    await expect(page.getByTestId('editor-title')).toHaveValue('Stub story 1');
+    await page.getByTestId('editor-restore-accept').click();
+    await expect(page.getByTestId('editor-title')).toHaveValue('Stub story 1 plus unsaved words');
+    await page.getByTestId('editor-save-draft').click();
+    await expect(page.locator('.toast').filter({ hasText: 'Draft saved successfully' })).toHaveCount(1);
+    expect(await localKeys(page)).toEqual([]);
+  });
+
+  const seedCopy = (page, values, userId = '7') => page.addInitScript(([vals, uid]) => {
+    sessionStorage.setItem('ctn_draft_1', JSON.stringify({ v: 1, userId: uid, baseUpdatedAt: null, savedAt: 1, values: vals }));
+  }, [values, userId]);
+
+  test('a local copy that matches the server, or belongs to another user, is not offered', async ({ page }) => {
+    await stubCms(page, { articles: [stubArticle(1)] });
+    await seedCopy(page, { title: 'Stub story 1', slug: 'stub-story-1', standfirst: 'Standfirst 1', bylineName: '', bodyMd: 'Body of story 1.', categoryId: '1' });
+    await page.goto(`${STUB_BASE}#editor?id=1`);
+    await expect(page.getByTestId('editor-title')).toHaveValue('Stub story 1');
+    await expect(page.getByTestId('editor-restore')).toBeHidden();
+    expect(await localKeys(page)).toEqual([]);
+  });
+
+  test('a local copy owned by someone else stays hidden', async ({ page }) => {
+    await stubCms(page, { articles: [stubArticle(1)] });
+    await seedCopy(page, { title: 'Other words', slug: 'x', standfirst: 'S', bylineName: '', bodyMd: 'B', categoryId: '1' }, '99');
+    await page.goto(`${STUB_BASE}#editor?id=1`);
+    await expect(page.getByTestId('editor-title')).toHaveValue('Stub story 1');
+    await expect(page.getByTestId('editor-restore')).toBeHidden();
+  });
+
+  test('a differing local copy is offered and discarding removes it', async ({ page }) => {
+    await stubCms(page, { articles: [stubArticle(1)] });
+    await seedCopy(page, { title: 'Other words', slug: 'x', standfirst: 'S', bylineName: '', bodyMd: 'B', categoryId: '1' });
+    await page.goto(`${STUB_BASE}#editor?id=1`);
+    await expect(page.getByTestId('editor-restore')).toBeVisible();
+    await page.getByTestId('editor-restore-discard').click();
+    expect(await localKeys(page)).toEqual([]);
+  });
+
+  test('logging out clears every local copy', async ({ page }) => {
+    await stubCms(page, { articles: [stubArticle(1)] });
+    await page.goto(`${STUB_BASE}#editor?id=1`);
+    await expect(page.getByTestId('editor-title')).toHaveValue('Stub story 1');
+    await page.getByTestId('editor-title').fill('Typed then logged out');
+    expect(await localKeys(page)).toEqual(['ctn_draft_1']);
+    await page.getByTestId('logout').click();
+    await expect(page.getByTestId('login-view')).toBeVisible();
+    expect(await localKeys(page)).toEqual([]);
+  });
+
+  test('skip link focuses the main region and never routes away from the editor', async ({ page }) => {
+    await stubCms(page, { articles: [stubArticle(1)] });
+    await page.goto(`${STUB_BASE}#editor?id=1`);
+    await expect(page.getByTestId('editor-title')).toHaveValue('Stub story 1');
+    await page.locator('.skip-link').focus();
+    await page.locator('.skip-link').click();
+    await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe('main-content');
+    expect(page.url()).toMatch(/#editor\?id=1$/);
+    await expect(page.getByTestId('editor-title')).toHaveValue('Stub story 1');
+  });
+
+  test('a hash of #main-content typed into the address bar is ignored by the router', async ({ page }) => {
+    await stubCms(page, { articles: [stubArticle(1)] });
+    await page.goto(`${STUB_BASE}#editor?id=1`);
+    await expect(page.getByTestId('editor-title')).toHaveValue('Stub story 1');
+    await page.evaluate(() => { window.location.hash = '#main-content'; });
+    await expect.poll(() => page.url()).toMatch(/#editor\?id=1$/);
+    await expect(page.getByTestId('editor-title')).toHaveValue('Stub story 1');
+  });
+
+  test('a 409 on a content save keeps the text, stops autosave, and offers copy and reload', async ({ page, context }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    const cms = await stubCms(page, { articles: [stubArticle(1)] });
+    await page.goto(`${STUB_BASE}#editor?id=1`);
+    await expect(page.getByTestId('editor-title')).toHaveValue('Stub story 1');
+    cms.touchArticle(1, { title: 'Changed by a colleague' });
+    await page.getByTestId('editor-title').fill('My careful headline');
+    await expect.poll(() => cms.log.patches.length, { timeout: 8000 }).toBe(1);
+    expect(cms.log.patches[0].body.expectedUpdatedAt).toBe('2026-01-01T00:00:00.000Z');
+    await expect(page.getByTestId('editor-conflict')).toBeVisible();
+    await expect(page.getByTestId('editor-conflict')).toContainText('changed by someone else');
+    await expect(page.getByTestId('editor-title')).toHaveValue('My careful headline');
+    await page.waitForTimeout(2200);
+    expect(cms.log.patches).toHaveLength(1); // no autosave retry loop
+    await page.getByTestId('editor-conflict-copy').click();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toContain('My careful headline');
+    await page.getByTestId('editor-conflict-reload').click();
+    await expect(page.getByTestId('editor-title')).toHaveValue('Changed by a colleague');
+    await expect(page.getByTestId('editor-restore')).toBeVisible(); // the user's text is still recoverable
+  });
+
+  test('a 403 on a write with a revoked session returns to sign-in and keeps the local copy', async ({ page }) => {
+    const cms = await stubCms(page, { articles: [stubArticle(1)] });
+    await page.goto(`${STUB_BASE}#editor?id=1`);
+    await expect(page.getByTestId('editor-title')).toHaveValue('Stub story 1');
+    cms.flags.forbidPatches = true;
+    cms.flags.sessionGone = true;
+    await page.getByTestId('editor-title').fill('Written while expired');
+    await page.getByTestId('editor-save-draft').click();
+    await expect(page.getByTestId('login-view')).toBeVisible();
+    await expect(page.locator('.toast').filter({ hasText: 'not allowed' })).toHaveCount(0);
+    expect(await page.evaluate(() => sessionStorage.getItem('ctn_draft_1'))).toContain('Written while expired');
+  });
+
+  test('a 403 on a write with a valid session is still shown as not permitted', async ({ page }) => {
+    const cms = await stubCms(page, { articles: [stubArticle(1)] });
+    await page.goto(`${STUB_BASE}#editor?id=1`);
+    await expect(page.getByTestId('editor-title')).toHaveValue('Stub story 1');
+    cms.flags.forbidPatches = true;
+    await page.getByTestId('editor-title').fill('Not mine to edit');
+    await page.getByTestId('editor-save-draft').click();
+    await expect(page.getByTestId('editor-error')).toContainText('not allowed');
+    await expect(page.getByTestId('login-view')).toHaveCount(0);
+  });
+
+  test('a request that never answers times out with a message instead of hanging', async ({ page }) => {
+    await page.clock.install();
+    const cms = await stubCms(page, { articles: [stubArticle(1)] });
+    await page.goto(`${STUB_BASE}#editor?id=1`);
+    await expect(page.getByTestId('editor-title')).toHaveValue('Stub story 1');
+    cms.holdPatches(); // the CMS never answers
+    await page.getByTestId('editor-title').fill('Will time out');
+    await page.getByTestId('editor-save-draft').click();
+    await expect.poll(() => cms.log.patches.length).toBe(1);
+    await page.clock.fastForward(31_000);
+    await expect(page.getByTestId('editor-error')).toContainText('took too long');
+    await expect(page.getByTestId('editor-title')).toHaveValue('Will time out');
+  });
+
+  test('the session is refreshed while the user is active, not while idle', async ({ page }) => {
+    await page.clock.install();
+    const cms = await stubCms(page, { articles: [stubArticle(1)] });
+    await page.goto(`${STUB_BASE}#dashboard`);
+    await expect(page.getByTestId('session-user')).toBeVisible();
+    await page.clock.runFor(40 * 60 * 1000); // idle the whole time
+    expect(cms.log.refreshes).toBe(0);
+    await page.keyboard.press('Shift'); // activity
+    await page.clock.runFor(2 * 60 * 1000);
+    expect(cms.log.refreshes).toBe(1);
+  });
+
+  test('going offline shows a banner and coming back hides it', async ({ page, context }) => {
+    await stubCms(page, { articles: [stubArticle(1)] });
+    await page.goto(`${STUB_BASE}#dashboard`);
+    await expect(page.getByTestId('session-user')).toBeVisible();
+    await expect(page.getByTestId('offline-banner')).toBeHidden();
+    await context.setOffline(true);
+    await expect(page.getByTestId('offline-banner')).toBeVisible();
+    await context.setOffline(false);
+    await expect(page.getByTestId('offline-banner')).toBeHidden();
+  });
+
+  test('live polling failures show a stale indicator that clears on recovery', async ({ page }) => {
+    const cms = await stubCms(page, {
+      events: [{ id: 5, slug: 'synod', title: 'Synod live', summary: '', status: 'live', category: { id: 1, title: 'News' } }],
+      updates: []
+    });
+    await page.goto(`${STUB_BASE}#live`);
+    await expect(page.locator('#btn-refresh-timeline')).toBeVisible();
+    await expect(page.getByTestId('live-stale-indicator')).toHaveCount(0);
+    cms.flags.failLive = true;
+    await page.locator('#btn-refresh-timeline').click();
+    await expect(page.getByTestId('live-stale-indicator')).toBeVisible();
+    cms.flags.failLive = false;
+    await page.locator('#btn-refresh-timeline').click();
+    await expect(page.getByTestId('live-stale-indicator')).toHaveCount(0);
+  });
+});
+
+// -------------------------------------------------------------------------------------------------------------
 // 3. LIVE CMS
 // -------------------------------------------------------------------------------------------------------------
 
@@ -978,7 +1238,7 @@ test.describe('LIVE CMS (real Payload, no mocks)', () => {
     await expect(page.locator('.toast').filter({ hasText: 'Draft saved successfully' })).toHaveCount(1);
     expect(patches.length).toBeGreaterThanOrEqual(1);
     for (const p of patches) {
-      expect(Object.keys(p)).toEqual(['title']);
+      expect(Object.keys(p)).toEqual(['title', 'expectedUpdatedAt']);
     }
     expect((await articleViaApi(storyId)).title).toBe(edited); // verified on the server, not just in the UI
 
@@ -1212,7 +1472,7 @@ test.describe('LIVE CMS (real Payload, no mocks)', () => {
     await page.getByTestId('editor-save-draft').click();
     expect((await pending).ok()).toBe(true);
     expect(patches.length).toBeGreaterThanOrEqual(1);
-    for (const p of patches) expect(Object.keys(p)).toEqual(['title']);
+    for (const p of patches) expect(Object.keys(p)).toEqual(['title', 'expectedUpdatedAt']);
 
     const after = await articleViaApi(lossyId);
     expect(after.title).toBe(`${title} (edited)`);

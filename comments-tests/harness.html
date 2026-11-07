@@ -1,0 +1,7 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>STUB archived comments component harness</title><style>body{color:#172e25;background:#fff;font:16px/1.5 sans-serif;margin:20px}main{max-width:700px;margin:auto}button{background:#fff;color:#172e25;border:1px solid #65766d;padding:8px}</style></head><body><main><h1>Synthetic published article</h1><p>STUB C6 comments response harness. This is not CMS integration.</p><div id="comments"></div><a href="#next" id="after">Next article</a></main><script type="module">
+import {commentsMarkup,bindPublicComments} from '/src/comments/public-comments.js';
+const query=new URLSearchParams(location.search),endpoint=query.has('disabled')?'':location.origin+'/api/legacy-comments';
+const config={endpoint};
+document.querySelector('#comments').innerHTML=commentsMarkup(query.get('article')||'42',config);
+window.disposeComments=bindPublicComments(document,{config,timeoutMs:query.has('timeout')?25:6000});
+</script></body></html>

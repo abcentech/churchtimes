@@ -42,6 +42,8 @@ export async function renderReview(container, preselectedStoryId = null) {
       </div>
     </div>
 
+    <p class="archive-link-row" data-archive-link ${api.can('archive.view') ? '' : 'hidden'}><a href="#archive" data-testid="review-archive-link">Recovered archive drafts: open Archive review</a></p>
+
     <div id="review-error" data-testid="review-error" role="alert" class="validation-summary-alert" style="display:none; margin-bottom: 1rem;"></div>
 
     <div class="review-tabs" role="tablist" aria-label="Review queue categories">
@@ -224,7 +226,7 @@ async function renderSubmissionsTab(area, container, isCurrent = () => true) {
 
   area.innerHTML = `
     <div class="ethics-notice-box" style="margin-bottom: 1.5rem;">
-      <h4>Crucial Newsroom Requirement</h4>
+      <h2>Crucial Newsroom Requirement</h2>
       <p>
         Reader tips arrive through ${publicLink}. They are <strong>NEVER published automatically</strong>.
         Every tip must be corroborated by a reporter, converted to a draft story and taken through the full workflow.
@@ -413,7 +415,8 @@ function inspectStoryModal(article, container, notice = '') {
               ${escapeHtml(article.featuredImage.caption || '')}${article.featuredImage.credit ? ` &middot; Credit: ${escapeHtml(article.featuredImage.credit)}` : ''}
             </div>
           </div>` : ''}
-        <div class="preview-body" data-testid="inspect-body" style="max-height: 250px; overflow-y: auto; background: var(--color-parchment-light); padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--color-rule);">
+        ${article.lossy ? `<div class="ethics-notice-box" data-testid="inspect-lossy-banner" role="alert"><p style="margin:0;"><strong>Body contains video/table content not shown; open in CMS admin before approving.</strong> Most imported articles can only have their body edited in the CMS admin.</p></div>` : ''}
+        <div class="preview-body" data-testid="inspect-body" tabindex="0" role="region" aria-label="Story body" style="max-height: 250px; overflow-y: auto; background: var(--color-parchment-light); padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid var(--color-rule);">
           ${markdownToHtml(article.bodyMd, { media: id => article.bodyMedia?.[id] })}
         </div>
 
@@ -475,8 +478,18 @@ function inspectStoryModal(article, container, notice = '') {
         await transition('changes_requested', { reviewNotes: notes }, 'Changes requested from reporter');
       });
 
-      body.querySelector('#modal-approve-story')?.addEventListener('click', () =>
-        transition('approved', {}, 'Story approved for publication!'));
+      body.querySelector('#modal-approve-story')?.addEventListener('click', async () => {
+        if (article.lossy) {
+          const sure = await askConfirm({
+            title: 'Approve without seeing the whole body?',
+            message: 'This body contains video/table content not shown here. Open it in the CMS admin before approving. Approve anyway?',
+            confirmLabel: 'Approve anyway',
+            testid: 'approve-lossy'
+          });
+          if (!sure) return;
+        }
+        await transition('approved', {}, 'Story approved for publication!');
+      });
 
       body.querySelector('#modal-publish-story')?.addEventListener('click', async () => {
         const ok = await askConfirm({

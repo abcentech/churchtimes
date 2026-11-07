@@ -8,12 +8,16 @@
 
 import { CMS_URL, CMS_HOST_LABEL, cmsAssetUrl } from '../config.js';
 import { can } from '../permissions.js';
-import { lexicalToMarkdown, markdownToLexical } from '../lexical.js';
+import { galleryMediaOf, lexicalToMarkdown, markdownToLexical } from '../lexical.js';
+import { categoryFieldsToCms, extraIdsFromCms } from '../categories.js';
+import { metaFromCms, metaToCms, profileOptions } from '../story-meta.js';
 import { ApiError, toApiError } from './errors.js';
 import { createCountCache } from './count-cache.js';
 import { liveUpdatePayload } from '../live-photo.js';
 import { loadLiveTimeline } from '../live-timeline.js';
-import { liveStatusBody, transitionBody } from '../stale-guard.js';
+import { liveStatusBody, transitionBody, contentPatchBody } from '../stale-guard.js';
+import { archiveWhere, normalizeProvenance, reviewPatchBody, REVIEW_STATUSES, CONFIDENCE_LEVELS } from '../archive-review.js';
+import { withTimeout, RequestTimeoutError, timeoutFor } from '../http-guard.js';
 
 const ID_RE = /^\d+$/;
 
@@ -74,7 +78,9 @@ function normalizeArticle(doc) {
   // Media documents the CMS populated inside the body (upload nodes), by id, for the editor's previews.
   const bodyMedia = {};
   for (const img of images) if (img.media) bodyMedia[img.id] = normalizeMedia(img.media);
+  for (const m of galleryMediaOf(doc.content)) bodyMedia[String(m.id)] = normalizeMedia(m);
   return {
+    ...metaFromCms(doc),
     id: String(doc.id),
     title: doc.title || '',
     slug: doc.slug || '',
@@ -84,6 +90,7 @@ function normalizeArticle(doc) {
     lossy,
     categoryId: relId(doc.category),
     categoryTitle: cat?.title || '',
+    extraCategoryIds: extraIdsFromCms(doc.categories),
     featuredImage: normalizeMedia(doc.featuredImage),
     status: doc.status || 'draft',
     authorId: relId(doc.author),
@@ -94,7 +101,9 @@ function normalizeArticle(doc) {
     publishedAt: doc.publishedAt || null,
     scheduledFor: doc.scheduledFor || null,
     reviewNotes: doc.reviewNotes || '',
-    corrections: Array.isArray(doc.corrections) ? doc.corrections : []
+    corrections: Array.isArray(doc.corrections) ? doc.corrections : [],
+    // Staff-only archive provenance (null for ordinary stories). Never rendered on a public page.
+    provenance: normalizeProvenance(doc.provenance)
   };
 }
 
@@ -153,6 +162,8 @@ export class CmsAdapter {
     this.currentUser = null;
     this.listeners = new Set();
     this.categoriesPromise = null;
+    this.topicsPromise = null;
+    this.authorProfilesPromise = null;
     this.articleCounts = createCountCache();
   }
 
@@ -191,25 +202,53 @@ export class CmsAdapter {
     } else if (form) {
       init.body = form; // multipart: let the browser set the boundary
     }
-    let res;
     try {
-      res = await fetch(url, init);
-    } catch {
-      throw new ApiError('Cannot reach the CMS. Check your connection and try again.', { status: 0, network: true });
-    }
-    if (!res.ok) {
-      const err = await toApiError(res);
-      if (res.status === 401 && auth) this.handleUnauthorized();
+      return await withTimeout(timeoutFor({ form }), async (signal) => {
+        init.signal = signal;
+        let res;
+        try {
+          res = await fetch(url, init);
+        } catch (err) {
+          if (err?.name === 'AbortError') throw err;
+          throw new ApiError('Cannot reach the CMS. Check your connection and try again.', { status: 0, network: true });
+        }
+        this.emit('network', true);
+        if (!res.ok) {
+          const err = await toApiError(res);
+          if (res.status === 401 && auth) this.handleUnauthorized();
+          if (res.status === 403 && auth && method !== 'GET') {
+            // A revoked/expired session can look like a permission refusal: confirm before saying "not permitted".
+            if (!(await this.verifySession())) {
+              throw new ApiError('Your session has ended. Please sign in again. Your unsaved text is kept on this device.', { status: 401 });
+            }
+          }
+          throw err;
+        }
+        if (res.status === 204) return null;
+        try { return await res.json(); } catch { return null; }
+      });
+    } catch (err) {
+      if (err instanceof RequestTimeoutError) {
+        this.emit('network', false);
+        throw new ApiError('The CMS took too long to respond. Check your connection and try again.', { status: 0, network: true });
+      }
+      if (err?.network) this.emit('network', false);
       throw err;
     }
-    if (res.status === 204) return null;
-    try { return await res.json(); } catch { return null; }
+  }
+
+  /** Extend the 8 hour session. Called periodically while the user is active; failures other than 401 are ignored. */
+  async refreshSession() {
+    if (!this.currentUser) return false;
+    try { await this.request('/users/refresh', { method: 'POST' }); return true; } catch { return false; }
   }
 
   handleUnauthorized() {
     if (!this.currentUser) return;
     this.currentUser = null;
     this.categoriesPromise = null;
+    this.topicsPromise = null;
+    this.authorProfilesPromise = null;
     this.articleCounts.invalidate();
     this.emit('unauthorized', null);
   }
@@ -282,6 +321,8 @@ export class CmsAdapter {
   clearLocalState() {
     this.currentUser = null;
     this.categoriesPromise = null;
+    this.topicsPromise = null;
+    this.authorProfilesPromise = null;
     this.articleCounts.invalidate();
     try {
       for (const key of Object.keys(localStorage)) {
@@ -350,12 +391,29 @@ export class CmsAdapter {
     if ('standfirst' in fields) out.excerpt = fields.standfirst;
     if ('bodyMd' in fields) out.content = markdownToLexical(fields.bodyMd);
     if ('bylineName' in fields) out.bylineName = fields.bylineName;
-    if ('categoryId' in fields && fields.categoryId) out.category = Number(safeId(fields.categoryId));
+    Object.assign(out, categoryFieldsToCms(fields, id => Number(safeId(id))));
     if ('featuredImageId' in fields) {
       out.featuredImage = fields.featuredImageId ? Number(safeId(fields.featuredImageId)) : null;
     }
     if ('corrections' in fields) out.corrections = fields.corrections;
+    Object.assign(out, metaToCms(fields));
     return out;
+  }
+
+  /** Topics for the story-details picker (staff read every topic; non-public ones are marked). Cached per session. */
+  async getTopics() {
+    this.topicsPromise ||= this.request('/topics', { query: { limit: '200', depth: '0', sort: 'name' } })
+      .then(data => profileOptions(data?.docs))
+      .catch(err => { this.topicsPromise = null; throw err; });
+    return this.topicsPromise;
+  }
+
+  /** Public byline profiles for the story-details picker (non-public ones are marked). Cached per session. */
+  async getAuthorProfiles() {
+    this.authorProfilesPromise ||= this.request('/authors', { query: { limit: '200', depth: '0', sort: 'name' } })
+      .then(data => profileOptions(data?.docs))
+      .catch(err => { this.authorProfilesPromise = null; throw err; });
+    return this.authorProfilesPromise;
   }
 
   async createArticle(fields) {
@@ -369,9 +427,10 @@ export class CmsAdapter {
   }
 
   /** PATCH only the supplied (changed) fields. */
-  async updateArticle(id, changes) {
-    const body = CmsAdapter.toCmsFields(changes);
-    if (!Object.keys(body).length) return this.getArticle(id);
+  async updateArticle(id, changes, { expectedUpdatedAt } = {}) {
+    const fields = CmsAdapter.toCmsFields(changes);
+    if (!Object.keys(fields).length) return this.getArticle(id);
+    const body = contentPatchBody(fields, expectedUpdatedAt);
     try {
       const data = await this.request(`/articles/${encodeURIComponent(safeId(id))}`, {
         method: 'PATCH', json: body, query: { depth: '1' }
@@ -410,6 +469,50 @@ export class CmsAdapter {
       method: 'PATCH', json: { status: 'scheduled', scheduledFor: when.toISOString() }, query: { depth: '1' }
     });
     return { data: normalizeArticle(data.doc) };
+  }
+
+  // ---- archive review (recovered archive drafts; docs/archive-candidate-schema.md) ----------------------------
+
+  /** Recovered drafts, filtered. Server-side filters only; the CMS lists them for editors and never publicly. */
+  async getArchiveCandidates(filters = {}, { limit = 25, page = 1 } = {}) {
+    const q = new URLSearchParams({ depth: '1', limit: String(limit), page: String(page), sort: '-updatedAt' });
+    for (const [k, v] of archiveWhere(filters)) q.set(k, v);
+    const data = await this.request('/articles', { query: q });
+    return {
+      data: (data?.docs || []).map(normalizeArticle),
+      totalDocs: data?.totalDocs ?? 0,
+      totalPages: data?.totalPages ?? 1,
+      page: data?.page ?? page
+    };
+  }
+
+  /** Counts per review status (ignoring the status filter) and per confidence (ignoring the confidence filter). */
+  async getArchiveCounts(filters = {}) {
+    const count = async (omit, extra) => {
+      const q = new URLSearchParams({ limit: '1', depth: '0' });
+      for (const [k, v] of archiveWhere(filters, omit)) q.set(k, v);
+      for (const [k, v] of extra) q.set(k, v);
+      return (await this.request('/articles', { query: q }))?.totalDocs ?? 0;
+    };
+    const [statusEntries, confidenceEntries] = await Promise.all([
+      Promise.all(REVIEW_STATUSES.map(async s => [s, await count('reviewStatus', [['where[provenance.reviewStatus][equals]', s]])])),
+      Promise.all(CONFIDENCE_LEVELS.map(async c => [c, await count('confidence', [['where[provenance.confidence][equals]', c]])]))
+    ]);
+    return { reviewStatus: Object.fromEntries(statusEntries), confidence: Object.fromEntries(confidenceEntries) };
+  }
+
+  /**
+   * Approve ("reviewed") or reject a recovered draft: PATCH of provenance.reviewStatus only. The CMS accepts it from editors
+   * in scope (others are refused), writes an audit entry (who, when) and keeps the story a draft; 409 when it changed meanwhile.
+   */
+  async setArchiveReview(id, reviewStatus, { expectedUpdatedAt } = {}) {
+    const body = reviewPatchBody(reviewStatus, expectedUpdatedAt);
+    try {
+      const data = await this.request(`/articles/${encodeURIComponent(safeId(id))}`, { method: 'PATCH', json: body, query: { depth: '1' } });
+      return { data: normalizeArticle(data.doc) };
+    } finally {
+      this.articleCounts.invalidate();
+    }
   }
 
   async deleteArticle(id) {

@@ -1,0 +1,45 @@
+{
+  "kind": "production Node host and compiled public site; C4/C5 and Cloudflare transports STUBBED",
+  "results": [
+    {
+      "device": "desktop",
+      "case": "confirm",
+      "passed": true
+    },
+    {
+      "device": "desktop",
+      "case": "unsubscribe",
+      "passed": true
+    },
+    {
+      "device": "desktop",
+      "case": "contact",
+      "passed": true
+    },
+    {
+      "device": "desktop",
+      "case": "newsletter",
+      "passed": true
+    },
+    {
+      "device": "mobile",
+      "case": "confirm",
+      "passed": true
+    },
+    {
+      "device": "mobile",
+      "case": "unsubscribe",
+      "passed": true
+    },
+    {
+      "device": "mobile",
+      "case": "contact",
+      "passed": true
+    },
+    {
+      "device": "mobile",
+      "case": "newsletter",
+      "passed": true
+    }
+  ]
+}

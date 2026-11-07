@@ -19,11 +19,29 @@ import { cmsAssetUrl } from '../config.js';
 import { livePhotoHtml } from '../live-photo.js';
 import { isStaleConflict } from '../stale-guard.js';
 import { sortPublishedNewestFirst } from '../live-order.js';
+import { liveStaleMessage } from '../http-guard.js';
 
 const POLL_MS = 20000;
 let pollingTimer = null;
 let currentEventId = null;
 let renderSeq = 0;
+let lastLiveOkAt = null;
+
+/** Show (or clear) the "feed may be out of date" notice above the timeline. Polling errors are otherwise silent. */
+function setLiveStale(container, feedEl, failing) {
+  let el = container.querySelector('#live-stale-indicator');
+  const text = liveStaleMessage(lastLiveOkAt, failing);
+  if (!text) { el?.remove(); return; }
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'live-stale-indicator';
+    el.className = 'live-stale-indicator';
+    el.setAttribute('role', 'status');
+    el.setAttribute('data-testid', 'live-stale-indicator');
+    feedEl.parentNode.insertBefore(el, feedEl);
+  }
+  el.textContent = text;
+}
 
 function eventStatusLabel(status) {
   return { draft: 'DRAFT', live: 'LIVE NOW', ended: 'ENDED' }[status] || String(status).toUpperCase();
@@ -238,10 +256,13 @@ async function refreshLiveStream(container, event, setError) {
     updates = (await api.getLiveUpdates(event.id)).data;
   } catch (err) {
     if (!container.isConnected) return false;
+    setLiveStale(container, feedEl, true);
     setError(showApiError(err, 'Could not load updates: '));
     return false;
   }
   if (!container.isConnected) return false;
+  lastLiveOkAt = Date.now();
+  setLiveStale(container, feedEl, false);
   setError('');
 
   const approved = sortPublishedNewestFirst(updates.filter(u => u.status === 'approved'));
@@ -270,7 +291,7 @@ async function refreshLiveStream(container, event, setError) {
             ${canApprove ? `
             <span style="display:inline-flex; gap:0.35rem;">
               <button type="button" class="btn btn-success btn-sm" data-testid="live-approve" data-approve-upd-id="${escapeHtml(u.id)}" data-updated-at="${escapeHtml(u.updatedAt || '')}">Approve &amp; Push Live</button>
-              <button type="button" class="btn btn-outline btn-sm" data-testid="live-reject" data-reject-upd-id="${escapeHtml(u.id)}" data-updated-at="${escapeHtml(u.updatedAt || '')}" style="color:#DC2626;">Reject</button>
+              <button type="button" class="btn btn-outline btn-sm" data-testid="live-reject" data-reject-upd-id="${escapeHtml(u.id)}" data-updated-at="${escapeHtml(u.updatedAt || '')}" style="color:#B91C1C;">Reject</button>
             </span>` : '<span class="badge badge-pending">Awaiting editor</span>'}
           </div>
           <div style="white-space: pre-wrap;">${escapeHtml(u.body)}</div>

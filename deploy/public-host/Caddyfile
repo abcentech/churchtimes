@@ -1,0 +1,24 @@
+# DRAFT reference only. PUBLIC_HOSTNAME must be owner-approved before use. It has no default: an unset or empty value
+# makes Caddy refuse to start (fail closed) instead of serving a placeholder name.
+# At cutover the site address becomes the whole list, for example (all names must resolve to this host; Node answers the
+# old hosts with a 301 to the primary host, see docs/public-redirects.md):
+#   churchtimesnigeria.net, www.churchtimesnigeria.net, churchtimesnigeria.org, www.churchtimesnigeria.org, churchtimesnigeria.com, www.churchtimesnigeria.com
+{$PUBLIC_HOSTNAME} {
+    encode zstd gzip
+    header {
+        -Server
+        Referrer-Policy "no-referrer"
+        # Newsletter confirm and unsubscribe pages hold POST buttons: no other site may frame the public site.
+        X-Frame-Options "DENY"
+        Content-Security-Policy "frame-ancestors 'none'"
+        # HSTS is deliberately OFF until the owner approves it (a wrong HSTS cannot be undone for the max-age):
+        # Strict-Transport-Security "max-age=300"
+    }
+    reverse_proxy 127.0.0.1:5373 {
+        health_uri /robots.txt
+        health_interval 30s
+        health_timeout 3s
+    }
+    # No request/access log: newsletter URLs can contain private action tokens.
+    # Keep Node's cache headers; never blanket-cache HTML, APIs or errors.
+}

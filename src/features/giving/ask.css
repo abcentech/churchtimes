@@ -1,0 +1,6 @@
+.give-ask{margin:40px 0 8px;padding:24px 22px;border-top:3px solid var(--clay);background:var(--white);max-width:720px}
+.give-ask h2{font-size:24px;margin-bottom:10px}
+.give-ask p{font-size:16px;margin-bottom:16px}
+.give-ask .button{font-size:15px;min-height:48px}
+.give-ask .button:focus-visible{outline:3px solid var(--clay);outline-offset:3px}
+@media (prefers-reduced-motion:reduce){.give-ask .button{transition:none}.give-ask .button:hover{transform:none}}

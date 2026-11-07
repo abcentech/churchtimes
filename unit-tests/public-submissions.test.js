@@ -33,7 +33,7 @@ test('phone is required and accepts local and international formatting',()=>{
   }
 });
 test('payload sends only intended fields and the opaque challenge token',()=>{
-  assert.deepEqual(submissionPayload({...values,status:'published',role:'editor',secret:'bad'},'opaque'),{name:'Reader',email:'reader@example.test',phone:'+234 803 123 4567',title:'A local story',body:'Key facts and source links for the community story.',categorySuggestion:'News',location:'',website:'',turnstileToken:'opaque'});
+  assert.deepEqual(submissionPayload({...values,status:'published',role:'editor',secret:'bad'},'opaque'),{name:'Reader',email:'reader@example.test',phone:'+234 803 123 4567',title:'A local story',body:'Key facts and source links for the community story.',categorySuggestion:'News',location:'',website:'',consent:true,consentTextVersion:'2026-10',turnstileToken:'opaque'});
   assert.equal(submissionPayload(values,'opaque','contact').subject,'A local story');
   assert.equal(submissionPayload(values,'opaque','contact').body,undefined);
 });
@@ -71,7 +71,7 @@ test('timeouts and navigation cancellation are distinguishable and never auto-re
 });
 
 test('maps CMS v1.2 location/category fields and rejects incompatible/false receipts',async()=>{
-  const payload=submissionPayload({...values,location:' Lagos '},'opaque');assert.equal(payload.location,'Lagos');assert.equal(payload.categorySuggestion,'News');assert.equal(payload.website,'');assert.equal('category' in payload,false);assert.equal('consent' in payload,false);
+  const payload=submissionPayload({...values,location:' Lagos '},'opaque');assert.equal(payload.location,'Lagos');assert.equal(payload.categorySuggestion,'News');assert.equal(payload.website,'');assert.equal('category' in payload,false);assert.equal(payload.consent,true);assert.equal(payload.consentTextVersion,'2026-10');assert.equal('consent' in submissionPayload({...values,consent:undefined},'opaque'),false);
   for(const [status,body] of [[201,{accepted:true,reference:'old'}],[201,{ok:false,reference:'false'}],[200,{ok:true,reference:'wrong-status'}],[201,{ok:true}]]){
     await assert.rejects(sendPublicSubmission({endpoint:'https://cms.example.test/api',values,token:'opaque',fetchImpl:async()=>response(status,body)}),error=>error.type==='unconfirmed');
   }

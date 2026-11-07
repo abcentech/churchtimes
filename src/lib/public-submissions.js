@@ -40,11 +40,13 @@ export function submissionEndpoint({ kind = 'story', cmsUrl, storyUrl, contactUr
   } catch { return ''; }
 }
 
+// Version of the consent sentence in public-form-markup.js; bump when that text changes.
+export const SUBMISSION_CONSENT_VERSION = '2026-10';
 export function submissionPayload(values, token, kind = 'story') {
   const shared = { name: values.name.trim(), email: values.email.trim(), phone: values.phone?.trim() || '', turnstileToken: token };
   return kind === 'contact'
     ? { ...shared, subject: values.title.trim(), message: values.message.trim() }
-    : { ...shared, title: values.title.trim(), categorySuggestion: values.category, location: values.location?.trim() || '', website: '', body: values.message.trim() };
+    : { ...shared, title: values.title.trim(), categorySuggestion: values.category, location: values.location?.trim() || '', website: '', body: values.message.trim(), ...(values.consent === true ? { consent: true, consentTextVersion: SUBMISSION_CONSENT_VERSION } : {}) };
 }
 
 export class SubmissionError extends Error {

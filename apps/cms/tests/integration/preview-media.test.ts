@@ -41,6 +41,36 @@ describe('article preview tokens', () => {
     expect((await api('GET', `/api/articles/${art.id}`)).status).toBe(404)
   })
 
+  it('never returns provenance, legacy ids or addresses, or other staff-only fields to a preview-link holder', async () => {
+    const art = await f.seedArticle({
+      status: 'draft',
+      author: f.users.reporter.id,
+      reviewNotes: 'private review note',
+      legacyId: 900000 + Math.floor(Math.random() * 90000),
+      legacyUrl: 'https://old-site.test/2020/01/secret-legacy-address/',
+      provenance: {
+        importBatch: `b-${runId}`,
+        sourceUrl: 'https://old-site.test/secret-origin',
+        sourceHost: 'old-site.test',
+        sourceSha256: 'a'.repeat(64),
+        confidence: 'partial',
+        reviewStatus: 'reviewed',
+        reviewedBy: f.users.admin.id,
+        reviewedAt: new Date().toISOString(),
+      },
+    })
+    const { token } = (await mint(f.tokens.eic, art.id)).json
+    const got = await fetchPreview(token)
+    expect(got.status).toBe(200)
+    for (const key of ['provenance', 'legacyId', 'legacyUrl', 'reviewNotes', 'author', 'scheduledFor', 'bodyMedia']) {
+      expect(got.json.doc, key).not.toHaveProperty(key)
+    }
+    for (const needle of ['secret-origin', 'secret-legacy-address', 'old-site.test', 'importBatch', 'reviewStatus', 'reviewedBy', 'reviewedAt', 'private review note']) {
+      expect(got.text, needle).not.toContain(needle)
+    }
+    expect(got.json.doc.id).toBe(art.id)
+  })
+
   it('rejects missing, tampered and expired tokens with 401', async () => {
     const art = await f.createArticle(f.tokens.reporter)
     const { token } = (await mint(f.tokens.reporter, art.id!)).json

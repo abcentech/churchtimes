@@ -23,14 +23,14 @@ async function noOverflow(page) {
   await expect(page.locator('main')).toHaveCount(1);
 }
 
-test('homepage exposes published reports without replacing the current edition',async({page})=>{
+test('homepage promotes published CMS reports into the lead story',async({page})=>{
   await mock(page,route=>send(route,[article,{...article,status:'draft',title:'Private draft'}]));
   await page.goto('/');
   await expect(page.locator('.lead-story h1')).toBeVisible();
   await expect(page.locator('#newsroom-home')).toBeVisible();
-  await expect(page.locator('#newsroom-home h2 a')).toHaveText(article.title);
+  await expect(page.locator('#newsroom-home .lead-story h1 a')).toHaveText(article.title);
   await expect(page.locator('#newsroom-home')).not.toContainText('Private draft');
-  await page.locator('#newsroom-home h2 a').click();
+  await page.locator('#newsroom-home .lead-story h1 a').click();
   await expect(page.locator('h1')).toHaveText(article.title);
   await expect(page.locator('.newsroom-article-body')).toContainText('The initiative brings communities together');
   await expect(page).toHaveTitle(`${article.title} — Church Times Nigeria`);

@@ -1,0 +1,44 @@
+name: Import rehearsal
+
+# Manual only. Runs the full WordPress import rehearsal (apps/cms: npm run import:rehearse) on a throwaway embedded
+# PostgreSQL with a LARGE SYNTHETIC export: dry run, apply, second apply (must be a no-op), update, rollback.
+# Nothing real is read and no repository secret is used. Default size is the real archive size (4,346 posts).
+on:
+  workflow_dispatch:
+    inputs:
+      posts:
+        description: 'Number of synthetic posts'
+        default: '4346'
+      images:
+        description: 'Number of synthetic images'
+        default: '200'
+
+permissions:
+  contents: read
+
+jobs:
+  rehearse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: apps/cms/package-lock.json
+      - run: npm ci
+        working-directory: apps/cms
+      - name: Rehearse
+        working-directory: apps/cms
+        shell: bash
+        run: npm run import:rehearse -- --posts "${{ inputs.posts }}" --images "${{ inputs.images }}" | tee "$RUNNER_TEMP/rehearsal.txt"
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo '### Import rehearsal (synthetic data)'
+            echo '```'
+            cat "$RUNNER_TEMP/rehearsal.txt" 2>/dev/null || echo 'no output'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,22 @@
+/* Church calendar page (tools/public-routes/church-calendar.mjs). Loaded only by that page; uses the site tokens. */
+.ct-cal-header{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px 24px;padding-block:20px;border-bottom:1px solid var(--line,#dcded6)}
+.ct-cal-home{font-family:var(--serif,Georgia,serif);font-size:1.5rem;font-weight:600}
+.ct-cal-header nav{display:flex;gap:20px;font-size:1rem}
+.ct-cal-header a{text-decoration:underline;text-underline-offset:.2em}
+.ct-cal{padding-block:32px 64px;max-width:860px}
+.ct-cal h1{font-size:clamp(2rem,5vw,3rem);margin-bottom:16px}
+.ct-cal h2{font-size:1.5rem;margin:32px 0 12px}
+.ct-cal p{margin:0 0 12px;font-size:1.0625rem}
+.ct-cal-today{padding:12px 16px;background:var(--white,#fffefa);border:1px solid var(--line,#dcded6);border-left:4px solid var(--clay,#9c4d35)}
+.ct-cal-years{display:flex;flex-wrap:wrap;gap:16px;margin:16px 0}
+.ct-cal-years a,.ct-cal-note a{text-decoration:underline;text-underline-offset:.2em}
+.ct-cal-table{width:100%;border-collapse:collapse;font-size:1rem}
+.ct-cal-table th,.ct-cal-table td{padding:10px 8px;text-align:left;border-bottom:1px solid var(--line,#dcded6);vertical-align:top}
+.ct-cal-table th{font-size:.875rem;letter-spacing:.04em;text-transform:uppercase;color:var(--muted,#657071)}
+.ct-cal-table tr[aria-current="date"] td{background:var(--sage,#e9ece4);font-weight:600}
+.ct-cal-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.ct-cal-swatch{display:inline-block;width:.85em;height:.85em;margin-right:.4em;border:1px solid var(--ink,#172b2e);border-radius:50%;vertical-align:-.05em}
+.ct-cal-purple{background:#5b2a86}.ct-cal-white{background:#fff}.ct-cal-green{background:#2f6b3a}.ct-cal-red{background:#b02a2a}.ct-cal-rose{background:#d98ca6}
+.ct-cal-seasons{padding-left:1.2em;line-height:1.7;font-size:1.0625rem}
+.ct-cal-note{margin-top:24px;color:var(--muted,#657071);font-size:1rem}
+@media (max-width:600px){.ct-cal-header,.ct-cal{width:calc(100% - 32px)}.ct-cal-table th,.ct-cal-table td{padding:8px 4px}}

@@ -1,4 +1,4 @@
-import {fetchLiveEvents,fetchLiveUpdates,liveSlug} from '../lib/public-live.js';
+import {fetchLiveEvents,fetchLiveUpdates,liveSlug,MAX_LIVE_RETRY_SECONDS} from '../lib/public-live.js';
 import {cmsErrorMessage} from '../lib/published-articles.js';
 const escape=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const timestamp=value=>new Intl.DateTimeFormat('en-GB',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',timeZone:'Africa/Lagos'}).format(new Date(value))+' WAT';
@@ -11,14 +11,16 @@ export function mountLivePage(root,{baseUrl,slug,signal,pollMs=15000,eventsReade
  const errorBox=root.querySelector('#live-error');const announce=root.querySelector('#live-announcement');
  const refresh=root.querySelector('#live-refresh');const pause=root.querySelector('#live-pause');const more=root.querySelector('#live-more');
  let timer,busy=false,paused=false,ended=false,stopped=false,cursor=0,hasMore=false,failures=0;
- let selected=slug,allEvents=[],nextPage;const ids=new Set();const sequences=new Set();
+ const invalidSlug=Boolean(slug&&!liveSlug(slug));
+ const invalidNotice=invalidSlug?'<p>Coverage unavailable. Check the event link or choose coverage below.</p>':'';
+ let selected=invalidSlug?undefined:slug,allEvents=[],nextPage;const items=new Map();const sequences=new Map();
  const controller=new AbortController();const alive=()=>!stopped&&root.isConnected;
  function stop(){stopped=true;clearTimeout(timer);controller.abort();document.removeEventListener('visibilitychange',visibility);signal?.removeEventListener('abort',stop);}
  signal?.addEventListener('abort',stop,{once:true});if(signal?.aborted){stop();return stop;}
  function schedule(delay=pollMs){clearTimeout(timer);if(alive()&&!paused&&!ended&&!document.hidden)timer=setTimeout(()=>loadUpdates(),delay);}
  function failure(error){
   errorBox.hidden=false;errorBox.textContent=error?.status===404?'Coverage unavailable. This event is not available to readers.':`Updates could not be loaded. ${cmsErrorMessage(error)||'Please try again. Previously published updates remain here.'}`;
-  if(error?.status===404){ended=true;cursor=0;hasMore=false;pause.hidden=true;more.hidden=true;announce.textContent='';root.querySelector('#live-event-status').textContent='Unavailable';root.querySelector('#live-event-title').textContent=root.querySelector('#live-event-title').textContent||'Coverage unavailable.';root.querySelector('#live-empty').hidden=true;clearTimeout(timer);root.querySelector('#live-timeline').replaceChildren();ids.clear();sequences.clear();}
+  if(error?.status===404){ended=true;cursor=0;hasMore=false;pause.hidden=true;more.hidden=true;announce.textContent='';root.querySelector('#live-event-status').textContent='Unavailable';root.querySelector('#live-event-title').textContent=root.querySelector('#live-event-title').textContent||'Coverage unavailable.';root.querySelector('#live-empty').hidden=true;clearTimeout(timer);root.querySelector('#live-timeline').replaceChildren();items.clear();sequences.clear();}
  }
  async function loadUpdates(){
   if(!alive()||busy||!selected)return;
@@ -28,20 +30,36 @@ export function mountLivePage(root,{baseUrl,slug,signal,pollMs=15000,eventsReade
    failures=0;ended=data.event.status==='ended';hasMore=data.hasMore;
    root.querySelector('#live-event-title').textContent=data.event.title;root.querySelector('#live-event-status').textContent=ended?'Coverage ended':'Live';
    const known=allEvents.find(e=>e.slug===selected);root.querySelector('#live-event-summary').textContent=known?.summary||'';
-   const list=root.querySelector('#live-timeline');let added=0;
+   const list=root.querySelector('#live-timeline');let added=0,changed=0;
    for(const update of data.updates){
-    if(ids.has(update.id)||sequences.has(update.sequence))continue;ids.add(update.id);sequences.add(update.sequence);added++;
-    const row=document.createElement('li');row.dataset.sequence=String(update.sequence);
+    const previous=items.get(update.id);
+    if(previous && update.sequence<=previous.sequence)continue;
+    const owner=sequences.get(update.sequence);
+    if(owner!==undefined && owner!==update.id)continue;
+    const row=document.createElement('li');row.dataset.sequence=String(update.sequence);row.dataset.id=update.id;
     const time=update.approvedAt||update.occurredAt;
     if(time){const label=document.createElement('p');label.className='live-update-time';const stamp=document.createElement('time');stamp.dateTime=time;stamp.textContent=timestamp(time);label.append(stamp);row.append(label);}
-    const body=document.createElement('p');body.className='live-update-body';body.textContent=update.body;row.append(body);list.append(row);
+    if(update.image){
+     const figure=document.createElement('figure');figure.className='live-update-figure';
+     const image=document.createElement('img');image.src=update.image.url;image.alt=update.image.alt;image.loading='lazy';image.decoding='async';
+     if(update.image.width)image.width=update.image.width;
+     if(update.image.height)image.height=update.image.height;
+     if(!update.image.width||!update.image.height)figure.classList.add('live-update-figure--placeholder');
+     image.addEventListener('error',()=>figure.remove(),{once:true});figure.append(image);row.append(figure);
+    }
+    const body=document.createElement('p');body.className='live-update-body';body.textContent=update.body;row.append(body);
+    if(previous){previous.element.remove();sequences.delete(previous.sequence);changed++;}else added++;
+    items.set(update.id,{element:row,sequence:update.sequence});sequences.set(update.sequence,update.id);
+    const following=Array.from(list.children).find(item=>Number(item.dataset.sequence)>update.sequence);
+    list.insertBefore(row,following||null);
    }
    cursor=data.nextSince;more.hidden=!hasMore;pause.hidden=ended;
-   root.querySelector('#live-empty').hidden=ids.size>0;
+   root.querySelector('#live-empty').hidden=items.size>0;
    root.querySelector('#live-check-time').textContent=`Last checked ${timestamp(new Date().toISOString())}`;
-   if(added||!ids.size||ended)announce.textContent=ended?`Coverage ended. ${ids.size} published updates shown.`:added?`${added} new ${added===1?'update':'updates'}. ${ids.size} published updates shown.`:'Waiting for the first published update.';
+   const changes=[];if(added)changes.push(`${added} new ${added===1?'update':'updates'}`);if(changed)changes.push(`${changed} ${changed===1?'update':'updates'} revised`);
+   if(changes.length||!items.size||ended)announce.textContent=ended?`Coverage ended. ${items.size} published updates shown.`:changes.length?`${changes.join('. ')}. ${items.size} published updates shown.`:'Waiting for the first published update.';
    schedule(hasMore?1000:pollMs);
-  }catch(error){if(!alive())return;failures++;failure(error);schedule(error?.status===429?Math.max(1000,error.retryAfter*1000):Math.min(120000,pollMs*2**Math.min(failures,3)));}
+  }catch(error){if(!alive())return;failures++;failure(error);schedule(error?.status===429?Math.max(1000,Math.min(MAX_LIVE_RETRY_SECONDS,Number(error.retryAfter)||30)*1000):Math.min(120000,pollMs*2**Math.min(failures,3)));}
   finally{busy=false;if(alive()){refresh.disabled=false;more.disabled=false;panel.setAttribute('aria-busy','false');}}
  }
  async function loadDiscovery(page=1){
@@ -50,16 +68,16 @@ export function mountLivePage(root,{baseUrl,slug,signal,pollMs=15000,eventsReade
    const data=await eventsReader({baseUrl,page,signal:controller.signal});if(!alive())return;
    for(const event of data.events)if(!allEvents.some(e=>e.slug===event.slug))allEvents.push(event);
    nextPage=data.nextPage;
-   discovery.innerHTML=allEvents.length?`<nav aria-label="Live and ended coverage"><ul class="live-event-links">${allEvents.map(event=>`<li><a href="#live/${escape(event.slug)}" ${event.slug===selected?'aria-current="page"':''}>${escape(event.title)} <span>${event.status==='live'?'Live':'Ended'}</span></a></li>`).join('')}</ul></nav>${nextPage?'<button class="outline-button" id="live-more-events">More coverage</button>':''}`:'<p>No live or ended coverage is available yet.</p>';
+   discovery.innerHTML=invalidNotice+(allEvents.length?`<nav aria-label="Live and ended coverage"><ul class="live-event-links">${allEvents.map(event=>`<li><a href="#live/${escape(event.slug)}" ${event.slug===selected?'aria-current="page"':''}>${escape(event.title)} <span>${event.status==='live'?'Live':'Ended'}</span></a></li>`).join('')}</ul></nav>${nextPage?'<button class="outline-button" id="live-more-events">More coverage</button>':''}`:'<p>No live or ended coverage is available yet.</p>');
    discovery.querySelector('#live-more-events')?.addEventListener('click',()=>loadDiscovery(nextPage));
-   if(!selected)selected=(allEvents.find(event=>event.status==='live')||allEvents[0])?.slug;
+   if(!selected&&!invalidSlug)selected=(allEvents.find(event=>event.status==='live')||allEvents[0])?.slug;
    discovery.querySelectorAll('a').forEach(link=>{if(link.getAttribute('href')===`#live/${selected}`)link.setAttribute('aria-current','page');});
    if(selected&&panel.hidden){panel.hidden=false;await loadUpdates();}
    if(focusInside)(discovery.querySelectorAll('a')[previousCount]||discovery.querySelector('a'))?.focus();
   }catch(error){
    if(!alive())return;
    if(allEvents.length){discovery.querySelector('#live-discovery-failure')?.remove();discovery.querySelector('#live-more-events')?.remove();discovery.insertAdjacentHTML('beforeend','<div id="live-discovery-failure"><p>More coverage could not be loaded.</p><button id="live-discovery-retry" class="outline-button">Try again</button></div>');}
-   else discovery.innerHTML=`<p>${escape(cmsErrorMessage(error)||'Coverage could not be loaded. Please try again.')}</p><button id="live-discovery-retry" class="outline-button">Try again</button>`;
+   else discovery.innerHTML=invalidNotice+`<p>${escape(cmsErrorMessage(error)||'Coverage could not be loaded. Please try again.')}</p><button id="live-discovery-retry" class="outline-button">Try again</button>`;
    discovery.querySelector('#live-discovery-retry')?.addEventListener('click',()=>loadDiscovery(page));
   }finally{if(alive())discovery.setAttribute('aria-busy','false');}
  }
@@ -68,7 +86,6 @@ export function mountLivePage(root,{baseUrl,slug,signal,pollMs=15000,eventsReade
  refresh.addEventListener('click',()=>{clearTimeout(timer);loadUpdates();});more.addEventListener('click',()=>{clearTimeout(timer);loadUpdates();});
  pause.addEventListener('click',()=>{paused=!paused;pause.setAttribute('aria-pressed',String(paused));pause.textContent=paused?'Resume automatic updates':'Pause automatic updates';clearTimeout(timer);if(!paused)schedule();});
  if(!baseUrl){discovery.innerHTML='<p>Live coverage is not available yet. Browse the current edition or the latest published reports.</p>';discovery.setAttribute('aria-busy','false');}
- else if(slug&&!liveSlug(slug)){discovery.innerHTML='<p>Coverage unavailable. Check the event link.</p>';discovery.setAttribute('aria-busy','false');}
- else {if(slug){panel.hidden=false;loadUpdates();}loadDiscovery();}
+ else {if(selected){panel.hidden=false;loadUpdates();}loadDiscovery();}
  return stop;
 }

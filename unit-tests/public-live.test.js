@@ -5,7 +5,7 @@ const event={id:1,slug:'public-event',title:'Public event',status:'live',author:
 const update={id:1,sequence:1,body:'<script>plain text</script>\nSecond line',occurredAt:'2026-10-14T08:00:00Z',approvedAt:'2026-10-14T08:05:00Z',author:{email:'private'},approvedBy:3};
 test('live models allow only public event states and whitelist plain-text update fields',()=>{
  assert.equal(normalizeLiveEvent({...event,status:'draft'}),null);assert.equal(normalizeLiveEvent({...event,slug:'../private'}),null);assert.equal(normalizeLiveEvent(event).author,undefined);
- assert.deepEqual(Object.keys(normalizeLiveUpdate(update)),['id','sequence','body','occurredAt','approvedAt']);assert.match(normalizeLiveUpdate(update).body,/<script>/);assert.equal(normalizeLiveUpdate({...update,status:'pending'}),null);assert.equal(normalizeLiveUpdate({...update,sequence:0}),null);
+ assert.deepEqual(Object.keys(normalizeLiveUpdate(update)),['id','sequence','image','body','occurredAt','approvedAt']);assert.match(normalizeLiveUpdate(update).body,/<script>/);assert.equal(normalizeLiveUpdate({...update,status:'pending'}),null);assert.equal(normalizeLiveUpdate({...update,sequence:0}),null);
 });
 test('anonymous event discovery explicitly requests live/ended, sort and real pagination',async()=>{
  const result=await fetchLiveEvents({baseUrl:'https://cms.example.test',fetchImpl:async(url,options)=>{const u=new URL(url);assert.equal(u.pathname,'/api/live-events');assert.equal(u.searchParams.get('where[status][in]'),'live,ended');assert.equal(u.searchParams.get('sort'),'-startedAt');assert.equal(options.credentials,'omit');assert.equal(options.headers.Authorization,undefined);return Response.json({docs:[event,{...event,status:'draft'}],hasNextPage:true,nextPage:2});}});assert.equal(result.events.length,1);assert.equal(result.nextPage,2);
@@ -23,4 +23,22 @@ test('timeouts, rate limits and navigation aborts stay distinguishable with no c
  await assert.rejects(fetchLiveEvents({baseUrl:'https://cms.example.test',timeoutMs:5,fetchImpl:(_url,{signal})=>new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>reject(Error('aborted'))))}),e=>e.type==='timeout');
  await assert.rejects(fetchLiveEvents({baseUrl:'https://cms.example.test',fetchImpl:async()=>new Response('',{status:429,headers:{'Retry-After':'15'}})}),e=>e.status===429&&e.retryAfter===15);
  const controller=new AbortController();controller.abort();let calls=0;await assert.rejects(fetchLiveEvents({baseUrl:'https://cms.example.test',signal:controller.signal,fetchImpl:()=>{calls++;}}),e=>e.type==='cancelled');assert.equal(calls,0);
+});
+
+test('live photos retain only safe same-origin media, nonempty alt and valid dimensions',()=>{
+ const baseUrl='https://cms.example.test';
+ const image={url:'/api/media/file/live.png',alt:'  Delegates in the hall  ',width:800,height:450,mimeType:'image/png',uploadedBy:{email:'private'}};
+ const normalize=value=>normalizeLiveUpdate({...update,image:value},{baseUrl}).image;
+ assert.deepEqual(normalize(image),{url:baseUrl+image.url,alt:'Delegates in the hall',width:800,height:450,mimeType:'image/png'});
+ assert.deepEqual(normalize({...image,width:1.5,height:-1}),{url:baseUrl+image.url,alt:'Delegates in the hall',width:null,height:null,mimeType:'image/png'});
+ for(const value of [null,{...image,alt:''},{...image,alt:'   '},{...image,alt:3},{...image,url:'javascript:alert(1)'},{...image,url:'https://foreign.test/api/media/file/photo.png'},{...image,url:'https://user:pass@cms.example.test/api/media/file/photo.png'},{...image,url:'/admin/private'},{...image,mimeType:'image/svg+xml'}])assert.equal(normalize(value),null);
+ assert.equal(normalizeLiveUpdate(update).image,null);
+ assert.equal(normalizeLiveUpdate({...update,image}).image,null,'photos need a validated CMS origin');
+});
+test('the live feed resolves relative media against its configured CMS origin',async()=>{
+ const result=await fetchLiveUpdates({baseUrl:'https://cms.example.test',slug:event.slug,fetchImpl:async()=>Response.json({event,docs:[{...update,image:{url:'/api/media/file/photo.webp',alt:'A public photograph',width:800,height:450,mimeType:'image/webp'}}],nextSince:1})});
+ assert.equal(result.updates[0].image.url,'https://cms.example.test/api/media/file/photo.webp');
+});
+test('numeric and HTTP-date live Retry-After values are capped at ten minutes',async()=>{
+ for(const value of ['86400',new Date(Date.now()+86400000).toUTCString()])await assert.rejects(fetchLiveEvents({baseUrl:'https://cms.example.test',fetchImpl:async()=>new Response('',{status:429,headers:{'Retry-After':value}})}),e=>e.status===429&&e.retryAfter===600);
 });

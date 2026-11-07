@@ -8,6 +8,13 @@ const salt = 'ab'.repeat(32)
 const current = `pbkdf2-sha256-v1:${pbkdf2Sync('correct-password-1', salt, 600_000, 32, 'sha256').toString('hex')}`
 const legacy = pbkdf2Sync('legacy-password-1', salt, 25_000, 512, 'sha256').toString('hex')
 
+describe('production password hash cost', () => {
+  it('keeps the production PBKDF2 parameters (never lowered for tests)', () => {
+    expect(passwordHashParameters(current)).toMatchObject({ iterations: 600_000, keyLength: 32 })
+    expect(passwordHashParameters(legacy)).toMatchObject({ iterations: 25_000, keyLength: 512 })
+  })
+})
+
 describe('verifyStoredPassword (Payload-compatible pbkdf2)', () => {
   it('accepts the right password and rejects the wrong one for current hashes', async () => {
     expect(await verifyStoredPassword({ hash: current, salt }, 'correct-password-1')).toBe(true)
