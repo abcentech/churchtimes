@@ -7,7 +7,7 @@ before running anything.
 
 Related: [owner-security-hardening.md](owner-security-hardening.md), [import.md](import.md) (server import commands: "Importing on the server"), [uploads-download.md](uploads-download.md), [operations.md](operations.md),
 [security.md](security.md), [api-contracts.md](api-contracts.md). The go-live plan, build spec and Codex specs
-(`docs/go-live-plan.md`, `docs/go-live-build-spec.md`, `docs/codex-wave4-spec.md`) live on the go-live-plan branch.
+([`docs/go-live-plan.md`](../../../docs/go-live-plan.md), [`docs/go-live-build-spec.md`](../../../docs/go-live-build-spec.md) and the historical `docs/codex-wave*` specs) are kept in `docs/` by PR #35. The plan is a short map to this runbook; this runbook is the authority for cutover and rollback.
 
 ## How to read the commands
 
