@@ -22,7 +22,7 @@ permissions:
   contents: read
 jobs:
   reader-budget:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         optional: [unset, synthetic]

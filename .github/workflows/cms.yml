@@ -21,7 +21,7 @@ jobs:
   # never share a database. The aggregate "verify" job keeps the original required-check name.
   static:
     name: typecheck, unit, build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: apps/cms
@@ -76,7 +76,7 @@ jobs:
 
   integration:
     name: integration (shard ${{ matrix.shard }}/3)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -129,7 +129,7 @@ jobs:
 
   security:
     name: security regression suite
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: apps/cms
@@ -178,7 +178,7 @@ jobs:
   verify:
     needs: [static, integration, security]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: All CMS checks passed
         run: |
