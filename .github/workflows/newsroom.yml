@@ -28,7 +28,7 @@ jobs:
   # no-demo-password-in-bundle audit). No CMS needed: live-CMS tests stay skipped without NEWSROOM_LIVE_CMS_URL.
   newsroom:
     if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -55,7 +55,7 @@ jobs:
   # Locally: cd apps/cms && npm run build && npm run staging:up (see apps/cms/docs/staging.md), then npm run test:e2e:cross-app.
   cross-app:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
