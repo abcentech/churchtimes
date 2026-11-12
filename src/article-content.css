@@ -5,7 +5,10 @@
 .article-table th{background:var(--sage);font-weight:650;color:var(--ink)}
 .youtube-video{margin:28px 0;max-width:100%}
 .youtube-video-screen{aspect-ratio:16 / 9;background:#222;color:#fff;overflow:hidden}
-.youtube-play{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:#fff;padding:20px;text-align:center;font:600 15px/1.4 var(--sans)}
+.youtube-play,.youtube-static{width:100%;height:100%;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:#fff;padding:20px;text-align:center;font:600 15px/1.4 var(--sans)}
+.youtube-static{display:flex}
+.youtube-play,html.has-video-controls .youtube-static{display:none}
+html.has-video-controls .youtube-play{display:flex}
 .youtube-play:hover{background:#333}
 .youtube-play:focus-visible{outline:3px solid #fff;outline-offset:-5px}
 .youtube-play-icon{display:grid;place-items:center;width:64px;height:48px;border-radius:9px;background:#b22;color:#fff;font-size:25px}

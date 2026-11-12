@@ -100,7 +100,7 @@ describe('C1.1 youtubeEmbed block in articles.content', () => {
   })
 
   it('refuses a malformed videoId on create and on update', async () => {
-    for (const videoId of ['short', 'dQw4w9WgXcQ0', 'dQw4w9WgXc!', 'https://youtu.be/dQw4w9WgXcQ', '', 12345678901]) {
+    for (const videoId of ['short', 'dQw4w9WgXcQ0', 'dQw4w9WgXc!', 'https://evil.test/watch?v=dQw4w9WgXcQ', '', 12345678901]) {
       const res = await f.createArticle(f.tokens.eic, { content: body(youtube({ videoId })) })
       expect(res.status, JSON.stringify(videoId)).toBe(400)
       expect(errorText(res)).toMatch(/video id/i)

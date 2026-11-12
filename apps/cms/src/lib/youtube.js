@@ -30,7 +30,8 @@ export function parseYoutubeInput(value) {
   if (YOUTUBE_ID_RE.test(input)) return { videoId: input };
   if (!input || input.length > 2048) return null;
   let url;
-  try { url = new URL(input); } catch { return null; }
+  const address = /^(?:(?:www\.|m\.)?youtube\.com|youtu\.be)\//i.test(input) ? `https://${input}` : input;
+  try { url = new URL(address); } catch { return null; }
   if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.port) return null;
   const host = url.hostname.toLowerCase();
   let id;

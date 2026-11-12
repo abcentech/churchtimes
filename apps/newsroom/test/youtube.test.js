@@ -7,7 +7,7 @@ const id = 'aB3_deF-123';
 
 test('accepts each normal YouTube link form and keeps valid start times', () => {
   for (const input of [
-    id, 'https://youtube.com/watch?v=' + id, 'https://www.youtube.com/watch?si=ok&v=' + id,
+    id, 'youtube.com/watch?v=' + id, 'youtu.be/' + id, 'https://youtube.com/watch?v=' + id, 'https://www.youtube.com/watch?si=ok&v=' + id,
     'https://m.youtube.com/watch?v=' + id, 'https://youtu.be/' + id + '?si=abc',
     'https://youtube.com/shorts/' + id, 'https://www.youtube.com/live/' + id,
     'https://youtube.com/watch?v=' + id + '&live=1'
