@@ -104,7 +104,8 @@ function picture(s, className='', eager=false, sizes='(max-width: 430px) calc(10
   const responsive = image ? `width="${image.width}" height="${image.height}" srcset="${image.variants.map(width => `${asset(`news-media/responsive/${s.id}-${width}.webp`)} ${width}w`).join(', ')}" sizes="${sizes}"` : '';
   return liteMarkup(`<img data-bundled-image class="${className}" src="${asset(s.image)}" ${responsive} alt="${escape(s.imageAlt || '')}" loading="${eager?'eager':'lazy'}" ${eager?'fetchpriority="high"':''} decoding="async">`);
 }
-function wordmark(className='') { return `<a class="wordmark ${className}" href="#home" aria-label="Church Times Nigeria home"><span>Church <span class="wordmark-times">Times</span><i aria-hidden="true"><svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="5" fill="currentColor"/></svg></i></span> <small>NIGERIA</small></a>`; }
+// The official masthead (public/brand-assets). Two files so the reader's own light/dark choice picks the right one.
+function wordmark(className='') { return `<a class="wordmark ${className}" href="#home" aria-label="Church Times Nigeria home"><img class="wordmark-logo wordmark-light" src="${asset('brand-assets/masthead.svg')}" width="1141" height="276" alt="" decoding="async"><img class="wordmark-logo wordmark-dark" src="${asset('brand-assets/masthead-dark.svg')}" width="1141" height="276" alt="" decoding="async"></a>`; }
 function bindPublicForm(kind) {
   const form=document.querySelector('#public-form');
   let cancelled=false,dispose;

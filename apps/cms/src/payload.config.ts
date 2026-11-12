@@ -147,6 +147,16 @@ export default buildConfig({
   admin: {
     user: 'users',
     importMap: { baseDir: path.resolve(dirname) },
+    components: {
+      graphics: {
+        Logo: '/components/BrandGraphics#BrandLogo',
+        Icon: '/components/BrandGraphics#BrandIcon',
+      },
+    },
+    meta: {
+      titleSuffix: ' | Church Times Nigeria',
+      icons: [{ rel: 'icon', type: 'image/svg+xml', url: '/brand/icon.svg' }],
+    },
   },
   collections: [
     Users,
