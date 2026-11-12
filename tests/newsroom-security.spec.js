@@ -732,14 +732,14 @@ test.describe('Production build against a stubbed CMS', () => {
     cms.touchArticle(1, { title: 'Stub story 1, corrected by the author' });
     await page.getByTestId('editor-publish').click();
     await page.getByTestId('publish-ok').click();
-    expect(cms.log.patches.at(-1)).toEqual({ id: '1', body: { status: 'published', expectedUpdatedAt: '2026-01-01T00:00:00.000Z' } });
+    await expect.poll(() => cms.log.patches.at(-1)).toEqual({ id: '1', body: { status: 'published', expectedUpdatedAt: '2026-01-01T00:00:00.000Z' } });
     await expect(page.getByTestId('editor-error')).toHaveText(STALE_CMS_MESSAGE);
     await expect(page.getByTestId('editor-title')).toHaveValue('Stub story 1, corrected by the author');
     await expect(page.getByTestId('editor-status')).toHaveAttribute('data-status', 'approved');
 
     await page.getByTestId('editor-publish').click();
     await page.getByTestId('publish-ok').click();
-    expect(cms.log.patches.at(-1)).toEqual({ id: '1', body: { status: 'published', expectedUpdatedAt: '2026-10-14T21:00:00.000Z' } });
+    await expect.poll(() => cms.log.patches.at(-1)).toEqual({ id: '1', body: { status: 'published', expectedUpdatedAt: '2026-10-14T21:00:00.000Z' } });
     await expect(page.getByTestId('editor-status')).toHaveAttribute('data-status', 'published');
   });
 
@@ -1016,11 +1016,14 @@ test.describe('Editor data-loss guards (stubbed CMS)', () => {
     const cms = await stubCms(page, { articles: [stubArticle(1)] });
     await page.goto(`${STUB_BASE}#dashboard`);
     await expect(page.getByTestId('session-user')).toBeVisible();
+    // The user badge can appear before the keep-alive timer is installed during startup.
+    await expect(page.getByTestId('story-list')).toBeVisible();
     await page.clock.runFor(40 * 60 * 1000); // idle the whole time
     expect(cms.log.refreshes).toBe(0);
     await page.keyboard.press('Shift'); // activity
-    await page.clock.runFor(2 * 60 * 1000);
-    expect(cms.log.refreshes).toBe(1);
+    // Advance in small steps so the mocked network request can complete before its 30-second timeout.
+    for (let i = 0; i < 120 && cms.log.refreshes === 0; i++) await page.clock.runFor(1000);
+    await expect.poll(() => cms.log.refreshes).toBe(1);
   });
 
   test('going offline shows a banner and coming back hides it', async ({ page, context }) => {

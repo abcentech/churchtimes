@@ -85,6 +85,11 @@ export function can(user, action, ctx = {}) {
       return isEditorRole(user) || role === 'trusted-publisher';
     case 'live.approve':
       return editor || (role === 'trusted-publisher' && inSections(user, categoryId));
+    case 'live.edit':
+      if (editor) return true;
+      if (ctx.eventStatus === 'ended' || !isAuthor) return false;
+      if (role === 'trusted-publisher') return inSections(user, categoryId) || status === 'pending';
+      return role === 'reporter' && status === 'pending';
     case 'archive.view':
       // Recovered archive drafts are staff-only and the CMS only lists them for editors (reporters see their own work only).
       return isEditorRole(user);

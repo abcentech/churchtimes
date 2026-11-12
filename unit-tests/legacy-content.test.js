@@ -61,12 +61,18 @@ test('root-relative body links remain links; protocol-relative, controls and bac
   assert.equal(renderArticleContent(article([{type:'link',fields:{url},children:[textNode('Reference')]}])),'Reference');
  }
 });
-test('C1 youtubeEmbed contract fixture is an escaped labelled link only, never an embed or arbitrary URL',()=>{
+test('C1 youtubeEmbed renders an escaped click-to-play facade with a fallback, without a player request',()=>{
  const block=fields=>({type:'block',version:2,fields:{blockType:'youtubeEmbed',...fields}});
  const html=renderArticleContent(article([block({videoId:'abc_DE-1234',title:'Synthetic <title> & video'})]));
- assert.equal(html,'<p><a href="https://www.youtube.com/watch?v=abc_DE-1234" rel="noopener noreferrer">Watch video on YouTube: Synthetic &lt;title&gt; &amp; video</a></p>');
+ assert.match(html,/data-youtube-video="abc_DE-1234"/);
+ assert.match(html,/Synthetic &lt;title&gt; &amp; video/);
+ assert.match(html,/<button[^>]*data-youtube-play/);
+ assert.match(html,/href="https:\/\/www.youtube.com\/watch\?v=abc_DE-1234"/);
+ assert.match(html,/>Watch on YouTube<\/a>/);
  assert.doesNotMatch(html,/<iframe|<script|<img|embed\//);
- assert.match(renderArticleContent(article([block({videoId:'abc_DE-1234',title:'\u00a0'})])),/>Watch video on YouTube<\/a>/);
+ assert.match(renderArticleContent(article([block({videoId:'abc_DE-1234',title:'\u00a0'})])),/YouTube video/);
+ assert.match(renderArticleContent(article([block({videoId:'abc_DE-1234',startSeconds:65})])),/data-youtube-start="65"/);
+ assert.doesNotMatch(renderArticleContent(article([block({videoId:'abc_DE-1234',startSeconds:'1" onload="x'})])),/data-youtube-start/);
  for(const videoId of ['x','abc_DE-1234?evil','https://evil.test','abc<DEF1234'])assert.equal(renderArticleContent(article([block({videoId})])), '');
 });
 test('cumulative table budget remains separate from prose and every shortened table is labelled',()=>{
@@ -87,8 +93,9 @@ test('absolute and mailto links preserve URL-encoded spaces and trim surrounding
 test('YouTube titles are bounded before escaping and paragraph-nested blocks stay valid inline links',()=>{
  const block={type:'block',fields:{blockType:'youtubeEmbed',videoId:'abcdefghijk',title:'<'.repeat(100000)}};
  const html=renderArticleContent(article([{type:'paragraph',children:[textNode('Video: '),block]}]));
- assert.equal(html,`<p>Video: <a href="https://www.youtube.com/watch?v=abcdefghijk" rel="noopener noreferrer">Watch video on YouTube: ${'&lt;'.repeat(200)}</a></p>`);
+ assert.equal(html,`<p>Video: <a href="https://www.youtube.com/watch?v=abcdefghijk" rel="noopener noreferrer">Watch on YouTube: ${'&lt;'.repeat(200)}</a></p>`);
  assert.ok(html.length<1200);assert.doesNotMatch(html,/<p><p>/);
  const unicode=renderArticleContent(article([{...block,fields:{...block.fields,title:'a'.repeat(199)+'\ud83d\ude00'}}]));
  assert.doesNotMatch(unicode,/[\ud800-\udbff]/u);
+ assert.ok(renderArticleContent(article([block])).length<4000);
 });

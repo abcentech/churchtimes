@@ -12,6 +12,7 @@ import {
   isSafeAvUrl,
 } from '../lib/avMedia'
 import { YOUTUBE_BLOCK_SLUG, YOUTUBE_TITLE_MAX, validateVideoId, validateYoutubeTitle } from '../lib/lexicalEmbeds'
+import { isYoutubeStartSeconds, YOUTUBE_START_MAX } from '../lib/youtube.js'
 import {
   GALLERY_BLOCK_SLUG,
   GALLERY_CAPTION_MAX,
@@ -36,7 +37,7 @@ export const youtubeEmbedBlock: Block = {
       type: 'text',
       required: true,
       validate: (value: unknown) => validateVideoId(value),
-      admin: { description: 'The 11-character id from the video address (the part after "v=" or youtu.be/).' },
+      admin: { description: 'Paste a YouTube video or live-stream link, or its 11-character video ID. The CMS saves the ID only.' },
     },
     {
       name: 'title',
@@ -44,6 +45,11 @@ export const youtubeEmbedBlock: Block = {
       maxLength: YOUTUBE_TITLE_MAX,
       validate: (value: unknown) => validateYoutubeTitle(value),
       admin: { description: `Optional short title shown before the video loads, up to ${YOUTUBE_TITLE_MAX} characters.` },
+    },
+    {
+      name: 'startSeconds', type: 'number', min: 0, max: YOUTUBE_START_MAX,
+      validate: (value: unknown) => isYoutubeStartSeconds(value) || 'Enter a whole number of seconds.',
+      admin: { description: 'Optional start time in seconds. A t= value in a pasted link fills this on save.' },
     },
   ],
 }

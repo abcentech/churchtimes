@@ -151,7 +151,9 @@ function normalizeUpdate(u) {
     occurredAt: u.occurredAt || u.createdAt || null,
     authorName: author?.name || '',
     // Optional photo: the CMS sends the media id (depth 0) or the populated document (depth 1).
-    image: u.image === null || u.image === undefined ? null : normalizeMedia(u.image)
+    image: u.image === null || u.image === undefined ? null : normalizeMedia(u.image),
+    video: u.video?.videoId ? { videoId: u.video.videoId, title: u.video.title || '', startSeconds: u.video.startSeconds ?? null } : null,
+    authorId: relId(u.author)
   };
 }
 
@@ -610,14 +612,21 @@ export class CmsAdapter {
    * publishNow asks the CMS to publish immediately; it only honours it for editors in scope (otherwise: pending).
    * imageId (optional) attaches one photo: the CMS requires an image with alt text and answers 400 with a message otherwise.
    */
-  async postLiveUpdate({ eventId, body, publishNow = false, imageId = null }) {
+  async postLiveUpdate({ eventId, body, publishNow = false, imageId = null, video = null }) {
     const hasImage = imageId !== null && imageId !== undefined && imageId !== '';
-    const payload = liveUpdatePayload({ eventId: safeId(eventId), body, publishNow, imageId: hasImage ? safeId(imageId) : null });
+    const payload = liveUpdatePayload({ eventId: safeId(eventId), body, publishNow, imageId: hasImage ? safeId(imageId) : null, video });
     const data = await this.request('/live-updates', {
       method: 'POST',
       json: payload,
       query: { depth: '1' }
     });
+    return { data: normalizeUpdate(data.doc) };
+  }
+
+  async setLiveUpdateVideo(id, video, { expectedUpdatedAt } = {}) {
+    const json = { video };
+    if (expectedUpdatedAt) json.expectedUpdatedAt = expectedUpdatedAt;
+    const data = await this.request(`/live-updates/${encodeURIComponent(safeId(id))}`, { method: 'PATCH', json, query: { depth: '1' } });
     return { data: normalizeUpdate(data.doc) };
   }
 

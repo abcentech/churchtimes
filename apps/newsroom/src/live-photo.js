@@ -18,9 +18,10 @@ export function livePhotoHtml(image, safeUrl, { testid = 'live-update-photo' } =
 }
 
 /** The body of POST /api/live-updates (image is the media id, a number; omitted when there is no photo). */
-export function liveUpdatePayload({ eventId, body, publishNow = false, imageId = null }) {
+export function liveUpdatePayload({ eventId, body, publishNow = false, imageId = null, video = null }) {
   const payload = { event: Number(eventId), body };
   if (publishNow) payload.status = 'approved';
   if (imageId !== null && imageId !== undefined && imageId !== '') payload.image = Number(imageId);
+  if (video) payload.video = video;
   return payload;
 }

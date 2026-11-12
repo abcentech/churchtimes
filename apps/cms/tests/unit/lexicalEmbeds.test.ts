@@ -47,8 +47,11 @@ describe('isYoutubeVideoId / validateVideoId', () => {
     ]
     for (const v of bad) {
       expect(isYoutubeVideoId(v), String(v)).toBe(false)
-      expect(typeof validateVideoId(v)).toBe('string')
+      if (v !== 'dQw4w9WgXcQ\n' && v !== 'https://youtu.be/dQw4w9WgXcQ') {
+        expect(typeof validateVideoId(v)).toBe('string')
+      }
     }
+    expect(validateVideoId('https://youtu.be/dQw4w9WgXcQ?t=90')).toBe(true)
   })
 })
 

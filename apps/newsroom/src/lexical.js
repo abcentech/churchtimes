@@ -10,11 +10,14 @@
  *   `>> Quote text -- Attribution`  <-> `pullQuote` block `{ quote, attribution }` (plain text, no inline formatting)
  *   `[gallery](media:12,13,14)`     <-> `gallery` block `{ images: [{ image: 12 }, ...] }` (captions are edited in the CMS
  *                                       admin: a gallery with captions makes the body read-only here)
- * Anything else found in an existing Lexical document (embeds, nested lists, underline, uploads with extra data, ...) sets
+ * YouTube videos: ![optional title](youtube:<id>?t=<seconds>) on its own line.
+ * Anything else found in an existing Lexical document (other embeds, nested lists, underline, uploads with extra data, ...) sets
  * `lossy: true` so the editor can refuse to rewrite a body it cannot represent faithfully.
  *
  * Output node shapes match what Payload's Lexical editor and the public site renderer (src/lib/article-content.js) read.
  */
+
+import { isYoutubeStartSeconds, YOUTUBE_ID_RE } from '../../cms/src/lib/youtube.js';
 
 const FORMAT_BOLD = 1;
 const FORMAT_ITALIC = 2;
@@ -63,6 +66,25 @@ export function imageToken(id, alt = '') {
   const s = String(id ?? '');
   if (!validMediaId(s)) return '';
   return `![${tokenAlt(alt)}](media:${s})`;
+}
+
+const YOUTUBE_LINE_RE = /^!\[((?:\\.|[^\]\\\n])*)\]\(youtube:([A-Za-z0-9_-]{11})(?:\?t=(\d+))?\)$/;
+
+/** A plain, editable video token; no editor-supplied URL becomes part of the story. */
+export function youtubeToken(videoId, title = '', startSeconds) {
+  if (typeof videoId !== 'string' || !YOUTUBE_ID_RE.test(videoId) || typeof title !== 'string'
+    || title.length > 120 || /[<>\u0000-\u001f\u007f-\u009f]/.test(title) || !isYoutubeStartSeconds(startSeconds)) return '';
+  const label = title.replace(/([\\\]])/g, '\\$1');
+  return `![${label}](youtube:${videoId}${startSeconds == null ? '' : `?t=${startSeconds}`})`;
+}
+
+export function matchYoutubeLine(line) {
+  const match = YOUTUBE_LINE_RE.exec(String(line).trim());
+  if (!match) return null;
+  const title = match[1].replace(/\\(.)/g, '$1');
+  const startSeconds = match[3] === undefined ? undefined : Number(match[3]);
+  if (!youtubeToken(match[2], title, startSeconds)) return null;
+  return { videoId: match[2], title, ...(startSeconds === undefined ? {} : { startSeconds }) };
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -262,7 +284,10 @@ export function parseMarkdown(markdown) {
     if (!line.trim()) { flushAll(); continue; }
 
     let m;
-    if ((m = matchImageLine(line))) {
+    if ((m = matchYoutubeLine(line))) {
+      flushAll();
+      blocks.push({ type: 'youtube', ...m });
+    } else if ((m = matchImageLine(line))) {
       flushAll();
       blocks.push({ type: 'image', id: m.missing ? null : Number(m.id), alt: m.alt, missing: m.missing });
     } else if ((m = matchGalleryLine(line))) {
@@ -365,8 +390,11 @@ export function markdownToLexical(markdown) {
   const seen = new Map();
   let quotes = 0;
   let galleries = 0;
+  let videos = 0;
   const children = blocks.map(b => {
     switch (b.type) {
+      case 'youtube':
+        return blockNode(`youtube:${videos++}`, { blockType: 'youtubeEmbed', videoId: b.videoId, title: b.title, ...(b.startSeconds === undefined ? {} : { startSeconds: b.startSeconds }) });
       case 'image': {
         const n = seen.get(b.id) || 0;
         seen.set(b.id, n + 1);
@@ -536,6 +564,7 @@ function blockToMarkdown(node, state, { onlyBlock = false } = {}) {
 const PULL_QUOTE_KEYS = new Set(['id', 'blockName', 'blockType', 'quote', 'attribution']);
 const GALLERY_KEYS = new Set(['id', 'blockName', 'blockType', 'images']);
 const GALLERY_ROW_KEYS = new Set(['id', 'image', 'caption']);
+const YOUTUBE_KEYS = new Set(['id', 'blockName', 'blockType', 'videoId', 'title', 'startSeconds']);
 
 /**
  * Pull quote and gallery blocks become their line; anything the line cannot carry (another block type, a block name,
@@ -544,6 +573,13 @@ const GALLERY_ROW_KEYS = new Set(['id', 'image', 'caption']);
 function blockNodeToMarkdown(node, state) {
   const f = node.fields && typeof node.fields === 'object' && !Array.isArray(node.fields) ? node.fields : {};
   if (f.blockName) state.lossy = true;
+  if (f.blockType === 'youtubeEmbed') {
+    if (Object.keys(f).some(k => !YOUTUBE_KEYS.has(k)) || (node.children && node.children.length)) state.lossy = true;
+    const title = f.title == null ? '' : f.title;
+    const line = youtubeToken(f.videoId, title, f.startSeconds);
+    if (!line) state.lossy = true;
+    return line;
+  }
   if (f.blockType === 'pullQuote') {
     if (Object.keys(f).some(k => !PULL_QUOTE_KEYS.has(k))) state.lossy = true;
     const quote = typeof f.quote === 'string' ? f.quote : '';
@@ -641,6 +677,8 @@ function inlineToHtml(nodes) {
 export function markdownToHtml(markdown, { media } = {}) {
   return parseMarkdown(markdown).map(b => {
     switch (b.type) {
+      case 'youtube':
+        return `<figure data-testid="preview-youtube"><figcaption>YouTube video${b.title ? `: ${escapeHtmlLocal(b.title)}` : ''} (ID: ${b.videoId})</figcaption></figure>`;
       case 'image': {
         if (b.missing) {
           return '<figure class="preview-inline-figure preview-inline-missing" data-testid="preview-inline-image-missing"><figcaption>Missing image: this picture no longer exists in the media library. Remove this line before saving.</figcaption></figure>';
@@ -693,6 +731,7 @@ export function countWords(markdown) {
   const plain = String(markdown || '')
     .replace(/^[ \t]*!\[(?:\\.|[^\]\\\n])*\]\(media:(?:[1-9]\d{0,9}|missing)\)[ \t]*$/gm, ' ')
     .replace(/^[ \t]*\[gallery\]\(media:[\d,\s]+\)[ \t]*$/gm, ' ')
+    .replace(/^[ \t]*!\[(?:\\.|[^\]\\\n])*\]\(youtube:[A-Za-z0-9_-]{11}(?:\?t=\d+)?\)[ \t]*$/gm, ' ')
     .replace(/[*#>\[\]()\\]/g, ' ').trim();
   return plain ? plain.split(/\s+/).length : 0;
 }

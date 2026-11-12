@@ -65,6 +65,24 @@ test.describe('Newsroom UI (dev mock mode)', () => {
     await expect(page.locator('.toast').filter({ hasText: 'Draft saved' })).toHaveCount(0);
   });
 
+  test('article editor inserts a pasted live-stream link as an editable ID and start', async ({ page }) => {
+    await page.getByTestId('dash-new-story').click();
+    await page.getByTestId('editor-title').fill('Synthetic video report');
+    await page.getByTestId('editor-body').fill('Opening text.');
+    await page.getByTestId('editor-insert-youtube').click();
+    await page.getByTestId('youtube-link-input').fill('https://youtube.com/live/aB3_deF-123?t=1m5s&si=fixture');
+    await page.getByTestId('youtube-link-confirm').click();
+    await page.getByTestId('youtube-title-input').fill('Opening service');
+    await page.getByTestId('youtube-title-confirm').click();
+    await expect(page.getByTestId('editor-body')).toHaveValue(/!\[Opening service\]\(youtube:aB3_deF-123\?t=65\)/);
+    await expect(page.getByTestId('editor-body')).not.toHaveValue(/https:/);
+    await expect(page.getByTestId('preview-youtube')).toContainText('Opening service');
+    await page.getByTestId('editor-save-draft').click();
+    await expect(page).toHaveURL(/#editor\?id=/);
+    await page.reload();
+    await expect(page.getByTestId('editor-body')).toHaveValue(/youtube:aB3_deF-123\?t=65/);
+  });
+
   test('review queue lets an editor inspect and approve an in-review story', async ({ page }) => {
     await page.locator('#user-role-select').selectOption({ label: 'Derin Adeogun (Section Editor)' });
     await page.goto('./#review');
@@ -111,6 +129,31 @@ test.describe('Newsroom UI (dev mock mode)', () => {
     await page.getByTestId('live-update-body').fill('Delegates assembled for the opening session.');
     await page.getByTestId('live-update-post').click();
     await expect(page.getByTestId('live-timeline')).toContainText('Delegates assembled for the opening session.');
+  });
+
+  test('live editor validates, previews, publishes and removes a video', async ({ page }) => {
+    await page.locator('#user-role-select').selectOption({ label: 'Lanre Ogundipe (Editor-in-Chief)' });
+    await page.goto('./#live');
+    await page.getByTestId('live-new-event').click();
+    await page.getByTestId('live-event-title').fill('Synthetic video event');
+    await page.getByTestId('live-event-create').click();
+    await page.getByTestId('live-go-live').click();
+    await page.getByTestId('live-update-body').fill('Synthetic coverage.');
+    await page.getByTestId('live-video-input').fill('https://evil.test/video');
+    await page.getByTestId('live-update-post').click();
+    await expect(page.locator('#live-error')).toContainText('YouTube');
+    await page.getByTestId('live-video-input').fill('https://youtu.be/aB3_deF-123?t=65&si=fixture');
+    await page.getByTestId('live-video-title').fill('Opening service');
+    await expect(page.getByTestId('live-video-preview')).toContainText('aB3_deF-123');
+    await page.getByTestId('live-remove-video').click();
+    await expect(page.getByTestId('live-video-input')).toHaveValue('');
+    await page.getByTestId('live-video-input').fill('https://youtu.be/aB3_deF-123?t=65');
+    await page.getByTestId('live-video-title').fill('Opening service');
+    await page.getByTestId('live-update-post').click();
+    const card = page.getByTestId('live-update-card').filter({hasText:'Synthetic coverage.'});
+    await expect(card.getByTestId('live-update-video')).toContainText('aB3_deF-123');
+    await card.getByRole('button',{name:'Remove video'}).click();
+    await expect(card.getByTestId('live-update-video')).toHaveCount(0);
   });
 
   test('media library lists assets, searches and opens details', async ({ page }) => {

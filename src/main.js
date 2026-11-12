@@ -1,4 +1,5 @@
 import { copyShareLink } from './lib/share-link.js';
+document.documentElement.classList.add('has-video-controls');
 function bindArticleListen(root){
   if(!root.querySelector('.article-body') || !window.speechSynthesis || !window.SpeechSynthesisUtterance)return ()=>{};
   let cancelled=false,dispose;
@@ -467,6 +468,8 @@ function handlePublicNavigation(){
 window.addEventListener('hashchange',handlePublicNavigation);
 window.addEventListener('popstate',handlePublicNavigation);
 document.addEventListener('click',event=>{
+  const play=event.target.closest?.('[data-youtube-play]');
+  if(play){const status=play.closest('[data-youtube-video]')?.querySelector('.youtube-status');if(navigator.onLine===false){if(status)status.textContent='Video is unavailable while offline.';return;}if(status)status.textContent='';play.disabled=true;void import('./lib/youtube-player.js').then(m=>m.playYoutube(play,{dataSaver:isLite()||navigator.connection?.saveData===true})).catch(()=>{if(status)status.textContent='Video is unavailable. Use the YouTube link below.';}).finally(()=>{play.disabled=false;});return;}
   const save=event.target.closest('[data-cms-save]');
   if(save){void import('./features/reader/cms-reading-list.js').then(m=>m.toggleSaved({button:save,saved,persistSaved,toast,refresh:savedPage}));return;}
   const link=event.target.closest('a[href]');

@@ -489,6 +489,14 @@ export interface LiveUpdate {
   event: number | LiveEvent;
   body: string;
   image?: (number | null) | Media;
+  /**
+   * Optional YouTube video or live stream. Paste a link or ID; only the ID is saved.
+   */
+  video?: {
+    videoId?: string | null;
+    title?: string | null;
+    startSeconds?: number | null;
+  };
   status: 'pending' | 'approved' | 'rejected';
   sequence?: number | null;
   publishSequence?: number | null;
@@ -1233,6 +1241,13 @@ export interface LiveUpdatesSelect<T extends boolean = true> {
   event?: T;
   body?: T;
   image?: T;
+  video?:
+    | T
+    | {
+        videoId?: T;
+        title?: T;
+        startSeconds?: T;
+      };
   status?: T;
   sequence?: T;
   publishSequence?: T;

@@ -41,6 +41,9 @@ const published = await f.seedArticle({status:'published',publishedAt:new Date()
   corrections:[{note:'A verified fixture correction.',correctedAt:new Date().toISOString()}],legacyUrl:'https://churchtimesnigeria.net/synthetic-legacy-fixture/',
 })
 const seoFallback=await f.seedArticle({title:runId+' SEO fallback report',slug:runId+'-seo-fallback',status:'published',publishedAt:'2020-01-01T00:00:00.000Z',excerpt:'Synthetic editorial fallback excerpt.',bylineName:'Synthetic archive contributor',featuredImage:media.id,content:lexical('Synthetic archive body; its publication date belongs to 2020.')})
+// Synthetic video data; browser tests intercept video-host requests and never contact YouTube.
+const videoArticle=await f.seedArticle({title:runId+' Video report',slug:runId+'-video-report',status:'published',publishedAt:'2019-01-01T00:00:00.000Z',
+  content:{root:{...lexical('Synthetic video article.').root,children:[...lexical('Synthetic video article.').root.children,{type:'block',version:2,format:'',fields:{blockType:'youtubeEmbed',videoId:'aB3_deF-123',title:'Synthetic service',startSeconds:65}}]}}})
 // Existing anonymous article contract; this does not execute an import pipeline.
 const legacySamples=[]
 if(process.env.PUBLIC_LEGACY_SAMPLES==='true')for(let i=1;i<=LEGACY_SAMPLE_COUNT;i++) {
@@ -55,6 +58,7 @@ const reporterDraft = await f.createArticle(f.tokens.reporter,{status:'draft'})
 const live = await f.payload.create({collection:'live-events',overrideAccess:true,data:{title:runId+' Public live coverage',slug:runId+'-public-live',summary:'Public coverage from our synthetic staging newsroom.',status:'live',category:f.catA.id}})
 const draftLive = await f.payload.create({collection:'live-events',overrideAccess:true,data:{title:runId+' PRIVATE draft event',slug:runId+'-draft-live',status:'draft',category:f.catA.id}})
 const endedLive = await f.payload.create({collection:'live-events',overrideAccess:true,data:{title:runId+' Ended coverage',slug:runId+'-ended-live',status:'ended',startedAt:'2026-10-13T08:00:00Z',category:f.catA.id}})
+const videoLive = await f.payload.create({collection:'live-events',overrideAccess:true,data:{title:runId+' Video coverage',slug:runId+'-video-live',status:'ended',startedAt:'2020-01-01T00:00:00Z',category:f.catA.id}})
 const liveUpdate=async(event:number,body:string,status='approved',occurredAt=new Date().toISOString())=>f.payload.create({collection:'live-updates',overrideAccess:true,data:{event,body:runId+' '+body,status,occurredAt,...(status==='approved'?{approvedAt:new Date().toISOString()}:{} )}})
 const delayed = await liveUpdate(live.id,'Delayed approval with an earlier occurrence','pending','2026-10-12T08:00:00Z')
 await liveUpdate(live.id,'First published update')
@@ -63,6 +67,8 @@ await liveUpdate(live.id,'PRIVATE rejected update','rejected')
 const pending = await liveUpdate(live.id,'PRIVATE pending update','pending')
 await liveUpdate(draftLive.id,'PRIVATE draft-event update')
 await liveUpdate(endedLive.id,'Ended event published update')
+await f.payload.create({collection:'live-updates',overrideAccess:true,data:{event:videoLive.id,body:'Synthetic video update',status:'approved',video:{videoId:'aB3_deF-123',title:'Synthetic live service',startSeconds:65}}})
+await f.payload.create({collection:'live-updates',overrideAccess:true,data:{event:videoLive.id,body:'PRIVATE video update',status:'pending',video:{videoId:'abcdefghijk',title:'Private fixture'}}})
 const handlers: Record<string, any> = {
   GET:routes.REST_GET(config),POST:routes.REST_POST(config),PATCH:routes.REST_PATCH(config),
   DELETE:routes.REST_DELETE(config),OPTIONS:routes.REST_OPTIONS(config),
@@ -79,7 +85,7 @@ async function submission(reference: string) {
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url || '/', 'http://127.0.0.1:'+port)
-    if (url.pathname === '/__test/fixtures') return reply(res,{runId,legacySamples,publishedSlug:published.slug,seoFallbackSlug:seoFallback.slug,draftSlug:reporterDraft.json.doc.slug,siteverifyCalls,liveSlug:live.slug,liveTitle:live.title,draftLiveSlug:draftLive.slug,endedLiveSlug:endedLive.slug})
+    if (url.pathname === '/__test/fixtures') return reply(res,{runId,legacySamples,publishedSlug:published.slug,seoFallbackSlug:seoFallback.slug,videoArticleSlug:videoArticle.slug,videoLiveSlug:videoLive.slug,draftSlug:reporterDraft.json.doc.slug,siteverifyCalls,liveSlug:live.slug,liveTitle:live.title,draftLiveSlug:draftLive.slug,endedLiveSlug:endedLive.slug})
     // STUB administrative control exists only on this disposable loopback test host.
     if(url.pathname==='/__test/newsletter' && req.method==='POST') {
       await f.payload.updateGlobal({slug:'newsletter-settings',overrideAccess:true,data:{enabled:url.searchParams.get('enabled')==='true'}})

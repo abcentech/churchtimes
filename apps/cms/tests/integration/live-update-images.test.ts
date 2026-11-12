@@ -169,7 +169,7 @@ describe('live update images', () => {
     const after = await poll(ev.slug)
     expect(after.json.docs.map((d: { id: number }) => d.id)).toEqual([textOnly.id, pending.id])
     const withImage = after.json.docs[1]
-    expect(Object.keys(withImage).sort()).toEqual(['approvedAt', 'body', 'id', 'image', 'occurredAt', 'sequence'])
+    expect(Object.keys(withImage).sort()).toEqual(['approvedAt', 'body', 'id', 'image', 'occurredAt', 'sequence', 'video'])
     expect(Object.keys(withImage.image).sort()).toEqual(['alt', 'height', 'mimeType', 'url', 'width'])
     expect(withImage.image).toEqual({
       url: m.url,

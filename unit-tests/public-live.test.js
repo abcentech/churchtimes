@@ -5,7 +5,9 @@ const event={id:1,slug:'public-event',title:'Public event',status:'live',author:
 const update={id:1,sequence:1,body:'<script>plain text</script>\nSecond line',occurredAt:'2026-10-14T08:00:00Z',approvedAt:'2026-10-14T08:05:00Z',author:{email:'private'},approvedBy:3};
 test('live models allow only public event states and whitelist plain-text update fields',()=>{
  assert.equal(normalizeLiveEvent({...event,status:'draft'}),null);assert.equal(normalizeLiveEvent({...event,slug:'../private'}),null);assert.equal(normalizeLiveEvent(event).author,undefined);
- assert.deepEqual(Object.keys(normalizeLiveUpdate(update)),['id','sequence','image','body','occurredAt','approvedAt']);assert.match(normalizeLiveUpdate(update).body,/<script>/);assert.equal(normalizeLiveUpdate({...update,status:'pending'}),null);assert.equal(normalizeLiveUpdate({...update,sequence:0}),null);
+ assert.deepEqual(Object.keys(normalizeLiveUpdate(update)),['id','sequence','image','video','body','occurredAt','approvedAt']);assert.match(normalizeLiveUpdate(update).body,/<script>/);assert.equal(normalizeLiveUpdate({...update,status:'pending'}),null);assert.equal(normalizeLiveUpdate({...update,sequence:0}),null);
+ assert.deepEqual(normalizeLiveUpdate({...update,video:{videoId:'aB3_deF-123',title:'A service',startSeconds:65,url:'https://evil.test'}}).video,{videoId:'aB3_deF-123',title:'A service',startSeconds:65});
+ assert.equal(normalizeLiveUpdate({...update,video:{videoId:'https://evil.test'}}).video,null);
 });
 test('anonymous event discovery explicitly requests live/ended, sort and real pagination',async()=>{
  const result=await fetchLiveEvents({baseUrl:'https://cms.example.test',fetchImpl:async(url,options)=>{const u=new URL(url);assert.equal(u.pathname,'/api/live-events');assert.equal(u.searchParams.get('where[status][in]'),'live,ended');assert.equal(u.searchParams.get('sort'),'-startedAt');assert.equal(options.credentials,'omit');assert.equal(options.headers.Authorization,undefined);return Response.json({docs:[event,{...event,status:'draft'}],hasNextPage:true,nextPage:2});}});assert.equal(result.events.length,1);assert.equal(result.nextPage,2);

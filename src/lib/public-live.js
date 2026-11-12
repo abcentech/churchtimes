@@ -1,5 +1,6 @@
 import {publicOrigin} from './public-url.js';
 import {CMSReadError,normalizePublicMedia} from './published-articles.js';
+import {youtubeVideo} from './youtube-facade.js';
 export const MAX_LIVE_RETRY_SECONDS=600;
 const text=(value,max)=>typeof value==='string'?value.trim().slice(0,max):'';
 export const liveSlug=value=>typeof value==='string'&&value.length<=160&&/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value);
@@ -14,7 +15,7 @@ export function normalizeLiveUpdate(value,{baseUrl}={}) {
  const origin=publicOrigin(baseUrl);
  const media=origin && normalizePublicMedia(value.image,origin);
  const image=media && text(value.image?.alt,300) ? {url:media.url,alt:text(value.image.alt,300),width:positive(value.image.width)?value.image.width:null,height:positive(value.image.height)?value.image.height:null,mimeType:value.image.mimeType} : null;
- return {id:String(value.id),sequence:value.sequence,image,body:text(value.body,5000),occurredAt:date(value.occurredAt),approvedAt:date(value.approvedAt)};
+ return {id:String(value.id),sequence:value.sequence,image,video:youtubeVideo(value.video),body:text(value.body,5000),occurredAt:date(value.occurredAt),approvedAt:date(value.approvedAt)};
 }
 async function read(path,{baseUrl,signal,fetchImpl=fetch,timeoutMs=6000}={}) {
  const origin=publicOrigin(baseUrl);if(!origin)throw new CMSReadError('configuration','Invalid public CMS origin');

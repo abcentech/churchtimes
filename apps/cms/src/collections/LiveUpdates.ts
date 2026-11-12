@@ -2,6 +2,7 @@ import {
   APIError,
   type Access,
   type CollectionConfig,
+  type CollectionBeforeOperationHook,
   type FieldAccess,
   type PayloadRequest,
   type Where,
@@ -22,6 +23,8 @@ import { advisoryTransactionLock } from '../lib/dbTransaction'
 import { assertExpectedUpdatedAt, captureExpectedUpdatedAt } from '../lib/expectedUpdatedAt'
 import { assertAttachableImage } from '../lib/mediaChecks'
 import { cleanText } from '../lib/sanitize'
+import { youtubeTitleProblem } from '../lib/lexicalEmbeds'
+import { isYoutubeStartSeconds, parseYoutubeInput, YOUTUBE_INPUT_MESSAGE, YOUTUBE_START_MAX } from '../lib/youtube.js'
 
 const asUser = (u: unknown) => u as UserLike | null | undefined
 const sameId = (a: unknown, b: unknown) => a !== undefined && b !== undefined && String(a) === String(b)
@@ -52,6 +55,46 @@ const update: Access = ({ req }) => {
 
 const staffRead: FieldAccess = ({ req }) => isStaff(asUser(req.user))
 const serverOnly = { create: () => false, update: () => false }
+
+// Payload traverses group fields before collection validation; translate null before that traversal.
+const prepareVideo: CollectionBeforeOperationHook = ({ args, operation }) => {
+  if (operation !== 'create' && operation !== 'update') return args
+  const data = (args as { data?: Record<string, unknown> }).data
+  if (!data || data.video === undefined) return args
+  if (data.video === null) data.video = { videoId: null, title: null, startSeconds: null }
+  else if (typeof data.video !== 'object' || Array.isArray(data.video)) throw new APIError(YOUTUBE_INPUT_MESSAGE, 400)
+  return args
+}
+
+/** Canonicalise editor input and reject incomplete/unsafe video metadata on every write. */
+function normalizeVideo(value: unknown, previous?: unknown) {
+  if (value === null) return { videoId: null, title: null, startSeconds: null }
+  if (typeof value !== 'object' || Array.isArray(value)) throw new APIError(YOUTUBE_INPUT_MESSAGE, 400)
+  const input = value as Record<string, unknown>
+  const old = previous && typeof previous === 'object' ? previous as Record<string, unknown> : {}
+  const rawId = input.videoId === undefined ? old.videoId : input.videoId
+  const title = input.title === undefined ? old.title : input.title
+  let start = input.startSeconds === undefined ? old.startSeconds : input.startSeconds
+  if (rawId === null || rawId === undefined || rawId === '') {
+    if ((title !== null && title !== undefined && title !== '') || (start !== null && start !== undefined)) {
+      throw new APIError('Add a YouTube video ID or clear the video title and start time.', 400)
+    }
+    return { videoId: null, title: null, startSeconds: null }
+  }
+  const video = parseYoutubeInput(rawId)
+  if (!video) throw new APIError(YOUTUBE_INPUT_MESSAGE, 400)
+  if (video.startSeconds !== undefined) start = video.startSeconds
+  else if (input.videoId !== undefined && video.videoId !== old.videoId && input.startSeconds === undefined) start = null
+  const titleError = youtubeTitleProblem(title)
+  if (titleError) throw new APIError(titleError, 400)
+  if (!isYoutubeStartSeconds(start)) throw new APIError('A YouTube start time must be a non-negative whole number of seconds.', 400)
+  return { videoId: video.videoId, title: title || null, startSeconds: start ?? null }
+}
+
+function videoKey(value: unknown): string {
+  const v = value && typeof value === 'object' ? value as Record<string, unknown> : {}
+  return JSON.stringify([v.videoId || null, v.title || null, v.startSeconds ?? null])
+}
 
 /**
  * Two counters per event, both "max + 1":
@@ -120,7 +163,11 @@ export const LiveUpdates: CollectionConfig = {
     { fields: ['event', 'publishSequence'], unique: true },
   ],
   hooks: {
-    beforeOperation: [clampLimit, captureExpectedUpdatedAt],
+    beforeOperation: [clampLimit, captureExpectedUpdatedAt, prepareVideo],
+    beforeValidate: [({ data, originalDoc }) => {
+      if (data && data.video !== undefined) data.video = normalizeVideo(data.video, originalDoc?.video)
+      return data
+    }],
     afterDelete: [auditDeleteHook('live-updates', (d) => `status ${d.status}`)],
     beforeChange: [
       assertExpectedUpdatedAt('live_updates'),
@@ -224,7 +271,8 @@ export const LiveUpdates: CollectionConfig = {
           const bodyChanged = data.body !== undefined && data.body !== originalDoc?.body
           const imageChanged =
             data.image !== undefined && String(idOf(data.image) ?? '') !== String(idOf(originalDoc?.image) ?? '')
-          if (bodyChanged || imageChanged) data.publishSequence = await nextCounter(req, eventId, 'publishSequence')
+          const videoChanged = data.video !== undefined && videoKey(data.video) !== videoKey(originalDoc?.video)
+          if (bodyChanged || imageChanged || videoChanged) data.publishSequence = await nextCounter(req, eventId, 'publishSequence')
         }
         return data
       },
@@ -283,6 +331,15 @@ export const LiveUpdates: CollectionConfig = {
       relationTo: 'media',
       hasMany: false,
       required: false,
+    },
+    {
+      name: 'video', type: 'group',
+      admin: { description: 'Optional YouTube video or live stream. Paste a link or ID; only the ID is saved.' },
+      fields: [
+        { name: 'videoId', type: 'text', validate: (value: unknown) => value == null || value === '' || !!parseYoutubeInput(value) || YOUTUBE_INPUT_MESSAGE },
+        { name: 'title', type: 'text', maxLength: 120, validate: (value: unknown) => youtubeTitleProblem(value) ?? true },
+        { name: 'startSeconds', type: 'number', min: 0, max: YOUTUBE_START_MAX, validate: (value: unknown) => isYoutubeStartSeconds(value) || 'Enter a whole number of seconds.' },
+      ],
     },
     {
       name: 'status',

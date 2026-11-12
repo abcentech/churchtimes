@@ -20,6 +20,7 @@ import * as migration_20261027_124620_four_eyes_review_stamp from './20261027_12
 import * as migration_20261027_140000_article_multi_category from './20261027_140000_article_multi_category';
 import * as migration_20261030_090102_w12_newsroom_giving from './20261030_090102_w12_newsroom_giving';
 import * as migration_20261031_120000_giving_consent_version from './20261031_120000_giving_consent_version';
+import * as migration_20261112_120000_live_update_video from './20261112_120000_live_update_video';
 
 export const migrations = [
   {
@@ -131,5 +132,10 @@ export const migrations = [
     up: migration_20261031_120000_giving_consent_version.up,
     down: migration_20261031_120000_giving_consent_version.down,
     name: '20261031_120000_giving_consent_version'
+  },
+  {
+    up: migration_20261112_120000_live_update_video.up,
+    down: migration_20261112_120000_live_update_video.down,
+    name: '20261112_120000_live_update_video'
   },
 ];

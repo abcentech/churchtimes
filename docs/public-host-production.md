@@ -119,9 +119,7 @@ counted warnings omit map paths, publisher IDs and response bodies.
 The Caddy reference terminates TLS and proxies only to the loopback Node process.
 It retains Node cache headers, adds `Referrer-Policy: no-referrer`, the framing headers below, and configures
 no request/access log, since newsletter query strings can hold private tokens.
-The application sets no Content-Security-Policy of its own beyond `frame-ancestors`: both the Node host (every
-response) and the Caddy reference send `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors 'none'`, because the newsletter confirm and
-unsubscribe pages hold POST buttons another site could frame. There is **no script CSP yet**: a full script/style CSP is a separate owner decision, and `node tools/public-csp-hash.mjs` already prints the exact `sha256-` hash of the inline `public-base-bootstrap` script in the final build, which is the input that policy will need; do not add a weaker proxy CSP or
+The Node host (every response) and the Caddy reference send `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors 'none'; frame-src https://www.youtube-nocookie.com`. These headers protect the newsletter confirm and unsubscribe pages from being framed, while allowing the reader-initiated YouTube player. There is **no script CSP yet**: a full script/style CSP is a separate owner decision, and `node tools/public-csp-hash.mjs` already prints the exact `sha256-` hash of the inline `public-base-bootstrap` script in the final build, which is the input that policy will need; do not add a weaker proxy CSP or
 blanket-cache HTML and errors. HSTS is a commented line in the Caddyfile and stays off until the owner approves it. The Caddy site address has no default, so
 an unset `PUBLIC_HOSTNAME` stops Caddy instead of serving a placeholder name. Hashed assets are immutable; HTML/errors
 remain no-store, robots/ads use their short server cache, and redirects retain

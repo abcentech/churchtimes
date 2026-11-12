@@ -350,17 +350,28 @@ export class MockAdapter {
     const list = this.db.updates.filter(u => u.eventId === eventId).sort((a, b) => b.sequence - a.sequence);
     return { data: clone(list) };
   }
-  async postLiveUpdate({ eventId, body, imageId = null }) {
+  async postLiveUpdate({ eventId, body, imageId = null, video = null }) {
     const isEditor = normRole(this.currentUser.role) !== 'reporter';
     const image = imageId ? this.db.media.find(m => String(m.id) === String(imageId)) || null : null;
     if (imageId && !image) throw new ApiError('The selected image does not exist.', { status: 400 });
     if (image && !String(image.alt || '').trim()) throw new ApiError('The image needs alt text before it can be used.', { status: 400 });
     const u = {
-      id: `upd-${Date.now()}`, eventId, body, image: image ? clone(image) : null, status: isEditor ? 'approved' : 'pending',
+      id: `upd-${Date.now()}`, eventId, body, image: image ? clone(image) : null, video: video ? clone(video) : null, status: isEditor ? 'approved' : 'pending',
       sequence: this.db.updates.length + 1, occurredAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-      authorName: this.currentUser.name
+      authorName: this.currentUser.name, authorId: this.currentUser.id
     };
     this.db.updates.unshift(u);
+    this.persist();
+    return { data: clone(u) };
+  }
+  async setLiveUpdateVideo(id, video, { expectedUpdatedAt } = {}) {
+    const u = this.db.updates.find(x => x.id === id);
+    if (!u) throw new ApiError('Not found.', { status: 404 });
+    const event = this.db.events.find(x => String(x.id) === String(u.eventId));
+    if (!event || !can(this.currentUser, 'live.edit', { categoryId: event.categoryId, eventStatus: event.status, status: u.status, isAuthor: String(u.authorId) === String(this.currentUser?.id) })) throw forbidden();
+    if (!versionMatches(u.updatedAt, expectedUpdatedAt)) throw new ApiError(STALE_MESSAGE, { status: 409 });
+    u.video = video ? clone(video) : null;
+    u.updatedAt = new Date().toISOString();
     this.persist();
     return { data: clone(u) };
   }

@@ -2,6 +2,7 @@ import {renderArticleTable} from './article-table.js';
 import { normalizePublicMedia, cmsFigure } from './cms-media.js';
 import { renderAudioVideo } from './article-av.js';
 import { renderPullQuote, renderGallery } from './reader-blocks.js';
+import { youtubeFacade } from './youtube-facade.js';
 // Render supported Payload Lexical text and populated public media safely.
 // Unknown nodes, unpopulated relationships and embedded HTML are omitted.
 const escape = text => String(text).replace(/[&<>"']/g, char => ({
@@ -29,13 +30,7 @@ export function renderArticleContent(content, {baseUrl} = {}) {
     if (depth > 30 || --budget.remaining < 0) {if(tableState)tableState.shortened=true;return '';}
     if(tableState && --tableRemaining<0){tableState.shortened=true;return '';}
     if(node.type==='block' && node.fields?.blockType==='youtubeEmbed') {
-      const {videoId,title}=node.fields;
-      if(typeof videoId!=='string'||!/^[-_A-Za-z0-9]{11}$/.test(videoId))return '';
-      // Cap UTF-16 code units before escaping, so oversized CMS titles cannot grow HTML.
-      const shortTitle=typeof title==='string'?title.trim().slice(0,200).replace(/[\uD800-\uDBFF]$/,''):'';
-      const label=shortTitle?`Watch video on YouTube: ${shortTitle}`:'Watch video on YouTube';
-      const link=`<a href="https://www.youtube.com/watch?v=${videoId}" rel="noopener noreferrer">${escape(label)}</a>`;
-      return parentType==='paragraph'?link:`<p>${link}</p>`;
+      return youtubeFacade(node.fields,{inline:parentType==='paragraph'});
     }
     if(node.type==='block' && node.fields?.blockType==='audioVideo') return renderAudioVideo(node.fields,{baseUrl,inline:parentType==='paragraph'});
     if(node.type==='block' && node.fields?.blockType==='pullQuote') return parentType==='paragraph'?'':renderPullQuote(node.fields);
