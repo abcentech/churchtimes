@@ -191,6 +191,15 @@ html, body {
   display: flex;
   flex-direction: column;
 }
+/* Official masthead logo, light-on-dark version for the dark newsroom header. */
+.brand-logo {
+  display: block;
+  height: 2.5rem;
+  width: auto;
+}
+@media (max-width: 480px) {
+  .brand-logo { height: 2rem; }
+}
 .brand-title {
   font-family: var(--font-serif);
   font-size: 1.25rem;

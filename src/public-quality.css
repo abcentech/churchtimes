@@ -12,3 +12,13 @@
 #main{min-height:calc(100svh - 160px)}
 
 .wordmark>span{word-spacing:-.15em}
+
+/* Official masthead logo (replaces the typed wordmark). Light file by default; dark file under the reader's dark theme. */
+.wordmark{letter-spacing:0;line-height:1}
+.wordmark-logo{display:block;width:clamp(240px,40vw,460px);height:auto}
+.footer-wordmark .wordmark-logo{width:clamp(180px,22vw,240px)}
+.wordmark-dark{display:none}
+:root[data-theme=dark] .wordmark-light{display:none}
+:root[data-theme=dark] .wordmark-dark{display:block}
+@media(prefers-color-scheme:dark){:root:not([data-theme]) .wordmark-light{display:none}:root:not([data-theme]) .wordmark-dark{display:block}}
+@media print{.wordmark-dark{display:none!important}.wordmark-light{display:block!important}}
