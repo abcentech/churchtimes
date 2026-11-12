@@ -265,7 +265,7 @@ Above the body are these buttons: **B** (bold), **I** (italic), **H2** (section 
 
 *Warning.* If a picture was deleted from the library you see **Missing image**. The system will not save the story until you click **Remove** on it.
 
-### Audio and video
+### Uploaded audio and video files
 
 This is done in the **CMS admin**, not in the newsroom app. The newsroom upload box accepts photos only. We tested it with an audio file.
 
@@ -294,7 +294,21 @@ This is done in the **CMS admin**, not in the newsroom app. The newsroom upload 
 
 ![The Audio or video block with all its fields.](staff-manual/img/104-cms-article-av-block.png)
 
-*Good to know.* YouTube videos use a separate YouTube block, also added in the CMS admin. A story that holds these blocks opens with a read-only body in the newsroom app. Edit the body in the CMS admin.
+Uploaded audio and video blocks remain read-only in the newsroom editor. YouTube links use the separate tool below.
+
+### Add a YouTube video or live stream to a story
+
+1. In the newsroom story editor, click in the body where the video should go, then click **YouTube video**.
+2. Paste a YouTube video or live-stream link, or its 11-character video ID, and click **Continue**. Watch links,
+   `youtu.be` links, Shorts, and `/live/` links work; extra sharing parameters are fine. A `t=` start time is kept.
+3. Add an optional short, plain-text title and click **Insert video**. A line such as
+   `![Opening service](youtube:aB3_deF-123?t=65)` appears in the body. Delete that whole line to remove the video.
+   Save the draft and follow the normal review and publication steps.
+4. In the CMS admin, use the **Content** blocks menu to add **YouTube video**. Paste the link or ID in **Video Id**,
+   add an optional title, and save. The CMS keeps the video ID and the optional start time in seconds, not the pasted link.
+
+This link tool supports **YouTube only**, including YouTube live broadcasts. It does not accept Facebook or other video hosts.
+Readers see a play button and a **Watch on YouTube** link. The player contacts YouTube only after a reader presses play.
 
 ### Story details: kicker, story type, key points, "Updated", topics and author profile
 
@@ -456,7 +470,7 @@ This section is for section editors, the editor-in-chief and admins. A section e
 
 ![The bottom of the window. Number 1 is the checklist, then Open in Full Editor, Request Changes and Approve Story. An editor who is allowed to publish also sees a Publish Live button.](staff-manual/img/21b-inspect-modal-buttons.png)
 
-*Warning.* If a story has video or table content the window cannot show, a warning says so. Open it in the CMS admin before approving. If you click Approve anyway, the app asks you to confirm.
+*Warning.* If a story has uploaded audio/video, a table or other content the window cannot show, a warning says so. Open it in the CMS admin before approving. If you click Approve anyway, the app asks you to confirm.
 
 ### Request changes
 
@@ -638,7 +652,10 @@ Live coverage is for events such as a synod, where you post short updates throug
 1. Pick the event in the box at the top right (it says **LIVE NOW: ...**).
 2. Type in **Update Content** (plain text, up to 5000 characters).
 3. Optional: click **Add photo** to attach one picture. Click **Remove photo** to take it off.
-4. Click the button at the bottom.
+4. Optional: paste a YouTube video or live-stream link into **YouTube video or live-stream link** and add a title.
+   Check the displayed video ID and start time. Click **Remove video** to clear it. On an update already posted,
+   staff with edit access can use **Change video**, **Add video** or **Remove video** on its card.
+5. Click the button at the bottom.
    - If you may approve updates (editors, or a trusted publisher in that section) it says **Publish Live Update**. You see "Live update published to public timeline!"
    - Everyone else (for example a reporter) sees **Submit Update for Editorial Review**. You see "Update submitted for editor approval."
 
@@ -918,7 +935,7 @@ Drafts, In Review, Approved but not published, Scheduled before the time, and Ar
 
 **I do not see Archive Review, Approve or Publish.** Your role or sections do not allow it. See the table in section 3.
 
-**I cannot edit a story.** A reporter can only edit their own stories while Draft or Changes Requested. Once it is In Review, only an editor can edit it. A story with video, tables or special formatting has a read-only body. Use the CMS admin.
+**I cannot edit a story.** A reporter can only edit their own stories while Draft or Changes Requested. Once it is In Review, only an editor can edit it. A story with uploaded audio/video, tables or special formatting may have a read-only body. Use the CMS admin. A supported YouTube video alone does not make the body read-only.
 
 **"Not permitted" or "Not permitted to move an article from ... to ...".** Your role cannot do that step. Ask an editor.
 
