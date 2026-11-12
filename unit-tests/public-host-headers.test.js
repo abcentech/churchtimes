@@ -15,11 +15,11 @@ test('every public host response forbids framing; the Caddy reference does the s
  for(const path of ['/','/latest/','/newsletter/confirm?token=synthetic','/newsletter/unsubscribe/','/ads.txt','/robots.txt','/sitemap.xml','/assets/synthetic.js','/missing-story/','/%ZZ','/about']) {
   const response=await fetch(origin+path,{redirect:'manual'});
   assert.equal(response.headers.get('x-frame-options'),'DENY',path);
-  assert.equal(response.headers.get('content-security-policy'),"frame-ancestors 'none'",path);
+  assert.equal(response.headers.get('content-security-policy'),"frame-ancestors 'none'; frame-src https://www.youtube-nocookie.com",path);
   await response.arrayBuffer();
  }
  const caddy=await readFile(new URL('../deploy/public-host/Caddyfile',import.meta.url),'utf8');
- assert.match(caddy,/^\s+X-Frame-Options "DENY"$/m);assert.match(caddy,/^\s+Content-Security-Policy "frame-ancestors 'none'"$/m);
+ assert.match(caddy,/^\s+X-Frame-Options "DENY"$/m);assert.match(caddy,/^\s+Content-Security-Policy "frame-ancestors 'none'; frame-src https:\/\/www\.youtube-nocookie\.com"$/m);
  assert.match(caddy,/^\s*#\s*Strict-Transport-Security /m);assert.doesNotMatch(caddy,/^\s*Strict-Transport-Security /m);
  assert.doesNotMatch(caddy,/PUBLIC_HOSTNAME:/,'hostname must fail closed: no placeholder default');
 });

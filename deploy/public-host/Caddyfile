@@ -10,7 +10,7 @@
         Referrer-Policy "no-referrer"
         # Newsletter confirm and unsubscribe pages hold POST buttons: no other site may frame the public site.
         X-Frame-Options "DENY"
-        Content-Security-Policy "frame-ancestors 'none'"
+        Content-Security-Policy "frame-ancestors 'none'; frame-src https://www.youtube-nocookie.com"
         # HSTS is deliberately OFF until the owner approves it (a wrong HSTS cannot be undone for the max-age):
         # Strict-Transport-Security "max-age=300"
     }

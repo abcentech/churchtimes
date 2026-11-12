@@ -3,3 +3,14 @@
 .article-table table{width:100%;min-width:480px;border-collapse:collapse;font:14px/1.6 var(--sans)}
 .article-table th,.article-table td{border:1px solid var(--line);padding:12px;text-align:start;vertical-align:top;overflow-wrap:anywhere}
 .article-table th{background:var(--sage);font-weight:650;color:var(--ink)}
+.youtube-video{margin:28px 0;max-width:100%}
+.youtube-video-screen{aspect-ratio:16 / 9;background:#222;color:#fff;overflow:hidden}
+.youtube-play{width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:#fff;padding:20px;text-align:center;font:600 15px/1.4 var(--sans)}
+.youtube-play:hover{background:#333}
+.youtube-play:focus-visible{outline:3px solid #fff;outline-offset:-5px}
+.youtube-play-icon{display:grid;place-items:center;width:64px;height:48px;border-radius:9px;background:#b22;color:#fff;font-size:25px}
+.youtube-video-title{font-size:clamp(16px,2vw,21px);overflow-wrap:anywhere}
+.youtube-video-screen iframe{width:100%;height:100%;border:0}
+.youtube-video figcaption{margin-top:8px;font:14px/1.5 var(--sans)}
+.youtube-video figcaption a{text-decoration:underline;text-underline-offset:3px}
+.youtube-status:empty{display:none}
