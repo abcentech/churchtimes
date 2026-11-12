@@ -163,9 +163,12 @@ new end) or is `ended` with none, and is cleared (`null`) while the status is `l
 move to `ended`, and an existing `endedAt` of an event that stays `ended`, are kept. Migration `20261014_221500_live_events_started_at_backfill` fills existing
 rows (`startedAt = createdAt`, `endedAt = updatedAt` for ended rows without one).
 
-### LiveUpdate (`/api/live-updates`) — `{ id, event, body, image?, status: 'pending'|'approved'|'rejected', sequence, occurredAt, approvedAt? }`
+### LiveUpdate (`/api/live-updates`) — `{ id, event, body, image?, video?, status: 'pending'|'approved'|'rejected', sequence, occurredAt, approvedAt? }`
 `body` is plain text (≤ 5 000 chars). `image` is an optional upload relationship to `media` (numeric id on write; a populated
-media doc when read with `depth ≥ 1`); see §6.2 for the rules. Public pages must use the feed (§4.3), not this field. Anonymous readers see only `approved`. `sequence` is **creation order**,
+media doc when read with `depth ≥ 1`); see §6.2 for the rules. `video` is optional: `{ videoId, title?, startSeconds? }`.
+Writers may paste a YouTube watch, shorts, live or youtu.be link as `videoId`; the CMS stores only its validated 11-character
+ID, optional plain-text title (≤ 120 characters) and optional non-negative whole-second start. A `t=` on a pasted link sets
+the start. No other video host, URL or HTML is stored. Public pages use the feed (§4.3). Anonymous readers see only `approved`. `sequence` is **creation order**,
 assigned by the server (per event, strictly increasing) and not client-writable. A second server-owned counter,
 `publishSequence` (per event, nullable until the update is first approved), records **publication order**: it is
 assigned `max(publishSequence)+1` every time an update becomes `approved` (also when it is created as
@@ -188,18 +191,19 @@ Serialized shape (the `version` of the wrapper is whatever Payload's block featu
 
 ```json
 { "type": "block", "version": 2, "format": "",
-  "fields": { "id": "<block id>", "blockName": "", "blockType": "youtubeEmbed", "videoId": "dQw4w9WgXcQ", "title": "Optional short title" } }
+  "fields": { "id": "<block id>", "blockName": "", "blockType": "youtubeEmbed", "videoId": "dQw4w9WgXcQ", "title": "Optional short title", "startSeconds": 65 } }
 ```
 
-- `videoId`: required, exactly 11 characters from `[A-Za-z0-9_-]`. `title`: optional plain text, at most 120 characters, no markup.
-  A URL is never stored; the public renderer builds the player address from the id.
+- `videoId`: required, stored as exactly 11 characters from `[A-Za-z0-9_-]`. Editors may paste a YouTube watch, shorts, live
+  or youtu.be link; the CMS saves its ID and converts `t=` into the optional `startSeconds` integer. `title`: optional plain
+  text, at most 120 characters, no markup. A URL is never stored; the public renderer builds the player address from the id.
 - **Server validation** runs on every write that carries `content` (create, update, restore through update), as a `beforeValidate`
   hook next to the body-image check, and is skipped only for trusted seed calls. `400` for: a malformed `youtubeEmbed` block
   (*A YouTube block has an invalid video id ...*, or a title problem), and for **any other embed**: a raw `embed` node (the
   archive importer's old `{ type: 'embed', embedType, url }` shape), an iframe-like node (`iframe`, `video`, `youtube`, `vimeo`,
   `oembed`, `audio`, `html`, `rawhtml`, `script`, `object`, `widget`, matched case-insensitively), an `inlineBlock`, or a `block`
   whose `blockType` is not `youtubeEmbed` (*Embeds other than YouTube are not accepted.*). A `youtubeEmbed` block must be a leaf:
-  no children, no `url`/`href`/`src` members and no fields beyond `id`, `blockName`, `blockType`, `videoId`, `title` (`400`).
+  no children, no `url`/`href`/`src` members and no fields beyond `id`, `blockName`, `blockType`, `videoId`, `title`, `startSeconds` (`400`).
   A body nested deeper than 64 object/array levels (about 15 nested list levels) is **refused with `400`**
   (*The article body is nested too deeply ...*): the check never silently skips what it cannot inspect.
   Anonymous readers get the block as stored, on published articles only (like all of `content`).
@@ -385,9 +389,10 @@ Polling endpoint for live coverage (recommended interval: 15–30 s).
   "docs": [
     {
       "id": 41, "sequence": 7, "body": "Delegates vote…", "occurredAt": "2026-10-13T10:15:00.000Z", "approvedAt": "2026-10-13T10:16:02.000Z",
-      "image": { "url": "https://cms.example.org/api/media/file/vote.jpg", "alt": "Delegates raising voting cards", "width": 1600, "height": 900, "mimeType": "image/jpeg" }
+      "image": { "url": "https://cms.example.org/api/media/file/vote.jpg", "alt": "Delegates raising voting cards", "width": 1600, "height": 900, "mimeType": "image/jpeg" },
+      "video": { "videoId": "aB3_deF-123", "title": "Opening service", "startSeconds": 65 }
     },
-    { "id": 42, "sequence": 8, "body": "Result announced.", "occurredAt": "2026-10-13T10:20:00.000Z", "approvedAt": "2026-10-13T10:20:30.000Z", "image": null }
+    { "id": 42, "sequence": 8, "body": "Result announced.", "occurredAt": "2026-10-13T10:20:00.000Z", "approvedAt": "2026-10-13T10:20:30.000Z", "image": null, "video": null }
   ],
   "nextSince": 8
 }
@@ -404,6 +409,9 @@ Polling endpoint for live coverage (recommended interval: 15–30 s).
   media URL / image type, the original upload is used instead. `alt` always comes from the media document.
   Only approved updates are in the feed, and (v1.6) the media collection is private for anything that is not on the public site
   (§3 Media), so the file of a pending or rejected photo cannot be fetched either, even by someone who knows its URL. Rendering guidance: `apps/cms/docs/live-update-images-contract.md`.
+- **`video`** (additive): `null` or `{ videoId, title, startSeconds }`; only approved updates are included. The reader-facing
+  player builds a privacy-enhanced YouTube address from the ID after an explicit play action. It never requests a thumbnail or
+  player before that action, and retains a normal link for readers without JavaScript.
 - Approved updates only, ordered by **publication order** ascending, `sequence > since` (default 0), `limit` ≤ 100
   (default 50). The `sequence` returned here is the update's `publishSequence` (§3), **not** its creation
   sequence, and `nextSince` is the `sequence` of the last returned update. This makes the feed safe for updates that
@@ -411,7 +419,7 @@ Polling endpoint for live coverage (recommended interval: 15–30 s).
   poller. Clients should de-duplicate and update by `id`: an update that is rejected after approval disappears from
   the feed (already-delivered copies must be removed by the client, e.g. on a full reload), and an update that is
   approved again later is delivered again with a new, higher `sequence`.
-- **Edits of an approved update (v1.4).** When the `body` or `image` of an update that *stays* `approved` is changed, the server
+- **Edits of an approved update (v1.4).** When the `body`, `image` or `video` of an update that *stays* `approved` is changed, the server
   assigns it a new, higher `publishSequence`, exactly as an approval does. A poller with `since=<old cursor>` therefore receives
   the corrected update again: **same `id`, higher `sequence`, new content** (including `image: null` when the photo was removed).
   Clients must treat `id` as the key and **replace** the item they hold (and re-position it by the new `sequence`); ignoring a
@@ -703,6 +711,9 @@ Send either the cookie (browser, same rules as §5) or `Authorization: JWT <toke
      update is audited (`live-update.image`). The media of an approved update cannot be edited or replaced by non-editors
      (`403`, both for metadata `PATCH` and for a multipart file replacement). Changing `body` or `image` of an approved update
      re-stamps `publishSequence` (§4.3).
+   - Optional video: `"video": { "videoId": "<YouTube link or ID>", "title": "...", "startSeconds": 65 }`.
+     The server canonicalises links to IDs and applies the same edit and approval access rules as `body`.
+     `"video": null` removes it; changing video on an approved update re-stamps `publishSequence`.
 3. Editor review queue: `GET /api/live-updates?where[event][equals]=<id>&where[status][equals]=pending&sort=sequence`
    (editors read every update; reporters/trusted-publishers see their own plus approved ones).
 4. Approve or reject: `PATCH /api/live-updates/:id { "status": "approved" | "rejected" | "pending", "expectedUpdatedAt"?: ISO }` (v1.6: `409` when the update changed since that version, §6.1) — editors in scope

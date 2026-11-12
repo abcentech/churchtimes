@@ -13,7 +13,7 @@ export function youtubeFacade(value,{inline=false}={}) {
   const {videoId,title,startSeconds} = video;
   const href = `https://www.youtube.com/watch?v=${videoId}${startSeconds === null ? '' : `&t=${startSeconds}s`}`;
   const link = `<a href="${escape(href)}" rel="noopener noreferrer">Watch on YouTube</a>`;
-  if (inline) return link; // Malformed nested block: do not put a figure inside a paragraph.
+  if (inline) return `<a href="${escape(href)}" rel="noopener noreferrer">Watch on YouTube${title ? `: ${escape(title)}` : ''}</a>`; // Do not put a figure inside a paragraph.
   const label = title || 'YouTube video';
   return `<figure class="youtube-video" data-youtube-video="${videoId}"${startSeconds === null ? '' : ` data-youtube-start="${startSeconds}"`}>
     <div class="youtube-video-screen"><button type="button" class="youtube-play" data-youtube-play aria-label="Play YouTube video: ${escape(label)}"><span class="youtube-play-icon" aria-hidden="true">▶</span><span class="youtube-video-title">${escape(label)}</span><span>Plays from YouTube</span></button></div>

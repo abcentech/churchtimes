@@ -93,7 +93,7 @@ test('absolute and mailto links preserve URL-encoded spaces and trim surrounding
 test('YouTube titles are bounded before escaping and paragraph-nested blocks stay valid inline links',()=>{
  const block={type:'block',fields:{blockType:'youtubeEmbed',videoId:'abcdefghijk',title:'<'.repeat(100000)}};
  const html=renderArticleContent(article([{type:'paragraph',children:[textNode('Video: '),block]}]));
- assert.equal(html,'<p>Video: <a href="https://www.youtube.com/watch?v=abcdefghijk" rel="noopener noreferrer">Watch on YouTube</a></p>');
+ assert.equal(html,`<p>Video: <a href="https://www.youtube.com/watch?v=abcdefghijk" rel="noopener noreferrer">Watch on YouTube: ${'&lt;'.repeat(200)}</a></p>`);
  assert.ok(html.length<1200);assert.doesNotMatch(html,/<p><p>/);
  const unicode=renderArticleContent(article([{...block,fields:{...block.fields,title:'a'.repeat(199)+'\ud83d\ude00'}}]));
  assert.doesNotMatch(unicode,/[\ud800-\udbff]/u);

@@ -11,12 +11,13 @@
 import { api } from '../api/index.js';
 import { store } from '../store.js';
 import { showToast } from '../components/toast.js';
-import { openModal } from '../components/modal.js';
+import { openModal, askText } from '../components/modal.js';
 import { showApiError } from '../components/notify.js';
 import { escapeHtml, formatTimeAgo } from '../util.js';
 import { openMediaPicker, mediaImageProblem } from '../components/media-picker.js';
 import { cmsAssetUrl } from '../config.js';
 import { livePhotoHtml } from '../live-photo.js';
+import { parseYoutubeInput, YOUTUBE_INPUT_MESSAGE } from '../../../cms/src/lib/youtube.js';
 import { isStaleConflict } from '../stale-guard.js';
 import { sortPublishedNewestFirst } from '../live-order.js';
 import { liveStaleMessage } from '../http-guard.js';
@@ -127,6 +128,14 @@ export async function renderLive(container) {
               placeholder="Report specific facts, quotes, or proceedings..."></textarea>
           </div>
           <div id="upd-photo-box" class="live-photo-draft" data-testid="live-update-photo-box"></div>
+          <div class="form-group">
+            <label for="upd-video-input" class="form-label">YouTube video or live-stream link (optional)</label>
+            <input id="upd-video-input" data-testid="live-video-input" class="form-input" type="text" autocomplete="off" aria-describedby="upd-video-preview">
+            <p id="upd-video-preview" data-testid="live-video-preview" aria-live="polite"></p>
+            <label for="upd-video-title" class="form-label">Video title (optional)</label>
+            <input id="upd-video-title" data-testid="live-video-title" class="form-input" type="text" maxlength="120">
+            <button type="button" class="btn btn-outline btn-sm" id="btn-remove-video" data-testid="live-remove-video" hidden>Remove video</button>
+          </div>
           <button type="submit" class="btn btn-primary" id="btn-post-update" data-testid="live-update-post" style="width: 100%;">
             ${api.can('live.approve', { categoryId: activeEvent.categoryId }) ? 'Publish Live Update' : 'Submit Update for Editorial Review'}
           </button>
@@ -197,12 +206,29 @@ export async function renderLive(container) {
     photoBox.querySelector('#btn-remove-photo').addEventListener('click', () => { photo = null; renderPhotoBox(); });
   };
   renderPhotoBox();
+  const videoInput = container.querySelector('#upd-video-input');
+  const videoTitle = container.querySelector('#upd-video-title');
+  const videoPreview = container.querySelector('#upd-video-preview');
+  const removeVideo = container.querySelector('#btn-remove-video');
+  const renderVideoPreview = () => {
+    const value = videoInput.value.trim();
+    const video = parseYoutubeInput(value);
+    videoPreview.textContent = !value ? '' : video ? `Video ID: ${video.videoId}${video.startSeconds === undefined ? '' : ` · starts at ${video.startSeconds} seconds`}` : YOUTUBE_INPUT_MESSAGE;
+    removeVideo.hidden = !value && !videoTitle.value;
+  };
+  videoInput.addEventListener('input', renderVideoPreview);
+  videoTitle.addEventListener('input', renderVideoPreview);
+  removeVideo.addEventListener('click', () => { videoInput.value = ''; videoTitle.value = ''; renderVideoPreview(); videoInput.focus(); });
 
   container.querySelector('#live-update-form').addEventListener('submit', async e => {
     e.preventDefault();
     const bodyEl = container.querySelector('#upd-body-input');
     const body = bodyEl.value.trim();
     if (!body) { setError('Please enter update content.'); return; }
+    const video = videoInput.value.trim() ? parseYoutubeInput(videoInput.value) : null;
+    const title = videoTitle.value.trim();
+    if ((videoInput.value.trim() && !video) || (!video && title)) { setError(YOUTUBE_INPUT_MESSAGE); return; }
+    if (title.length > 120 || /[<>\u0000-\u001f\u007f-\u009f]/.test(title)) { setError('The video title must be plain text and at most 120 characters.'); return; }
     const submit = container.querySelector('#btn-post-update');
     submit.disabled = true;
     try {
@@ -210,11 +236,13 @@ export async function renderLive(container) {
         eventId: activeEvent.id,
         body,
         publishNow: api.can('live.approve', { categoryId: activeEvent.categoryId }),
-        imageId: photo ? photo.id : null
+        imageId: photo ? photo.id : null,
+        video: video ? { ...video, title } : null
       });
       bodyEl.value = '';
       photo = null;
       renderPhotoBox();
+      videoInput.value = ''; videoTitle.value = ''; renderVideoPreview();
       setError('');
       showToast(res.data.status === 'approved'
         ? 'Live update published to public timeline!'
@@ -268,6 +296,13 @@ async function refreshLiveStream(container, event, setError) {
   const approved = sortPublishedNewestFirst(updates.filter(u => u.status === 'approved'));
   const pending = updates.filter(u => u.status === 'pending');
   const canApprove = api.can('live.approve', { categoryId: event.categoryId });
+  const videoHtml = u => u.video?.videoId ? `<p data-testid="live-update-video">YouTube video: ${escapeHtml(u.video.title || 'Untitled')} (ID: ${escapeHtml(u.video.videoId)}${u.video.startSeconds == null ? '' : `, ${escapeHtml(u.video.startSeconds)} seconds`})</p>` : '';
+  const videoActions = u => {
+    const isAuthor = u.authorId != null && String(u.authorId) === String(api.getCurrentUser()?.id);
+    if (!api.can('live.edit', { categoryId: event.categoryId, eventStatus: event.status, status: u.status, isAuthor })) return '';
+    return `<button type="button" class="btn btn-outline btn-sm" data-edit-video="${escapeHtml(u.id)}">${u.video?.videoId ? 'Change video' : 'Add video'}</button>
+      ${u.video?.videoId ? `<button type="button" class="btn btn-outline btn-sm" data-remove-video="${escapeHtml(u.id)}">Remove video</button>` : ''}`;
+  };
 
   feedEl.innerHTML = approved.length === 0
     ? '<div style="text-align: center; padding: 2rem; color: var(--color-muted);">No updates published yet.</div>'
@@ -278,6 +313,7 @@ async function refreshLiveStream(container, event, setError) {
         </div>
         <p style="font-size: 0.9375rem; color: var(--color-ink); line-height: 1.5; white-space: pre-wrap;">${escapeHtml(upd.body)}</p>
         ${livePhotoHtml(upd.image, cmsAssetUrl)}
+        ${videoHtml(upd)}${videoActions(upd)}
         ${upd.authorName ? `<span style="font-size: 0.75rem; color: var(--color-muted);">By ${escapeHtml(upd.authorName)}</span>` : ''}
       </article>`).join('');
 
@@ -296,6 +332,7 @@ async function refreshLiveStream(container, event, setError) {
           </div>
           <div style="white-space: pre-wrap;">${escapeHtml(u.body)}</div>
           ${livePhotoHtml(u.image, cmsAssetUrl)}
+          ${videoHtml(u)}${videoActions(u)}
         </div>`).join('');
 
     const review = (attr, status, ok) => pendingEl.querySelectorAll(`[${attr}]`).forEach(btn => {
@@ -315,6 +352,31 @@ async function refreshLiveStream(container, event, setError) {
     });
     review('data-approve-upd-id', 'approved', 'Update approved and broadcast to public stream!');
     review('data-reject-upd-id', 'rejected', 'Update rejected.');
+  }
+  const byId = new Map(updates.map(u => [String(u.id), u]));
+  for (const parent of [feedEl, pendingEl].filter(Boolean)) {
+    parent.querySelectorAll('[data-edit-video], [data-remove-video]').forEach(button => button.addEventListener('click', async () => {
+      const update = byId.get(button.dataset.editVideo || button.dataset.removeVideo);
+      if (!update) return;
+      let video = null;
+      if (button.hasAttribute('data-edit-video')) {
+        const input = await askText({ title: 'YouTube video', label: 'Paste a video or live-stream link, or its ID', confirmLabel: 'Continue', testid: 'live-edit-video' });
+        if (input === null || !container.isConnected) return;
+        video = parseYoutubeInput(input);
+        if (!video) { setError(YOUTUBE_INPUT_MESSAGE); return; }
+        const title = await askText({ title: 'Video title', label: 'Optional plain-text title (up to 120 characters)', required: false, confirmLabel: 'Save video', testid: 'live-edit-title' });
+        if (title === null || !container.isConnected) return;
+        if (title.length > 120 || /[<>\u0000-\u001f\u007f-\u009f]/.test(title)) { setError('The video title must be plain text and at most 120 characters.'); return; }
+        video.title = title;
+      }
+      try {
+        await api.setLiveUpdateVideo(update.id, video, { expectedUpdatedAt: update.updatedAt || undefined });
+        await refreshLiveStream(container, event, setError);
+      } catch (error) {
+        if (isStaleConflict(error)) await refreshLiveStream(container, event, setError);
+        setError(showApiError(error));
+      }
+    }));
   }
   return true;
 }

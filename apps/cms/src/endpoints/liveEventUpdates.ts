@@ -1,4 +1,6 @@
 import type { Endpoint, PayloadRequest } from 'payload'
+import { isYoutubeVideoId, youtubeTitleProblem } from '../lib/lexicalEmbeds'
+import { isYoutubeStartSeconds } from '../lib/youtube.js'
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const NON_NEG_INT = /^\d{1,15}$/
@@ -48,6 +50,13 @@ export function publicImage(media: unknown): PublicImage | null {
     return { url: v.url, alt: m.alt, width: dimension(v.width), height: dimension(v.height), mimeType: v.mimeType }
   }
   return { url: m.url, alt: m.alt, width: dimension(m.width), height: dimension(m.height), mimeType: m.mimeType }
+}
+
+function publicVideo(value: unknown) {
+  if (!value || typeof value !== 'object') return null
+  const video = value as Record<string, unknown>
+  if (!isYoutubeVideoId(video.videoId) || youtubeTitleProblem(video.title) || !isYoutubeStartSeconds(video.startSeconds)) return null
+  return { videoId: video.videoId, title: video.title || null, startSeconds: video.startSeconds ?? null }
 }
 
 /** Public polling endpoint: approved updates of a non-draft live event. */
@@ -103,7 +112,7 @@ export const liveEventUpdatesEndpoint: Endpoint = {
             depth: 1,
             pagination: false,
             overrideAccess: true,
-            select: { publishSequence: true, body: true, occurredAt: true, approvedAt: true, image: true },
+            select: { publishSequence: true, body: true, occurredAt: true, approvedAt: true, image: true, video: true },
             populate: {
               media: {
                 url: true,
@@ -125,6 +134,7 @@ export const liveEventUpdatesEndpoint: Endpoint = {
       occurredAt: d.occurredAt,
       approvedAt: d.approvedAt ?? null,
       image: publicImage(d.image),
+      video: publicVideo(d.video),
     }))
     const nextSince = docs.length ? docs[docs.length - 1].sequence : since
 

@@ -1,5 +1,6 @@
 import {fetchLiveEvents,fetchLiveUpdates,liveSlug,MAX_LIVE_RETRY_SECONDS} from '../lib/public-live.js';
 import {cmsErrorMessage} from '../lib/published-articles.js';
+import {youtubeFacade} from '../lib/youtube-facade.js';
 const escape=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const timestamp=value=>new Intl.DateTimeFormat('en-GB',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',timeZone:'Africa/Lagos'}).format(new Date(value))+' WAT';
 export function livePageMarkup() {
@@ -48,6 +49,7 @@ export function mountLivePage(root,{baseUrl,slug,signal,pollMs=15000,eventsReade
      image.addEventListener('error',()=>figure.remove(),{once:true});figure.append(image);row.append(figure);
     }
     const body=document.createElement('p');body.className='live-update-body';body.textContent=update.body;row.append(body);
+    if(update.video)row.insertAdjacentHTML('beforeend',youtubeFacade(update.video));
     if(previous){previous.element.remove();sequences.delete(previous.sequence);changed++;}else added++;
     items.set(update.id,{element:row,sequence:update.sequence});sequences.set(update.sequence,update.id);
     const following=Array.from(list.children).find(item=>Number(item.dataset.sequence)>update.sequence);

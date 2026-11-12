@@ -24,7 +24,7 @@ test('50 synthetic historical articles render through real CMS REST on a mobile/
   if(sample.index===48)await expect(body.locator('td[colspan="20"]')).toHaveText('Synthetic spanning value');
   await expect(body.locator('.article-table-note')).toHaveCount(sample.index===49?1:0);
   await expect(body.locator('a[href^="https://example.test/"]')).toHaveCount(1);
-  await expect(body.locator('figcaption')).toContainText('CMS integration caption');
+  await expect(body.locator('.cms-figure figcaption')).toContainText('CMS integration caption');
   await expect(body.locator('img')).toHaveAttribute('srcset',/\d+w/);
   await expect(body.locator('img')).toHaveJSProperty('complete',true);expect(await body.locator('img').evaluate(image=>image.naturalWidth)).toBeGreaterThan(0);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
