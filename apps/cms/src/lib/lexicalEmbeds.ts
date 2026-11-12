@@ -13,6 +13,8 @@
  */
 
 import { AV_BLOCK_SLUG, AV_CAPTION_MAX, AV_KINDS, AV_TITLE_MAX, avTextProblem, isSafeAvSourceUrl, isSafeAvUrl } from './avMedia'
+import { isYoutubeStartSeconds, parseYoutubeInput, YOUTUBE_ID_RE, YOUTUBE_INPUT_MESSAGE } from './youtube.js'
+export { YOUTUBE_ID_RE } from './youtube.js'
 import {
   GALLERY_BLOCK_SLUG,
   GALLERY_CAPTION_MAX,
@@ -27,8 +29,6 @@ export const YOUTUBE_BLOCK_SLUG = 'youtubeEmbed'
 export const YOUTUBE_TITLE_MAX = 120
 
 /** Exactly 11 characters from [A-Za-z0-9_-]. */
-export const YOUTUBE_ID_RE = /^[A-Za-z0-9_-]{11}$/
-
 export const EMBED_REFUSED_MESSAGE = 'Embeds other than YouTube are not accepted.'
 
 /**
@@ -45,7 +45,7 @@ export const BODY_TOO_DEEP_MESSAGE = `The article body is nested too deeply (mor
 const EMBED_LIKE_TYPE_RE = /(html|iframe|embed|video|audio|youtube|vimeo|oembed|frame|widget|script|object)/i
 
 /** Keys a `youtubeEmbed` block's `fields` may carry (Payload adds `id` and `blockName`). */
-const YOUTUBE_FIELD_KEYS = new Set(['id', 'blockName', 'blockType', 'videoId', 'title'])
+const YOUTUBE_FIELD_KEYS = new Set(['id', 'blockName', 'blockType', 'videoId', 'title', 'startSeconds'])
 const URL_LIKE_KEY_RE = /^(url|href|src|link|embedurl)$/i
 
 // eslint-disable-next-line no-control-regex
@@ -67,9 +67,31 @@ export function youtubeTitleProblem(value: unknown): string | null {
 
 /** Field-level validators for the block definition (return `true` or a message), shared with the schema. */
 export const validateVideoId = (value: unknown): true | string =>
-  isYoutubeVideoId(value) ? true : 'The YouTube video id must be exactly 11 characters: letters, numbers, "-" or "_".'
+  parseYoutubeInput(value) ? true : YOUTUBE_INPUT_MESSAGE
 
 export const validateYoutubeTitle = (value: unknown): true | string => youtubeTitleProblem(value) ?? true
+
+/** Canonicalise editor input before the body is validated and persisted. Invalid input is left for validation. */
+export function normalizeYoutubeEmbeds(content: unknown): void {
+  const walk = (node: unknown, depth: number): void => {
+    if (depth > BODY_MAX_DEPTH || node === null || typeof node !== 'object') return
+    if (Array.isArray(node)) { for (const child of node) walk(child, depth + 1); return }
+    const rec = node as Record<string, unknown>
+    if (rec.type === 'block' && rec.fields && typeof rec.fields === 'object' && !Array.isArray(rec.fields)) {
+      const fields = rec.fields as Record<string, unknown>
+      if (fields.blockType === YOUTUBE_BLOCK_SLUG) {
+        const parsed = parseYoutubeInput(fields.videoId)
+        if (parsed) {
+          fields.videoId = parsed.videoId
+          if (parsed.startSeconds !== undefined) fields.startSeconds = parsed.startSeconds
+        }
+        return
+      }
+    }
+    for (const child of Object.values(rec)) walk(child, depth + 1)
+  }
+  walk(content, 0)
+}
 
 export const UNSAFE_LINK_MESSAGE = 'Links must use http, https or mailto addresses (or a relative path or #fragment).'
 
@@ -311,8 +333,11 @@ export function findEmbedProblem(content: unknown): string | null {
           return
         }
         if (!isYoutubeVideoId(fields.videoId)) {
-          problem =
-            'A YouTube block has an invalid video id (expected exactly 11 characters from A-Z, a-z, 0-9, "-" and "_").'
+          problem = `A YouTube block has an invalid video id. ${YOUTUBE_INPUT_MESSAGE}`
+          return
+        }
+        if (!isYoutubeStartSeconds(fields.startSeconds)) {
+          problem = 'A YouTube start time must be a non-negative whole number of seconds.'
           return
         }
         problem = youtubeTitleProblem(fields.title)

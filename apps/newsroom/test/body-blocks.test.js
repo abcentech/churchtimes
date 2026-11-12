@@ -50,7 +50,7 @@ test('a populated gallery reads back to ids; captions, block names or unknown bl
   const named = { type: 'block', version: 2, format: '', fields: { id: 'q', blockName: 'Named', blockType: 'pullQuote', quote: 'Q', attribution: '' } };
   assert.equal(lexicalToMarkdown({ root: { children: [named] } }).lossy, true);
   const yt = { type: 'block', version: 2, format: '', fields: { id: 'y', blockName: '', blockType: 'youtubeEmbed', videoId: 'dQw4w9WgXcQ' } };
-  assert.equal(lexicalToMarkdown({ root: { children: [yt] } }).lossy, true);
+  assert.equal(lexicalToMarkdown({ root: { children: [yt] } }).lossy, false);
   assert.deepEqual(galleryMediaOf({ root: { children: [gallery([{ image: { id: 7, alt: 'Choir' } }, { image: 8 }])] } }).map(m => m.id), [7]);
 });
 

@@ -233,15 +233,15 @@ test('imported body (YouTube block, table, h4, new-tab link, upload fields:null)
   const { lossy, markdown } = lexicalToMarkdown(IMPORTED);
   assert.equal(lossy, true);
   assert.ok(markdown.includes('Closing paragraph.'));
-  assert.ok(!/dQw4w9WgXcQ/.test(markdown), 'video is not representable in markdown');
+  assert.ok(/dQw4w9WgXcQ/.test(markdown), 'video is representable in markdown');
   assert.ok(!markdown.includes('Score'), 'table content is dropped from the markdown view');
-  // Converting it back would destroy the video and the table: this is why the body must stay read-only.
+  // Converting it back would destroy the table and other unsupported nodes: the body must stay read-only.
   assert.notDeepEqual(markdownToLexical(markdown), IMPORTED);
 });
 
 test('imported body: the lossy reviewer view omits content, so the lossy flag is the only warning', () => {
   const html = markdownToHtml(lexicalToMarkdown(IMPORTED).markdown);
-  assert.ok(!html.includes('dQw4w9WgXcQ'));
+  assert.ok(html.includes('dQw4w9WgXcQ'));
   assert.ok(!html.includes('Score'));
 });
 

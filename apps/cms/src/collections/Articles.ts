@@ -29,7 +29,7 @@ import { articlePreviewTokenEndpoint } from '../endpoints/articlePreviewToken'
 import { writeAuditLog } from '../lib/audit'
 import { clampLimit } from '../lib/clampLimit'
 import { deepEqual } from '../lib/deepEqual'
-import { collectAvBlocks, collectAvMedia, collectGalleryMedia, findEmbedProblem } from '../lib/lexicalEmbeds'
+import { collectAvBlocks, collectAvMedia, collectGalleryMedia, findEmbedProblem, normalizeYoutubeEmbeds } from '../lib/lexicalEmbeds'
 import {
   CONTENT_TYPES,
   CONTENT_TYPE_LABELS,
@@ -251,7 +251,9 @@ const normalizeSeoFields: CollectionBeforeValidateHook = async ({ data }) => {
  */
 const validateEmbeds: CollectionBeforeValidateHook = ({ data, req }) => {
   const ctx = (req.context ?? {}) as { seed?: boolean }
-  if (ctx.seed === true || !data || data.content === undefined) return data
+  if (!data || data.content === undefined) return data
+  normalizeYoutubeEmbeds(data.content)
+  if (ctx.seed === true) return data
   const problem = findEmbedProblem(data.content)
   if (problem) throw new APIError(problem, 400)
   return data

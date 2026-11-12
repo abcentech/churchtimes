@@ -19,7 +19,8 @@ import { showToast } from '../components/toast.js';
 import { askText, askConfirm } from '../components/modal.js';
 import { showApiError } from '../components/notify.js';
 import { openMediaPicker, mediaImageProblem } from '../components/media-picker.js';
-import { markdownToHtml, countWords, imageToken, insertBlockLine, listImages, removeImageLine, stripImageLabels, pullQuoteToken, galleryToken, matchGalleryLine, GALLERY_MAX } from '../lexical.js';
+import { markdownToHtml, countWords, imageToken, insertBlockLine, listImages, removeImageLine, stripImageLabels, pullQuoteToken, galleryToken, matchGalleryLine, youtubeToken, GALLERY_MAX } from '../lexical.js';
+import { parseYoutubeInput, YOUTUBE_INPUT_MESSAGE } from '../../../cms/src/lib/youtube.js';
 import {
   CONTENT_TYPES, KICKER_MAX, KEY_POINTS_MAX, KEY_POINT_MAX, TOPICS_MAX, META_KEYS, blankMeta, contentTypeLabel,
   keyPointsFromText, normalizeKeyPointsText, normalizeIso, metaProblem, parseIdList, toggleTopic, isoToLocalMinutes, localMinutesToIso
@@ -206,7 +207,7 @@ export async function renderEditor(container, storyId = null) {
     </div>
     <div id="schedule-panel" class="ethics-notice-box" data-testid="editor-schedule-panel" style="display:none; margin-bottom: 1rem;"></div>
     ${!editable ? `<div class="ethics-notice-box" data-testid="editor-readonly-note" style="margin-bottom:1rem;"><p style="margin:0;">You can read this story but not edit it in its current status.</p></div>` : ''}
-    ${story.lossy ? `<div class="ethics-notice-box" data-testid="editor-lossy-note" style="margin-bottom:1rem;"><p style="margin:0;">This story contains elements the newsroom editor cannot represent (for example embedded video, nested lists, underline, alignment or links that open in a new tab). The body is read-only here so nothing is lost. Most imported (archive) articles can only have their body edited in the CMS admin; headline, standfirst and other fields can still be edited here.</p></div>` : ''}
+    ${story.lossy ? `<div class="ethics-notice-box" data-testid="editor-lossy-note" style="margin-bottom:1rem;"><p style="margin:0;">This story contains elements the newsroom editor cannot represent (for example nested lists, underline, alignment or links that open in a new tab). The body is read-only here so nothing is lost. Most imported (archive) articles can only have their body edited in the CMS admin; headline, standfirst and other fields can still be edited here.</p></div>` : ''}
 
     <div id="review-notes-banner" class="ethics-notice-box" style="display:none; margin-bottom: 1rem;" data-testid="editor-review-notes">
       <h4 id="review-notes-title">Editorial Review Notes</h4>
@@ -278,6 +279,7 @@ export async function renderEditor(container, storyId = null) {
             <button type="button" class="format-btn" data-fmt="image" id="btn-insert-image" data-testid="editor-insert-image" title="Insert an image from the media library (or upload one) at the cursor" ${bodyReadonly ? 'disabled' : ''}>Insert image</button>
             <button type="button" class="format-btn" data-fmt="pullquote" data-testid="editor-insert-pull-quote" title="Pull quote: a line starting with >> (quote -- who said it)" ${bodyReadonly ? 'disabled' : ''}>Pull quote</button>
             <button type="button" class="format-btn" data-fmt="gallery" id="btn-insert-gallery" data-testid="editor-insert-gallery" title="Photo gallery: adds an image to the gallery line under the cursor, or starts a new gallery (up to ${GALLERY_MAX} images)" ${bodyReadonly ? 'disabled' : ''}>Gallery image</button>
+            <button type="button" class="format-btn" data-fmt="youtube" data-testid="editor-insert-youtube" title="Insert a YouTube video or live stream" ${bodyReadonly ? 'disabled' : ''}>YouTube video</button>
           </div>
           <p class="form-hint" style="font-size:0.75rem;color:var(--color-muted);margin:0.25rem 0;overflow-wrap:anywhere;">Pull quote: <code>&gt;&gt; Quote text -- Name</code> on its own line. Gallery: <code>[gallery](media:12,13)</code>; put the cursor on that line and press "Gallery image" to add more. Gallery captions are edited in the CMS admin.</p>
           <div id="body-images" class="body-images" data-testid="editor-body-images" aria-label="Images in this story" style="display:none;"></div>
@@ -631,6 +633,7 @@ function bindEditorListeners(container) {
     btn.addEventListener('click', () => {
       if (btn.getAttribute('data-fmt') === 'image') return insertImage(container);
       if (btn.getAttribute('data-fmt') === 'gallery') return insertGalleryImage(container);
+      if (btn.getAttribute('data-fmt') === 'youtube') return insertYoutube(container);
       if (btn.getAttribute('data-fmt') === 'pullquote') {
         insertPullQuote(bodyInput);
         triggerAutosave(container);
@@ -1306,6 +1309,32 @@ function insertPullQuote(textarea) {
   textarea.value = edited.value;
   textarea.focus();
   textarea.selectionStart = textarea.selectionEnd = edited.caret;
+}
+
+/** Insert the canonical ID and optional start, preserving the original cursor across the dialogs. */
+async function insertYoutube(container) {
+  const body = container.querySelector('#story-body-input');
+  const start = body.selectionStart;
+  const end = body.selectionEnd;
+  const input = await askText({
+    title: 'Insert a YouTube video', label: 'Paste a YouTube video or live-stream link, or its video ID',
+    confirmLabel: 'Continue', testid: 'youtube-link'
+  });
+  if (input === null || !container.isConnected) return;
+  const video = parseYoutubeInput(input);
+  if (!video) { showToast(YOUTUBE_INPUT_MESSAGE, 'error'); return; }
+  const title = await askText({
+    title: 'Video title', label: 'Optional short title for readers (plain text, up to 120 characters)',
+    confirmLabel: 'Insert video', required: false, testid: 'youtube-title'
+  });
+  if (title === null || !container.isConnected) return;
+  const token = youtubeToken(video.videoId, title, video.startSeconds);
+  if (!token) { showToast('The video title must be plain text and at most 120 characters.', 'error'); return; }
+  const edited = insertBlockLine(body.value, start, end, token);
+  body.value = edited.value;
+  body.focus();
+  body.setSelectionRange(edited.caret, edited.caret);
+  body.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
 /** Add a picked image to the gallery line under the cursor, or start a new gallery line there. */
