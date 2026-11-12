@@ -9,6 +9,23 @@ beforeAll(async () => { f = await setupFixtures(runId) })
 afterAll(async () => { await f?.cleanup() })
 
 describe('live-update video', () => {
+  it.each([
+    'https://youtube.com/live/aB3_deF-123?si=live',
+    'https://youtube.com/watch?v=aB3_deF-123&feature=live',
+  ])('publishes a live-broadcast URL as its ID: %s', async (url) => {
+    const event = await api('POST', '/api/live-events', { token: f.tokens.eic, body: {
+      title: runId + ' broadcast', slug: runId + '-' + Math.random().toString(36).slice(2), category: f.catA.id, status: 'live'
+    } })
+    expect(event.status).toBe(201)
+    const update = await api('POST', '/api/live-updates', { token: f.tokens.eic, body: {
+      event: event.json.doc.id, body: 'Synthetic live broadcast', status: 'approved', video: { videoId: url }
+    } })
+    expect(update.status, update.text).toBe(201)
+    const feed = await api('GET', '/api/live-events/' + event.json.doc.slug + '/updates')
+    expect(feed.json.docs[0].video.videoId).toBe('aB3_deF-123')
+    expect(feed.text).not.toContain('youtube.com')
+  })
+
   it('migration is additive and reversible', async () => {
     const db = (f.payload.db as any).drizzle
     const args = { db, payload: f.payload, req: {} } as never

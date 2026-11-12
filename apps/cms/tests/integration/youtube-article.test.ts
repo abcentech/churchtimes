@@ -13,6 +13,15 @@ const content = (videoId: string) => {
 }
 
 describe('article YouTube input', () => {
+  it.each([
+    'https://youtube.com/live/aB3_deF-123?si=live',
+    'https://m.youtube.com/watch?v=aB3_deF-123&feature=live',
+  ])('stores a live broadcast URL as its video ID: %s', async (url) => {
+    const result = await f.createArticle(f.tokens.reporter, { content: content(url) })
+    expect(result.status, result.text).toBe(201)
+    expect(result.json.doc.content.root.children.find((n: any) => n.fields?.blockType === 'youtubeEmbed').fields.videoId).toBe('aB3_deF-123')
+  })
+
   it('stores only the ID and parsed start when a reporter pastes a link', async () => {
     const result = await f.createArticle(f.tokens.reporter, { content: content('https://youtube.com/live/aB3_deF-123?t=1m5s&si=abc') })
     expect(result.status, JSON.stringify(result.json)).toBe(201)
